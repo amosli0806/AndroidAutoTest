@@ -1,0 +1,103 @@
+{
+  "elements": [
+    {
+      "id": "elem_895379173_0",
+      "name": "GPS图标",
+      "app": "6系地图",
+      "module": "主图态",
+      "loc_type": "资源ID",
+      "loc_value": "com.baidu.naviauto:id/map_top_status_bar_gnss",
+      "remark": ""
+    },
+    {
+      "id": "elem_895452400_0",
+      "name": "静音图标",
+      "app": "6系地图",
+      "module": "主图态",
+      "loc_type": "资源ID",
+      "loc_value": "com.baidu.naviauto:id/map_top_status_bar_volume",
+      "remark": ""
+    },
+    {
+      "id": "elem_895516772_0",
+      "name": "放大图标",
+      "app": "6系地图",
+      "module": "主图态",
+      "loc_type": "资源ID",
+      "loc_value": "com.baidu.naviauto:id/zoomin_btn",
+      "remark": ""
+    },
+    {
+      "id": "elem_895541540_0",
+      "name": "缩小图标",
+      "app": "6系地图",
+      "module": "主图态",
+      "loc_type": "资源ID",
+      "loc_value": "com.baidu.naviauto:id/zoomout_btn",
+      "remark": ""
+    },
+    {
+      "id": "elem_895601195_0",
+      "name": "卫星定位页面返回按钮",
+      "app": "6系地图",
+      "module": "主图态",
+      "loc_type": "资源ID",
+      "loc_value": "com.baidu.naviauto:id/ll_left_close",
+      "remark": ""
+    },
+    {
+      "id": "elem_896302594_0",
+      "name": "快捷设置页面限行入口",
+      "app": "6系地图",
+      "module": "快捷设置",
+      "loc_type": "XPath",
+      "loc_value": "//*[@resource-id=\"com.baidu.naviauto:id/map_top_limit_view\"]",
+      "remark": ""
+    },
+    {
+      "id": "elem_896344200_0",
+      "name": "设置按钮",
+      "app": "6系地图",
+      "module": "主图态",
+      "loc_type": "资源ID",
+      "loc_value": "com.baidu.naviauto:id/bt_quick_setting",
+      "remark": ""
+    },
+    {
+      "id": "elem_896492456_0",
+      "name": "城市筛选按钮",
+      "app": "6系地图",
+      "module": "限行政策",
+      "loc_type": "资源ID",
+      "loc_value": "com.baidu.naviauto:id/bt_city_select",
+      "remark": ""
+    },
+    {
+      "id": "elem_897028307_0",
+      "name": "输入框",
+      "app": "6系地图",
+      "module": "主图态",
+      "loc_type": "文本",
+      "loc_value": "搜索目的地",
+      "remark": ""
+    },
+    {
+      "id": "elem_897164974_0",
+      "name": "SUG联想结果列表第一个",
+      "app": "6系地图",
+      "module": "检索",
+      "loc_type": "XPath",
+      "loc_value": "//*[@resource-id=\"com.baidu.naviauto:id/sug_search_result_rv\"]/android.view.ViewGroup[1]",
+      "remark": ""
+    },
+    {
+      "id": "elem_897240586_0",
+      "name": "搜索页面搜索按钮",
+      "app": "6系地图",
+      "module": "检索",
+      "loc_type": "资源ID",
+      "loc_value": "com.baidu.naviauto:id/tv_lion_search_search",
+      "remark": ""
+    }
+  ]
+}
