@@ -26,6 +26,13 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 
+# 桩版本 = 当前版本 patch+1，**永远比本地新**。
+# 为什么必须动态：早期写死 v1.1.4，等项目真发 1.1.4 时，check_for_update 会把桩
+# 判成"已是最新"，自测第一项就挂（v1.1.4 发版 CI 实测踩坑）。
+from utils.version import APP_VERSION as _CUR
+_parts = _CUR.split(".")
+NEXT_VER = ".".join(_parts[:-1] + [str(int(_parts[-1]) + 1)])
+
 PORT = 8741
 UPDATER_EXE = os.path.join(ROOT, "dist_updater", "updater.exe")
 ok = True
@@ -37,8 +44,9 @@ def check(name, cond, detail=""):
     print(f"  [{'OK ' if cond else 'FAIL'}] {name}{('  ' + detail) if detail else ''}")
 
 
-def build_package(path, version="1.1.4", with_evil=True, with_internal=True):
-    """造一个和 CI 产出同布局的更新包。"""
+def build_package(path, version=None, with_evil=True, with_internal=True):
+    """造一个和 CI 产出同布局的更新包。版本号缺省 = 桩版本（永远比本地新）。"""
+    version = version or NEXT_VER
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("虫师.exe", f"NEW-EXE-{version}")
         if with_internal:
@@ -69,11 +77,14 @@ def serve_zip(zip_path, digest):
             if self.path == "/pkg":
                 raw = STATE["pkg"]
             else:
+                # 桩版本必须**永远比本地新**：早期写死 v1.1.4，等项目发到 1.1.4 时
+                # check_for_update 会判成"已是最新"，第一项就挂（v1.1.4 CI 实测踩坑）。
                 raw = json.dumps({
-                    "tag_name": "v1.1.4", "body": "test",
+                    "tag_name": f"v{NEXT_VER}", "body": "test",
                     "published_at": "2026-09-23T00:00:00Z",
-                    "html_url": "https://example.invalid/r/v1.1.4",
-                    "assets": [{"name": "虫师-1.1.4-win64.zip", "size": len(STATE["pkg"]),
+                    "html_url": f"https://example.invalid/r/v{NEXT_VER}",
+                    "assets": [{"name": f"chongshi-{NEXT_VER}-win64.zip",
+                                "size": len(STATE["pkg"]),
                                 "browser_download_url": f"http://127.0.0.1:{PORT}/pkg",
                                 "digest": f"sha256:{STATE['digest']}"}],
                 }).encode()
@@ -123,7 +134,7 @@ def main():
           all(os.path.exists(os.path.join(staging, n))
               for n in ("虫师.exe", "_internal", "updater.exe")))
     check("内容是这一版的", open(os.path.join(staging, "虫师.exe"), encoding="utf-8").read()
-          == "NEW-EXE-1.1.4")
+          == f"NEW-EXE-{NEXT_VER}")
 
     # zip-slip：恶意条目必须落在暂存目录**内**、绝不能逃到外面
     escaped = [os.path.join(staging, n) for n in ("../escaped.txt", "abs_escaped.txt",
@@ -138,7 +149,7 @@ def main():
                                                       "drive_escaped.txt")]))
     check("TEMP 里的压缩包已清理",
           not os.path.exists(os.path.join(tempfile.gettempdir(), "chongshi_update",
-                                          "虫师-1.1.4-win64.zip")))
+                                          f"chongshi-{NEXT_VER}-win64.zip")))
 
     # 摘要不符必须拦住，且不留半成品
     build_package(zip_path)
@@ -162,7 +173,7 @@ def main():
     except Exception as e:
         err2 = str(e)
     check("缺 _internal 被拦下", "_internal" in err2, err2[:60])
-    check("失败后暂存目录没留下垃圾", not os.path.isdir(us.staging_dir("1.1.4")))
+    check("失败后暂存目录没留下垃圾", not os.path.isdir(us.staging_dir(NEXT_VER)))
 
     # 版本号当路径的安全
     check("恶意版本号不会逃出暂存根",
@@ -205,9 +216,9 @@ def main():
                            capture_output=True, text=True, timeout=180)
         check("updater 替换成功（返回 0）", p.returncode == 0, f"rc={p.returncode}")
         check("安装目录换成了新版",
-              open(os.path.join(fake, "虫师.exe"), encoding="utf-8").read() == "NEW-EXE-1.1.4"
+              open(os.path.join(fake, "虫师.exe"), encoding="utf-8").read() == f"NEW-EXE-{NEXT_VER}"
               and open(os.path.join(fake, "_internal", "python313.dll"), encoding="utf-8").read()
-              == "NEW-DLL-1.1.4")
+              == f"NEW-DLL-{NEXT_VER}")
         check("data/ 用户数据未被触碰",
               open(os.path.join(fake, "data", "project_data.json"), encoding="utf-8").read()
               == "USER-DATA")
