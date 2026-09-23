@@ -89,14 +89,16 @@ jobs:
           ) if not os.path.exists(p)]
           if missing:
               sys.exit("产物缺失：" + "、".join(missing))
-          print("产物完整：虫师.exe / _internal / updater.exe 均就位")
+          print("artifacts ok: exe / _internal / updater.exe present")
 
       - name: 压更新包（不含 data/ 等运行期数据）
         shell: python
         run: |
           import os, zipfile, sys
           ver = "${{ github.ref_name }}".lstrip("v")
-          out = f"虫师-{ver}-win64.zip"
+          # 包名用纯 ASCII：GitHub 对中文文件名会丢前缀（v1.1.3 变成了 -1.1.3-win64.zip），
+          # 应用内 update_service 只认 -win64.zip 后缀，换英文名不影响匹配。
+          out = f"chongshi-{ver}-win64.zip"
           base = os.path.join("dist", "虫师")
           with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
               for root, dirs, files in os.walk(base):
@@ -116,7 +118,7 @@ jobs:
                   if not any(x == n or x.startswith(n + "/") for x in names):
                       sys.exit(f"更新包里缺少 {n}")
           size_mb = os.path.getsize(out) / 1024 / 1024
-          print(f"已打包 {out}（{size_mb:.1f} MB，{len(names)} 个文件，无 data/ 泄漏）")
+          print(f"packed {out} ({size_mb:.1f} MB, {len(names)} files, no data/ leak)")
 
       - name: 创建 Release 并上传更新包
         uses: softprops/action-gh-release@v2
@@ -127,5 +129,5 @@ jobs:
 
             > 发布后请在网页上编辑这段「更新说明」——应用内「检查更新」
             > 弹窗展示的就是这段文字。
-          files: 虫师-*-win64.zip
+          files: chongshi-*-win64.zip
           fail_on_unmatched_files: true
