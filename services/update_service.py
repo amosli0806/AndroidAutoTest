@@ -40,6 +40,21 @@ UPDATE_ASSET_SUFFIX = "-win64.zip"
 # 把接口地址整个换掉的开关（本地联调、或以后想改成内网镜像时用得上）。
 UPDATE_API_OVERRIDE_ENV = "CHONGSHI_UPDATE_API"
 
+# ---------- 下载加速镜像 ----------
+# 国内直连 GitHub 的文件实体（objects.githubusercontent.com）经常超时/极慢，
+# 应用内「检查更新」下载更新包就是撞在这里。下面这个前缀只在**下载 asset 时**拼到
+# browser_download_url 前面，让下载走国内加速通道；**检查更新仍直连 GitHub API**，
+# 版本号、摘要（sha256）都来自官方，下载完还会逐字节核对摘要，镜像只负责传输、
+# 无法篡改内容。
+#
+# 实测（2026-09-23，本机）：gh-proxy.com 约 5 MB/s；ghproxy.cn 4 KB/s（形同断网）；
+# ghfast.top / github.moeyy.xyz / gh.llkk.cc 均超时。镜像站时效性不稳定，换哪个改这里。
+# **留空 = 直连 GitHub，不走镜像**（海外/能直连的用户用空串）。
+DOWNLOAD_MIRROR = "https://gh-proxy.com/"
+
+# 用环境变量整体覆盖镜像（打包后不改代码也能换，运维排障用）。
+DOWNLOAD_MIRROR_OVERRIDE_ENV = "CHONGSHI_DOWNLOAD_MIRROR"
+
 _CONNECT_TIMEOUT = 5
 _READ_TIMEOUT = 15
 
@@ -186,6 +201,40 @@ def sha256_of(path: str, chunk: int = 1024 * 1024) -> str:
     return h.hexdigest()
 
 
+def _mirror_prefix() -> str:
+    """当前生效的下载镜像前缀（末尾带 /），空串 = 直连。环境变量可整体覆盖。"""
+    override = os.environ.get(DOWNLOAD_MIRROR_OVERRIDE_ENV, "").strip()
+    if override:
+        return override if override.endswith("/") else override + "/"
+    if not DOWNLOAD_MIRROR:
+        return ""
+    return DOWNLOAD_MIRROR if DOWNLOAD_MIRROR.endswith("/") else DOWNLOAD_MIRROR + "/"
+
+
+def _download_url(asset_url: str) -> str:
+    """下载 asset 用的 URL：只对指向 GitHub 官方域的 URL 拼镜像前缀。
+
+    刻意不镜像「检查更新」那个 API——版本与 sha256 摘要必须来自官方；
+    镜像只负责搬运字节，下载完仍逐字节核对摘要，保证内容没被篡改。
+
+    为什么只对 GitHub 域名拼前缀：自测/联调时 asset_url 会被指到本地桩服务
+    （http://127.0.0.1:...），或以后指向内网镜像——那些本来就能直连，拼上
+    gh-proxy 反而会坏。判断依据是 URL 的 host 属于 github.com / *.github.com。
+    """
+    prefix = _mirror_prefix()
+    if not prefix:
+        return asset_url
+    host = ""
+    try:
+        from urllib.parse import urlparse
+        host = (urlparse(asset_url).hostname or "").lower()
+    except Exception:
+        host = ""
+    if not (host == "github.com" or host.endswith(".github.com")):
+        return asset_url          # 非 GitHub 官方域：保持直连
+    return prefix + asset_url
+
+
 def download_asset(info: UpdateInfo, dest_dir: str,
                    progress: Optional[Callable[[int, int], None]] = None,
                    cancel: Optional[Callable[[], bool]] = None) -> str:
@@ -200,7 +249,9 @@ def download_asset(info: UpdateInfo, dest_dir: str,
     target = os.path.join(dest_dir, info.asset_name or "update.zip")
     part = target + ".part"
 
-    with requests.get(info.asset_url, stream=True, timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT)) as resp:
+    url = _download_url(info.asset_url)
+    logger.info("下载更新包（镜像=%s）：%s", _mirror_prefix() or "直连", url)
+    with requests.get(url, stream=True, timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT)) as resp:
         resp.raise_for_status()
         total = int(resp.headers.get("Content-Length") or info.asset_size or 0)
         done = 0
