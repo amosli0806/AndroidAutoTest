@@ -20,6 +20,13 @@ on:
 permissions:
   contents: write
 
+# CI 机器默认代码页不是 UTF-8：python 步骤里 print 中文会抛 UnicodeEncodeError
+# （v1.1.3 第一次 CI 失败就是因为校验成功后的中文 print 崩了）；PyInstaller 处理
+# 「虫师.exe」这类中文路径同样需要 UTF-8 模式 —— 所以全局强制。
+env:
+  PYTHONUTF8: '1'
+  PYTHONIOENCODING: 'utf-8'
+
 jobs:
   release:
     runs-on: windows-latest
@@ -35,7 +42,7 @@ jobs:
 
       - name: 环境探针（确认 python 可用）
         shell: python
-        run: import sys; print("python 可用：", sys.version)
+        run: import sys; print("python ok:", sys.version)
 
       - name: 校验 tag 与代码版本一致
         shell: bash
