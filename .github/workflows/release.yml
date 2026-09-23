@@ -33,20 +33,26 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: 校验 tag 与代码版本一致
+      - name: 环境探针（确认 python 可用）
         shell: python
+        run: import sys; print("python 可用：", sys.version)
+
+      - name: 校验 tag 与代码版本一致
+        shell: bash
         run: |
-          import pathlib, re, sys
-          tag = "${{ github.ref_name }}".lstrip("vV")
-          text = pathlib.Path("utils/version.py").read_text(encoding="utf-8")
-          m = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', text)
-          if not m:
-              sys.exit("utils/version.py 里找不到 APP_VERSION")
-          ver = m.group(1)
-          if tag != ver:
-              sys.exit(f"tag 是 v{tag}，但 utils/version.py 的 APP_VERSION={ver}，"
-                       f"两者必须一致后重新打 tag")
-          print(f"版本一致：{ver}")
+          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${TAG#V}"
+          VER="$(grep -oE 'APP_VERSION[[:space:]]*=[[:space:]]*"[^"]+"' utils/version.py \
+                 | grep -oE '"[^"]+"' | tr -d '"' | head -1)"
+          if [ -z "$VER" ]; then
+            echo "::error::utils/version.py 里找不到 APP_VERSION"
+            exit 1
+          fi
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::tag 是 $TAG，但 utils/version.py 的 APP_VERSION=$VER，两者必须一致"
+            exit 1
+          fi
+          echo "版本一致：$VER（tag=$GITHUB_REF_NAME）"
 
       - name: 安装依赖
         run: |
