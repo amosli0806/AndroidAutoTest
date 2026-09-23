@@ -1782,6 +1782,8 @@ class MainWindow(QMainWindow):
             self._apply_welcome_page_theme(is_dark=True, has_wallpaper=has_wallpaper)
             # 全局 QToolTip（悬浮提示）跟随主题
             self._apply_tooltip_theme(is_dark=True)
+            # 主菜单动作图标颜色跟随主题（暗色下深灰图标会看不清）
+            self._refresh_menu_icons()
             # Windows 原生标题栏跟随深色
             set_dark_title_bar(self, True)
             if self._perf_view is not None:
@@ -2054,6 +2056,8 @@ class MainWindow(QMainWindow):
         self._apply_welcome_page_theme(is_dark=False, has_wallpaper=has_wallpaper)
         # 全局 QToolTip（悬浮提示）跟随主题
         self._apply_tooltip_theme(is_dark=False)
+        # 主菜单动作图标颜色跟随主题
+        self._refresh_menu_icons()
         # Windows 原生标题栏跟随浅色
         set_dark_title_bar(self, False)
         if self._perf_view is not None:
@@ -2343,8 +2347,43 @@ class MainWindow(QMainWindow):
     _BADGE_ICON_SIZE = 20
     _BADGE_DOT_SIZE = 11
 
-    def _render_update_icon(self, icon_name: str, available: bool, color: str = '#555555'):
-        """生成带红点角标的图标；无更新时就是普通图标。"""
+    def _menu_icon_color(self):
+        """主菜单动作图标的颜色：跟随主题。
+
+        为什么不能写死：菜单 QSS 会随主题变深/变浅，写死 #555555 的图标在
+        暗色菜单上几乎看不见（用户实测反馈）。暗色用浅灰 #a3a6b0（与菜单
+        按钮的齿轮同色），亮色保持 #555555。
+        """
+        try:
+            if Settings.get_theme_mode() == THEME_MODE_DARK:
+                return '#a3a6b0'
+        except Exception:
+            pass
+        return '#555555'
+
+    def _refresh_menu_icons(self):
+        """主题切换后重画主菜单动作图标与菜单按钮齿轮（保留更新红点角标）。"""
+        color = self._menu_icon_color()
+        for key, icon_name in (('settings', 'fa6s.gear'),
+                               ('check_update', 'fa6s.rotate'),
+                               ('about', 'fa6s.circle-info')):
+            action = self._main_menu_actions.get(key)
+            if action is None:
+                continue
+            if key == 'check_update':
+                action.setIcon(self._render_update_icon(
+                    icon_name, self._update_available, color))
+            else:
+                action.setIcon(qta.icon(icon_name, color=color))
+        # 菜单按钮的齿轮固定浅灰 #a3a6b0（亮暗两套工具栏上都是这个色，可见性 OK）
+        if getattr(self, 'menu_btn', None) is not None:
+            self.menu_btn.setIcon(self._render_update_icon(
+                'fa6s.gear', self._update_available, color='#a3a6b0'))
+
+    def _render_update_icon(self, icon_name: str, available: bool, color: str = None):
+        """生成带红点角标的图标；无更新时就是普通图标。color 缺省时跟随主题。"""
+        if color is None:
+            color = self._menu_icon_color()
         icon = qta.icon(icon_name, color=color)
         if not available:
             return icon
