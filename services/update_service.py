@@ -33,9 +33,15 @@ logger = logging.getLogger(__name__)
 # 这样没建好仓库之前也不会误报。
 UPDATE_REPO = "amosli0806/AndroidAutoTest"
 
-# 用来做自更新的那个资产的后缀，CI 里按这个规则产出（如 虫师-1.1.4-win64.zip）。
+# 用来做自更新的那个资产的后缀，CI 里按这个规则产出（如 chongshi-1.1.4-win64.zip）。
 # 找不到匹配的资产时会退而取第一个 .zip。
 UPDATE_ASSET_SUFFIX = "-win64.zip"
+
+# 更新包名的固定前缀（CI 压包时用纯英文名，见 .github/workflows/release.yml）。
+# 为什么挑包时优先认它：v1.1.3 首次发版中文文件名被 GitHub 丢弃了前缀，留下一个
+# 残缺的 "-1.1.3-win64.zip"，它同样以 -win64.zip 结尾、还排在列表里，会抢走匹配。
+# 优先认带前缀的完整名，就能免疫这种残缺资产；前缀匹配不到再退后缀匹配。
+UPDATE_ASSET_PREFIX = "chongshi-"
 
 # 把接口地址整个换掉的开关（本地联调、或以后想改成内网镜像时用得上）。
 UPDATE_API_OVERRIDE_ENV = "CHONGSHI_UPDATE_API"
@@ -127,11 +133,22 @@ def _is_newer(remote: str, local: str) -> bool:
 
 
 def _pick_asset(assets) -> dict:
-    """挑自更新用的包：优先后缀匹配的，否则退第一个 zip。"""
+    """挑自更新用的包：优先「前缀+版本+后缀」的完整名，其次后缀匹配，最后第一个 zip。
+
+    优先级这么排的原因见 UPDATE_ASSET_PREFIX 的注释：残缺资产（中文名丢前缀后的
+    "-x.y.z-win64.zip"）也会命中后缀，但它不是我们想发的那个包。
+    """
     zips = [a for a in assets if str(a.get("name", "")).lower().endswith(".zip")]
+    # 1) 完整名：前缀 + 任意版本 + 后缀
+    for a in zips:
+        name = a.get("name", "")
+        if name.startswith(UPDATE_ASSET_PREFIX) and name.endswith(UPDATE_ASSET_SUFFIX):
+            return a
+    # 2) 后缀匹配（兜底：前缀换过名、或 CI 改名了）
     for a in zips:
         if a.get("name", "").endswith(UPDATE_ASSET_SUFFIX):
             return a
+    # 3) 第一个 zip
     return zips[0] if zips else {}
 
 
