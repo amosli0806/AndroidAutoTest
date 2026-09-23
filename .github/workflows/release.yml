@@ -120,14 +120,31 @@ jobs:
           size_mb = os.path.getsize(out) / 1024 / 1024
           print(f"packed {out} ({size_mb:.1f} MB, {len(names)} files, no data/ leak)")
 
+      - name: 提取当前版本的更新说明
+        shell: python
+        run: |
+          import re, sys
+          ver = "${{ github.ref_name }}".lstrip("vV")
+          try:
+              text = open("CHANGELOG.md", encoding="utf-8").read()
+          except OSError:
+              text = ""
+          # 找 "## vX.Y.Z" 这个标题，取它到下一个 "## " 之间的正文
+          m = re.search(rf'(?m)^##\s+v?{re.escape(ver)}\s*\n(.*?)(?=^##\s+|\Z)',
+                        text, re.DOTALL)
+          body = m.group(1).strip() if m else ""
+          if body:
+              open("release_notes.md", "w", encoding="utf-8").write(body)
+              print(f"已提取 v{ver} 的更新说明（{len(body)} 字符）")
+          else:
+              open("release_notes.md", "w", encoding="utf-8").write(
+                  f"自动构建的发布版本 ${{ github.ref_name }}。")
+              print(f"CHANGELOG.md 里没找到 v{ver} 段落，使用占位说明")
+
       - name: 创建 Release 并上传更新包
         uses: softprops/action-gh-release@v2
         with:
           name: 虫师 ${{ github.ref_name }}
-          body: |
-            自动构建的发布版本 ${{ github.ref_name }}。
-
-            > 发布后请在网页上编辑这段「更新说明」——应用内「检查更新」
-            > 弹窗展示的就是这段文字。
+          body_path: release_notes.md
           files: chongshi-*-win64.zip
           fail_on_unmatched_files: true
