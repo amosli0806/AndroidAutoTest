@@ -1,12 +1,11 @@
 # controllers/project_controller.py
 from PyQt6.QtWidgets import QMessageBox, QInputDialog
 from PyQt6.QtCore import Qt
-from models.project_model import ProjectModel, TreeNode
+from models.project_model import ProjectModel, TreeNode, new_node_id
 from views.project_tree_view import ProjectTreeView
 from controllers.step_controller import StepController
 from models.suite_model import SuiteModel
 from utils.toast import show_toast
-import time
 from utils.dialogs import InputDialog, ConfirmDeleteDialog, WarningDialog
 from utils.theme import ThemeMode
 
@@ -90,9 +89,13 @@ class ProjectController:
                     detail="相关步骤也会被移除。"
             ):
                 return
-            if node.type == 'case':
-                self.step_controller.remove_case_steps(node_id)
-                self._remove_case_from_suites(node_id)
+            # 用例：连它的步骤和套件引用一起清；**项目/功能模块：把下面所有子用例一起清** ——
+            # 以前只处理 case 类型，删文件夹/整个项目时子用例的步骤会永远留在
+            # steps_data.json 里变成没人引用的垃圾（那份文件虚胖的主因之一），
+            # 套件里也会留下点不出内容的死引用。
+            for case in self.model.get_descendant_cases(node):
+                self.step_controller.remove_case_steps(case.id)
+                self._remove_case_from_suites(case.id)
             success = self.model.delete_node(node_id)
             if success:
                 if self.step_controller.current_case_id == node_id:
@@ -228,7 +231,7 @@ class ProjectController:
         show_toast(message="复制成功")
 
     def _copy_node_recursive(self, src_node: TreeNode, new_name: str) -> TreeNode:
-        new_id = f"{src_node.type}_{int(time.time() * 1000)}_{id(new_name)}"
+        new_id = new_node_id(src_node.type)
         new_node = TreeNode(
             id=new_id,
             name=new_name,

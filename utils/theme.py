@@ -6,6 +6,7 @@
 """
 from enum import Enum
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPalette, QColor
 from PyQt6.QtWidgets import QWidget, QApplication
 
 
@@ -17,6 +18,46 @@ class ThemeMode(Enum):
 
 class Theme:
     """存放所有控件样式的字符串常量，每个控件独立"""
+
+    # ---------- 全局调色板（QSS 管不到的原生控件用）----------
+    # QMessageBox / QInputDialog / QFileDialog / QCalendarWidget 等内部绘制不看 QSS，
+    # 只能靠 QApplication 的调色板跟随主题，键为 ThemeMode
+    APP_PALETTE_COLORS = {
+        ThemeMode.LIGHT: {
+            QPalette.ColorRole.Window: "#f5f6fa",
+            QPalette.ColorRole.WindowText: "#000000",
+            QPalette.ColorRole.Base: "#ffffff",
+            QPalette.ColorRole.AlternateBase: "#ebeef2",
+            QPalette.ColorRole.Text: "#000000",
+            QPalette.ColorRole.Button: "#f0f0f0",
+            QPalette.ColorRole.ButtonText: "#000000",
+            QPalette.ColorRole.BrightText: "#ff0000",
+            QPalette.ColorRole.Highlight: "#1976d2",
+            QPalette.ColorRole.HighlightedText: "#ffffff",
+            QPalette.ColorRole.ToolTipBase: "#ffffff",
+            QPalette.ColorRole.ToolTipText: "#000000",
+            QPalette.ColorRole.PlaceholderText: "#9aa0a6",
+            QPalette.ColorRole.Link: "#1565c0",
+        },
+        ThemeMode.DARK: {
+            QPalette.ColorRole.Window: "#3c3c3c",
+            QPalette.ColorRole.WindowText: "#eeeeee",
+            QPalette.ColorRole.Base: "#2d2d2d",
+            QPalette.ColorRole.AlternateBase: "#3a3a3a",
+            QPalette.ColorRole.Text: "#eeeeee",
+            QPalette.ColorRole.Button: "#3c3c3c",
+            QPalette.ColorRole.ButtonText: "#eeeeee",
+            QPalette.ColorRole.BrightText: "#ff5252",
+            QPalette.ColorRole.Highlight: "#1976d2",
+            QPalette.ColorRole.HighlightedText: "#ffffff",
+            QPalette.ColorRole.ToolTipBase: "#3c3c3c",
+            QPalette.ColorRole.ToolTipText: "#eeeeee",
+            QPalette.ColorRole.PlaceholderText: "#8a8f98",
+            QPalette.ColorRole.Link: "#64b5f6",
+        },
+    }
+
+    APP_PALETTE_DISABLED_TEXT = {ThemeMode.LIGHT: "#a3a3a3", ThemeMode.DARK: "#6b6b6b"}
 
     # ---------- 基础通用样式（仅用于极少数全局控制，不建议使用）----------
     BASE_LIGHT = """
@@ -84,11 +125,83 @@ class Theme:
 
     # ---------- 自动化编辑视图（容器，不直接设样式，其子控件各自独立）----------
 
+    # ---------- 全局统一：所有下拉框的弹出面板样式 ----------
+    # 各处下拉面板原先各写一套（有的干脆没写，用的是 Qt 默认样式），风格不一。
+    # 这里统一成一份，由 utils.widget_helpers 应用到每个 QComboBox 的 view 上；
+    # view 是弹出面板里最"靠近"的控件，QSS 优先级最高，能盖过对话框级别的规则。
+    # 下拉弹出面板的底色。面板本体是 view（下面的 QSS 控制），但它外面还套着一个
+    # QComboBoxPrivateContainer（Qt 的弹出窗口），那个容器不受 view 样式影响，底色
+    # 可能取自全局调色板（浅色），夜间模式下会露出白边，所以这里单独给出底色，
+    # 由 utils.widget_helpers 同步设到容器上。改下面 QSS 里的底色时这里要一起改。
+    COMBO_POPUP_BG = {"light": "#ffffff", "dark": "#3c3c3c"}
+
+    COMBO_POPUP_LIGHT = """
+        QListView {
+            background-color: #ffffff;
+            color: #333333;
+            /* 不加边框/圆角：弹出面板保持方角，和改之前的观感一致
+               （之前 prepare_combo_view 里的 border:none 会盖掉各对话框自己写的圆角边框） */
+            border: none;
+            border-radius: 0px;
+            outline: none;
+            padding: 4px;
+            margin: 0px;
+        }
+        QListView::item {
+            background-color: #ffffff;
+            color: #333333;
+            min-height: 24px;
+            padding: 4px 10px;
+            margin: 1px 2px;
+            border: none;
+            border-radius: 4px;
+        }
+        QListView::item:hover {
+            background-color: #e8f0fe;
+            color: #1976d2;
+        }
+        QListView::item:selected {
+            background-color: #1976d2;
+            color: #ffffff;
+        }
+    """
+    COMBO_POPUP_DARK = """
+        QListView {
+            background-color: #3c3c3c;
+            color: #eeeeee;
+            /* 同亮色：不加边框/圆角，保持方角 */
+            border: none;
+            border-radius: 0px;
+            outline: none;
+            padding: 4px;
+            margin: 0px;
+        }
+        QListView::item {
+            background-color: #3c3c3c;
+            color: #eeeeee;
+            min-height: 24px;
+            padding: 4px 10px;
+            margin: 1px 2px;
+            border: none;
+            border-radius: 4px;
+        }
+        QListView::item:hover {
+            background-color: #4a4a4a;
+            color: #ffffff;
+        }
+        QListView::item:selected {
+            background-color: #1976d2;
+            color: #ffffff;
+        }
+    """
+
     # 项目树 (objectName: ProjectTreeView)
     PROJECT_TREE_LIGHT = """
         #ProjectTreeView {
             background-color: #e8eaed;
             border: none;
+            border-radius: 6px;
+            padding: 4px;
             outline: none;
         }
         #ProjectTreeView::item {
@@ -109,14 +222,10 @@ class Theme:
         #ProjectTreeView::item:hover:!selected {
             background-color: #dfe2e6;
         }
-        #ProjectTreeView::branch {
-            background: transparent;
-        }
-        #ProjectTreeView::branch:selected,
-        #ProjectTreeView::branch:selected:active,
-        #ProjectTreeView::branch:selected:!active {
-            background: transparent;
-        }
+        /* 这里刻意不写 ::branch 规则：只要给 ::branch 指定了任何属性
+           （哪怕只是 background: transparent），Qt 就会接管分支列的绘制，
+           从而不再画展开/折叠箭头 —— 「选中项目/功能模块后箭头消失」就是这个原因。
+           选中行不出现蓝色色块靠 ProjectTreeView 构造里把 palette.Highlight 置透明。 */
         #ProjectTreeView QScrollBar:vertical {
             width: 6px;
             background: #e0e0e0;
@@ -136,6 +245,8 @@ class Theme:
         #ProjectTreeView {
             background-color: rgba(60, 60, 60, 0.7);
             border: none;
+            border-radius: 6px;
+            padding: 4px;
             outline: none;
         }
         #ProjectTreeView::item {
@@ -153,17 +264,12 @@ class Theme:
             border: none;
             outline: none;
         }
+        /* 必须不透明：半透明色会被 QTreeView 的「缩进列 / 内容列」两个单元格
+           以不同次数叠加，同一行会出现色差 */
         #ProjectTreeView::item:hover:!selected {
-            background-color: rgba(74, 74, 74, 0.6);
+            background-color: #4a4a4a;
         }
-        #ProjectTreeView::branch {
-            background: transparent;
-        }
-        #ProjectTreeView::branch:selected,
-        #ProjectTreeView::branch:selected:active,
-        #ProjectTreeView::branch:selected:!active {
-            background: transparent;
-        }
+        /* 同亮色主题：不写 ::branch 规则，否则展开/折叠箭头会被 Qt 接管后不画 */
         #ProjectTreeView QScrollBar:vertical {
             width: 6px;
             background: rgba(58, 58, 58, 0.5);
@@ -403,6 +509,11 @@ class Theme:
             background: transparent;
             border: none;
         }
+        /* 卡片列表的滚动容器：底色跟「动作卡片」分组区域保持一致（由分组决定），
+           否则它会用调色板底色刷一层实色，比分组区域偏灰 */
+        #ActionCardScrollContainer {
+            background: transparent;
+        }
         #ActionCardView QScrollBar:vertical {
             width: 6px;
             background: #e0e0e0;
@@ -422,6 +533,10 @@ class Theme:
         #ActionCardView {
             background: transparent;
             border: none;
+        }
+        /* 同亮色：卡片列表容器透明，底色与壁纸透明度都跟随分组区域 */
+        #ActionCardScrollContainer {
+            background: transparent;
         }
         #ActionCardView QScrollBar:vertical {
             width: 6px;
@@ -961,14 +1076,8 @@ class Theme:
         #HelpView QTreeView::item:hover:!selected {
             background-color: #dfe2e6;
         }
-        #HelpView QTreeView::branch {
-            background: transparent;
-        }
-        #HelpView QTreeView::branch:selected,
-        #HelpView QTreeView::branch:selected:active,
-        #HelpView QTreeView::branch:selected:!active {
-            background: transparent;
-        }
+        /* 这里刻意不写 ::branch 规则，否则展开/折叠箭头会被 Qt 接管后不画
+           （帮助中心的箭头消失就是这个原因），分支列的色块由 palette 兜底 */
         #HelpView QTreeView QScrollBar:vertical {
             width: 6px;
             background: #e0e0e0;
@@ -1049,14 +1158,7 @@ class Theme:
         #HelpView QTreeView::item:hover:!selected {
             background-color: rgba(74, 74, 74, 0.6);
         }
-        #HelpView QTreeView::branch {
-            background: transparent;
-        }
-        #HelpView QTreeView::branch:selected,
-        #HelpView QTreeView::branch:selected:active,
-        #HelpView QTreeView::branch:selected:!active {
-            background: transparent;
-        }
+        /* 同上：不写 ::branch 规则，否则展开/折叠箭头不画 */
         #HelpView QTreeView QScrollBar:vertical {
             width: 6px;
             background: rgba(58, 58, 58, 0.5);
@@ -1615,6 +1717,12 @@ class Theme:
         }
         #TaskEditDialog QRadioButton {
             color: #333;
+            /* 不设透明底时，暗色主题下原生指示器会被样式填成白底圆点，看不见圆环 */
+            background: transparent;
+        }
+        #TaskEditDialog QRadioButton:checked {
+            color: #1976d2;
+            font-weight: 600;
         }
         #TaskEditDialog QCheckBox {
             color: #333;
@@ -1689,6 +1797,12 @@ class Theme:
         }
         #TaskEditDialog QRadioButton {
             color: #eee;
+            /* 不设透明底时，暗色主题下原生指示器会被样式填成白底圆点，看不见圆环 */
+            background: transparent;
+        }
+        #TaskEditDialog QRadioButton:checked {
+            color: #90caf9;
+            font-weight: 600;
         }
         #TaskEditDialog QCheckBox {
             color: #eee;
@@ -1943,6 +2057,13 @@ class Theme:
         if style is not None:
             widget.setStyleSheet(style)
 
+        # 下拉框的弹出面板全应用统一一份样式（内部会在样式未变化时直接返回）
+        try:
+            from utils import widget_helpers
+            widget_helpers.set_combo_popup_theme(theme_mode == ThemeMode.DARK)
+        except Exception as e:
+            print(f"[Theme] 统一下拉面板样式失败: {e}")
+
     @classmethod
     def _get_light_style(cls, widget):
         obj_name = widget.objectName()
@@ -2044,3 +2165,24 @@ class Theme:
         for widget in QApplication.topLevelWidgets():
             cls.apply_theme_to_widget(widget, theme_mode)
         # 对于非顶层但已设置 objectName 的对话框，可单独处理，但这里简化
+
+    @classmethod
+    def apply_app_palette(cls, theme_mode):
+        """把深/浅色调色板应用到 QApplication
+
+        只影响 QSS 覆盖不到的部分（原生弹窗、日历弹出面板、无样式控件），
+        不会清掉全局样式表。由 MainWindow.apply_theme 在切换主题时调用。
+        """
+        app = QApplication.instance()
+        if app is None:
+            return
+
+        key = ThemeMode.DARK if theme_mode == ThemeMode.DARK else ThemeMode.LIGHT
+        palette = QPalette()
+        for role, color in cls.APP_PALETTE_COLORS[key].items():
+            palette.setColor(role, QColor(color))
+        disabled = QColor(cls.APP_PALETTE_DISABLED_TEXT[key])
+        for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text,
+                     QPalette.ColorRole.ButtonText, QPalette.ColorRole.PlaceholderText):
+            palette.setColor(QPalette.ColorGroup.Disabled, role, disabled)
+        app.setPalette(palette)

@@ -55,9 +55,6 @@ class MemoryMonitorDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
 
-        title = QLabel("📊 内存监控")
-        title.setObjectName("titleLabel")
-        layout.addWidget(title)
 
         info = QLabel(
             "功能说明：\n"
@@ -158,8 +155,10 @@ class MemoryMonitorDialog(QDialog):
         if not os.path.exists(local_script):
             self._append_log(f"⚠️ 本地脚本不存在: {local_script}，正在自动创建...")
             os.makedirs(os.path.dirname(local_script), exist_ok=True)
-            default_script = """#!/system/bin/sh
-PACKAGE="com.baidu.naviauto"
+            # 包名不写死在代码里：默认取设置里的"目标应用"（存在本机 data/config.json），
+            # 需要时也可以直接编辑本机这份脚本
+            default_script = f"""#!/system/bin/sh
+PACKAGE="{Settings.get_target_package()}"
 OUTPUT_DIR="/data/local/tmp/dumpmeminfo"
 mkdir -p $OUTPUT_DIR
 cd $OUTPUT_DIR

@@ -1,10 +1,34 @@
 # models/project_model.py
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from typing import List, Optional
+from utils.app_paths import data_path
+
+
+# ----------------------------------------------------------------------
+# 节点 id 的生成：类型_毫秒时间戳_进程内自增序号
+#
+# 以前是 f"{type}_{id(name)}" —— 拿**字符串对象的内存地址**当唯一性来源。地址在临时
+# 字符串被回收后会被复用，于是不同名字的节点能撞成同一个 id（实测循环建 5 个节点，
+# 5 次拿到同一个 id）。而 get_node_by_id 只返回遍历中**第一个**命中的节点，id 一撞，
+# 改名 / 复制 / 删除 / 步骤列表就全落到别的节点上：
+#   - 复制「已是半屏，语音切换为半屏」→ 查到的是同 id 的「3」→ 复制出来叫「3 副本」
+#   - 重命名某个节点 → 改的是同 id 的另一个节点（对话框预填的也是那个节点的名字）
+# 麻烦在于它不报错、只是默默改错东西，所以别再退回按名字算 id 的写法。
+_id_seq = 0
+
+
+def new_node_id(node_type: str) -> str:
+    """生成一个进程内绝不重复的节点 id（毫秒时间戳 + 自增序号）"""
+    global _id_seq
+    _id_seq += 1
+    return f"{node_type}_{int(time.time() * 1000)}_{_id_seq:04d}"
+
 
 @dataclass
+
 class TreeNode:
     id: str
     name: str
@@ -38,7 +62,7 @@ class TreeNode:
 
 
 class ProjectModel:
-    DATA_FILE = "project_data.json"
+    DATA_FILE = data_path("project_data.json")
 
     def __init__(self):
         self.root_nodes: List[TreeNode] = []
@@ -66,7 +90,7 @@ class ProjectModel:
         case2 = TreeNode(id='case2', name='用例示例：手势操作缩放底图', type='case')
         folder1 = TreeNode(id='folder1', name='功能模块示例：导航态', type='folder', children=[case1], expanded=True)
         folder2 = TreeNode(id='folder2', name='功能模块示例：主组态', type='folder', children=[case2], expanded=False)
-        project1 = TreeNode(id='project1', name='项目示例：本田地图QC测试', type='project', children=[folder1, folder2])
+        project1 = TreeNode(id='project1', name='项目示例：车机地图QC测试', type='project', children=[folder1, folder2])
         self.root_nodes = [project1]
 
     def get_node_by_id(self, node_id: str, nodes: List[TreeNode] = None) -> Optional[TreeNode]:
@@ -175,7 +199,7 @@ class ProjectModel:
         return cases
 
     def create_project(self, name: str) -> TreeNode:
-        node = TreeNode(id=f"proj_{id(name)}", name=name, type='project')
+        node = TreeNode(id=new_node_id('project'), name=name, type='project')
         self.root_nodes.append(node)
         self.save()
         return node
@@ -183,7 +207,7 @@ class ProjectModel:
     def create_folder(self, parent_id: str, name: str) -> TreeNode:
         parent = self.get_node_by_id(parent_id)
         if parent:
-            node = TreeNode(id=f"folder_{id(name)}", name=name, type='folder')
+            node = TreeNode(id=new_node_id('folder'), name=name, type='folder')
             parent.children.append(node)
             self.save()
             return node
@@ -192,11 +216,41 @@ class ProjectModel:
     def create_case(self, parent_id: str, name: str) -> TreeNode:
         parent = self.get_node_by_id(parent_id)
         if parent:
-            node = TreeNode(id=f"case_{id(name)}", name=name, type='case')
+            node = TreeNode(id=new_node_id('case'), name=name, type='case')
             parent.children.append(node)
             self.save()
             return node
         return None
+
+    def repair_duplicate_ids(self) -> List[tuple]:
+        """自愈存量数据：撞了 id 的节点，**保留第一个，其余换新 id**。
+
+        返回 [(旧id, 新id), ...]，调用方据此把旧 id 名下的步骤复制给新 id —— 修复前
+        这几个节点共用同一份步骤，复制过去能让各自界面看上去和修复前一致，同时从此
+        互不干扰。
+
+        为什么保留第一个：第一个出现的节点可能已经被套件、当前选中用例、执行清单引用，
+        它的 id 一动引用就全断；改"后来者"影响面最小。
+        """
+        seen = set()
+        fixes = []
+
+        def walk(nodes):
+            for node in nodes:
+                if node.id in seen:
+                    new_id = new_node_id(node.type)
+                    while new_id in seen:
+                        new_id = new_node_id(node.type)
+                    fixes.append((node.id, new_id))
+                    node.id = new_id
+                seen.add(node.id)
+                walk(node.children)
+
+        walk(self.root_nodes)
+        if fixes:
+            self.save()
+        return fixes
+
 
     def is_descendant(self, node_id: str, ancestor_id: str) -> bool:
         ancestor = self.get_node_by_id(ancestor_id)

@@ -28,7 +28,6 @@ class AndroidCompat:
         'cpu': 1,        # 全版本
         'mem': 1,        # 全版本
         'fps': 16,       # Android 4.1
-        'jank': 23,      # Android 6.0
         'traffic': 1,    # 全版本（但 Android 10+ 可能需要降级）
     }
 
@@ -113,19 +112,28 @@ class AndroidCompat:
         except Exception:
             return False
 
-    def list_third_party_packages(self) -> list:
-        """获取第三方应用包名列表（用于应用下拉框）"""
-        try:
-            out = shell_text(self.device, "pm list packages -3")
-            packages = []
+    def list_all_packages(self) -> list:
+        """获取设备上所有应用包名（第三方 + 系统预装，用于应用下拉框）。
+
+        获取方式与 ADB 工具箱「Monkey 测试」的包名能力对齐：
+        同时拉取 -3（第三方）与 -s（系统预装），这样车机上原有的预装应用
+        也能被选到，而不是只有用户后来手动安装的那些。
+        两个命令分别容错，其中一个失败时仍返回另一部分结果。
+        """
+        packages = set()
+        for flag in ("-3", "-s"):
+            try:
+                out = shell_text(self.device, f"pm list packages {flag}")
+            except Exception as e:
+                logger.warning(f"[AndroidCompat] pm list packages {flag} 失败: {e}")
+                continue
             for line in out.splitlines():
                 line = line.strip()
                 if line.startswith("package:"):
-                    packages.append(line[8:])
-            return sorted(packages)
-        except Exception as e:
-            logger.warning(f"[AndroidCompat] 获取应用列表失败: {e}")
-            return []
+                    name = line[8:].strip()
+                    if name:
+                        packages.add(name)
+        return sorted(packages)
 
     def get_traffic_collect_method(self) -> str:
         """返回当前设备可用的流量采集方式（含文件存在性探测，通用兼容）"""

@@ -39,6 +39,53 @@ class BorderedCheckBox(QCheckBox):
         except Exception:
             pass
 
+class BorderedRadioButton(QRadioButton):
+    """单选框：Fusion 默认圆点又小又细，未选中时几乎与普通文字无异
+    （执行频率一行看不出是可选项）。这里在原生绘制之上叠加一圈更粗、
+    对比更强的圆环：未选中灰色、选中主题色、置灰跟随禁用文字色。
+    与 BorderedCheckBox 同一思路。"""
+
+    # 圆环配色由 TaskEditDialog.apply_theme 按当前主题覆写
+    ring_unchecked = QColor(90, 90, 90)
+    ring_checked = QColor(25, 118, 210)
+    ring_disabled = QColor(180, 180, 180)
+
+    @classmethod
+    def set_ring_colors(cls, unchecked, checked, disabled):
+        cls.ring_unchecked = QColor(unchecked)
+        cls.ring_checked = QColor(checked)
+        cls.ring_disabled = QColor(disabled)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        try:
+            opt = QStyleOptionButton()
+            self.initStyleOption(opt)
+            rect = self.style().subElementRect(
+                QStyle.SubElement.SE_RadioButtonIndicator, opt, self
+            )
+            if not (rect.isValid() and rect.width() > 0):
+                return
+            if not self.isEnabled():
+                ring_color = self.ring_disabled
+            elif self.isChecked():
+                ring_color = self.ring_checked
+            else:
+                ring_color = self.ring_unchecked
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(ring_color, 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(rect.adjusted(1, 1, -1, -1))
+            if self.isChecked() and self.isEnabled():
+                # 原生选中点是深灰的，套在主题色圆环里颜色不统一；用同色圆点盖掉
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(ring_color)
+                painter.drawEllipse(rect.adjusted(3, 3, -3, -3))
+            painter.end()
+        except Exception:
+            pass
+
 class TaskView(QWidget):
     task_selected = pyqtSignal(object)
     task_added = pyqtSignal()
@@ -587,6 +634,12 @@ class TaskEditDialog(QDialog):
             theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
         Theme.apply_theme_to_widget(self, theme_mode)
 
+        # 执行频率单选框的圆环为自绘，配色不跟着 QSS 走，随主题一起刷新
+        if theme_mode == ThemeMode.DARK:
+            BorderedRadioButton.set_ring_colors("#b8b8b8", "#90caf9", "#6a6a6a")
+        else:
+            BorderedRadioButton.set_ring_colors("#5a5a5a", "#1976d2", "#b0b0b0")
+
         # 让 QDateTimeEdit 的日历弹窗也跟随主题
         try:
             cal = self.time_edit.calendarWidget()
@@ -722,9 +775,15 @@ class TaskEditDialog(QDialog):
         except Exception as e:
             print(f"[TaskEditDialog] 日历主题设置失败: {e}")
 
-    def _setup_combo_style(self, combo):
+    def _setup_combo_style(self, combo, min_row_height=0, min_popup_width=0):
         from utils.widget_helpers import prepare_combo_view
-        prepare_combo_view(combo)
+        # 只在显式指定时才传，未指定时沿用 prepare_combo_view 的默认值
+        kwargs = {}
+        if min_row_height:
+            kwargs["min_row_height"] = min_row_height
+        if min_popup_width:
+            kwargs["min_popup_width"] = min_popup_width
+        prepare_combo_view(combo, **kwargs)
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -766,10 +825,10 @@ class TaskEditDialog(QDialog):
         form.addRow("关联套件:", self.suite_combo)
 
         self.schedule_group = QButtonGroup(self)
-        self.once_radio = QRadioButton("不重复")
-        self.daily_radio = QRadioButton("每天")
-        self.weekly_radio = QRadioButton("每周")
-        self.monthly_radio = QRadioButton("每月")
+        self.once_radio = BorderedRadioButton("不重复")
+        self.daily_radio = BorderedRadioButton("每天")
+        self.weekly_radio = BorderedRadioButton("每周")
+        self.monthly_radio = BorderedRadioButton("每月")
         self.schedule_group.addButton(self.once_radio)
         self.schedule_group.addButton(self.daily_radio)
         self.schedule_group.addButton(self.weekly_radio)
@@ -809,7 +868,9 @@ class TaskEditDialog(QDialog):
         form.addRow("每周:", self.week_widget)
 
         self.day_combo = QComboBox()
-        self._setup_combo_style(self.day_combo)
+        # 「每月」的候选项只有 1~2 位数字，下拉面板容易被压得又窄又挤，
+        # 行高由 prepare_combo_view 的默认下限保证，这里再兜一个面板宽度
+        self._setup_combo_style(self.day_combo, min_popup_width=140)
         self.day_combo.addItems([str(i) for i in range(1, 32)])
         self.day_combo.setEnabled(False)
         form.addRow("每月:", self.day_combo)

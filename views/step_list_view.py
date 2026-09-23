@@ -268,7 +268,7 @@ class StepListView(QListWidget):
             'gesture_zoom': '手势缩放', 'flick': '飞掠', 'gesture_seq': '复杂手势',
             'physical_key': '物理按键', 'screen_ctrl': '屏幕控制', 'app_mgr': '应用管理',
             'screenshot': '截图', 'input': '输入', 'wait': '等待',
-            'assert': '断言'
+            'assert': '断言', 'voice': '语音播报'
         }
         filtered = []
         for step in self._all_steps:
@@ -382,23 +382,12 @@ class StepCardWidget(QWidget):
         'input': '#f39c12',
         'wait': '#95a5a6',
         'assert': '#ff9800',
+        'voice': '#00bcd4',
     }
 
-    LABEL_MAP = {
-        'locationType': '定位方式', 'locationValue': '定位值', 'duration': '时长(秒)',
-        'text': '输入文字', 'longPressMs': '长按毫秒', 'startX': '起始X', 'startY': '起始Y',
-        'endX': '结束X', 'endY': '结束Y', 'keyword': '搜索关键字',
-        'fromLocationType': '源定位方式', 'fromValue': '源定位值',
-        'toLocationType': '目标定位方式', 'toValue': '目标定位值',
-        'direction': '方向', 'points': '路径点', 'durationMs': '总时长(毫秒)',
-        'gestureType': '手势类型', 'centerX': '中心点X', 'centerY': '中心点Y',
-        'scale': '缩放比例', 'distance': '飞掠距离(像素)', 'velocity': '速度(像素/秒)',
-        'sequenceId': '手势序列编号', 'description': '手势描述',
-        'keyName': '按键名称', 'action': '操作', 'packageName': '包名/应用名',
-        'apkPath': '安装包路径', 'savePath': '保存路径', 'fileName': '文件名前缀',
-        'assert_type': '断言类型', 'expected_value': '预期值', 'timeout': '超时(秒)',
-        'element_id': '元素ID'
-    }
+    # 注：这里原本还有一份完整的 LABEL_MAP，但全项目没有任何读取点
+    #（步骤卡片的参数 chip 用下面的 COMPACT_LABEL_MAP，更新步骤弹窗用
+    #  StepController 里那份），属于死代码，而且很容易"改了不生效"——已删除。
 
     # 参数 chip 的短标签（用于步骤卡片上的紧凑展示）
     COMPACT_LABEL_MAP = {
@@ -419,6 +408,7 @@ class StepCardWidget(QWidget):
         'packageName': '包名', 'apkPath': 'APK',
         'savePath': '路径', 'fileName': '前缀',
         'assert_type': '断言', 'expected_value': '预期', 'timeout': '超时',
+        'voiceText': '文案', 'afterDelay': '播后等待',
     }
 
     def __init__(self, step, element_controller=None, parent=None):
@@ -686,7 +676,7 @@ class StepCardWidget(QWidget):
             'gesture_zoom': '手势缩放', 'flick': '飞掠', 'gesture_seq': '复杂手势',
             'physical_key': '物理按键', 'screen_ctrl': '屏幕控制', 'app_mgr': '应用管理',
             'screenshot': '截图', 'input': '输入', 'wait': '等待',
-            'assert': '断言'
+            'assert': '断言', 'voice': '语音播报'
         }
         self.type_label.setText(type_names.get(self.step.type, self.step.type))
         self.type_label.setStyleSheet(

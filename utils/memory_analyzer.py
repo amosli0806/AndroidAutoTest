@@ -4,10 +4,16 @@
 提供从 output.txt 解析内存数据并生成 HTML 图表和 Excel 报表的功能。
 """
 import os
+import re
 from typing import Dict, List
 from openpyxl import Workbook
 from pyecharts.charts import Line
 from pyecharts import options as opts
+
+from utils.settings import Settings
+
+# 形如 [com.example.app] 的进程标记（用于自动识别被测包名）
+_PKG_MARKER_RE = re.compile(r"\[([A-Za-z][\w.]*)\]")
 
 
 # 默认配置
@@ -17,9 +23,11 @@ DEFAULT_CHART_COLORS = [
 ]
 
 
-def parse_memory_data(file_path: str) -> Dict[str, List]:
-    """
-    解析内存数据文件，返回包含各指标列表的字典。
+def parse_memory_data(file_path: str, target_package: str = "") -> Dict[str, List]:
+    """解析内存数据文件，返回包含各指标列表的字典。
+
+    target_package：被测应用包名（用来定位目标进程的内存段）。不传则取
+    data/config.json 里的"目标应用"；都没有时自动识别 dump 里第一个 [包名] 标记。
     返回格式：
     {
         "timestamp": [...],
@@ -45,6 +53,8 @@ def parse_memory_data(file_path: str) -> Dict[str, List]:
 
     active_flag = False
     temp_time = ""
+    # 被测包名：调用方指定 > 本机设置 > 自动识别（见下面循环里的 [包名] 标记）
+    pkg = (target_package or Settings.get_target_package() or "").strip()
 
     with open(file_path, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -57,12 +67,18 @@ def parse_memory_data(file_path: str) -> Dict[str, List]:
                     temp_time = parts[-1]  # 时间部分
                 continue
 
-            # 包匹配逻辑：遇到 backup_package 时停止记录，遇到 target_package 时开始记录
-            if "[com.baidu.naviauto:remote]" in line:
-                active_flag = False
-            if "[com.baidu.naviauto]" in line:
-                active_flag = True
-                continue
+            # 包匹配逻辑：遇到 [包名:xxx]（备用/远程进程）停止记录，遇到 [包名] 开始记录。
+            # 包名刻意不写死在代码里 —— 公开仓库不该带具体被测应用的名字。
+            if not pkg:
+                m = _PKG_MARKER_RE.search(line)
+                if m:
+                    pkg = m.group(1)
+            if pkg:
+                if f"[{pkg}:" in line:
+                    active_flag = False
+                if f"[{pkg}]" in line:
+                    active_flag = True
+                    continue
 
             if active_flag:
                 _parse_memory_line(line, memory_data)

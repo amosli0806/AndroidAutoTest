@@ -6,7 +6,7 @@ from datetime import datetime
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
 
-from models.execution_model import ExecutionModel
+from models.execution_model import ExecutionModel, FailureContext
 from models.project_model import ProjectModel
 from models.step_model import StepModel
 from utils.dialogs import ErrorDialog
@@ -91,43 +91,95 @@ class ExecutionWorker(QObject):
             if self._abort:
                 break
             if loop_idx > 0:
-                self.progress.emit(f"--- 第 {loop_idx+1} 轮执行 ---", "info")
+                self.progress.emit(f"--- 第 {loop_idx + 1} 轮执行 ---", "info")
             for idx, case_id in enumerate(self.case_ids):
                 if self._abort:
                     break
                 case_node = self.project_model.get_node_by_id(case_id)
                 case_name = case_node.name if case_node else f"用例{case_id}"
-                self.progress.emit(f"▶ [{idx+1}/{len(self.case_ids)}] 用例 \"{case_name}\" 开始执行", "info")
+                self.progress.emit(f"▶ [{idx + 1}/{len(self.case_ids)}] 用例 \"{case_name}\" 开始执行", "info")
+
+                # 用显式标志记录本用例结果，避免依赖异常穿透——
+                # 只要有一处 except 吞掉了异常，"用例通过"就会被错误地打出来
+                case_failed = False
+
                 try:
                     steps = self.step_model.get_steps_for_case(case_id)
                     if not steps:
                         self.progress.emit(f"  ⚠ 用例 \"{case_name}\" 没有步骤，跳过", "warning")
                         continue
+
                     for step_idx, step in enumerate(steps, 1):
+                        if self._abort:
+                            break
                         try:
                             self.device.perform(step)
                             if step.type == 'assert':
                                 self.progress.emit(f"  ✅ 断言：{step.name} 通过", "success")
                         except Exception as e:
                             # 截图（如果设备服务支持）
+                            shot_path = None
                             if hasattr(self.device, 'last_screenshot') and self.device.last_screenshot:
-                                self.exec_model.screenshot_paths.append(self.device.last_screenshot)
+                                shot_path = self.device.last_screenshot
+                                self.exec_model.screenshot_paths.append(shot_path)
                                 self.device.last_screenshot = None
+
                             step_info = f"步骤 {step_idx} \"{step.name}\""
                             error_msg = self._format_error(e)
                             self.progress.emit(f"  ✗ {step_info} 失败：{error_msg}", "error")
-                            raise
-                    self.progress.emit(f"  ✓ 用例 \"{case_name}\" 执行通过", "success")
-                except Exception:
+
+                            # 收集失败上下文（不调 AI，只留数据；AI 由用户按需触发）
+                            try:
+                                self.exec_model.failure_contexts.append(FailureContext(
+                                    case_id=case_id,
+                                    case_name=case_name,
+                                    step_index=step_idx,
+                                    step_type=step.type,
+                                    step_name=step.name,
+                                    step_params=dict(step.params or {}),
+                                    prev_steps=[
+                                        {"type": s.type, "name": s.name,
+                                         "params": dict(s.params or {})}
+                                        for s in steps[max(0, step_idx - 3):step_idx - 1]
+                                    ],
+                                    error_msg=error_msg,
+                                    screenshot_path=shot_path,
+                                    loop_index=loop_idx,
+                                    timestamp=datetime.now().strftime("%H:%M:%S"),
+                                ))
+                            except Exception:
+                                # 上下文收集失败不能影响主流程
+                                pass
+
+                            # 关键：显式标记失败并终止当前用例，不再执行后续步骤
+                            case_failed = True
+                            break
+                except Exception as e:
+                    # 兜底：获取步骤等外层环节出错（例如模型层异常）
+                    self.progress.emit(
+                        f"  ✗ 用例 \"{case_name}\" 执行失败：{self._format_error(e)}",
+                        "error",
+                    )
+                    case_failed = True
+
+                if case_failed:
                     self.progress.emit(f"  ✗ 用例 \"{case_name}\" 执行失败", "error")
                     if self.stop_on_fail:
                         self.progress.emit("  ⛔ 因失败停止标志，终止后续执行", "warning")
                         self._abort = True
                         break
+                else:
+                    self.progress.emit(f"  ✓ 用例 \"{case_name}\" 执行通过", "success")
+
         self.finished.emit()
 
 
 class ExecutionController(QObject):
+    # 执行状态变化信号：True=开始执行，False=执行结束
+    execution_state_changed = pyqtSignal(bool)
+    # 本轮执行的统计（通过数, 失败数）——纯新增，供消息中心留痕，不影响既有流程
+    execution_finished = pyqtSignal(int, int)
+
     def __init__(self, exec_model: ExecutionModel, project_model: ProjectModel,
                  step_model: StepModel, exec_view: ExecuteView, logs_view: LogsView,
                  device_service: DeviceService):
@@ -162,9 +214,6 @@ class ExecutionController(QObject):
         loop_count = self.exec_view.loop_spin.value()
         stop_on_fail = self.exec_view.stop_on_fail_check.isChecked()
 
-        self.exec_model.reset()
-        self.logs_view.update_stats()
-
         filtered_cases = []
         for node_id in case_ids:
             node = self.project_model.get_node_by_id(node_id)
@@ -175,6 +224,29 @@ class ExecutionController(QObject):
             self.logs_view.add_log("没有可执行的用例", "warning")
             self.exec_view.set_executing(False)
             return
+
+        # 前置检查：未连接设备时不再一刀切拒绝 —— 纯语音/等待的用例要能跑
+        # （测试环境版本连不上设备时也要能输出语音）。
+        # 但只要用例里有需要设备操作的步骤，仍然直接拒绝，
+        # 避免整段用例跑完才在日志里看到满屏失败。
+        if not self.device.check_device_online():
+            names = self._device_dependent_step_names(filtered_cases)
+            if names:
+                tail = " 等" if len(names) >= 3 else ""
+                self.logs_view.add_log(
+                    f"⚠ 未检测到设备：本用例含需要设备操作的步骤"
+                    f"（{'、'.join(names)}{tail}），请先在顶部工具栏连接设备后再执行",
+                    "warning"
+                )
+                self.exec_view.set_executing(False)
+                return
+            self.logs_view.add_log(
+                "ℹ 未连接设备，本次只执行语音播报/等待类步骤（不截图、不断言）",
+                "info"
+            )
+
+        self.exec_model.reset()
+        self.logs_view.update_stats()
 
         self.thread = QThread()
         self.worker = ExecutionWorker(
@@ -194,6 +266,21 @@ class ExecutionController(QObject):
         self.thread.start()
 
         self.exec_view.set_executing(True)
+        self.execution_state_changed.emit(True)
+
+    def _device_dependent_step_names(self, case_ids, limit=3):
+        """挑出这些用例里「需要设备」的步骤名，用来把拒绝原因说清楚。
+
+        用步骤名而不是类型名：步骤名是用户自己起的，比 'click' 之类好定位。
+        """
+        names = []
+        for case_id in case_ids:
+            for step in self.step_model.get_steps_for_case(case_id) or []:
+                if self.device.step_needs_device(step.type):
+                    names.append(step.name or step.type)
+                    if len(names) >= limit:
+                        return names
+        return names
 
     def _on_progress(self, message, log_type):
         self.logs_view.add_log(message, log_type)
@@ -212,6 +299,20 @@ class ExecutionController(QObject):
         self.thread.wait()
         self.thread = None
         self.worker = None
+        self.execution_state_changed.emit(False)
+
+        # 消息中心：把本轮统计抛出去。注意这里只在「用户手动执行」的收尾路径上，
+        # 定时任务的收尾走 TaskController，避免同一次执行产生两条消息
+        try:
+            stats = self.exec_model.get_stats()
+            self.execution_finished.emit(stats[0], stats[1])
+        except Exception:
+            pass
+
+        # 有失败上下文时，让日志视图把「AI 分析」按钮亮起来
+        if self.exec_model.failure_contexts:
+            if hasattr(self.logs_view, "set_ai_available"):
+                self.logs_view.set_ai_available(True)
 
     def generate_report(self):
         os.makedirs("reports", exist_ok=True)

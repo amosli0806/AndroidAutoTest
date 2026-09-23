@@ -7,10 +7,21 @@ import os
 from datetime import datetime
 from typing import Optional, List
 from models.step_model import Step
+from utils.adb_path import get_adb_path
+from utils.settings import Settings
 from utils.theme import ThemeMode
 
 
 class DeviceService:
+    # 不依赖设备的步骤类型：没连设备也能执行。
+    # 用途：测试环境里设备连不上时，仍然可以跑纯语音的「文案用例」。
+    DEVICE_FREE_STEP_TYPES = frozenset({'voice', 'wait'})
+
+    @classmethod
+    def step_needs_device(cls, step_type: str) -> bool:
+        """该步骤类型是否必须有设备才能执行"""
+        return step_type not in cls.DEVICE_FREE_STEP_TYPES
+
     def __init__(self, serial: Optional[str] = None):
         self.device = None
         self.serial = serial
@@ -44,26 +55,37 @@ class DeviceService:
             raise Exception(f"连接设备失败: {e}")
 
     def get_devices(self) -> List[str]:
+        """当前可用的 adb 设备序列号列表。
+
+        两个要点：
+        1. 统一用内置 adb（utils.adb_path.get_adb_path），与 DeviceWatcher 的
+           track-devices 长连接是同一个可执行文件。若这里改用 PATH 里的 adb，
+           两个二进制版本不一致时 adb 会互相杀掉对方的 server，
+           把长连接一起打断。
+        2. 必须带 timeout：调用方是 GUI 线程上的定时刷新，adb 卡住不能把界面拖死。
+
+        注：原先首选的 u2.device.get_devices() 是死路径 —— uiautomator2 模块
+        并没有 device 属性，每次都会抛 AttributeError 被静默吞掉，实际一直是
+        走下面的 adb 子进程，所以这里直接去掉。
+        """
         try:
-            devices = u2.device.get_devices()
-            return [d.serial for d in devices] if devices else []
-        except:
-            try:
-                result = subprocess.run(
-                    ['adb', 'devices'],
-                    capture_output=True,
-                    text=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-                )
-                lines = result.stdout.strip().split('\n')[1:]
-                devices = []
-                for line in lines:
-                    if line.strip() and 'device' in line and 'offline' not in line:
-                        serial = line.split()[0]
-                        devices.append(serial)
-                return devices
-            except:
-                return []
+            result = subprocess.run(
+                [get_adb_path(), 'devices'],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                encoding='utf-8', errors='replace',
+            )
+            lines = result.stdout.strip().split('\n')[1:]
+            devices = []
+            for line in lines:
+                # offline / unauthorized 都不可用，不算数
+                if line.strip() and 'device' in line and 'offline' not in line:
+                    devices.append(line.split()[0])
+            return devices
+        except Exception:
+            return []
 
     def restore_ime(self) -> str:
         if not self.device:
@@ -112,8 +134,10 @@ class DeviceService:
     # ---------- 核心方法：perform ----------
     def perform(self, step: Step):
         """执行步骤，失败时抛出用户友好的错误信息"""
-        # 设备重连逻辑
-        if not self.device:
+        # 设备重连逻辑。
+        # 语音播报 / 等待这两类步骤不碰设备，没有连接也要能执行 ——
+        # 用途是测试环境版本连不上设备时，仍然可以跑纯语音的「文案用例」。
+        if self.step_needs_device(step.type) and not self.device:
             if self.serial:
                 try:
                     self.connect(self.serial)
@@ -142,8 +166,8 @@ class DeviceService:
         else:
             raise ValueError(f"不支持的动作类型: {step.type}")
 
-        # 步骤后间隔（跳过 wait 类型）
-        if step.type != 'wait' and self.step_interval > 0:
+        # 步骤后间隔（wait / voice 自带等待语义，不再叠加默认间隔）
+        if step.type not in ('wait', 'voice') and self.step_interval > 0:
             time.sleep(self.step_interval)
 
     # ---------- 错误信息格式化 ----------
@@ -331,6 +355,27 @@ class DeviceService:
         duration = params.get('duration', 4)
         time.sleep(duration)
 
+    def _perform_voice(self, params):
+        """语音播报：把文案用电脑扬声器读出来，车机麦克风拾取后交给它的语音助手。
+
+        这里**阻塞到这句播完**才返回 —— 后续步骤必须等这段语音放完，
+        否则整段序列会抢跑（典型场景：先播唤醒词，再播指令）。
+        播完还要再等 afterDelay 秒，留给车机语音助手处理时间。
+        """
+        text = (params.get('voiceText') or '').strip()
+        if not text:
+            raise Exception("语音播报的文案为空")
+
+        from services.voice_service import VoiceError, get_voice_service
+        try:
+            get_voice_service().speak(text)
+        except VoiceError as e:
+            raise Exception(str(e))
+
+        delay = float(params.get('afterDelay', 0) or 0)
+        if delay > 0:
+            time.sleep(delay)
+
     def _perform_swipe(self, params):
         direction = params.get('direction', '自定义坐标')
         if direction == '上滑':
@@ -473,7 +518,8 @@ class DeviceService:
             self.device.app_uninstall(package)
 
     def _perform_screenshot(self, params):
-        save_path = params.get('savePath', 'C:/Users/15735/Desktop/')
+        # 没传保存路径时用本机配置的输出目录（原来这里写死了某个用户的桌面绝对路径）
+        save_path = params.get('savePath') or Settings.get_output_dir()
         if not save_path.endswith('/'):
             save_path += '/'
         file_name = params.get('fileName', 'screenshot')
@@ -490,10 +536,10 @@ class DeviceService:
         try:
             import subprocess
             local_temp = f"temp_screenshot_{timestamp}.png"
-            cmd = ['adb', 'exec-out', 'screencap', '-p']
+            cmd = [get_adb_path(), 'exec-out', 'screencap', '-p']
             with open(local_temp, 'wb') as f:
                 subprocess.run(cmd, stdout=f, check=True, timeout=10)
-            subprocess.run(['adb', 'push', local_temp, full_path], check=True, timeout=10)
+            subprocess.run([get_adb_path(), 'push', local_temp, full_path], check=True, timeout=10)
             os.remove(local_temp)
             print(f"截图保存成功: {full_path} (通过 adb exec-out)")
             return
@@ -601,7 +647,7 @@ class DeviceService:
 
         try:
             result = subprocess.run(
-                ['adb', 'devices'],
+                [get_adb_path(), 'devices'],
                 capture_output=True,
                 text=True,
                 timeout=2,

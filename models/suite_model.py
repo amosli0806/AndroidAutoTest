@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from utils.app_paths import data_path
+
 @dataclass
 class TestSuite:
     name: str
@@ -21,7 +23,7 @@ class TestSuite:
 
 
 class SuiteModel:
-    DATA_FILE = "suites_data.json"
+    DATA_FILE = data_path("suites_data.json")
 
     def __init__(self):
         self.suites: List[TestSuite] = []
@@ -87,3 +89,20 @@ class SuiteModel:
         if affected > 0:
             self.save()
         return affected
+
+    def remove_missing_cases(self, valid_case_ids) -> int:
+        """清掉套件里指向「已不存在的用例」的引用，返回清掉的引用条数。
+
+        删用例时 project_controller 会调 remove_case_from_all_suites；但删**项目/功能模块**
+        （连带下面的子用例一起消失）以前漏了这一步，套件里就会留下点不出内容的用例 id。
+        """
+        valid = set(valid_case_ids or ())
+        removed = 0
+        for suite in self.suites:
+            kept = [cid for cid in suite.case_ids if cid in valid]
+            if len(kept) != len(suite.case_ids):
+                removed += len(suite.case_ids) - len(kept)
+                suite.case_ids = kept
+        if removed:
+            self.save()
+        return removed

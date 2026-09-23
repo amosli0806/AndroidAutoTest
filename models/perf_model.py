@@ -2,9 +2,10 @@
 import json
 import os
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from typing import List, Optional
 
+from utils.app_paths import data_path
 
 @dataclass
 class PerfSample:
@@ -13,14 +14,15 @@ class PerfSample:
     cpu_percent: float = 0.0          # CPU 占用率（%）
     mem_pss_mb: float = 0.0           # 内存 PSS（MB）
     fps: int = 0                      # 帧率
-    total_frames: int = 0             # gfxinfo 累计总帧数（用于卡顿率计算）
-    jank_count: int = 0               # 卡顿次数（累计）
     rx_bytes: int = 0                 # 接收字节（累计）
     tx_bytes: int = 0                 # 发送字节（累计）
     errors: List[str] = field(default_factory=list)  # 本次采样中失败的项
 
     def to_dict(self):
         return asdict(self)
+
+
+_PERF_SAMPLE_FIELDS = {f.name for f in fields(PerfSample)}
 
 
 @dataclass
@@ -33,7 +35,7 @@ class PerfSession:
     start_time: str = ""
     end_time: str = ""
     sample_interval: float = 5.0
-    metrics: List[str] = field(default_factory=list)     # ['cpu','mem','fps','jank','traffic']
+    metrics: List[str] = field(default_factory=list)     # ['cpu','mem','fps','traffic']
     samples: List[PerfSample] = field(default_factory=list)
     # 场景化（可选）
     suite_name: str = ""
@@ -75,7 +77,10 @@ class PerfSession:
             case_names=data.get("case_names", []),
         )
         for s in data.get("samples", []):
-            session.samples.append(PerfSample(**s))
+            # 兼容旧数据：早期 perf_data.json 的采样点里还带卡顿相关的字段，
+            # 这些字段已经下线，构造时直接忽略，避免整份历史数据加载失败
+            session.samples.append(PerfSample(**{k: v for k, v in s.items()
+                                                if k in _PERF_SAMPLE_FIELDS}))
         session.alerts = [tuple(a) for a in data.get("alerts", [])]
         return session
 
@@ -114,18 +119,6 @@ class PerfSession:
             stat = calc([s.fps for s in self.samples if s.fps > 0])
             stat['current'] = self.samples[-1].fps
             result['fps'] = stat
-        # 卡顿
-        if 'jank' in self.metrics:
-            janks = [s.jank_count for s in self.samples]
-            if len(janks) >= 2:
-                delta = janks[-1] - janks[0]
-                duration_sec = self.samples[-1].timestamp - self.samples[0].timestamp
-                result['jank'] = {
-                    "total": max(0, delta),  # App 重启导致负值时归零
-                    "rate": self._jank_rate(),
-                    "duration": duration_sec,  # 新增：采样时长（秒）
-                    "samples": len(self.samples),  # 新增：采样点数
-                }
         # 流量
         if 'traffic' in self.metrics:
             if len(self.samples) >= 2:
@@ -136,25 +129,6 @@ class PerfSession:
                 }
         return result
 
-    def _jank_rate(self) -> float:
-        """卡顿率（卡顿次数 / 总帧数）——用 gfxinfo 的 Total frames rendered 差分"""
-        if len(self.samples) < 2:
-            return 0.0
-        s0, s1 = self.samples[0], self.samples[-1]
-        # 卡顿数差
-        total_janks = s1.jank_count - s0.jank_count
-        if total_janks < 0:
-            # App 期间重启过，gfxinfo 计数被重置，此段数据不可信
-            return 0.0
-        # 总帧数差：优先用 total_frames，若为 0（旧数据）则回退到 fps 估算
-        if s1.total_frames > 0 and s0.total_frames > 0 and s1.total_frames >= s0.total_frames:
-            total_frames = s1.total_frames - s0.total_frames
-        else:
-            total_frames = sum(s.fps * self.sample_interval for s in self.samples)
-        if total_frames <= 0:
-            return 0.0
-        return total_janks / total_frames * 100
-
 
 @dataclass
 class PerfThreshold:
@@ -162,7 +136,6 @@ class PerfThreshold:
     cpu_max: float = 400.0           # 8 核多核累计，400% ≈ 4 核满载
     mem_max: float = 800.0           # 地图类 PSS 典型 500~800MB
     fps_min: float = 50.0            # 地图渲染低于 50 帧已可感知卡顿
-    jank_max: int = 10               # 单采样周期（默认 5 秒）内新增卡顿上限
     enabled: bool = True             # 是否启用阈值告警
 
     def to_dict(self):
@@ -201,8 +174,8 @@ class PerfBaseline:
 
 class PerfModel:
     """性能数据的持久化管理"""
-    DATA_FILE = "perf_data.json"
-    BASELINE_FILE = "perf_baselines.json"
+    DATA_FILE = data_path("perf_data.json")
+    BASELINE_FILE = data_path("perf_baselines.json")
 
     def __init__(self):
         self.sessions: List[PerfSession] = []

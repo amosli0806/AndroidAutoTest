@@ -108,10 +108,6 @@ class PerfThresholdDialog(QDialog):
         self.fps_spin.setSuffix(" 帧/秒")
         form.addRow("FPS 低于:", self.fps_spin)
 
-        self.jank_spin = QSpinBox()
-        self.jank_spin.setRange(1, 9999)
-        form.addRow("累计卡顿超过:", self.jank_spin)
-
         root.addLayout(form)
 
         root.addStretch()
@@ -146,7 +142,6 @@ class PerfThresholdDialog(QDialog):
         self.cpu_spin.setValue(th.cpu_max)
         self.mem_spin.setValue(th.mem_max)
         self.fps_spin.setValue(int(th.fps_min))
-        self.jank_spin.setValue(th.jank_max)
 
     def _on_reset(self):
         from models.perf_model import PerfThreshold
@@ -155,7 +150,6 @@ class PerfThresholdDialog(QDialog):
         self.cpu_spin.setValue(default.cpu_max)
         self.mem_spin.setValue(default.mem_max)
         self.fps_spin.setValue(int(default.fps_min))
-        self.jank_spin.setValue(default.jank_max)
 
     def _on_ok(self):
         th = self.threshold
@@ -163,7 +157,6 @@ class PerfThresholdDialog(QDialog):
         th.cpu_max = self.cpu_spin.value()
         th.mem_max = self.mem_spin.value()
         th.fps_min = self.fps_spin.value()
-        th.jank_max = self.jank_spin.value()
         self.accept()
 
     def apply_theme(self, theme_mode=None):

@@ -7,11 +7,17 @@ from PyQt6.QtCore import pyqtSignal, Qt, QModelIndex
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QIcon
 from models.project_model import ProjectModel, TreeNode
 from models.suite_model import SuiteModel
+from utils import tree_state
 from utils.toast import show_toast
 from utils.dialogs import InputDialog, WarningDialog, ConfirmDeleteDialog, ErrorDialog
 from utils.theme import ThemeMode, Theme
 from PyQt6.QtWidgets import QCheckBox, QStyleOptionButton, QStyle
 from PyQt6.QtGui import QPainter, QPen, QColor
+
+# 树节点图标：与「项目管理」树的 _create_item（views/project_tree_view.py）
+# 和「语音播报」页的分组/用例图标保持同一套，改一处记得同步另一处。
+ICON_COLOR_GROUP = "#f0b429"    # 琥珀：项目 / 功能模块
+ICON_COLOR_CASE = "#8a9099"     # 中性灰：用例
 
 
 class BorderedCheckBox(QCheckBox):
@@ -303,6 +309,8 @@ class ExecuteView(QWidget):
         self.model = QStandardItemModel()
         self.tree_view.setModel(self.model)
         self.model.dataChanged.connect(self._on_data_changed)
+        # 展开状态持久化：默认全折叠，记住用户上次展开的项目/模块（存 data/config.json）
+        self._tree_state = tree_state.bind_view(self.tree_view, "execute_tree")
 
         self.placeholder = QLabel("无自动化执行", self)
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -342,7 +350,10 @@ class ExecuteView(QWidget):
         self.refresh()
 
     def refresh(self):
-        self.model.clear()
+        # 重建前先把当前展开态收下来（model.clear() 会把展开态全部丢掉）
+        self._tree_state.snapshot()
+        with self._tree_state.pause():
+            self.model.clear()
         if not self.project_model or not self.project_model.root_nodes:
             self.placeholder.show()
             self.placeholder.setGeometry(0, 0, self.width(), self.height())
@@ -353,7 +364,8 @@ class ExecuteView(QWidget):
         for node in self.project_model.root_nodes:
             item = self._create_item(node)
             self.model.appendRow(item)
-        self.tree_view.expandAll()
+        # 按上次记录还原展开态；没有记录（首次运行）就保持全折叠（原来是无条件 expandAll）
+        self._tree_state.restore()
         self.tree_view.doItemsLayout()
         self._update_buttons()
 
@@ -368,6 +380,15 @@ class ExecuteView(QWidget):
         item.setEditable(False)
         item.setCheckable(True)
         item.setCheckState(Qt.CheckState.Unchecked)
+        # 图标放在复选框和文案之间（Qt 自动就是插在这里），
+        # 用的图标与「项目管理」树、以及「语音播报」页的分组/用例是同一套：
+        # 项目/功能模块 = 琥珀色文件夹，用例 = 灰色对话气泡
+        if node.type == 'project':
+            item.setIcon(qta.icon("fa6s.folder-open", color=ICON_COLOR_GROUP))
+        elif node.type == 'folder':
+            item.setIcon(qta.icon("fa6s.folder", color=ICON_COLOR_GROUP))
+        else:
+            item.setIcon(qta.icon("fa6s.comment-dots", color=ICON_COLOR_CASE))
         if node.children:
             for child in node.children:
                 child_item = self._create_item(child)

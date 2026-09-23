@@ -6,22 +6,14 @@
 """
 import json
 import os
-import sys
 
-# 配置文件路径（放在项目根目录）
+from utils.app_paths import data_path
+
+# 配置文件路径（统一放在程序目录的 data/ 目录下）
 def get_config_path():
     """获取配置文件路径"""
-    if getattr(sys, 'frozen', False):
-        # 打包环境：放在可执行文件所在目录
-        base = os.path.dirname(sys.executable)
-    else:
-        # 开发环境：放在项目根目录（main.py 所在目录）
-        # 获取 main.py 的绝对路径
-        main_file = sys.argv[0]
-        if not os.path.isabs(main_file):
-            main_file = os.path.abspath(main_file)
-        base = os.path.dirname(main_file)
-    return os.path.join(base, 'config.json')
+    return data_path('config.json')
+
 
 CONFIG_FILE = get_config_path()
 
@@ -34,32 +26,63 @@ THEME_MODE_LIGHT = "light"
 THEME_MODE_DARK = "dark"
 DEFAULT_THEME_MODE = THEME_MODE_SYSTEM
 
-# 默认快捷键映射（合并了捕虫师的默认值）
+# 默认快捷键映射（按功能模块分组）
 DEFAULT_SHORTCUTS = {
-    "refresh_devices": "F5",
-    "execute_selected": "M",
-    "clear_log": "Delete",
-    "search_commands": "Ctrl+F",
-    "add_command": "Ctrl+N",
-    "edit_command": "Ctrl+E",
-    "delete_command": "Ctrl+D",
-    "wireless": "Ctrl+W",
-    "scrcpy": "Ctrl+P",
-    "install_app": "Ctrl+I",
-    "push_file": "Ctrl+U",
-    "app_manager": "Ctrl+A",
-    "device_info": "Ctrl+H",
-    "hprof_dump": "Ctrl+J",
-    "monkey": "Ctrl+M",
-    "crash_log": "Ctrl+L",
-    "anr_analyzer": "Ctrl+R",
-    "md5_query": "Ctrl+Q",
-    "weak_network": "Ctrl+Y",
-    "export_commands": "Ctrl+Shift+E",
-    "import_commands": "Ctrl+Shift+I",
+    # ---------- 全局 ----------
     "help_center": "F1",
-    "packet_capture": "Ctrl+G",
-    "about": "",
+    "open_settings": "F2",
+    "refresh_devices": "F5",
+    "toggle_log_panel": "Ctrl+L",
+    "restore_ime": "Ctrl+Shift+K",
+
+    # ---------- 自动化编辑页 ----------
+    "toggle_record": "Ctrl+Shift+R",
+    "generate_steps": "Ctrl+Shift+G",
+    "focus_step_search": "Ctrl+F",
+    "import_cases": "Ctrl+Shift+I",
+    "export_cases": "Ctrl+Shift+E",
+
+    # ---------- 自动化执行页 ----------
+    "execute_cases": "F9",
+    "toggle_select_all": "Ctrl+Shift+A",
+    "save_suite": "Ctrl+S",
+    "delete_suite": "Ctrl+Shift+D",
+    "generate_report": "Ctrl+P",
+
+    # ---------- ADB 工具箱页 ----------
+    "adb_search": "Ctrl+F",
+    "adb_add_command": "Ctrl+N",
+    "adb_edit_command": "Ctrl+E",
+    "adb_delete_command": "Ctrl+D",
+    "adb_import_commands": "Ctrl+Shift+I",
+    "adb_export_commands": "Ctrl+Shift+E",
+    "adb_execute_selected": "F9",
+
+    # ---------- ADB 快捷功能 ----------
+    "adb_wireless": "Alt+W",
+    "adb_scrcpy": "Alt+P",
+    "adb_install": "Alt+I",
+    "adb_push": "Alt+U",
+    "adb_device_info": "Alt+H",
+    "adb_hprof": "Alt+J",
+    "adb_monkey": "Alt+M",
+    "adb_crash": "Alt+L",
+    "adb_anr": "Alt+R",
+    "adb_md5": "Alt+Q",
+    "adb_weak_network": "Alt+Y",
+    "adb_packet": "Alt+B",
+
+    # ---------- 性能检测页 ----------
+    "perf_toggle_monitor": "F9",
+    "perf_toggle_pause": "F6",
+    "perf_export_csv": "Ctrl+Shift+E",
+    "perf_save_baseline": "Ctrl+B",
+
+    # ---------- 应用元素库页 ----------
+    "elem_add": "Ctrl+N",
+    "elem_edit": "Ctrl+E",
+    "elem_delete": "Delete",
+    "elem_verify": "Ctrl+T",
 }
 
 class Settings:
@@ -231,6 +254,37 @@ class Settings:
         settings['custom_commands'] = commands
         cls.save(settings)
 
+    # ---------- AI 辅助 ----------
+    @classmethod
+    def get_ai_config(cls) -> dict:
+        settings = cls.load()
+        return {
+            "enabled": settings.get("ai_enabled", False),
+            "api_key": settings.get("ai_api_key", ""),
+            "model": settings.get("ai_model", "gpt-4o-mini"),
+            "base_url": settings.get("ai_base_url", "https://api.openai.com/v1"),
+            "timeout": settings.get("ai_timeout", 30),
+        }
+
+    @classmethod
+    def set_ai_config(cls, **kwargs):
+        settings = cls.load()
+        key_map = {
+            "enabled": "ai_enabled", "api_key": "ai_api_key",
+            "model": "ai_model", "base_url": "ai_base_url",
+            "timeout": "ai_timeout",
+        }
+        for k, v in kwargs.items():
+            if k in key_map:
+                settings[key_map[k]] = v
+        cls.save(settings)
+
+    @classmethod
+    def is_ai_ready(cls) -> bool:
+        """AI 功能是否可用：开关打开 + 有 key"""
+        cfg = cls.get_ai_config()
+        return bool(cfg["enabled"] and cfg["api_key"])
+
     # ---------- 捕虫师：UI 状态 ----------
     @classmethod
     def save_display_command_ids(cls, ids):
@@ -264,3 +318,51 @@ class Settings:
     def load_checked_commands(cls):
         settings = cls.load()
         return settings.get('checked_commands', [])
+
+    # ---------- 自动化编辑页：动作卡片显示哪些 ----------
+    @classmethod
+    def save_visible_action_cards(cls, types):
+        """保存「动作卡片 ▾」里勾选的卡片类型（列表）；None = 全部显示"""
+        settings = cls.load()
+        settings['visible_action_cards'] = types
+        cls.save(settings)
+
+    @classmethod
+    def load_visible_action_cards(cls):
+        """读取勾选的卡片类型；**None = 从来没设置过**（= 全部显示）。
+
+        注意空列表与 None 的区别：[] 是"用户把卡片全隐藏了"，要原样恢复；
+        所以这里不能写成 `or None` 那种兜底。
+        """
+        settings = cls.load()
+        value = settings.get('visible_action_cards')
+        if isinstance(value, list):
+            return [str(v) for v in value]
+        return None
+
+    # ---------- 站点私有目标（存在本机 data/config.json，不进公开仓库） ----------
+    # 这类"具体测哪个应用"的值不该写死在代码里：公开仓库里只留通用默认值，
+    # 各自的机器在本地配置里指定。
+    @classmethod
+    def get_target_package(cls) -> str:
+        """被测应用包名（内存监控脚本、内存解析用它定位目标进程）。空 = 自动识别。"""
+        settings = cls.load()
+        return str(settings.get('target_package', '') or '').strip()
+
+    @classmethod
+    def set_target_package(cls, package: str):
+        settings = cls.load()
+        settings['target_package'] = str(package or '').strip()
+        cls.save(settings)
+
+    @classmethod
+    def get_monkey_package(cls) -> str:
+        """Monkey 面板里默认填入的包名（记住上次用的，省得每次重敲）。"""
+        settings = cls.load()
+        return str(settings.get('monkey_package', '') or '').strip()
+
+    @classmethod
+    def set_monkey_package(cls, package: str):
+        settings = cls.load()
+        settings['monkey_package'] = str(package or '').strip()
+        cls.save(settings)

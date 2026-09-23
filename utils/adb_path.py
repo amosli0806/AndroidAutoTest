@@ -26,3 +26,26 @@ def get_adb_path() -> str:
 
     # 3. 系统 PATH
     return 'adb'
+
+def get_scrcpy_path() -> str:
+    """返回 scrcpy 可执行文件路径，优先级：
+    1. 打包后的 tools/scrcpy.exe
+    2. 项目根 tools/scrcpy.exe
+    3. 系统 PATH 中的 scrcpy
+    """
+    scrcpy_name = 'scrcpy.exe' if sys.platform == 'win32' else 'scrcpy'
+
+    # 1. 打包环境：_MEIPASS/tools/scrcpy.exe
+    if getattr(sys, 'frozen', False):
+        packed = os.path.join(sys._MEIPASS, 'tools', scrcpy_name)
+        if os.path.exists(packed):
+            return packed
+
+    # 2. 开发环境：utils/adb_path.py 往上两级才是项目根
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local = os.path.join(base, 'tools', scrcpy_name)
+    if os.path.exists(local):
+        return local
+
+    # 3. 系统 PATH
+    return 'scrcpy'

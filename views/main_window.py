@@ -12,13 +12,17 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QWidgetAction, QGraphicsOpacityEffect, QFrame, QToolTip,
     QDockWidget
 )
-from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainterPath, QRegion
+from PyQt6.QtGui import (
+    QAction, QColor, QFont, QIcon, QPainter, QPixmap, QPainterPath, QRegion,
+    QShortcut, QKeySequence,
+)
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QObject, QUrl, QSize, QPoint, QEvent, QRectF, QTimer
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
-from models.project_model import TreeNode
+from models.project_model import TreeNode, new_node_id
 from models.step_model import Step
 from utils.settings import Settings, THEME_MODE_SYSTEM, THEME_MODE_LIGHT, THEME_MODE_DARK
+from utils.version import APP_VERSION, BUILD_DATE
 from utils.win_dark_title import set_dark_title_bar
 from utils.theme import Theme, ThemeMode
 from utils.toast import show_toast
@@ -115,6 +119,9 @@ class RoundedDockWidget(QDockWidget):
 
 class MainWindow(QMainWindow):
     refresh_devices_signal = pyqtSignal()
+    # 菜单里点了「检查更新」（含启动时的自动检查由 main.py 触发）。
+    # 本类不碰网络：只发信号，谁接谁去查。
+    check_update_requested = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -125,6 +132,7 @@ class MainWindow(QMainWindow):
         self.visualize_button = None
         self.project_model = None
         self.step_model = None
+        self.data_cleanup_handler = None    # 「清理无用数据」入口，由 main.py 注入
         self.element_controller = None
         self.project_controller = None
         self.step_controller = None
@@ -141,17 +149,27 @@ class MainWindow(QMainWindow):
         self.left_toolbar = None
         self.right_toolbar = None
         self.log_action = None
-        self.ai_action = None
+        self.msg_action = None
+        self._notification_service = None
+        self._notification_view = None
+        self._bottom_stack = None
+        self.device_action = None
+        self.crash_action = None
+        self.anr_action = None
+        self._bottom_panel_kind = "log"          # 底部面板当前展示：log / crash / anr
+        self._bottom_panel_contents = {}         # cache：Crash / ANR 拉取结果
+        self._bottom_panel_actions = {}  # kind -> QAction
         self.help_action = None
         self.device_status_label = None
         self.nav_actions = []
         self.nav_icons = []
+        self.nav_indices = []
         self.visualize_widget = None
         self._visualize_container = None
         self.visualize_dock = None
         self._perf_view = None
+        self._voice_view = None
         self._adb_toolbox_controller = None
-        self.weak_network_banner = None
         self._element_container = None
         self._logs_view_ref = None
         self._execute_view_ref = None
@@ -160,6 +178,10 @@ class MainWindow(QMainWindow):
         self._main_menu_actions = {}
         self._project_menu_btn = None
         self._project_menu = None
+        # 「动作卡片 ▾」下拉入口（菜单里「展示动作」打开勾选对话框）
+        self._action_cards_btn = None
+        self._action_cards_menu = None
+        self.action_card = None
         self._welcome_tip_rows = []
         self._sub_views = []
         self.left_toolbar_buttons = []
@@ -169,7 +191,7 @@ class MainWindow(QMainWindow):
         self.load_wallpaper()
         self.setup_tab_icons()
 
-        self.switch_view(6)
+        self.switch_view(self.WELCOME_PAGE_INDEX)
         self.apply_theme()
 
         # 记录上一次检测到的系统主题（用于轮询比对）
@@ -426,6 +448,115 @@ class MainWindow(QMainWindow):
                 elif txt == "导出用例":
                     action.setIcon(qta.icon('fa6s.file-export', color=icon_color))
 
+    # ------------------------------------------------------------------
+    # 「动作卡片 ▾」：勾选卡片区显示哪几张卡片
+    # ------------------------------------------------------------------
+    def _on_show_action_cards_dialog(self):
+        """打开「展示卡片」对话框（观感与「指令管理 → 展示指令」同一套）
+
+        卡片清单与顺序都取自 ActionCardView（就是卡片区的展示顺序），不写死任何
+        卡片类型 —— 以后加卡片，对话框自动多一项。取消/关闭 = 不改动。
+        """
+        if self.action_card is None:
+            return
+        from views.dialogs.select_action_cards_dialog import SelectActionCardsDialog
+
+        dlg = SelectActionCardsDialog(
+            self.action_card.card_titles(),
+            self.action_card.visible_card_types(),
+            self,
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.action_card.set_visible_card_types(dlg.get_selected_types())
+
+    def _apply_action_cards_menu_theme(self, is_dark):
+        """「动作卡片 ▾」按钮与菜单的主题。
+
+        取值与「项目管理 ▾」「指令管理 ▾」两处完全相同（那两处的注释也互相指向），
+        改一处要同步另外两处。
+        """
+        if self._action_cards_btn is None:
+            return
+
+        if is_dark:
+            btn_color = "#ffffff"
+            menu_bg = "#2b2d30"
+            menu_border = "#4a4a4a"
+            menu_text = "#dddddd"
+            menu_hover_bg = "#1e3a5f"
+            menu_hover_text = "#ffffff"
+            sep_color = "#4a4a4a"
+            icon_color = "#bbbbbb"
+        else:
+            btn_color = "#333333"
+            menu_bg = "#ffffff"
+            menu_border = "#d0d0d0"
+            menu_text = "#333333"
+            menu_hover_bg = "#e8f0fe"
+            menu_hover_text = "#1976d2"
+            sep_color = "#e0e0e0"
+            icon_color = "#555555"
+
+        # 按钮样式：与「项目管理 ▾」一致——透明背景、加粗 16px、去掉 Qt 默认小三角
+        self._action_cards_btn.setStyleSheet(f"""
+            QToolButton#ActionCardsMenuBtn {{
+                background: transparent;
+                border: none;
+                color: {btn_color};
+                font-weight: bold;
+                font-size: 16px;
+                padding: 0px 0px;
+            }}
+            QToolButton#ActionCardsMenuBtn::menu-indicator {{
+                image: none;
+                width: 0px;
+                height: 0px;
+            }}
+        """)
+
+        if self._action_cards_menu is not None:
+            # 关键：去掉系统窗口装饰 + 允许透明背景，让 QSS 的圆角四角真正生效
+            self._action_cards_menu.setWindowFlags(
+                Qt.WindowType.Popup
+                | Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.NoDropShadowWindowHint
+            )
+            self._action_cards_menu.setAttribute(
+                Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            self._action_cards_menu.setStyleSheet(f"""
+                QMenu#ActionCardsMenu {{
+                    background-color: {menu_bg};
+                    border: 1px solid {menu_border};
+                    border-radius: 8px;
+                    padding: 6px;
+                }}
+                QMenu#ActionCardsMenu::item {{
+                    background: transparent;
+                    padding: 7px 28px 7px 32px;
+                    margin: 1px 2px;
+                    border-radius: 5px;
+                    color: {menu_text};
+                    font-size: 13px;
+                }}
+                QMenu#ActionCardsMenu::item:selected {{
+                    background-color: {menu_hover_bg};
+                    color: {menu_hover_text};
+                }}
+                QMenu#ActionCardsMenu::separator {{
+                    height: 1px;
+                    background: {sep_color};
+                    margin: 4px 8px;
+                }}
+                QMenu#ActionCardsMenu::icon {{
+                    left: 10px;
+                }}
+            """)
+
+            # 图标颜色跟主题走（qta 出的是位图，QSS 改不了）
+            for act in self._action_cards_menu.actions():
+                if act.text() == "展示动作":
+                    act.setIcon(qta.icon('fa6s.eye', color=icon_color))
+
     def _apply_welcome_page_theme(self, is_dark, has_wallpaper=False):
         """应用主题到欢迎页（参照 PyCharm 欢迎页风格）
         有壁纸时卡片 transparent，让 centralWidget 罩层 + 壁纸透出。"""
@@ -519,6 +650,13 @@ class MainWindow(QMainWindow):
         self.project_model = project_model
         self.step_model = step_model
 
+    def set_data_cleanup_handler(self, handler):
+        """注入「清理无用数据」的执行入口（main.py 注册，设置页的数据维护页用它）。
+
+        处理器由调用方提供、签名 () -> dict|None，返回回收统计（None = 当前不能清理）。
+        """
+        self.data_cleanup_handler = handler
+
     def set_project_controller(self, controller):
         self.project_controller = controller
 
@@ -601,12 +739,24 @@ class MainWindow(QMainWindow):
             QToolBar QPushButton#menuBtn {
                 background: transparent;
                 border: none;
+                /* 清掉通用 QPushButton 的 0 12px 内边距，否则悬浮高亮框会被撑宽 */
+                padding: 0px;
                 min-width: 28px;
                 max-width: 28px;
                 min-height: 28px;
                 max-height: 28px;
             }
             QToolBar QPushButton#menuBtn:hover { background: rgba(0,0,0,0.05); border-radius: 3px; }
+            QToolBar QPushButton#toolIconBtn {
+                background: transparent;
+                border: none;
+                padding: 0px;
+                min-width: 28px;
+                max-width: 28px;
+                min-height: 28px;
+                max-height: 28px;
+            }
+            QToolBar QPushButton#toolIconBtn:hover { background: rgba(0,0,0,0.05); border-radius: 3px; }
         """)
         self.addToolBar(toolbar)
 
@@ -639,9 +789,38 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        # ---------- 顶栏快捷功能按钮（纯图标，不显示文案）----------
+        # 只有图标，用途靠 tooltip 说明，所以 tooltip 里带上对应快捷键
+        _shortcuts = Settings.get_shortcuts()
+
+        def _quick_icon_btn(icon_name, action_key, shortcut_key, tip):
+            key_seq = _shortcuts.get(shortcut_key) or ""
+            btn = QPushButton()
+            btn.setObjectName("toolIconBtn")
+            btn.setIcon(qta.icon(icon_name, color='#a3a6b0'))
+            btn.setToolTip(f"{tip} ({key_seq})" if key_seq else tip)
+            btn.setFixedSize(32, 32)
+            btn.clicked.connect(lambda _, k=action_key: self._dispatch_quick_action(k))
+            return btn
+
+        # 分割线右侧：无线 / 投屏，左对齐
+        for icon_name, action_key, shortcut_key, tip in [
+            ('fa6s.wifi', "wireless", "adb_wireless", "无线联调"),
+            ('fa6s.desktop', "scrcpy", "adb_scrcpy", "投屏"),
+        ]:
+            toolbar.addWidget(_quick_icon_btn(icon_name, action_key, shortcut_key, tip))
+
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         toolbar.addWidget(spacer)
+
+        # 顶栏右侧：安装 / 推送 / MD5，与菜单按钮一样右对齐
+        for icon_name, action_key, shortcut_key, tip in [
+            ('fa6s.box', "install", "adb_install", "安装 APK"),
+            ('fa6s.upload', "push", "adb_push", "推送文件"),
+            ('fa6s.key', "md5", "adb_md5", "MD5 查询"),
+        ]:
+            toolbar.addWidget(_quick_icon_btn(icon_name, action_key, shortcut_key, tip))
 
         self.menu_btn = QPushButton()
         self.menu_btn.setObjectName("menuBtn")
@@ -660,6 +839,11 @@ class MainWindow(QMainWindow):
             qta.icon('fa6s.gear', color='#555555'), "设置",
             lambda: self._on_menu_action("settings"))
         self.main_menu.addSeparator()
+        # 检查更新：动作本身只发信号，真正的网络请求由 main.py 接线（这里不碰网络）
+        self._update_available = False
+        self._main_menu_actions['check_update'] = self.main_menu.addAction(
+            qta.icon('fa6s.rotate', color='#555555'), "检查更新",
+            self.check_update_requested.emit)
         self._main_menu_actions['about'] = self.main_menu.addAction(
             qta.icon('fa6s.circle-info', color='#555555'), "关于",
             lambda: self._on_menu_action("about"))
@@ -674,17 +858,16 @@ class MainWindow(QMainWindow):
 
         # ---------- 主区域垂直分割器 ----------
         self.main_splitter = QSplitter(Qt.Vertical)
-        self.main_splitter.setStyleSheet("background: transparent;")
 
         self.stacked_widget = QStackedWidget()
-        self.stacked_widget.setStyleSheet("background: transparent;")
+        # 9 个占位 + 下面把欢迎页 insertWidget 到 6，最终共 10 页（index 0..9）。
+        # index 9 本来就是空占位，语音播报页直接复用它，不用再加页。
         for _ in range(9):
             self.stacked_widget.addWidget(QWidget())
 
         # 欢迎页（参照 PyCharm 欢迎页设计）
         welcome_wrapper = QWidget()
         welcome_wrapper.setObjectName("WelcomeWrapper")
-        welcome_wrapper.setStyleSheet("#WelcomeWrapper { background: transparent; }")
         wrapper_layout = QVBoxLayout(welcome_wrapper)
         # 留出 20px 边距，让内部圆角卡片能露出来
         wrapper_layout.setContentsMargins(0, 0, 0, 0)
@@ -726,14 +909,18 @@ class MainWindow(QMainWindow):
         tips_container.setFixedWidth(520)
         tips_layout = QVBoxLayout(tips_container)
         tips_layout.setContentsMargins(80, 0, 0, 0)
-        tips_layout.setSpacing(10)
+        tips_layout.setSpacing(5)
 
         self._welcome_tip_rows = []
+        # 按「从零跑通一个用例」的上手顺序排列：
+        # 连接设备 → 建用例 → 录制 → 执行，最后两条点出工具页 / 性能页
         tips = [
+            ("fa6s.mobile-screen", "连接设备", "顶部工具栏 → 选择设备 → 刷新"),
             ("fa6s.pen-to-square", "创建用例", "「自动化编辑」→ 右键项目树 → 创建用例"),
-            ("fa6s.file-import", "导入 / 导出用例", "顶部「项目 ▾」→ 导入 / 导出用例"),
-            ("fa6s.list", "管理元素", "「应用元素库」→ 新增 / 编辑元素"),
-            ("fa6s.mobile-screen", "连接设备", "顶部工具栏 → 刷新设备"),
+            ("fa6s.video", "录制步骤", "选中用例 → 点步骤列表上方 ● 开始录制"),
+            ("fa6s.play", "执行测试", "「自动化执行」→ 勾选用例 → 执行"),
+            ("fa6s.screwdriver-wrench", "ADB 调试", "「ADB 工具箱」→ 指令 / 弱网 / Monkey"),
+            ("fa6s.gauge-high", "性能检测", "「性能检测」→ 选应用 → 开始监控"),
         ]
         for icon_name, label_text, desc_text in tips:
             row = QHBoxLayout()
@@ -771,29 +958,11 @@ class MainWindow(QMainWindow):
 
         self.main_splitter.addWidget(self.stacked_widget)
 
-        # 底部占位（日志面板）
-        self.bottom_placeholder = QLabel("捕虫师日志功能开发中")
-        self.bottom_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.bottom_placeholder.setStyleSheet("color: #999; font-size: 16px; background: #e9eaee;")
-        self.bottom_placeholder.setVisible(False)
-        self.main_splitter.addWidget(self.bottom_placeholder)
-
-        self.main_splitter.setSizes([1, 0])
+        # 日志面板由 main.py 通过 set_bottom_log_placeholder() 注入
         self.main_splitter.setChildrenCollapsible(False)
 
-        # 弱网提示横幅（默认隐藏）
-        self.weak_network_banner = QLabel("⚠️ 弱网模拟生效中")
-        self.weak_network_banner.setObjectName("WeakNetworkBanner")
-        self.weak_network_banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.weak_network_banner.setFixedHeight(26)
-        self.weak_network_banner.setStyleSheet(
-            "background-color: #f39c12; color: white; font-weight: 600;"
-            "font-size: 13px;"
-        )
-        self.weak_network_banner.setVisible(False)
-        main_layout.addWidget(self.weak_network_banner)
-
         main_layout.addWidget(self.main_splitter)
+
 
         # ---------- 左侧功能导航 ----------
         self.left_toolbar = QToolBar("功能导航", self)
@@ -838,16 +1007,19 @@ class MainWindow(QMainWindow):
             ("应用元素库", 'fa6s.list', 4),
             ("接口自动化", 'fa6s.plug', 7),
             ("性能检测", 'fa6s.gauge-high', 8),
+            ("语音播报", 'fa6s.microphone', 9),
         ]
         self.nav_actions = []
         self.nav_icons = []
+        self.nav_indices = []  # 每个 action 对应的视图索引
         for text, icon, idx in nav_items:
             action = QAction(qta.icon(icon, color='#a3a6b0'), text, self)
             action.setCheckable(True)
-            action.triggered.connect(lambda checked, i=idx: self.switch_view(i))
+            action.triggered.connect(lambda checked, i=idx: self._on_nav_clicked(i, checked))
             self.left_toolbar.addAction(action)
             self.nav_actions.append(action)
             self.nav_icons.append(icon)
+            self.nav_indices.append(idx)
 
         spacer_widget = QWidget()
         spacer_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -855,11 +1027,39 @@ class MainWindow(QMainWindow):
         spacer_action.setDefaultWidget(spacer_widget)
         self.left_toolbar.addAction(spacer_action)
 
+        # ---------- 左工具栏下方：硬件 / Crash / ANR（选中即在底部日志区展示内容）----------
+        _left_shortcuts = Settings.get_shortcuts()
+
+        def _bottom_panel_action(icon_name, kind, tip, shortcut_key):
+            action = QAction(qta.icon(icon_name, color='#a3a6b0'), tip, self)
+            action.setCheckable(True)
+            key_seq = _left_shortcuts.get(shortcut_key) or ""
+            action.setToolTip(f"{tip} ({key_seq})" if key_seq else tip)
+            action.triggered.connect(
+                lambda checked, k=kind: self._on_bottom_panel_action(k, checked))
+            self.left_toolbar.addAction(action)
+            return action
+
+        self.device_action = _bottom_panel_action(
+            'fa6s.microchip', "device_info", "硬件信息", "adb_device_info")
+        self.crash_action = _bottom_panel_action(
+            'fa6s.bug', "crash", "Crash 日志", "adb_crash")
+        self.anr_action = _bottom_panel_action(
+            'fa6s.hourglass-half', "anr", "ANR 日志", "adb_anr")
+
         self.log_action = QAction(qta.icon('fa6s.terminal', color='#a3a6b0'), "日志", self)
         self.log_action.setCheckable(True)
-        self.log_action.setToolTip("显示/隐藏捕虫师日志面板 (Ctrl+L)")
+        self.log_action.setToolTip("显示/隐藏虫师日志面板 (Ctrl+L)")
         self.log_action.triggered.connect(self.toggle_bottom_log)
         self.left_toolbar.addAction(self.log_action)
+
+        # 底部面板几个开关共用一块区域，互斥显示
+        self._bottom_panel_actions = {
+            "log": self.log_action,
+            "device_info": self.device_action,
+            "crash": self.crash_action,
+            "anr": self.anr_action,
+        }
 
         # ---------- 右侧辅助工具栏 ----------
         self.right_toolbar = QToolBar("辅助工具", self)
@@ -896,18 +1096,24 @@ class MainWindow(QMainWindow):
         # ========== 新增：为右侧工具栏安装事件过滤器 ==========
         self.right_toolbar.installEventFilter(self)
 
-        msg_action = QAction(qta.icon('fa6s.bell', color='#a3a6b0'), "消息", self)
-        msg_action.triggered.connect(lambda: show_toast(self, "消息功能开发中", duration=2000))
-        self.right_toolbar.addAction(msg_action)
-
-        self.ai_action = QAction(qta.icon('fa6s.robot', color='#a3a6b0'), "AI 助手", self)
-        self.ai_action.setCheckable(True)
-        self.ai_action.triggered.connect(self.toggle_ai_panel)
-        self.right_toolbar.addAction(self.ai_action)
+        # 消息中心：与左侧底部面板开关同构（可开合、与其他 kind 互斥）。
+        # 内容由 NotificationCenterView 提供，与虫师日志共用底部面板那块区域。
+        self.msg_action = QAction(qta.icon('fa6s.bell', color='#a3a6b0'), "消息", self)
+        self.msg_action.setCheckable(True)
+        self.msg_action.setToolTip("消息中心")
+        self.msg_action.triggered.connect(
+            lambda checked: self._on_bottom_panel_action("message", checked)
+        )
+        self.right_toolbar.addAction(self.msg_action)
+        # 复用底部面板那套互斥机制：一次只显示一种内容
+        self._bottom_panel_actions["message"] = self.msg_action
 
         self.help_action = QAction(qta.icon('fa6s.circle-question', color='#a3a6b0'), "帮助中心", self)
         self.help_action.setCheckable(True)
-        self.help_action.triggered.connect(lambda: self.switch_view(5))
+        # 与左侧功能按钮一致：再次点击已选中的按钮 -> 取消选中并回到欢迎页
+        self.help_action.triggered.connect(
+            lambda checked: self._on_nav_clicked(5, checked)
+        )
         self.right_toolbar.addAction(self.help_action)
         # ---------- 为左侧和右侧工具栏按钮安装事件过滤器 ----------
         for action in self.left_toolbar.actions():
@@ -929,9 +1135,182 @@ class MainWindow(QMainWindow):
         self.device_status_label = QLabel("○ 未连接设备")
         self.device_status_label.setStyleSheet("padding: 2px 8px; color: #c0392b; background: transparent;")
         self.statusBar().addWidget(self.device_status_label)
-
+        self.apply_shortcuts()
         # ---------- 应用可视化 Dock ----------
         self.setup_visualize_dock()
+
+    def apply_shortcuts(self):
+        """根据配置注册所有快捷键（全局 + 页内 + 快捷功能）"""
+        # 清理旧快捷键
+        if hasattr(self, '_shortcuts'):
+            for sc in self._shortcuts:
+                try:
+                    sc.activated.disconnect()
+                except Exception:
+                    pass
+                sc.deleteLater()
+        self._shortcuts = []
+
+        shortcuts = Settings.get_shortcuts()
+
+        # ---------- 注册辅助函数 ----------
+        def register(key, callback, page_index=None):
+            """page_index: None 表示全局；否则只在指定页生效"""
+            ks_str = shortcuts.get(key, "")
+            if not ks_str:
+                return
+            try:
+                sc = QShortcut(QKeySequence(ks_str), self)
+                if page_index is None:
+                    sc.activated.connect(callback)
+                else:
+                    def wrapper(idx=page_index, cb=callback):
+                        try:
+                            if self.stacked_widget.currentIndex() == idx:
+                                cb()
+                        except Exception:
+                            pass
+                    sc.activated.connect(wrapper)
+                self._shortcuts.append(sc)
+            except Exception as e:
+                print(f"[apply_shortcuts] 注册 {key}({ks_str}) 失败: {e}")
+
+        # ============ 全局 ============
+        register("help_center", lambda: self.switch_view(5))
+        register("open_settings", lambda: self.on_settings())
+        register("refresh_devices", lambda: self.refresh_devices_signal.emit())
+        register("toggle_log_panel", lambda: self.toggle_bottom_log(
+            not self.bottom_placeholder.isVisible()
+            if self.bottom_placeholder else True))
+        register("restore_ime", lambda: self._on_menu_action("restore_ime"))
+
+        # ============ 自动化编辑（index 1）============
+        register("toggle_record",
+                 lambda: self.step_controller.toggle_recording() if self.step_controller else None,
+                 page_index=1)
+        register("generate_steps",
+                 lambda: self._on_step_generate(),
+                 page_index=1)
+        register("focus_step_search",
+                 lambda: self.step_search_input.setFocus() if self.step_search_input else None,
+                 page_index=1)
+        register("import_cases",
+                 lambda: self._on_menu_action("import_cases"),
+                 page_index=1)
+        register("export_cases",
+                 lambda: self._on_menu_action("export_cases"),
+                 page_index=1)
+
+        # ============ 自动化执行（index 3）============
+        def _execute_from_view():
+            if self._execute_view_ref:
+                self._execute_view_ref._execute()
+        register("execute_cases", _execute_from_view, page_index=3)
+
+        def _toggle_select_all():
+            if not self._execute_view_ref:
+                return
+            view = self._execute_view_ref
+            # 若已全选则取消，否则全选
+            from PyQt6.QtCore import Qt as _Qt
+            def count(item, total=0, checked=0):
+                if item.isCheckable():
+                    total += 1
+                    if item.checkState() == _Qt.CheckState.Checked:
+                        checked += 1
+                for i in range(item.rowCount()):
+                    total, checked = count(item.child(i), total, checked)
+                return total, checked
+            t, c = 0, 0
+            for i in range(view.model.rowCount()):
+                t, c = count(view.model.item(i), t, c)
+            if t > 0 and c == t:
+                view.deselect_all()
+            else:
+                view.select_all()
+        register("toggle_select_all", _toggle_select_all, page_index=3)
+
+        register("save_suite",
+                 lambda: self._execute_view_ref._save_current_as_suite() if self._execute_view_ref else None,
+                 page_index=3)
+        register("delete_suite",
+                 lambda: self._execute_view_ref._delete_selected_suite() if self._execute_view_ref else None,
+                 page_index=3)
+        register("generate_report",
+                 lambda: self._execute_view_ref._on_report_clicked() if self._execute_view_ref else None,
+                 page_index=3)
+
+        # ============ ADB 工具箱（index 0）============
+        if self._adb_toolbox_controller:
+            ctrl = self._adb_toolbox_controller
+            view = ctrl.view
+            register("adb_search", lambda: view.search_edit.setFocus(), page_index=0)
+            register("adb_add_command", lambda: ctrl._on_add_command(), page_index=0)
+            register("adb_edit_command",
+                     lambda: view._on_edit_command_clicked(), page_index=0)
+            register("adb_delete_command",
+                     lambda: view._on_delete_command_clicked(), page_index=0)
+            register("adb_import_commands",
+                     lambda: ctrl._on_import_commands(), page_index=0)
+            register("adb_export_commands",
+                     lambda: ctrl._on_export_commands(), page_index=0)
+            register("adb_execute_selected",
+                     lambda: view._on_execute_selected(), page_index=0)
+
+        # ============ ADB 快捷功能（全局）============
+        if self._adb_toolbox_controller:
+            ctrl = self._adb_toolbox_controller
+            for key, action_key in [
+                ("adb_wireless", "wireless"),
+                ("adb_scrcpy", "scrcpy"),
+                ("adb_install", "install"),
+                ("adb_push", "push"),
+                ("adb_device_info", "device_info"),
+                ("adb_hprof", "hprof"),
+                ("adb_monkey", "monkey"),
+                ("adb_crash", "crash"),
+                ("adb_anr", "anr"),
+                ("adb_md5", "md5"),
+                ("adb_weak_network", "weak_network"),
+                ("adb_packet", "packet"),
+            ]:
+                if action_key in ("device_info", "crash", "anr"):
+                    # 这几个功能的内容在底部日志区显示：快捷键与左工具栏按钮走同一条路，
+                    # 否则只拉了内容、面板还关着，看起来像没反应
+                    register(key, lambda k=action_key: self._on_bottom_panel_action(k, True))
+                elif action_key in ("weak_network", "monkey"):
+                    # 弱网 / Monkey 已内嵌到 ADB 工具箱页，快捷键改为切页 + 聚焦面板
+                    register(key, lambda k=action_key: self._focus_toolbox_panel(k))
+                else:
+                    register(key,
+                             lambda k=action_key: ctrl._on_quick_action(k))
+
+        # ============ 性能检测（index 8）============
+        if self._perf_view:
+            register("perf_toggle_monitor",
+                     lambda: self._perf_view._on_start_clicked()
+                     if self._perf_view.get_state() == self._perf_view.STATE_IDLE
+                     else self._perf_view.stop_requested.emit(),
+                     page_index=8)
+            register("perf_toggle_pause",
+                     lambda: (self._perf_view.pause_requested.emit()
+                              if self._perf_view.get_state() == self._perf_view.STATE_RUNNING
+                              else self._perf_view.resume_requested.emit()),
+                     page_index=8)
+            register("perf_export_csv",
+                     lambda: self._perf_view.export_csv_requested.emit(),
+                     page_index=8)
+            register("perf_save_baseline",
+                     lambda: self._perf_view.baseline_requested.emit(),
+                     page_index=8)
+
+        # ============ 元素库（index 4）============
+        handlers = getattr(self, '_elem_shortcut_handlers', None)
+        if handlers:
+            register("elem_add", handlers.get("elem_add"), page_index=4)
+            register("elem_edit", handlers.get("elem_edit"), page_index=4)
+            register("elem_delete", handlers.get("elem_delete"), page_index=4)
+            register("elem_verify", handlers.get("elem_verify"), page_index=4)
 
     # ---------- 应用可视化 Dock ----------
     def setup_visualize_dock(self):
@@ -954,7 +1333,7 @@ class MainWindow(QMainWindow):
         dock_content.setObjectName("VisualizeDockContent")
         # dock_content 透明，让圆角外露出的部分透出 dock 底色
         dock_content.setStyleSheet(
-            "#VisualizeDockContent { background: transparent; }"
+            "#VisualizeDockContent { background-color: rgba(44, 44, 44, 0); }"
         )
         dock_layout = QVBoxLayout(dock_content)
         # 四周边距，让内部容器的圆角露出来
@@ -978,6 +1357,39 @@ class MainWindow(QMainWindow):
             color = 'white' if visible else '#a3a6b0'
             action.setIcon(qta.icon(self.nav_icons[2], color=color))
 
+    def _fit_visualize_dock_to_screen(self):
+        """把浮动中的可视化窗口整体（含标题栏/边框）收敛进屏幕可用区域。
+
+        move() 用的是窗口框架坐标，标题栏会额外占掉约一行高度，
+        所以在窗口 show() 之后再按 frameGeometry() 校正一次。
+        """
+        dock = self.visualize_dock
+        if dock is None or not dock.isVisible():
+            return
+        screen = dock.screen() or self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        avail = screen.availableGeometry()
+
+        # 窗口本身比屏幕还大时先缩小（留出标题栏的余量）
+        frame = dock.frameGeometry()
+        if frame.width() > avail.width() or frame.height() > avail.height():
+            dock.resize(min(dock.width(), max(600, avail.width() - 80)),
+                        min(dock.height(), max(400, avail.height() - 120)))
+            frame = dock.frameGeometry()
+
+        dx = dy = 0
+        if frame.left() < avail.left():
+            dx = avail.left() - frame.left()
+        elif frame.right() > avail.right():
+            dx = avail.right() - frame.right()
+        if frame.top() < avail.top():
+            dy = avail.top() - frame.top()
+        elif frame.bottom() > avail.bottom():
+            dy = avail.bottom() - frame.bottom()
+        if dx or dy:
+            dock.move(dock.x() + dx, dock.y() + dy)
+
     def toggle_visualize_dock(self, checked):
         """显示或隐藏可视化 Dock；首次显示时自动启动 weditor"""
         if self.visualize_dock is None:
@@ -987,18 +1399,36 @@ class MainWindow(QMainWindow):
             if not self.visualize_dock.isFloating():
                 self.visualize_dock.setFloating(True)
 
-            # 首次浮动时给一个居中的合理尺寸和位置
+            # 首次浮动时给一个合适的尺寸和位置
             if not getattr(self, '_visualize_dock_positioned', False):
-                self.visualize_dock.resize(1620, 780)
-                # 相对主窗口右对齐居中
+                # 目标尺寸，并收敛到可用屏幕范围内：小于屏幕时按屏幕算，避免窗口跑到屏幕外
+                target_w, target_h = 1180, 760
+                screen = self.screen() or QApplication.primaryScreen()
+                avail = screen.availableGeometry() if screen is not None else None
+                if avail is not None:
+                    margin = 40
+                    w = min(target_w, max(600, avail.width() - margin * 2))
+                    h = min(target_h, max(400, avail.height() - margin * 2))
+                else:
+                    w, h = target_w, target_h
+                self.visualize_dock.resize(w, h)
+
+                # 相对主窗口右对齐居中，同时保证整个窗口落在屏幕内
                 main_geo = self.geometry()
-                x = main_geo.right() - self.visualize_dock.width() - 60
+                x = main_geo.right() - w - 60
                 y = main_geo.top() + 80
+                if avail is not None:
+                    x = max(avail.left(), min(x, avail.right() - w + 1))
+                    y = max(avail.top(), min(y, avail.bottom() - h + 1))
                 self.visualize_dock.move(x, y)
                 self._visualize_dock_positioned = True
 
             self.visualize_dock.show()
             self.visualize_dock.raise_()
+
+            # 窗口显示后才能拿到包含标题栏/边框的 frameGeometry，
+            # 这里再校正一次，避免浮动窗口（含标题栏）被顶出屏幕
+            QTimer.singleShot(0, self._fit_visualize_dock_to_screen)
 
             # 首次打开时，若无 weditor 进程则自动启动
             if self.weditor_service is not None:
@@ -1013,7 +1443,6 @@ class MainWindow(QMainWindow):
         self.wallpaper_label = QLabel(self)
         self.wallpaper_label.setObjectName("wallpaper")
         self.wallpaper_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.wallpaper_label.setStyleSheet("background: transparent;")
         self.wallpaper_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.wallpaper_label.setGeometry(self.rect())
         self.wallpaper_label.lower()
@@ -1100,6 +1529,8 @@ class MainWindow(QMainWindow):
 
         if theme_mode == THEME_MODE_DARK:
             mode = ThemeMode.DARK
+            # 原生弹窗（QMessageBox / QInputDialog / QFileDialog）靠全局调色板跟随主题
+            Theme.apply_app_palette(mode)
             Theme.apply_theme_to_widget(self, mode)
             for view in self._sub_views:
                 if view and hasattr(view, 'apply_theme'):
@@ -1164,6 +1595,8 @@ class MainWindow(QMainWindow):
                 QToolBar QPushButton#menuBtn {{
                     background: transparent;
                     border: none;
+                    /* 清掉通用 QPushButton 的 0 12px 内边距，否则悬浮高亮框会被撑宽 */
+                    padding: 0px;
                     min-width: 28px;
                     max-width: 28px;
                     min-height: 28px;
@@ -1171,6 +1604,16 @@ class MainWindow(QMainWindow):
                 }}
                 QToolBar QPushButton#menuBtn:hover {{ background: rgba(255, 255, 255, 0.08); border-radius: 3px; }}
                 QToolBar QPushButton#menuBtn::menu-indicator {{ image: none; width: 0px; height: 0px; }}
+                QToolBar QPushButton#toolIconBtn {{
+                    background: transparent;
+                    border: none;
+                    padding: 0px;
+                    min-width: 28px;
+                    max-width: 28px;
+                    min-height: 28px;
+                    max-height: 28px;
+                }}
+                QToolBar QPushButton#toolIconBtn:hover {{ background: rgba(255, 255, 255, 0.08); border-radius: 3px; }}
                 QToolBar QLabel {{ color: #eee; background: transparent; }}
             """)
             # 菜单按钮图标颜色适配暗色
@@ -1233,17 +1676,23 @@ class MainWindow(QMainWindow):
             """)
 
             # 中央区域背景：有壁纸使用与工具栏一致的半透明色，无壁纸纯色
+            # 必须带上 #centralWidget 选择器：Qt 会把「不带选择器的声明」应用到该
+            # 控件及其所有子孙控件，编辑页里每一层容器都会各画一遍半透明底，
+            # 叠四五层后壁纸就完全看不出来了。
             if has_wallpaper:
-                self.centralWidget().setStyleSheet("background: rgba(60, 60, 60, 0.7);")
+                self.centralWidget().setStyleSheet(
+                    "#centralWidget { background: rgba(60, 60, 60, 0.7); }")
             else:
-                self.centralWidget().setStyleSheet("background: #3c3c3c;")
-            self.stacked_widget.setStyleSheet("background: transparent;")
-
+                self.centralWidget().setStyleSheet(
+                    "#centralWidget { background: #3c3c3c; }")
+    
             # 清空之前可能设置的背景，保证所有子页面都透明
             for i in range(self.stacked_widget.count()):
                 widget = self.stacked_widget.widget(i)
                 if widget and widget.objectName() == "":
-                    widget.setStyleSheet("background: transparent;")
+                    # 无名占位页：清掉样式即可（不写 background: transparent，
+                    # 那样会把该控件调色板算成全黑并向下继承）
+                    widget.setStyleSheet("")
                 elif widget and widget.objectName():
                     # 部分视图已由 Theme 应用样式，不强制覆盖
                     pass
@@ -1278,9 +1727,7 @@ class MainWindow(QMainWindow):
                         """)
             # 三个区域标题文字颜色适配暗色
             for lbl in self.findChildren(QLabel, "GroupTitleLabel"):
-                lbl.setStyleSheet(
-                    "font-weight: bold; font-size: 16px; background: transparent; color: #ffffff;"
-                )
+                lbl.setStyleSheet(self._group_title_qss("#ffffff"))
 
             if self._visualize_container is not None:
                 self._visualize_container.setStyleSheet(
@@ -1329,8 +1776,12 @@ class MainWindow(QMainWindow):
             self._apply_main_menu_theme(is_dark=True)
             # "项目 ▾"下拉按钮及菜单主题
             self._apply_project_menu_theme(is_dark=True)
+            # "动作卡片 ▾"下拉按钮及菜单主题（与"项目 ▾"同一套取值）
+            self._apply_action_cards_menu_theme(is_dark=True)
             # 欢迎页主题
             self._apply_welcome_page_theme(is_dark=True, has_wallpaper=has_wallpaper)
+            # 全局 QToolTip（悬浮提示）跟随主题
+            self._apply_tooltip_theme(is_dark=True)
             # Windows 原生标题栏跟随深色
             set_dark_title_bar(self, True)
             if self._perf_view is not None:
@@ -1343,6 +1794,8 @@ class MainWindow(QMainWindow):
 
         # ---------- 亮色主题（保持原有不透明样式） ----------
         mode = ThemeMode.LIGHT
+        # 原生弹窗（QMessageBox / QInputDialog / QFileDialog）靠全局调色板跟随主题
+        Theme.apply_app_palette(mode)
         Theme.apply_theme_to_widget(self, mode)
 
         for view in self._sub_views:
@@ -1374,13 +1827,14 @@ class MainWindow(QMainWindow):
 
         central = self.centralWidget()
         if central:
+            # 同深色分支：选择器不能省，否则会被所有子孙控件继承、逐层叠加
             if has_wallpaper:
                 # 有壁纸：中央区域使用与工具栏一致的半透明色，让圆角内外一致
-                central.setStyleSheet("background: rgba(233, 234, 238, 0.7);")
+                central.setStyleSheet(
+                    "#centralWidget { background: rgba(233, 234, 238, 0.7); }")
             else:
                 # 没有壁纸时用 #e9eaee
-                central.setStyleSheet("background: #e9eaee;")
-        self.stacked_widget.setStyleSheet("background: transparent;")
+                central.setStyleSheet("#centralWidget { background: #e9eaee; }")
 
         self.toolbar.setStyleSheet(f"""
             QToolBar {{
@@ -1417,6 +1871,8 @@ class MainWindow(QMainWindow):
             QToolBar QPushButton#menuBtn {{
                 background: transparent;
                 border: none;
+                /* 清掉通用 QPushButton 的 0 12px 内边距，否则悬浮高亮框会被撑宽 */
+                padding: 0px;
                 min-width: 28px;
                 max-width: 28px;
                 min-height: 28px;
@@ -1424,6 +1880,16 @@ class MainWindow(QMainWindow):
             }}
             QToolBar QPushButton#menuBtn:hover {{ background: rgba(0,0,0,0.05); border-radius: 3px; }}
             QToolBar QPushButton#menuBtn::menu-indicator {{ image: none; width: 0px; height: 0px; }}
+            QToolBar QPushButton#toolIconBtn {{
+                background: transparent;
+                border: none;
+                padding: 0px;
+                min-width: 28px;
+                max-width: 28px;
+                min-height: 28px;
+                max-height: 28px;
+            }}
+            QToolBar QPushButton#toolIconBtn:hover {{ background: rgba(0,0,0,0.05); border-radius: 3px; }}
             QToolBar QLabel {{ color: #333; background: transparent; }}
         """)
         # 菜单按钮图标颜色适配主题
@@ -1534,9 +2000,7 @@ class MainWindow(QMainWindow):
 
         # 三个区域标题文字颜色适配亮色
         for lbl in self.findChildren(QLabel, "GroupTitleLabel"):
-            lbl.setStyleSheet(
-                "font-weight: bold; font-size: 16px; background: transparent; color: #333;"
-            )
+            lbl.setStyleSheet(self._group_title_qss("#333"))
         # 应用元素库容器背景（与项目管理一致：无壁纸 #ffffff，有壁纸 transparent 由 centralWidget 罩层透出）
         if self._element_container is not None:
             if has_wallpaper:
@@ -1584,8 +2048,12 @@ class MainWindow(QMainWindow):
         self._apply_main_menu_theme(is_dark=False)
         # "项目 ▾"下拉按钮及菜单主题
         self._apply_project_menu_theme(is_dark=False)
+        # "动作卡片 ▾"下拉按钮及菜单主题（与"项目 ▾"同一套取值）
+        self._apply_action_cards_menu_theme(is_dark=False)
         # 欢迎页主题
         self._apply_welcome_page_theme(is_dark=False, has_wallpaper=has_wallpaper)
+        # 全局 QToolTip（悬浮提示）跟随主题
+        self._apply_tooltip_theme(is_dark=False)
         # Windows 原生标题栏跟随浅色
         set_dark_title_bar(self, False)
         if self._perf_view is not None:
@@ -1600,6 +2068,24 @@ class MainWindow(QMainWindow):
             self._sub_views.append(view)
 
     # ---------- 视图切换 ----------
+    # 主区域"欢迎页"在 stacked_widget 里的位置（setup_ui 里 insertWidget(6, ...)）
+    WELCOME_PAGE_INDEX = 6
+
+    def _on_nav_clicked(self, index, checked):
+        """左侧/右侧功能按钮的点击处理。
+
+        再次点击已选中的按钮时取消选中，主区域回到欢迎页 —— 与"虫师日志"
+        按钮那种可开关的行为保持一致。
+        应用可视化(index=2)是开关 Dock，不适用这个规则。
+        """
+        if index == 2:
+            self.switch_view(index)
+            return
+        if checked:
+            self.switch_view(index)
+        else:
+            self.switch_view(self.WELCOME_PAGE_INDEX)
+
     def switch_view(self, index):
         # 应用可视化：不再切页，改为开关 Dock
         if index == 2:
@@ -1612,7 +2098,7 @@ class MainWindow(QMainWindow):
             if i == 2:
                 # 可视化按钮的状态由 dock 的可见性控制，跳过
                 continue
-            if i == index:
+            if self.nav_indices[i] == index:
                 action.setIcon(qta.icon(self.nav_icons[i], color='white'))
             else:
                 action.setIcon(qta.icon(self.nav_icons[i], color='#a3a6b0'))
@@ -1625,10 +2111,8 @@ class MainWindow(QMainWindow):
                 action.setIcon(qta.icon(self.nav_icons[i], color='#a3a6b0'))
             self.help_action.setChecked(True)
             self.help_action.setIcon(qta.icon('fa6s.circle-question', color='white'))
-            self.ai_action.setChecked(False)
-            self.ai_action.setIcon(qta.icon('fa6s.robot', color='#a3a6b0'))
             self.statusBar().showMessage("当前功能: 帮助中心", 2000)
-        elif index == 6:
+        elif index == self.WELCOME_PAGE_INDEX:
             for i, action in enumerate(self.nav_actions):
                 if i == 2:
                     continue
@@ -1636,18 +2120,14 @@ class MainWindow(QMainWindow):
                 action.setIcon(qta.icon(self.nav_icons[i], color='#a3a6b0'))
             self.help_action.setChecked(False)
             self.help_action.setIcon(qta.icon('fa6s.circle-question', color='#a3a6b0'))
-            self.ai_action.setChecked(False)
-            self.ai_action.setIcon(qta.icon('fa6s.robot', color='#a3a6b0'))
             self.statusBar().showMessage("欢迎", 2000)
         else:
             for i, action in enumerate(self.nav_actions):
                 if i == 2:
                     continue
-                action.setChecked(i == index)
+                action.setChecked(self.nav_indices[i] == index)
             self.help_action.setChecked(False)
             self.help_action.setIcon(qta.icon('fa6s.circle-question', color='#a3a6b0'))
-            self.ai_action.setChecked(False)
-            self.ai_action.setIcon(qta.icon('fa6s.robot', color='#a3a6b0'))
             if index < len(self.nav_actions):
                 self.statusBar().showMessage(f"当前功能: {self.nav_actions[index].text()}", 2000)
             # 占位页面（接口自动化 / 性能检测）
@@ -1662,73 +2142,288 @@ class MainWindow(QMainWindow):
                     layout.addWidget(label)
 
     # ---------- 底部日志面板 ----------
+    # 面板标题与图标：三种模式共用同一块区域
+    BOTTOM_PANEL_TITLES = {
+        "log": "🐞 虫师日志",
+        "device_info": "📱 硬件信息",
+        "crash": "💥 Crash 日志",
+        "anr": "⏳ ANR 日志",
+        "message": "🔔 消息",
+    }
+    BOTTOM_PANEL_ICONS = {
+        "log": 'fa6s.terminal',
+        "device_info": 'fa6s.microchip',
+        "crash": 'fa6s.bug',
+        "anr": 'fa6s.hourglass-half',
+        "message": 'fa6s.bell',
+    }
+    # 各模式的占位文案（内容拉取完成前的提示）
+    BOTTOM_PANEL_PENDING = {
+        "device_info": "正在读取硬件信息…",
+        "crash": "正在拉取 Crash 日志…",
+        "anr": "正在拉取 ANR 日志…",
+    }
+    # 虫师日志只保留最近若干行防无限增长；Crash / ANR 不限制行数（0 = 不限）
+    BOTTOM_LOG_MAX_BLOCKS = 50
+
     def set_bottom_log_placeholder(self, widget):
         old = self.main_splitter.widget(1)
         if old:
             old.deleteLater()
-
-        # 外层容器：负责圆角 + 边框 + 背景
-        container = QFrame()
-        container.setObjectName("BottomLogContainer")
-        container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(12, 12, 12, 12)
-        container_layout.setSpacing(0)
-
-        # 内层内容：透明，让外层背景透出
-        widget.setObjectName("BottomLogContent")
-        widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        widget.setStyleSheet("#BottomLogContent { background: transparent; }")
-        container_layout.addWidget(widget)
-
-        self.main_splitter.insertWidget(1, container)
-        container.setVisible(False)
-        self.bottom_placeholder = container
-        self.bottom_placeholder_inner = widget
+        # widget 本身已经带 #BottomLogPanel + #BottomLogTitle + #BottomLogText 结构
+        # 不再包装外层，直接放入 splitter，让 _apply_bottom_log_theme 直接作用于它
+        self.main_splitter.insertWidget(1, widget)
+        widget.setVisible(False)
+        self.bottom_placeholder = widget
         self.register_sub_view(widget)
 
     def toggle_bottom_log(self, checked):
-        if not self.bottom_placeholder:
-            return
-        self.bottom_placeholder.setVisible(checked)
-        self.log_action.setChecked(checked)
-        self.log_action.setIcon(qta.icon('fa6s.terminal', color='white' if checked else '#a3a6b0'))
-        if checked:
-            total = self.main_splitter.height()
-            self.main_splitter.setSizes([int(total * 0.7), int(total * 0.3)])
-        else:
-            self.main_splitter.setSizes([1, 0])
+        """日志按钮：显示/隐藏底部面板（内容为虫师日志）"""
+        self._on_bottom_panel_action("log", checked)
 
-    # ---------- AI 面板 ----------
-    def toggle_ai_panel(self, checked):
-        if checked:
-            self.ai_action.setIcon(qta.icon('fa6s.robot', color='white'))
-            self.help_action.setChecked(False)
-            self.help_action.setIcon(qta.icon('fa6s.circle-question', color='#a3a6b0'))
-            self.ai_action.setChecked(True)
-        else:
-            self.ai_action.setIcon(qta.icon('fa6s.robot', color='#a3a6b0'))
-            self.ai_action.setChecked(False)
-        QMessageBox.information(self, "AI 助手", "AI 功能开发中，敬请期待")
-        self.ai_action.setChecked(False)
-        self.ai_action.setIcon(qta.icon('fa6s.robot', color='#a3a6b0'))
+    def _on_bottom_panel_action(self, kind, checked):
+        """底部面板几个开关（日志 / 硬件信息 / Crash / ANR / 消息）共用一块区域，互斥显示
+
+        再次点击已选中的按钮 -> 收起面板（沿用原"日志"按钮的行为）。
+        硬件信息 / Crash / ANR 先占位提示，再由控制器拉取内容回填；
+        消息面板的内容由 NotificationCenterView 自己维护。
+        """
+        if not checked:
+            self._hide_bottom_panel()
+            return
+        if kind == "log":
+            self.show_bottom_panel("log")
+            return
+        if kind == "message":
+            # 不需要拉取内容，也不该走 ADB 快捷动作分发
+            self.show_bottom_panel("message")
+            return
+        self.show_bottom_panel(kind, content=self.BOTTOM_PANEL_PENDING.get(kind, "正在获取…"))
+        self._dispatch_quick_action(kind)
+
+    def _hide_bottom_panel(self):
+        if self.bottom_placeholder is not None:
+            self.bottom_placeholder.setVisible(False)
+        self.main_splitter.setSizes([1, 0])
+        self._sync_bottom_panel_actions(None)
+
+    def _sync_bottom_panel_actions(self, active_kind):
+        for kind, action in self._bottom_panel_actions.items():
+            if action is None:
+                continue
+            on = (kind == active_kind)
+            action.setChecked(on)
+            if kind == "message":
+                # 铃铛图标带未读角标，必须走专用渲染；
+                # 直接用 qta.icon(...) 会把角标覆盖掉，表现为"一打开面板角标就没了"
+                action.setIcon(self._render_bell_icon(active=on))
+            else:
+                action.setIcon(qta.icon(self.BOTTOM_PANEL_ICONS[kind],
+                                        color='white' if on else '#a3a6b0'))
+
+    def show_bottom_panel(self, kind, content=None):
+        """切换底部面板内容：log / crash / anr / device_info / message 共用同一块区域"""
+        if content is not None:
+            self._bottom_panel_contents[kind] = content
+        if self.bottom_placeholder is None:
+            return
+
+        self._bottom_panel_kind = kind
+        title = getattr(self, "_bottom_log_title", None)
+        if title is not None:
+            title.setText(self.BOTTOM_PANEL_TITLES.get(kind, self.BOTTOM_PANEL_TITLES["log"]))
+
+        # 内容容器切页：0 = 文本区（log / crash / anr / device_info），1 = 消息中心
+        is_message = (kind == "message")
+        if self._bottom_stack is not None:
+            self._bottom_stack.setCurrentIndex(1 if is_message else 0)
+
+        text = getattr(self, "_bottom_log_text", None)
+        if text is not None and not is_message:
+            doc = text.document()
+            if kind == "log":
+                # 虫师日志只保留最近若干行，避免无限增长
+                doc.setMaximumBlockCount(self.BOTTOM_LOG_MAX_BLOCKS)
+                # 日志带 HTML 行内配色，需按当前主题重新上色
+                from utils import log_colors
+                text.clear()
+                for html in getattr(self, "_bottom_log_entries", []):
+                    text.append(log_colors.recolor(html))
+                sb = text.verticalScrollBar()
+                sb.setValue(sb.maximum())
+            else:
+                # 0 = 不限行数：Crash / ANR 动辄上千行，截断会看不到关键堆栈
+                doc.setMaximumBlockCount(0)
+                text.setPlainText(self._bottom_panel_contents.get(kind) or "（暂无内容）")
+                text.verticalScrollBar().setValue(0)
+
+        if is_message and self._notification_view is not None:
+            # 打开消息面板即全部标为已读（角标随之清零）
+            self._notification_view.on_panel_shown()
+
+        self.bottom_placeholder.setVisible(True)
+        self._sync_bottom_panel_actions(kind)
+        total = self.main_splitter.height()
+        self.main_splitter.setSizes([int(total * 0.7), int(total * 0.3)])
+
+    def set_bottom_panel_content(self, kind, content):
+        """Crash / ANR 拉取完成后回填；若用户已切到别的模式，只缓存不抢占视图"""
+        self._bottom_panel_contents[kind] = content
+        if (self._bottom_panel_kind == kind
+                and self.bottom_placeholder is not None
+                and self.bottom_placeholder.isVisible()):
+            self.show_bottom_panel(kind, content)
+
+    # ---------- 消息中心 ----------
+    def set_bottom_panel_stack(self, stack, notification_view=None):
+        """注入底部面板的内容容器（QStackedWidget：0 = 文本区，1 = 消息中心）。
+
+        内容区原本是单个 QTextEdit，四种 kind 全靠切文字；加入消息列表后必须换成
+        堆叠容器 —— 列表需要每行的动态动作按钮与右键菜单，纯文本控件做不到。
+        """
+        self._bottom_stack = stack
+        if notification_view is not None:
+            self._notification_view = notification_view
+            self.register_sub_view(notification_view)
+
+    def set_notification_service(self, service):
+        """注入消息总线：仅用于驱动铃铛未读角标"""
+        self._notification_service = service
+        service.unread_changed.connect(self._refresh_bell_badge)
+        self._refresh_bell_badge()
+
+    def _has_message_panel_open(self):
+        return (self._bottom_panel_kind == "message"
+                and self.bottom_placeholder is not None
+                and self.bottom_placeholder.isVisible())
+
+    def _render_bell_icon(self, active=False):
+        """生成带未读角标的铃铛图标；无未读时就是普通铃铛。
+
+        角标画在图标位图上，而不是叠一个独立控件：两侧工具栏统一是
+        QAction + setIcon 的用法，落成位图可以完全不改动工具栏结构。
+        未读数按 1-9 显示，超过 9 显示 9+。
+        """
+        color = 'white' if active else '#a3a6b0'
+        unread = (self._notification_service.unread_count
+                  if self._notification_service else 0)
+        if unread <= 0:
+            return qta.icon('fa6s.bell', color=color)
+
+        size = 20
+        pixmap = qta.icon('fa6s.bell', color=color).pixmap(size, size)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#f57c00"))
+        painter.drawEllipse(QRectF(size - 11, 0, 11, 11))
+        painter.setPen(QColor("white"))
+        font = QFont()
+        font.setPixelSize(8)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(QRectF(size - 11, 0, 11, 11),
+                         Qt.AlignmentFlag.AlignCenter,
+                         "9+" if unread > 9 else str(unread))
+        painter.end()
+        return QIcon(pixmap)
+
+    def _refresh_bell_badge(self, *args):
+        """未读数变化 / 面板开合后重绘铃铛图标（只动铃铛，不干扰其他按钮状态）"""
+        if self.msg_action is None:
+            return
+        self.msg_action.setIcon(
+            self._render_bell_icon(active=self._has_message_panel_open()))
+
+    # ---------- 检查更新：红点角标 ----------
+    # 与铃铛未读角标同一套画法（同样画在位图上、同样贴在图标右上角），
+    # 只把颜色换成项目里惯用的红 #e74c3c、且不带数字（只表示"有新版本"）。
+    # 铃铛那边是 #f57c00 的橙；想让两个角标完全同色，改 UPDATE_BADGE_COLOR 即可。
+    UPDATE_BADGE_COLOR = "#e74c3c"
+    _BADGE_ICON_SIZE = 20
+    _BADGE_DOT_SIZE = 11
+
+    def _render_update_icon(self, icon_name: str, available: bool, color: str = '#555555'):
+        """生成带红点角标的图标；无更新时就是普通图标。"""
+        icon = qta.icon(icon_name, color=color)
+        if not available:
+            return icon
+
+        size = self._BADGE_ICON_SIZE
+        dot = self._BADGE_DOT_SIZE
+        pixmap = icon.pixmap(size, size)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(self.UPDATE_BADGE_COLOR))
+        painter.drawEllipse(QRectF(size - dot, 0, dot, dot))
+        painter.end()
+        return QIcon(pixmap)
+
+    def set_update_available(self, available: bool):
+        """有新版本时给「检查更新」菜单项和菜单按钮都点上红点。
+
+        必须是"重画图标"而不是叠控件：菜单项是 QAction、按钮是 QPushButton，
+        统一走 setIcon 才不用动两边的结构（铃铛未读角标同理）。
+        """
+        self._update_available = bool(available)
+        action = self._main_menu_actions.get('check_update')
+        if action is not None:
+            action.setIcon(self._render_update_icon('fa6s.rotate', self._update_available))
+        if getattr(self, 'menu_btn', None) is not None:
+            self.menu_btn.setIcon(
+                self._render_update_icon('fa6s.gear', self._update_available,
+                                         color='#a3a6b0'))
+
+    def is_update_available(self) -> bool:
+        return self._update_available
+
+    def set_update_action_enabled(self, enabled: bool):
+        """检查进行中时把菜单项灰掉，避免重复点。"""
+        action = self._main_menu_actions.get('check_update')
+        if action is not None:
+            action.setEnabled(bool(enabled))
+
+
+    def open_bottom_panel(self, kind):
+        """供消息动作调用：打开底部面板的指定 kind（等价于点击对应开关）"""
+        self._on_bottom_panel_action(kind, True)
 
     # ---------- 设置对话框 ----------
     def on_settings(self):
         dlg = SettingsDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            # 顺序不能反：先加载壁纸更新 _wallpaper_loaded，
-            # 再 apply_theme 让 centralWidget 按有壁纸渲染半透明背景
             self.load_wallpaper()
             self.apply_theme()
+            self.apply_shortcuts()  # ← 新增：重新注册快捷键
+            # 唤醒词可能改过：「语音播报」卡片的默认文案跟着刷新
+            # （只在用户没动过那个输入框时才刷，见 ActionCardView.refresh_voice_default）
+            if self.action_card is not None:
+                self.action_card.refresh_voice_default()
 
     # ---------- 设置各种视图 ----------
+    # 「步骤列表」「动作卡片」的标题是 QLabel，「项目管理」的标题是 QToolButton，
+    # 而 QToolButton 自带约 13px 的内部水平边距（QLabel 没有），不对齐会让三处标题
+    # 文案的左边距不一致：实测 QLabel 的文案起点 ≈ padding-left + 6px，
+    # 所以补 padding-left = 7px 让两者都落在 13px；垂直方向补 3px 与按钮文案齐平。
+    GROUP_TITLE_PADDING_LEFT = 7
+    GROUP_TITLE_PADDING_TOP = 3
+
+    @classmethod
+    def _group_title_qss(cls, color: str) -> str:
+        """分组标题样式（三处标题共用，保证与"项目管理 ▾"文案对齐）"""
+        return (
+            f"font-weight: bold; font-size: 16px; background: transparent; "
+            f"color: {color}; "
+            f"padding-left: {cls.GROUP_TITLE_PADDING_LEFT}px; "
+            f"padding-top: {cls.GROUP_TITLE_PADDING_TOP}px;"
+        )
+
     def set_edit_views(self, project_tree, step_list, action_card):
         project_tree.setObjectName("ProjectTreeView")
         step_list.setObjectName("StepListView")
 
         container = QWidget()
-        container.setStyleSheet("background: transparent;")
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -1754,7 +2449,9 @@ class MainWindow(QMainWindow):
         splitter.setHandleWidth(4)
         splitter.setChildrenCollapsible(False)
 
-        def create_group_with_title(title, hint, widget, extra_widget=None):
+        def create_group_with_title(title, hint, widget, extra_widget=None, title_widget=None):
+            """title_widget 给了就用它当标题（比如「动作卡片 ▾」这种下拉按钮），
+            否则按 title 文字生成 QLabel 标题 —— 两种情况走同一套布局，观感不会漂"""
             group = QGroupBox()
             group.setFlat(False)
             group.setStyleSheet("""
@@ -1768,12 +2465,15 @@ class MainWindow(QMainWindow):
             g_layout = QVBoxLayout(group)
             g_layout.setContentsMargins(0, 0, 0, 0)
             title_layout = QHBoxLayout()
-            title_label = QLabel(title)
-            title_label.setObjectName("GroupTitleLabel")
-            title_label.setStyleSheet("font-weight: bold; font-size: 16px; background: transparent; color: #333;")
+            if title_widget is not None:
+                title_layout.addWidget(title_widget)
+            else:
+                title_label = QLabel(title)
+                title_label.setObjectName("GroupTitleLabel")
+                title_label.setStyleSheet(self._group_title_qss("#333"))
+                title_layout.addWidget(title_label)
             hint_label = QLabel(hint)
             hint_label.setStyleSheet("color: #999; font-size: 12px; background: transparent;")
-            title_layout.addWidget(title_label)
             title_layout.addWidget(hint_label)
             title_layout.addStretch()
             if extra_widget:
@@ -1847,7 +2547,7 @@ class MainWindow(QMainWindow):
         title_layout = QHBoxLayout()
         title_label = QLabel("步骤列表")
         title_label.setObjectName("GroupTitleLabel")
-        title_label.setStyleSheet("font-weight: bold; font-size: 16px; background: transparent; color: #333;")
+        title_label.setStyleSheet(self._group_title_qss("#333"))
         title_layout.addWidget(title_label)
         title_layout.addStretch()
 
@@ -1900,7 +2600,32 @@ class MainWindow(QMainWindow):
         step_layout.addLayout(title_layout)
         step_layout.addWidget(step_list)
 
-        action_group = create_group_with_title("动作卡片", "填写参数后点击添加按钮", action_card)
+        # ---------- 动作卡片：标题是「动作卡片 ▾」，菜单里「展示动作」打开勾选对话框 ----------
+        action_menu_btn = QToolButton()
+        action_menu_btn.setObjectName("ActionCardsMenuBtn")
+        action_menu_btn.setText("动作卡片 ▾")
+        action_menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        action_menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        action_menu_btn.setToolTip("展示动作：选择卡片区显示哪些动作卡片")
+
+        # 菜单目前只有一项「展示动作」：勾选界面本身是对话框（与「指令管理 → 展示指令」同款），
+        # 挂在菜单里而不是点标题直接弹出，是为了跟「项目管理 ▾」「指令管理 ▾」的入口观感一致。
+        # 图标用 fa6s.eye，与「展示指令」同一个（都是"控制显示范围"）。
+        action_menu = QMenu(action_menu_btn)
+        action_menu.setObjectName("ActionCardsMenu")
+        act_display_cards = QAction("展示动作", action_menu)
+        act_display_cards.setIcon(qta.icon('fa6s.eye', color='#555555'))
+        act_display_cards.triggered.connect(self._on_show_action_cards_dialog)
+        action_menu.addAction(act_display_cards)
+        action_menu_btn.setMenu(action_menu)
+
+        self._action_cards_btn = action_menu_btn
+        self._action_cards_menu = action_menu
+        self.action_card = action_card
+
+        action_group = create_group_with_title(
+            "动作卡片", "填写参数后点击添加按钮", action_card,
+            title_widget=action_menu_btn)
         action_group.setObjectName("EditActionGroup")
         splitter.addWidget(project_group)
         splitter.addWidget(step_group)
@@ -1994,7 +2719,7 @@ class MainWindow(QMainWindow):
 
         container = QWidget()
         container.setObjectName("ExecutePageContainer")
-        container.setStyleSheet("#ExecutePageContainer { background: transparent; }")
+        container.setStyleSheet("")
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -2130,7 +2855,9 @@ class MainWindow(QMainWindow):
         if self._execute_view_ref is not None:
             selected_bg = '#1e3a5f' if is_dark else '#d0e4f7'
             selected_fg = '#ffffff' if is_dark else '#1a1a1a'
-            hover_bg = 'rgba(74, 74, 74, 0.6)' if is_dark else '#dfe2e6'
+            # 必须不透明：半透明色会被 QTreeView 的「缩进列 / 内容列」两个单元格
+            # 以不同次数叠加，导致同一行出现色差（与项目树 PROJECT_TREE_DARK 同样处理）
+            hover_bg = '#4a4a4a' if is_dark else '#dfe2e6'
             self._execute_view_ref.setStyleSheet(f"""
                 #ExecuteView {{
                     background-color: {panel_bg};
@@ -2167,16 +2894,11 @@ class MainWindow(QMainWindow):
                 #ExecuteView QTreeView::item:hover:!selected {{
                     background-color: {hover_bg};
                 }}
-                #ExecuteView QTreeView::branch {{
-                    background: transparent;
-                    border: none;
-                }}
-                #ExecuteView QTreeView::branch:selected,
-                #ExecuteView QTreeView::branch:selected:active,
-                #ExecuteView QTreeView::branch:selected:!active {{
-                    background: transparent;
-                    border: none;
-                }}
+                /* 这里刻意不写 ::branch 规则：只要给 ::branch 指定了任何属性
+                   （哪怕只是 background: transparent），Qt 就接管分支列的绘制，
+                   从而不再画展开/折叠箭头（执行区域的箭头就是这么丢的）。
+                   分支列不出现蓝色色块由上面的 selection-background-color:
+                   transparent + 下面 palette.Highlight 置透明两处负责。 */
                 /* 滚动条（与项目树一致） */
                 #ExecuteView QTreeView QScrollBar:vertical {{
                     width: 6px;
@@ -2241,8 +2963,27 @@ class MainWindow(QMainWindow):
 
     def _apply_bottom_log_theme(self, is_dark, has_wallpaper=False):
         """捕虫师日志面板：圆角 + 主题背景（兼容壁纸）"""
+        # 日志是以 HTML span 上色的，行内颜色优先于控件配色，
+        # 所以这里同步刷新日志配色表，否则切到夜间模式后日志文字仍是深色
+        from utils import log_colors
+        log_colors.refresh(is_dark)
+
         if self.bottom_placeholder is None:
             return
+
+        # 已经输出过的日志把颜色写死在 HTML 行内样式里了，控件样式表改不动它们，
+        # 所以这里按新主题把整段日志重新渲染一遍，否则旧日志会一直是旧主题的颜色
+        # （当前若在看 Crash / ANR，不要去覆盖它的内容）
+        entries = getattr(self, "_bottom_log_entries", None)
+        log_text = getattr(self, "_bottom_log_text", None)
+        if entries and log_text is not None and self._bottom_panel_kind == "log":
+            sb = log_text.verticalScrollBar()
+            keep_bottom = sb.value() >= sb.maximum() - 2
+            log_text.clear()
+            for html in entries:
+                log_text.append(log_colors.recolor(html))
+            if keep_bottom:
+                sb.setValue(sb.maximum())
 
         if is_dark:
             bg = "transparent" if has_wallpaper else "#191a1c"
@@ -2253,18 +2994,85 @@ class MainWindow(QMainWindow):
             border = "rgba(176, 176, 176, 0.9)" if has_wallpaper else "#d0d0d0"
             text = "#333333"
 
+        # 内容容器（QStackedWidget）不能自己铺底色，否则会盖掉面板的圆角背景。
+        #
+        # 注意：这里只能用 QSS 注释 /* */，不能用 #。
+        # # 开头会被解析成一个选择器，从那一行起后面的规则全部失效 —— 表现就是
+        # 正文区丢掉 background: transparent 与 border: none，夜间模式底色变浅、
+        # 壁纸模式下变成一块不透明方块，四周还会多出一圈边框。
         self.bottom_placeholder.setStyleSheet(f"""
-            #BottomLogContainer {{
+            #BottomLogPanel {{
                 background-color: {bg};
                 border: 1px solid {border};
                 border-radius: 8px;
             }}
-            #BottomLogContent {{
+            #BottomLogPanel QStackedWidget#BottomPanelStack {{
+                background: transparent;
+                border: none;
+            }}
+            #BottomLogPanel #BottomLogTitle {{
+                color: {text};
+                font-weight: bold;
+                font-size: 13px;
+                background: transparent;
+            }}
+            #BottomLogPanel QTextEdit#BottomLogText {{
                 background: transparent;
                 color: {text};
-                font-size: 16px;
+                border: none;
+                font-family: Consolas, monospace;
+                font-size: 12px;
+            }}
+            #BottomLogPanel QTextEdit#BottomLogText QScrollBar:vertical {{
+                width: 6px;
+                background: transparent;
+                border-radius: 3px;
+            }}
+            #BottomLogPanel QTextEdit#BottomLogText QScrollBar::handle:vertical {{
+                background: {'#666' if is_dark else '#c0c0c0'};
+                border-radius: 3px;
+                min-height: 20px;
+            }}
+            #BottomLogPanel QTextEdit#BottomLogText QScrollBar::add-line:vertical,
+            #BottomLogPanel QTextEdit#BottomLogText QScrollBar::sub-line:vertical {{
+                height: 0px;
             }}
         """)
+
+    @staticmethod
+    def _apply_tooltip_theme(is_dark: bool):
+        """全局 QToolTip 跟随主题。
+
+        QToolTip 是 QApplication 级别的顶层窗口，不是 MainWindow 的子控件，
+        在 MainWindow 上 setStyleSheet 管不到它；main.py 里那句初始样式写死了白底，
+        夜间模式下就变成白底黑字很刺眼。这里切换主题时统一覆盖 app 级样式表。
+
+        app 级样式表原本只有这一条 QToolTip 规则，所以整体覆盖是安全的；
+        各对话框 / 视图的样式都是各自 setStyleSheet，不受影响。
+        """
+        app = QApplication.instance()
+        if app is None:
+            return
+        if is_dark:
+            app.setStyleSheet("""
+                QToolTip {
+                    background-color: #3c3c3c;
+                    color: #eeeeee;
+                    border: 1px solid #666666;
+                    padding: 4px;
+                    font-size: 11px;
+                }
+            """)
+        else:
+            app.setStyleSheet("""
+                QToolTip {
+                    background-color: #ffffff;
+                    color: #000000;
+                    border: 1px solid #cccccc;
+                    padding: 4px;
+                    font-size: 11px;
+                }
+            """)
 
     def set_element_manager_view(self, element_manager):
         element_manager.setObjectName("ElementManagerView")
@@ -2288,7 +3096,7 @@ class MainWindow(QMainWindow):
         inner_container.setObjectName("ElementManagerInner")
         inner_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         inner_container.setStyleSheet(
-            "#ElementManagerInner { background: transparent; }"
+            ""
         )
         inner_layout = QVBoxLayout(inner_container)
         inner_layout.setContentsMargins(0, 0, 0, 0)
@@ -2309,7 +3117,6 @@ class MainWindow(QMainWindow):
 
     def set_adb_toolbox_view(self, toolbox_widget):
         container = QWidget()
-        container.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(toolbox_widget)
@@ -2322,15 +3129,27 @@ class MainWindow(QMainWindow):
         self.apply_theme()
 
     def set_adb_toolbox_controller(self, controller):
-        """挂载 ADB 工具箱控制器，并连接弱网信号到横幅"""
         self._adb_toolbox_controller = controller
-        if controller is not None:
-            controller.weak_network_changed.connect(self._on_weak_network_changed)
 
-    def _on_weak_network_changed(self, active: bool):
-        """弱网状态变化：显示/隐藏主界面顶部横幅"""
-        if self.weak_network_banner is not None:
-            self.weak_network_banner.setVisible(active)
+    def _dispatch_quick_action(self, action_key):
+        """顶栏 / 左工具栏的快捷功能按钮 -> ADB 工具箱的快捷动作
+
+        控制器是启动后才注入的，这里延迟取，不能在 setup_toolbar 里直接绑定。
+        """
+        if self._adb_toolbox_controller is None:
+            return
+        self._adb_toolbox_controller._on_quick_action(action_key)
+
+    def _focus_toolbox_panel(self, kind):
+        """弱网 / Monkey 已内嵌到 ADB 工具箱页：快捷键改为切到该页并聚焦对应面板"""
+        ctrl = self._adb_toolbox_controller
+        if ctrl is None or getattr(ctrl, "view", None) is None:
+            return
+        self.switch_view(0)
+        if kind == "weak_network":
+            ctrl.view.focus_weak_network()
+        else:
+            ctrl.view.focus_monkey()
 
     def set_help_view(self, help_view):
         help_view.setObjectName("HelpView")
@@ -2415,6 +3234,38 @@ class MainWindow(QMainWindow):
         except RuntimeError:
             pass
 
+    # weditor 页面三栏是固定宽度（#left 500px、.middle 400px），而且 flex 子项
+    # 默认 min-width:auto 不允许收缩，窗口一窄就会撑出页面级横向滚动条。
+    # 这里注入一段样式让它按窗口宽度自适应（只改布局宽度，不动功能）。
+    _WEDITOR_FIT_CSS = (
+        "html,body{overflow-x:hidden;}"
+        "#app,#upper{max-width:100%;}"
+        "#upper>*{min-width:0;}"
+        "#left{flex:0 1 auto;min-width:220px;}"
+        "div.middle{flex:0 1 auto;min-width:180px;}"
+        "#right{flex:1 1 0;min-width:0;}"
+    )
+
+    def _inject_weditor_fit_css(self, web_view):
+        """往 weditor 页面注入自适应样式，避免窗口变窄时出现横向滚动条。"""
+        import json as _json
+        js = """
+        (function () {
+            var ID = 'qishi-fit-window';
+            var old = document.getElementById(ID);
+            if (old && old.parentNode) { old.parentNode.removeChild(old); }
+            var style = document.createElement('style');
+            style.id = ID;
+            style.type = 'text/css';
+            style.appendChild(document.createTextNode(%s));
+            document.head.appendChild(style);
+        })();
+        """ % _json.dumps(self._WEDITOR_FIT_CSS)
+        try:
+            web_view.page().runJavaScript(js)
+        except Exception as e:
+            print(f"[weditor] 注入自适应样式失败: {e}")
+
     def _on_weditor_success(self, port):
         self._cleanup_thread()
 
@@ -2426,6 +3277,8 @@ class MainWindow(QMainWindow):
             def on_loaded(ok):
                 if not ok:
                     return
+                # 页面自带样式加载完之后再注入，保证优先级
+                self._inject_weditor_fit_css(web_view)
                 try:
                     if self._visualize_container:
                         layout = self._visualize_container.layout()
@@ -2576,7 +3429,7 @@ class MainWindow(QMainWindow):
                             import_node(child_data, existing)
                     else:
                         new_node = TreeNode(
-                            id=f"proj_{id(node_name)}",
+                            id=new_node_id(node_type),
                             name=node_name,
                             type=node_type,
                             children=[],
@@ -2598,7 +3451,7 @@ class MainWindow(QMainWindow):
                         if node_type == 'case':
                             imported_case_count += 1
                             new_node = TreeNode(
-                                id=f"case_{id(node_name)}",
+                                id=new_node_id('case'),
                                 name=node_name,
                                 type='case',
                                 children=[],
@@ -2619,7 +3472,7 @@ class MainWindow(QMainWindow):
                                 import_node(child_data, new_node)
                         else:
                             new_node = TreeNode(
-                                id=f"folder_{id(node_name)}",
+                                id=new_node_id('folder'),
                                 name=node_name,
                                 type='folder',
                                 children=[],
@@ -2635,6 +3488,12 @@ class MainWindow(QMainWindow):
 
             self.project_model.save()
             self.step_model.save()
+
+            # 导入时"文件里的全部步骤"都会先建出来，但只有真正落地成新用例的那些才有人
+            # 引用；被跳过的（同名的已存在用例）步骤会变成孤儿，顺手回收一次
+            # （没有注入清理入口时跳过，导入本身不受影响）
+            if callable(self.data_cleanup_handler):
+                self.data_cleanup_handler()
 
             if self.project_controller:
                 self.project_controller.view.refresh()
@@ -2679,7 +3538,7 @@ class MainWindow(QMainWindow):
         container = QFrame()
         container.setObjectName("PerfContainer")
         container.setStyleSheet(
-            "QFrame#PerfContainer { background: transparent; border: none; }"
+            "QFrame#PerfContainer { border: none; }"
         )
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2691,6 +3550,25 @@ class MainWindow(QMainWindow):
         self.stacked_widget.insertWidget(8, container)
         self.register_sub_view(perf_view)
         self._perf_view = perf_view
+        self.apply_theme()
+
+    def set_voice_view(self, voice_view):
+        """挂载语音播报视图到 index 9（左工具栏「性能检测」下面那一项）"""
+        voice_view.setObjectName("VoiceView")
+        # 外层包裹，与性能检测页保持同一套布局约定
+        container = QFrame()
+        container.setObjectName("VoiceContainer")
+        container.setStyleSheet("QFrame#VoiceContainer { border: none; }")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(voice_view)
+
+        old = self.stacked_widget.widget(9)
+        self.stacked_widget.removeWidget(old)
+        old.deleteLater()
+        self.stacked_widget.insertWidget(9, container)
+        self.register_sub_view(voice_view)
+        self._voice_view = voice_view
         self.apply_theme()
 
     def _show_about_dialog(self):
@@ -2797,7 +3675,7 @@ class MainWindow(QMainWindow):
         title.setObjectName("AboutTitle")
         info_v.addWidget(title)
 
-        sub = QLabel("V1.0.1 · Build 2026-09-12")
+        sub = QLabel(f"V{APP_VERSION} · Build {BUILD_DATE}")
         sub.setObjectName("AboutSubtitle")
         info_v.addWidget(sub)
 
@@ -2849,7 +3727,7 @@ class MainWindow(QMainWindow):
         def _copy_and_close():
             info = (
                 "虫师\n"
-                "版本：V1.0.1 (Build: 2026-09-12 23:26:35)\n"
+                f"版本：V{APP_VERSION} (Build: {BUILD_DATE})\n"
                 "作者：李金钊\n"
                 "技术栈：Python 3.13 · PyQt6 · uiautomator2 · weditor · qtawesome\n"
                 "© 2026 李金钊 · 虫师团队"

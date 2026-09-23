@@ -359,6 +359,10 @@ class StatCard(QFrame):
             col.addWidget(key_label)
 
             cell = QWidget()
+            # 数据区背景跟随卡片：不设这层的话会落到调色板的白色底，
+            # 在浅色下比卡片底色更白、夜间模式下更是突兀
+            cell.setObjectName("StatCell")
+            cell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             cell.setLayout(col)
             self._items[item['key']] = val_label
             row.addWidget(cell, 1)   # stretch=1 让每项等宽
@@ -388,6 +392,10 @@ class StatCard(QFrame):
                 background-color: {bg};
                 border: 1px solid {border};
                 border-radius: 8px;
+            }}
+            #StatCard QWidget#StatCell {{
+                background: transparent;
+                border: none;
             }}
             #StatCard QLabel {{
                 color: {text};

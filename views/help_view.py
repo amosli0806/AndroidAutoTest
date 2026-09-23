@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QSplitter, QTreeView, QApplicat
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
 from utils.theme import Theme, ThemeMode
+from utils import tree_state
 from utils.settings import Settings, THEME_MODE_DARK
 
 
@@ -56,7 +57,10 @@ class HelpView(QFrame):
 
         style = f"""
             #HelpView {{
-                background-color: transparent;
+                /* 不要写 transparent：Qt 会把该控件的调色板整份算成全黑，
+                   挂在它下面的 QMessageBox / QFileDialog 会继承黑调色板、内容看不清。
+                   alpha=0 的具体颜色视觉上一样全透，但调色板正常。 */
+                background-color: {"rgba(44, 44, 44, 0)" if theme_mode == ThemeMode.DARK else "rgba(245, 246, 250, 0)"};
             }}
             #HelpTreeContainer, #HelpContentContainer {{
                 background-color: {container_bg};
@@ -89,19 +93,11 @@ class HelpView(QFrame):
             #HelpTreeContainer QTreeView::item:hover:!selected {{
                 background-color: {hover_bg};
             }}
-            /* branch 全部状态统一为透明/选中色，显式指定，让 Qt 不再用 Highlight 画 */
-            #HelpTreeContainer QTreeView::branch {{
-                background: transparent;
-                border: none;
-            }}
-            #HelpTreeContainer QTreeView::branch:selected,
-            #HelpTreeContainer QTreeView::branch:selected:active,
-            #HelpTreeContainer QTreeView::branch:selected:!active,
-            #HelpTreeContainer QTreeView::branch:selected:focus {{
-                background-color: {selected_bg};
-                border: none;
-                outline: none;
-            }}
+            /* 这里刻意不写 ::branch 规则：只要给 ::branch 指定属性（哪怕只是
+               background: transparent），Qt 就接管分支列的绘制，不再画展开/折叠
+               箭头（帮助中心的箭头就是这么丢的）。分支列不出现蓝色色块由上面的
+               selection-background-color: transparent + 末尾 palette.Highlight
+               置透明两处负责。 */
             #HelpTreeContainer QTreeView QScrollBar:vertical {{
                 width: 6px;
                 background: {sb_bg};
@@ -189,6 +185,10 @@ class HelpView(QFrame):
         self.tree.setHeaderHidden(True)
         self.tree.setIndentation(20)
         tree_layout.addWidget(self.tree)
+        # 展开状态持久化：默认全折叠，记住用户上次展开的章节（存 data/config.json）。
+        # 章节/条目没有业务 id，用"从根到自己的文字路径"当 id
+        self._tree_state = tree_state.bind_view(
+            self.tree, "help_tree", id_of=tree_state.index_text_path_id)
         splitter.addWidget(self.tree_container)
 
         # 右侧容器（内容）
@@ -228,7 +228,10 @@ class HelpView(QFrame):
             root.appendRow(section_item)
 
         self.tree.setModel(model)
-        self.tree.expandAll()
+        # 展开状态持久化：重建前收状态、填完后按记录还原；没有记录（首次运行）
+        # 就保持全折叠（原来是无条件 expandAll）
+        self._tree_state.snapshot()
+        self._tree_state.restore()
         first_index = model.index(0, 0)
         if first_index.isValid():
             if model.hasChildren(first_index):
@@ -293,29 +296,75 @@ class HelpView(QFrame):
     def _get_help_content(self):
         """返回所有帮助章节和子主题的 HTML 内容"""
         return {
-            "🔧 ADB工具箱": {
-                "功能规划": """
+                        "🔧 ADB工具箱": {
+                "使用说明": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🔧 ADB工具箱</h2>
                 <p style="font-size: 15px;">
-                    <b>ADB工具箱</b> 是驭虫师即将推出的设备调试模块，用于对 Android 设备执行常用 ADB 命令，
-                    覆盖设备管理、应用管理、文件操作、日志抓取、性能诊断等场景。
+                    <b>ADB工具箱</b> 集成了常用 ADB 命令与设备调试工具，
+                    覆盖<b>设备管理、指令执行、文件操作、日志抓取、网络诊断</b>等场景。
+                </p>
+                <p style="font-size: 15px;">
+                    页面分左右两栏：左侧是<b>指令管理</b>（命令列表 + 菜单 + 执行选中），
+                    右侧自上而下是<b>搜索框</b>、<b>弱网模拟</b>、<b>Monkey 测试</b>。
+                    设备相关的常用工具已按用途分散到顶部工具栏、左侧工具栏和性能检测页，
+                    详见「快捷功能」一节。
                 </p>
 
-                <h3 style="font-size: 16px; margin-top: 20px;">🎯 规划中的核心能力</h3>
-                <ul style="font-size: 14px; line-height: 1.9;">
-                    <li><b>设备管理</b>：设备列表刷新、无线联调、重启 / 恢复出厂</li>
-                    <li><b>应用管理</b>：安装 / 卸载 / 清除数据 / 强制停止 / 查看组件信息</li>
-                    <li><b>文件操作</b>：推送 / 拉取文件或文件夹，实时显示进度</li>
-                    <li><b>日志抓取</b>：logcat、内核日志、崩溃日志，支持过滤与保存</li>
-                    <li><b>快捷功能</b>：一键截图、录屏、Monkey 测试、投屏（scrcpy）</li>
-                    <li><b>性能诊断</b>：内存监控、堆转储、ANR / Crash 分析</li>
-                    <li><b>网络工具</b>：网络抓包（tcpdump）、弱网模拟（netem）</li>
-                    <li><b>自定义指令</b>：把常用命令保存为快捷按钮，支持导入 / 导出</li>
-                </ul>
+                {self._get_steps_html([
+                    {'image': 'adb_2_search.png', 'desc': '右侧搜索框支持预设、自定义、ADB 库三类命令'},
+                    {'image': 'adb_3_cmdlist.png', 'desc': '左侧命令列表：勾选 + 执行/停止，每条命令独立控制'},
+                    {'image': 'adb_4_quick.png', 'desc': '搜索框下方内嵌「弱网模拟」「Monkey 测试」两块面板（弱网在上）'},
+                    {'image': 'adb_5_logs.png', 'desc': '结果统一输出到主窗口底部「虫师日志」面板'},
+                ])}
 
-                <div style="border-left: 4px solid; padding: 12px 16px; margin: 16px 0; border-radius: 4px; background: #fff3e0; border-color: #ff9800;">
-                    ⏳ <b>当前状态</b>：功能开发中，敬请期待。<br>
-                    如需优先支持，欢迎通过「关于」页面联系开发者反馈。
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 <b>自定义指令</b>：通过「菜单 → 新增指令」保存常用命令，支持定时执行、循环、保存输出等。
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    ⚠️ 主项目正在执行用例时，高风险命令（monkey / logcat / screenrecord / tcpdump 等）会被自动禁用，避免干扰测试。
+                </div>
+                """,
+
+                "快捷功能": f"""
+                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🛠️ 快捷功能</h2>
+                <p style="font-size: 15px;">
+                    常用工具按用途分布在三处：<b>顶部工具栏</b>、<b>左侧工具栏下方</b>、
+                    <b>性能检测页的「性能工具」卡片</b>，以及 ADB 工具箱右栏的<b>内嵌面板</b>。
+                </p>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>顶部工具栏</b>（左侧为设备选择 / 刷新）<br>
+                    • 分割线右侧（左对齐）：<b>无线</b>、<b>投屏</b>（scrcpy 镜像，支持参数调节与同步录屏）<br>
+                    • 工具栏最右侧（与菜单按钮同组，只显示图标）：<b>安装</b>（APK 安装并智能解析失败原因）、
+                    <b>推送</b>（push 文件/文件夹，实时进度）、<b>MD5</b>（计算 APK 的 MD5 值）<br>
+                    • 图标按钮的用途看悬浮提示，提示里带对应快捷键
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>左侧工具栏下方</b>（只显示图标，点击后内容显示在底部面板）<br>
+                    • <b>硬件信息</b>：分辨率 / 屏幕密度 / 安卓版本<br>
+                    • <b>Crash 日志</b>：拉取 logcat -b crash，完整输出不限行数<br>
+                    • <b>ANR 日志</b>：拉取 /data/anr/ 最新一份并解析；设备未 root 时给出提示文案<br>
+                    • <b>日志</b>：虫师日志<br>
+                    这四者是互斥开关：再点一次当前按钮收起面板
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>ADB 工具箱右栏内嵌面板</b><br>
+                    • <b>弱网模拟</b>：tc netem 模拟延迟 / 丢包 / 带宽限制，需设备已 root；
+                    应用/清除的结果会输出到「虫师日志」<br>
+                    • <b>Monkey 测试</b>：图形化配置事件数量、随机种子、包名与各类事件比例
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>性能检测页 · 性能工具卡片</b><br>
+                    • <b>堆转储</b>：选择应用 → dump hprof 到本地<br>
+                    • <b>抓包</b>：tcpdump 抓取流量到 pcap 文件（Wireshark 可打开）
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    ⚠️ 主项目正在执行用例时，高风险命令（monkey / logcat / screenrecord / tcpdump 等）会被自动禁用，避免干扰测试。
                 </div>
                 """
             },
@@ -534,7 +583,8 @@ class HelpView(QFrame):
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">⚙️ 性能检测</h2>
                 <p style="font-size: 15px;">
                     <b>性能检测</b> 通过 ADB 实时采集被测应用的核心指标，包括
-                    <b>CPU、内存、FPS、卡顿、流量</b>。支持「独立监控」和「场景化测试」两种模式。
+                    <b>CPU、内存、FPS、流量</b>（原「卡顿」指标已下线）。支持「独立监控」和「场景化测试」两种模式。
+                    卡片区最后一行是<b>性能工具</b>卡片，提供「堆转储」「抓包」入口。
                 </p>
 
                 {self._get_steps_html([
@@ -542,7 +592,7 @@ class HelpView(QFrame):
                     {'image': 'perf_2_choose_metrics.png', 'desc': '勾选需要监控的指标，支持多选；设备不支持的指标会置灰'},
                     {'image': 'perf_3_set_interval.png', 'desc': '设置采样间隔：单项 1 秒即可，多项建议 ≥ 5 秒'},
                     {'image': 'perf_4_start_monitor.png', 'desc': '点「开始监控」，曲线与统计数据实时刷新'},
-                    {'image': 'perf_5_view_charts.png', 'desc': '实时查看 CPU / 内存 / FPS / 流量 / 卡顿曲线'},
+                    {'image': 'perf_5_view_charts.png', 'desc': '实时查看 CPU / 内存 / FPS / 流量曲线'},
                     {'image': 'perf_6_export_report.png', 'desc': '采集完成后可保存基线、导出 CSV、生成性能报告'},
                 ])}
 
@@ -550,8 +600,9 @@ class HelpView(QFrame):
                     📊 <b>指标口径</b><br>
                     • <b>CPU</b>：多核累计，8 核设备上限 800%（单核满载 = 100%）<br>
                     • <b>内存</b>：主进程 PSS，不含子进程<br>
-                    • <b>FPS / 卡顿</b>：基于 gfxinfo 渲染帧数差分<br>
-                    • <b>流量</b>：按 UID 汇总，展示为速率（KB/s）
+                    • <b>FPS</b>：基于 gfxinfo 渲染帧数差分<br>
+                    • <b>流量</b>：按 UID 汇总，展示为速率（KB/s）<br>
+                    • <b>性能工具</b>：卡片区右下角提供「堆转储 / 抓包」入口
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
@@ -584,6 +635,88 @@ class HelpView(QFrame):
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     ⚠️ 场景化模式下的性能数据包含用例执行开销（点击、滑动、截图等），
                     与独立监控模式（用户手动操作）的基线不具直接可比性。
+                </div>
+                """
+            },
+
+            "🎤 语音播报": {
+                "使用说明": f"""
+                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🎤 语音播报</h2>
+                <p style="font-size: 15px;">
+                    <b>语音播报</b> 做的是<b>声学耦合</b>：电脑扬声器把文案念出来，车机麦克风拾音后
+                    交给它自己的语音助手。所以这页要解决的是<b>「声音从哪个扬声器出去」</b>和
+                    <b>「每句之间等多久」</b>，不跟车机做任何协议对接。
+                </p>
+                <p style="font-size: 15px;">
+                    页面分三栏：左侧<b>语音管理</b>（独立的语音用例库）、中间<b>用例步骤</b>
+                    （该用例的文案列表）、右侧<b>执行</b>（勾选要播的用例 + 语速 / 循环 / 执行选中 / 停止）。
+                </p>
+
+                {self._get_steps_html([
+                    {'image': 'voice_1_manage.png', 'desc': '左侧语音管理：右键分组/用例可新建、复制、重命名、删除'},
+                    {'image': 'voice_2_phrases.png', 'desc': '中间用例步骤：增删改文案，每行可设「播后等待」，可单条播报'},
+                    {'image': 'voice_3_execute.png', 'desc': '右侧执行：勾选要播的用例（分组勾选会级联），设置语速与循环'},
+                ])}
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 <b>语音用例与「自动化编辑」里的用例是两套独立的东西</b>：那边是 App 操作序列
+                    （点击 / 输入 / 断言…），这里是纯播报脚本，互不影响。「语音管理 ▾」里可以导入 / 导出文案。
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    ⚠️ 执行期间请保持车机语音助手处于可被唤醒的状态，并让电脑扬声器音量足够大 ——
+                    车机那边的识别结果取决于拾音质量，与文案本身是否正确无关。
+                </div>
+                """,
+
+                "唤醒词": f"""
+                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🗣️ 唤醒词</h2>
+                <p style="font-size: 15px;">
+                    车机助手要先被叫醒才听得进后面的指令，所以每个用例开头通常都有一句唤醒词。
+                    中间栏标题旁的 <b>「唤醒词」按钮</b> 就是为省打字准备的：点一下，把它<b>追加到当前用例末尾</b>。
+                </p>
+
+                {self._get_steps_html([
+                    {'image': 'voice_4_wake_word.png', 'desc': '点「唤醒词」追加一条唤醒词文案；未选用例时按钮置灰'},
+                    {'image': 'voice_5_wake_word_setting.png', 'desc': '文案在「设置 → 语音播报」里改，默认「你好虫师」'},
+                ])}
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 追加是<b>加在末尾</b>的。想让唤醒词当第一句，就在空用例上先点「唤醒词」，
+                    再用「+ 添加步骤」补后面的指令。
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 唤醒词在<b>「设置 → 语音播报」</b>页面配置，<b>留空则用默认的「你好虫师」</b>；
+                    在设置里改完立刻生效，不用重启。
+                </div>
+                """,
+
+                "执行与设置": f"""
+                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">▶️ 执行与设置</h2>
+                <p style="font-size: 15px;">
+                    右栏勾选要播的用例后点 <b>「执行选中」</b>，会用配置好的音色和输出设备依次播报；
+                    播报中 <b>「停止」</b> 会立刻打断当前这一句，不用等它念完。
+                </p>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>勾选方式</b><br>
+                    • <b>点行内任意位置</b>即可勾选 / 取消，不用对准那个小方框<br>
+                    • 勾选<b>分组</b>会级联到组内所有用例；组内只勾了一部分时，分组显示为部分选中<br>
+                    • <b>「全选」/「取消全选」</b> 一次处理整棵树<br>
+                    • <b>循环</b>设几次就整轮播几遍，<b>语速</b>与用例里的语音步骤共用
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>设置 → 语音播报</b><br>
+                    • <b>音色</b>：引擎里可用的发音人<br>
+                    • <b>输出设备</b>：声音从哪个扬声器 / 声卡出去，<b>选错车机就完全听不见</b><br>
+                    • <b>唤醒词</b>：上面那个按钮追加的文案<br>
+                    • 改完可点「试听」确认车机那边真能听见
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    ⚠️ 响度直接用电脑的系统音量，程序内不单独调音量。
                 </div>
                 """
             },

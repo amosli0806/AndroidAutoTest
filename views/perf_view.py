@@ -6,7 +6,7 @@ import logging
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QComboBox, QPushButton, QCheckBox,
+    QLabel, QComboBox, QPushButton, QCheckBox, QRadioButton, QButtonGroup,
     QSpinBox, QFrame, QScrollArea, QSizePolicy,
     QFileDialog, QDialog, QStackedWidget
 )
@@ -18,7 +18,7 @@ import qtawesome as qta
 from utils.toast import show_toast
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
-from views.perf_widgets import MetricCard, StatCard
+from views.perf_widgets import MetricCard
 from PyQt6.QtWidgets import QStyleOptionButton, QStyle
 from PyQt6.QtGui import QPainter, QPen, QColor
 logger = logging.getLogger(__name__)
@@ -47,6 +47,53 @@ class BorderedCheckBox(QCheckBox):
         except Exception:
             pass
 
+class BorderedRadioButton(QRadioButton):
+    """单选框：Fusion 默认圆点又小又细，放在控制面板上几乎看不出是可选项
+    （监控指标一排全未选中时，整行看起来就是纯文字）。这里在原生绘制之上叠加
+    一圈更粗、对比更强的圆环：未选中灰色、选中主题蓝、置灰跟随禁用文字色。
+    与 BorderedCheckBox 同一思路。"""
+
+    # 圆环配色由 apply_theme 按当前主题覆写（深浅底都需要足够对比度）
+    ring_unchecked = QColor(90, 90, 90)
+    ring_checked = QColor(25, 118, 210)
+    ring_disabled = QColor(180, 180, 180)
+
+    @classmethod
+    def set_ring_colors(cls, unchecked, checked, disabled):
+        cls.ring_unchecked = QColor(unchecked)
+        cls.ring_checked = QColor(checked)
+        cls.ring_disabled = QColor(disabled)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        try:
+            opt = QStyleOptionButton()
+            self.initStyleOption(opt)
+            rect = self.style().subElementRect(
+                QStyle.SubElement.SE_RadioButtonIndicator, opt, self
+            )
+            if not (rect.isValid() and rect.width() > 0):
+                return
+            if not self.isEnabled():
+                ring_color = self.ring_disabled
+            elif self.isChecked():
+                ring_color = self.ring_checked
+            else:
+                ring_color = self.ring_unchecked
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(ring_color, 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(rect.adjusted(1, 1, -1, -1))
+            if self.isChecked() and self.isEnabled():
+                # 原生选中点是深灰的，套在蓝色圆环里颜色不统一；用同色圆点盖掉
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(ring_color)
+                painter.drawEllipse(rect.adjusted(3, 3, -3, -3))
+            painter.end()
+        except Exception:
+            pass
+
 class PerfView(QWidget):
     """性能检测视图"""
 
@@ -68,6 +115,8 @@ class PerfView(QWidget):
     baseline_manager_requested = pyqtSignal()
     clear_requested = pyqtSignal()
     threshold_config_requested = pyqtSignal()
+    hprof_requested = pyqtSignal()          # 堆转储（性能工具卡片入口）
+    packet_requested = pyqtSignal()         # 抓包（性能工具卡片入口）
 
     # 状态枚举
     STATE_IDLE = 'idle'
@@ -84,6 +133,7 @@ class PerfView(QWidget):
         self._suite_model = None
         self._project_model = None
         self._cards = {}
+        self._tool_card = None
         self._metric_available = {}  # 各指标在当前设备上的可用性
         self._active_metrics = []  # 本次会话实际勾选的指标
         # 流量速率差分基准
@@ -198,17 +248,7 @@ class PerfView(QWidget):
                 avg_text=f"总共 {total_mb:.2f}MB",
                 extra_text="",
             )
-        if 'jank' in stats and 'jank' in self._cards:
-            s = stats['jank']
-            duration = s.get('duration', 0)
-            if duration >= 60:
-                dur_text = f"{int(duration // 60)}m{int(duration % 60)}s"
-            else:
-                dur_text = f"{duration:.0f}s"
-            self._cards['jank'].set_value('total', s.get('total', 0))
-            self._cards['jank'].set_value('rate', f"{s.get('rate', 0):.2f}%")
-            self._cards['jank'].set_value('duration', dur_text)
-            self._cards['jank'].set_value('samples', s.get('samples', 0))
+
 
     def set_alert(self, metric: str, alert: bool):
         if metric in self._cards and isinstance(self._cards[metric], MetricCard):
@@ -275,8 +315,8 @@ class PerfView(QWidget):
                   self.stop_on_fail_check):
             w.setVisible(scenario_on)
 
-        # 指标复选框：运行中禁用；空闲/暂停时按设备兼容性恢复
-        for key, cb in self.metric_checks.items():
+        # 指标单选按钮：运行中禁用；空闲/暂停时按设备兼容性恢复
+        for key, cb in self.metric_radios.items():
             if idle or paused:
                 cb.setEnabled(self._metric_available.get(key, True))
             else:
@@ -394,13 +434,17 @@ class PerfView(QWidget):
         row2.setSpacing(12)
 
         row2.addWidget(QLabel("监控指标:"))
-        self.metric_checks = {}
+        # 监控指标做单选：同时采集多项会互相干扰（例如采集流量要反复读 /proc，
+        # 会把 CPU 采样值拉高），影响数据准确性
+        self.metric_group = QButtonGroup(self)
+        self.metric_group.setExclusive(True)
+        self.metric_radios = {}
         for key, label in [('cpu', 'CPU'), ('mem', '内存'), ('fps', 'FPS'),
-                           ('traffic', '流量'), ('jank', '卡顿')]:
-            cb = BorderedCheckBox(label)
-            cb.setChecked(False)
-            self.metric_checks[key] = cb
-            row2.addWidget(cb)
+                           ('traffic', '流量')]:
+            rb = BorderedRadioButton(label)
+            self.metric_group.addButton(rb)
+            self.metric_radios[key] = rb
+            row2.addWidget(rb)
 
         row2.addSpacing(24)
 
@@ -538,15 +582,39 @@ class PerfView(QWidget):
                 {'name': '发送', 'color': '#e67e22'},
             ]
         )
-        self._cards['jank'] = StatCard('卡顿统计', items=[
-            {'key': 'total', 'label': '累计卡顿', 'value': '0'},
-            {'key': 'rate', 'label': '卡顿率', 'value': '0.00%'},
-            {'key': 'duration', 'label': '采样时长', 'value': '0s'},
-            {'key': 'samples', 'label': '采样点数', 'value': '0'},
-        ])
+
+        # 性能工具卡片：堆转储 / 抓包（原来挂在 ADB 工具箱，移到性能检测页）
+        self._build_tool_card()
 
         # 初始布局
         self._relayout_cards()
+
+    def _build_tool_card(self):
+        """性能工具卡片：与指标卡片同一视觉风格，放两个设备分析入口"""
+        self._tool_card = QFrame()
+        self._tool_card.setObjectName("PerfToolCard")
+
+        tool_layout = QHBoxLayout(self._tool_card)
+        tool_layout.setContentsMargins(12, 10, 12, 10)
+        tool_layout.setSpacing(10)
+
+        self._tool_title = QLabel("性能工具")
+        tool_layout.addWidget(self._tool_title)
+        tool_layout.addSpacing(6)
+
+        self.hprof_btn = QPushButton("堆转储")
+        self.hprof_btn.setIcon(qta.icon('fa6s.database', color='white'))
+        self.hprof_btn.setToolTip("导出指定进程的 Java 堆快照 (.hprof)")
+        self.hprof_btn.clicked.connect(self.hprof_requested.emit)
+        tool_layout.addWidget(self.hprof_btn)
+
+        self.packet_btn = QPushButton("抓包")
+        self.packet_btn.setIcon(qta.icon('fa6s.network-wired', color='white'))
+        self.packet_btn.setToolTip("抓取设备侧网络包并保存")
+        self.packet_btn.clicked.connect(self.packet_requested.emit)
+        tool_layout.addWidget(self.packet_btn)
+
+        tool_layout.addStretch()
 
     def _relayout_cards(self):
         """根据当前宽度决定是两列还是一列"""
@@ -559,28 +627,29 @@ class PerfView(QWidget):
         width = self.scroll.viewport().width() if self.scroll else 900
         two_cols = width >= 900
 
-        order = ['cpu', 'mem', 'fps', 'traffic', 'jank']
+        order = ['cpu', 'mem', 'fps', 'traffic']
         if two_cols:
-            # 前 4 项 2×2 排布
-            top_order = ['cpu', 'mem', 'fps', 'traffic']
-            for i, key in enumerate(top_order):
+            # 4 个指标卡片 2×2 排布
+            for i, key in enumerate(order):
                 r = i // 2
                 c = i % 2
                 card = self._cards[key]
                 card.setParent(self.cards_container)
                 card.setVisible(True)
                 self.cards_grid.addWidget(card, r, c)
-            # 卡顿统计跨 2 列
-            jank = self._cards['jank']
-            jank.setParent(self.cards_container)
-            jank.setVisible(True)
-            self.cards_grid.addWidget(jank, 2, 0, 1, 2)
+            # 性能工具占满一行，放在指标卡片下方
+            self._tool_card.setParent(self.cards_container)
+            self._tool_card.setVisible(True)
+            self.cards_grid.addWidget(self._tool_card, 2, 0, 1, 2)
         else:
             for i, key in enumerate(order):
                 card = self._cards[key]
                 card.setParent(self.cards_container)
                 card.setVisible(True)
                 self.cards_grid.addWidget(card, i, 0)
+            self._tool_card.setParent(self.cards_container)
+            self._tool_card.setVisible(True)
+            self.cards_grid.addWidget(self._tool_card, len(order), 0)
 
         # 让多余空间落到最末行下方，而不是分散到卡片之间
         for r in range(0, 20):
@@ -610,9 +679,9 @@ class PerfView(QWidget):
         }
         interval = interval_map.get(interval_text, 5.0)
 
-        metrics = [k for k, cb in self.metric_checks.items() if cb.isChecked()]
+        metrics = [k for k, cb in self.metric_radios.items() if cb.isChecked()]
         if not metrics:
-            show_toast(message="请至少选择一项指标", parent=self)
+            show_toast(message="请选择一项监控指标", parent=self)
             return
         self._active_metrics = list(metrics)
 
@@ -704,6 +773,14 @@ class PerfView(QWidget):
         self._has_wallpaper = has_wallpaper
         is_dark = (theme_mode == ThemeMode.DARK)
 
+        # 下拉面板的统一样式：本页不走 Theme.apply_theme_to_widget，
+        # 这里显式刷新一次，否则本页下拉拿不到统一样式、弹出容器还会露白底
+        try:
+            from utils import widget_helpers
+            widget_helpers.set_combo_popup_theme(is_dark)
+        except Exception:
+            pass
+
         # 主区域背景
         # 无壁纸：纯色
         # 有壁纸：transparent，让 centralWidget 罩层 + 壁纸透出
@@ -727,6 +804,8 @@ class PerfView(QWidget):
             primary_fg = "#ffffff"
             danger_bg = "#c0392b"
             danger_fg = "#ffffff"
+            radio_ring = "#b8b8b8"          # 深色底：圆环要更亮才看得见
+            radio_ring_disabled = "#6a6a6a"
         else:
             panel_bg = "rgba(232, 234, 237, 0.85)" if has_wallpaper else "#e8eaed"
             panel_border = "#d0d0d0"
@@ -737,6 +816,8 @@ class PerfView(QWidget):
             primary_fg = "#ffffff"
             danger_bg = "#e74c3c"
             danger_fg = "#ffffff"
+            radio_ring = "#5a5a5a"          # 浅色底：深灰圆环保证对比度
+            radio_ring_disabled = "#b0b0b0"
 
         # 卡片区背景：跟主区域一致（有壁纸 transparent，无壁纸纯色）
         if is_dark:
@@ -785,16 +866,23 @@ class PerfView(QWidget):
                     selection-color: white;
                     outline: none;
                 }}
-                #PerfControlPanel QCheckBox {{
+                #PerfControlPanel QCheckBox, #PerfControlPanel QRadioButton {{
                     background: transparent;
                 }}
-                #PerfControlPanel QCheckBox:enabled {{
+                #PerfControlPanel QCheckBox:enabled, #PerfControlPanel QRadioButton:enabled {{
                     color: {text};
                 }}
-                #PerfControlPanel QCheckBox:disabled {{
+                #PerfControlPanel QCheckBox:disabled, #PerfControlPanel QRadioButton:disabled {{
                     color: {disabled_text};
                 }}
+                #PerfControlPanel QRadioButton:enabled:checked {{
+                    color: {primary_bg};
+                    font-weight: 600;
+                }}
             """)
+
+        # 指标单选框圆环自绘，配色不跟着 QSS 走，这里随主题一起刷新
+        BorderedRadioButton.set_ring_colors(radio_ring, primary_bg, radio_ring_disabled)
 
         bottom = self.findChild(QFrame, "PerfBottomBar")
         if bottom is not None:
@@ -855,11 +943,64 @@ class PerfView(QWidget):
             f"QScrollArea > QWidget > QWidget {{"
             f" background-color: {cards_bg};"
             f" }}"
+            f"QScrollBar:vertical {{"
+            f" width: 6px;"
+            f" background: {'#3a3a3a' if is_dark else '#e0e0e0'};"
+            f" border-radius: 3px;"
+            f" margin: 0px;"
+            f" }}"
+            f"QScrollBar::handle:vertical {{"
+            f" background: {'#666' if is_dark else '#c0c0c0'};"
+            f" border-radius: 3px;"
+            f" min-height: 20px;"
+            f" }}"
+            f"QScrollBar::handle:vertical:hover {{"
+            f" background: {'#888' if is_dark else '#a0a0a0'};"
+            f" }}"
+            f"QScrollBar::add-line:vertical,"
+            f"QScrollBar::sub-line:vertical {{"
+            f" height: 0px;"
+            f" width: 0px;"
+            f" background: transparent;"
+            f" border: none;"
+            f" }}"
+            f"QScrollBar::add-page:vertical,"
+            f"QScrollBar::sub-page:vertical {{"
+            f" background: transparent;"
+            f" }}"
+            f"QScrollBar::up-arrow:vertical,"
+            f"QScrollBar::down-arrow:vertical {{"
+            f" background: transparent;"
+            f" border: none;"
+            f" width: 0px;"
+            f" height: 0px;"
+            f" }}"
         )
         self.cards_container.setStyleSheet(f"background-color: {cards_bg};")
 
         for card in self._cards.values():
             if hasattr(card, 'apply_theme'):
                 card.apply_theme(theme_mode, has_wallpaper)
+
+        # 性能工具卡片：与指标卡片保持同一套配色
+        if self._tool_card is not None:
+            if is_dark:
+                tool_bg = "rgba(35, 36, 39, 0.85)" if has_wallpaper else "#232427"
+                tool_border = "#3a3a3a"
+                tool_title = "#ffffff"
+            else:
+                tool_bg = "rgba(232, 234, 237, 0.85)" if has_wallpaper else "#e8eaed"
+                tool_border = "#d0d0d0"
+                tool_title = "#333333"
+            self._tool_card.setStyleSheet(f"""
+                #PerfToolCard {{
+                    background-color: {tool_bg};
+                    border: 1px solid {tool_border};
+                    border-radius: 8px;
+                }}
+            """)
+            self._tool_title.setStyleSheet(
+                f"font-weight: 600; font-size: 13px; color: {tool_title}; background: transparent;"
+            )
 
         # 复选框颜色由父级 QSS 的 :enabled / :disabled 分支控制，无需额外刷新

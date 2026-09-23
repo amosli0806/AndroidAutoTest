@@ -8,6 +8,9 @@ from datetime import datetime, timedelta
 
 import logging
 
+from utils.app_paths import data_path
+
+
 
 @dataclass
 class ScheduledTask:
@@ -62,7 +65,7 @@ class ScheduledTask:
 
 
 class TaskModel:
-    DATA_FILE = "tasks_data.json"
+    DATA_FILE = data_path("tasks_data.json")
 
     def __init__(self):
         self.tasks: List[ScheduledTask] = []

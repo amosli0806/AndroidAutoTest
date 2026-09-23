@@ -22,6 +22,7 @@ import time
 from PyQt6.QtCore import QObject, pyqtSignal, QThreadPool, QRunnable
 
 from utils.adb_path import get_adb_path
+from utils import log_colors
 
 # 并发上限
 MAX_CONCURRENT_TASKS = 10
@@ -90,13 +91,16 @@ class AdbCommandRunnable(QRunnable):
             self.LEVEL_WARNING: "⚠️", self.LEVEL_ERROR: "❌",
             self.LEVEL_RESULT: "🏁",
         }
-        colors = {
-            self.LEVEL_INFO: "#000000", self.LEVEL_SUCCESS: "#2e7d32",
-            self.LEVEL_WARNING: "#f57c00", self.LEVEL_ERROR: "#c62828",
-            self.LEVEL_RESULT: "#1565c0",
+        # 颜色跟随主题：原本写死的深色系只在白底上可读，深色面板上会看不清
+        levels = {
+            self.LEVEL_INFO: log_colors.INFO,
+            self.LEVEL_SUCCESS: log_colors.SUCCESS,
+            self.LEVEL_WARNING: log_colors.WARNING,
+            self.LEVEL_ERROR: log_colors.ERROR,
+            self.LEVEL_RESULT: log_colors.RESULT,
         }
         icon = icons.get(level, "")
-        color = colors.get(level, "#000000")
+        color = log_colors.log_color(levels.get(level, log_colors.INFO))
         return f"<span style='color:{color};'>{icon} {text}</span>"
 
     def _emit_finished(self, success):
@@ -851,7 +855,7 @@ class AdbCommandPool(QObject):
             ok, reason = self.can_execute(command_obj)
             if not ok:
                 self.command_output.emit(
-                    f"<span style='color:#f57c00;'>⚠️ {reason}</span>", tag
+                    f"<span style='color:{log_colors.log_color(log_colors.WARNING)};'>⚠️ {reason}</span>", tag
                 )
                 return
 
@@ -879,7 +883,8 @@ class AdbCommandPool(QObject):
         self.command_output.emit(text, tag)
 
     def _on_signals_error(self, text, tag):
-        self.command_output.emit(f"<span style='color:#c62828;'>{text}</span>", tag)
+        self.command_output.emit(
+            f"<span style='color:{log_colors.log_color(log_colors.ERROR)};'>{text}</span>", tag)
 
     def _on_signals_finished(self, cmd_id, cmd_name, success, tag):
         self.running_commands.pop(cmd_id, None)

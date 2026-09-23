@@ -58,38 +58,6 @@ ADB_COMMANDS = [
         "category": "设备管理",
         "description": "重新挂载系统分区为可读写"
     },
-    {
-        "command": "adb shell settings put system hc_auth_personal_info_enable 1\n"
-                   "adb shell settings put system hc_auth_sensitive_info_enable 1\n"
-                   "adb shell settings put system hc_auth_gps_enable 1\n"
-                   "adb shell settings put system hc_auth_mic_enable 1\n"
-                   "adb shell settings put system hc_auth_camera_enable 1\n"
-                   "adb shell settings put system hc_auth_info_sharing_enable 1",
-        "category": "设备管理",
-        "description": "开启个人隐私授权（本田车机）"
-    },
-    {
-        "command": "adb shell settings put system hc_auth_personal_info_enable 0\n"
-                   "adb shell settings put system hc_auth_sensitive_info_enable 0\n"
-                   "adb shell settings put system hc_auth_gps_enable 0\n"
-                   "adb shell settings put system hc_auth_mic_enable 0\n"
-                   "adb shell settings put system hc_auth_camera_enable 0\n"
-                   "adb shell settings put system hc_auth_info_sharing_enable 0",
-        "category": "设备管理",
-        "description": "关闭个人隐私授权（本田车机）"
-    },
-    {
-        "command": "adb shell setprop hsae.vhal.debug 1\n"
-                   "adb shell dumpsys activity service com.android.car/.CarService inject-vhal-event 0x40382402 1\n"
-                   "adb shell dumpsys activity service com.android.car/.CarService inject-vhal-event 0x40382403 1",
-        "category": "设备管理",
-        "description": "25M 走行限制关闭，发送 P 档信号"
-    },
-    {
-        "command": "adb shell am start -n com.alap.honda30ea.chs.developerdiag/com.alap.honda30ea.chs.developerdiag.MainActivity",
-        "category": "设备管理",
-        "description": "23M/24M 走行限制关闭"
-    },
 
     # ---------- 应用管理 ----------
     {
@@ -116,16 +84,6 @@ ADB_COMMANDS = [
         "command": "adb shell am start -n <package_name>/<activity_name>",
         "category": "应用管理",
         "description": "启动指定的 Activity"
-    },
-    {
-        "command": "adb shell am start -n com.hynex.vehicleservice/com.hynex.vehicleservice.MenuActivity",
-        "category": "应用管理",
-        "description": "本田 23M/24M/25M 写 VIN 后门"
-    },
-    {
-        "command": "adb shell am start -n com.hynex.vehicleservice/com.hynex.vehicleservice.ui.MenuActivity",
-        "category": "应用管理",
-        "description": "本田 27M 写 VIN 后门"
     },
     {
         "command": "adb shell am start com.android.car.settings",
@@ -193,26 +151,6 @@ ADB_COMMANDS = [
         "command": "adb shell mkdir <directory>",
         "category": "文件操作",
         "description": "创建目录"
-    },
-    {
-        "command": "adb pull /sdcard/BaiduMapAuto/video",
-        "category": "文件操作",
-        "description": "拉取仪表投流视频"
-    },
-    {
-        "command": "adb pull /storage/emulated/0/Android/data/com.baidu.naviauto/BaiduMap/bnav/naviautoenginelog",
-        "category": "文件操作",
-        "description": "HC3.0 地图引擎日志"
-    },
-    {
-        "command": "adb pull /sdcard/BaiduMapAuto/naviautoenginelog",
-        "category": "日志文件",
-        "description": "本田 23M/24M/25M/26M 地图引擎日志路径"
-    },
-    {
-        "command": "adb pull /data/vendor/bdicc/log",
-        "category": "日志文件",
-        "description": "本田 25M GPS 日志路径"
     },
 
     # ---------- 日志 ----------
@@ -455,6 +393,72 @@ ADB_COMMANDS = [
         "command": "adb shell setenforce 1",
         "category": "应用权限",
         "description": "打开 SELinux"
+    },
+
+    # ---------- 站点/客户相关命令 ----------
+    # 与具体项目/客户绑定的命令（厂商私有 settings、内部日志路径、特定机型入口等）
+    # 由团队按实际需要维护。
+    {
+        "command": "adb shell settings put system hc_auth_personal_info_enable 1\n"
+                   "adb shell settings put system hc_auth_sensitive_info_enable 1\n"
+                   "adb shell settings put system hc_auth_gps_enable 1\n"
+                   "adb shell settings put system hc_auth_mic_enable 1\n"
+                   "adb shell settings put system hc_auth_camera_enable 1\n"
+                   "adb shell settings put system hc_auth_info_sharing_enable 1",
+        "category": "设备管理",
+        "description": "开启个人隐私授权（车机）"
+    },
+    {
+        "command": "adb shell settings put system hc_auth_personal_info_enable 0\n"
+                   "adb shell settings put system hc_auth_sensitive_info_enable 0\n"
+                   "adb shell settings put system hc_auth_gps_enable 0\n"
+                   "adb shell settings put system hc_auth_mic_enable 0\n"
+                   "adb shell settings put system hc_auth_camera_enable 0\n"
+                   "adb shell settings put system hc_auth_info_sharing_enable 0",
+        "category": "设备管理",
+        "description": "关闭个人隐私授权（车机）"
+    },
+    {
+        "command": "adb shell setprop hsae.vhal.debug 1\n"
+                   "adb shell dumpsys activity service com.android.car/.CarService inject-vhal-event 0x40382402 1\n"
+                   "adb shell dumpsys activity service com.android.car/.CarService inject-vhal-event 0x40382403 1",
+        "category": "设备管理",
+        "description": "25M 走行限制关闭，发送 P 档信号"
+    },
+    {
+        "command": "adb shell am start -n com.hynex.vehicleservice/com.hynex.vehicleservice.MenuActivity",
+        "category": "应用管理",
+        "description": "23M/24M/25M 写 VIN 后门"
+    },
+    {
+        "command": "adb shell am start -n com.hynex.vehicleservice/com.hynex.vehicleservice.ui.MenuActivity",
+        "category": "应用管理",
+        "description": "27M 写 VIN 后门"
+    },
+    {
+        "command": "adb pull /sdcard/BaiduMapAuto/video",
+        "category": "文件操作",
+        "description": "拉取仪表投流视频"
+    },
+    {
+        "command": "adb pull /storage/emulated/0/Android/data/com.baidu.naviauto/BaiduMap/bnav/naviautoenginelog",
+        "category": "文件操作",
+        "description": "HC3.0 地图引擎日志"
+    },
+    {
+        "command": "adb pull /sdcard/BaiduMapAuto/naviautoenginelog",
+        "category": "日志文件",
+        "description": "23M/24M/25M/26M 地图引擎日志路径"
+    },
+    {
+        "command": "adb pull /data/vendor/bdicc/log",
+        "category": "日志文件",
+        "description": "25M GPS 日志路径"
+    },
+    {
+        "command": "adb shell am start -n com.alap.honda30ea.chs.developerdiag/com.alap.honda30ea.chs.developerdiag.MainActivity",
+        "category": "设备管理",
+        "description": "23M/24M 走行限制关闭"
     },
 ]
 

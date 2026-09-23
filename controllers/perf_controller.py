@@ -119,6 +119,10 @@ class ScenarioWorker(QThread):
 class PerfController(QObject):
     """性能检测控制器"""
 
+    # 消息中心用（纯新增）：采集完成 / 阈值异常
+    perf_finished = pyqtSignal(int)   # 采样点数
+    perf_alert = pyqtSignal(str)      # 异常文案
+
     def __init__(self, perf_model: PerfModel, perf_view,
                  device_service, project_model, step_model, suite_model,
                  logs_view=None, parent=None):
@@ -135,7 +139,6 @@ class PerfController(QObject):
         self.perf_worker = None
         self.scenario_worker = None
         self._alert_cache = {}  # {metric: bool}
-        self._last_jank_count = None  # 用于计算卡顿增量
 
         # 采样统计刷新定时器
         self._stats_timer = QTimer(self)
@@ -188,13 +191,13 @@ class PerfController(QObject):
             return
         try:
             compat = AndroidCompat(self.device_service.device)
-            packages = compat.list_third_party_packages()
+            packages = compat.list_all_packages()
             self.view.update_app_list(packages)
 
             # 更新指标可用性
             available = {}
             reasons = {}
-            for key in ('cpu', 'mem', 'fps', 'traffic', 'jank'):
+            for key in ('cpu', 'mem', 'fps', 'traffic'):
                 ok = compat.is_metric_available(key)
                 available[key] = ok
                 if not ok:
@@ -244,7 +247,6 @@ class PerfController(QObject):
         )
         self.current_session = session
         self._alert_cache = {k: False for k in metrics}
-        self._last_jank_count = None  # 重置卡顿增量基准
 
         # 清空视图数据
         for card in self.view._cards.values():
@@ -354,6 +356,8 @@ class PerfController(QObject):
                     self.view,
                     f"采集完成，共 {len(self.current_session.samples)} 个采样点"
                 )
+                # 消息中心：采集完成留痕（纯新增信号）
+                self.perf_finished.emit(len(self.current_session.samples))
             self.current_session = None
 
         self.view.set_state(self.view.STATE_IDLE)
@@ -394,36 +398,12 @@ class PerfController(QObject):
                 msg = f"⚠ {key.upper()} 异常: {val:.1f}（阈值 {limit}）"
                 self.current_session.alerts.append((sample.timestamp, key, msg))
                 self.view.add_alert_log(msg)
+                # 消息中心：阈值异常留痕（_alert_cache 保证同一指标一次会话只报一次）
+                self.perf_alert.emit(msg)
             elif not triggered and self._alert_cache.get(key, False):
                 # 恢复正常
                 self._alert_cache[key] = False
                 self.view.set_alert(key, False)
-
-        # 卡顿单独处理：用"本次采样期间的增量"对比阈值
-        if 'jank' in self.current_session.metrics:
-            current_jank = sample.jank_count
-            if self._last_jank_count is None:
-                # 首个采样点，只记录基准，不判断
-                self._last_jank_count = current_jank
-            else:
-                delta = current_jank - self._last_jank_count
-                self._last_jank_count = current_jank
-                # App 重启导致 jank_count 被重置时，delta 会为负数，跳过本次判断
-                if delta < 0:
-                    pass
-                else:
-                    triggered = (delta > th.jank_max)
-                    if triggered and not self._alert_cache.get('jank', False):
-                        self._alert_cache['jank'] = True
-                        self.view.set_alert('jank', True)
-                        msg = f"⚠ JANK 异常: 本周期新增 {delta} 次（阈值 {th.jank_max}）"
-                        self.current_session.alerts.append((sample.timestamp, 'jank', msg))
-                        self.view.add_alert_log(msg)
-                        if self.logs_view:
-                            self.logs_view.add_log(f"[性能告警] {msg}", "warning")
-                    elif not triggered and self._alert_cache.get('jank', False):
-                        self._alert_cache['jank'] = False
-                        self.view.set_alert('jank', False)
 
     def _refresh_stats(self, final=False):
         if not self.current_session:
@@ -518,12 +498,12 @@ class PerfController(QObject):
                 writer = csv.writer(f)
                 writer.writerow([
                     'timestamp', 'cpu_percent', 'mem_pss_mb',
-                    'fps', 'jank_count', 'rx_bytes', 'tx_bytes'
+                    'fps', 'rx_bytes', 'tx_bytes'
                 ])
                 for s in session.samples:
                     writer.writerow([
                         f"{s.timestamp:.3f}", f"{s.cpu_percent:.2f}",
-                        f"{s.mem_pss_mb:.2f}", s.fps, s.jank_count,
+                        f"{s.mem_pss_mb:.2f}", s.fps,
                         s.rx_bytes, s.tx_bytes
                     ])
             show_toast(self.view, "导出成功")

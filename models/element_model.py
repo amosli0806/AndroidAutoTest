@@ -3,6 +3,8 @@ import json
 import os
 from typing import List, Optional
 from dataclasses import dataclass, field
+from utils.app_paths import data_path
+
 
 @dataclass
 class Element:
@@ -39,7 +41,7 @@ class Element:
 
 
 class ElementModel:
-    DATA_FILE = "elements_data.json"
+    DATA_FILE = data_path("elements_data.json")
 
     def __init__(self):
         self.elements: List[Element] = []

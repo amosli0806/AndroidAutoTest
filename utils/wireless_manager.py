@@ -5,6 +5,12 @@ import sys
 import socket
 import time
 
+from utils.adb_path import get_adb_path
+
+# 无线调试这几条命令统一走内置 adb，和其它地方（DeviceWatcher 长连接、设备列表、
+# 用例执行）用同一个二进制。注意这里是 shell 字符串，路径带空格会被截断，必须带引号。
+_ADB = f'"{get_adb_path()}"'
+
 
 def _get_local_ip():
     """获取本机局域网 IP"""
@@ -66,7 +72,7 @@ class WirelessManager:
 
             # 方法1：尝试从指定接口直接获取 IP（使用 ip addr）
             for iface in wifi_ifaces:
-                cmd = f"adb -s {serial} shell ip addr show {iface}"
+                cmd = f"{_ADB} -s {serial} shell ip addr show {iface}"
                 result = _run_adb_command(cmd, timeout=5)
                 if result.returncode == 0:
                     match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/', result.stdout)
@@ -80,7 +86,7 @@ class WirelessManager:
             all_ips = []
             wifi_ips = []
             for cmd_base in commands:
-                cmd = f"adb -s {serial} shell {cmd_base}"
+                cmd = f"{_ADB} -s {serial} shell {cmd_base}"
                 result = _run_adb_command(cmd, timeout=5)
                 if result.returncode != 0:
                     continue
@@ -169,12 +175,12 @@ class WirelessManager:
 
         # 3. 如果有线设备序列号存在，执行 tcpip 切换
         if serial:
-            check_cmd = f"adb -s {serial} shell getprop service.adb.tcp.port"
+            check_cmd = f"{_ADB} -s {serial} shell getprop service.adb.tcp.port"
             check_result = _run_adb_command(check_cmd, timeout=5)
             if check_result.returncode == 0 and check_result.stdout.strip() == str(port):
                 pass
             else:
-                tcpip_cmd = f"adb -s {serial} tcpip {port}"
+                tcpip_cmd = f"{_ADB} -s {serial} tcpip {port}"
                 tcpip_result = _run_adb_command(tcpip_cmd, timeout=10)
                 if tcpip_result.returncode != 0:
                     return False, f"设置 TCP/IP 模式失败: {tcpip_result.stderr}"
@@ -188,7 +194,7 @@ class WirelessManager:
                     return False, "设备未能成功切换到 TCP/IP 模式，请确保设备已通过 USB 连接并授权。"
 
         # 4. 执行 connect
-        connect_cmd = f"adb connect {ip}:{port}"
+        connect_cmd = f"{_ADB} connect {ip}:{port}"
         connect_result = _run_adb_command(connect_cmd, timeout=30)
         output = connect_result.stdout + connect_result.stderr
         if "connected to" in output or "already connected" in output:
@@ -204,9 +210,9 @@ class WirelessManager:
     def disconnect(self, ip=None):
         try:
             if ip:
-                cmd = f"adb disconnect {ip}:5555"
+                cmd = f"{_ADB} disconnect {ip}:5555"
             else:
-                cmd = "adb disconnect"
+                cmd = f"{_ADB} disconnect"
             result = _run_adb_command(cmd, timeout=10)
             return True, result.stdout.strip()
         except Exception as e:

@@ -8,9 +8,34 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 
 from models.command import Command
+from utils.toast import show_toast
 from utils.theme import ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
+from PyQt6.QtWidgets import QStyleOptionButton, QStyle
+from PyQt6.QtGui import QPainter, QPen, QColor
 
+
+class BorderedCheckBox(QCheckBox):
+    """复选框：保留 Fusion 默认绘制（勾选时有 √），额外叠加明显的边框。
+    与 execute_view / perf_view / task_view 中同名控件保持一致。"""
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        try:
+            opt = QStyleOptionButton()
+            self.initStyleOption(opt)
+            rect = self.style().subElementRect(
+                QStyle.SubElement.SE_CheckBoxIndicator, opt, self
+            )
+            if rect.isValid() and rect.width() > 0:
+                painter = QPainter(self)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setPen(QPen(QColor(140, 140, 140), 1))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRect(rect.adjusted(0, 0, -1, -1))
+                painter.end()
+        except Exception:
+            pass
 
 class CustomCommandDialog(QDialog):
     """自定义指令对话框：新增或编辑"""
@@ -71,7 +96,7 @@ class CustomCommandDialog(QDialog):
         form.addRow("功能描述:", self.desc_edit)
 
         # ---- 定时执行 ----
-        self.timer_check = QCheckBox("定时执行")
+        self.timer_check = BorderedCheckBox("定时执行")
         form.addRow("", self.timer_check)
 
         self.interval_spin = QSpinBox()
@@ -83,7 +108,7 @@ class CustomCommandDialog(QDialog):
         form.addRow("执行间隔:", self.interval_spin)
 
         # ---- 循环执行 ----
-        self.loop_check = QCheckBox("循环执行")
+        self.loop_check = BorderedCheckBox("循环执行")
         form.addRow("", self.loop_check)
 
         self.loop_count_spin = QSpinBox()
@@ -95,16 +120,16 @@ class CustomCommandDialog(QDialog):
         form.addRow("循环次数:", self.loop_count_spin)
 
         # ---- 显示执行/停止按钮 ----
-        self.stop_btn_check = QCheckBox("显示执行/停止按钮")
+        self.stop_btn_check = BorderedCheckBox("显示执行/停止按钮")
         self.stop_btn_check.setChecked(True)
         form.addRow("", self.stop_btn_check)
 
         # ---- 保存输出到文件 ----
-        self.save_output_check = QCheckBox("保存输出到文件")
+        self.save_output_check = BorderedCheckBox("保存输出到文件")
         form.addRow("", self.save_output_check)
 
         # ---- 无超时执行 ----
-        self.no_timeout_check = QCheckBox("无超时执行（适用于长时间运行的命令）")
+        self.no_timeout_check = BorderedCheckBox("无超时执行（适用于长时间运行的命令）")
         self.no_timeout_check.setToolTip("勾选后该命令不受 30 秒超时限制")
         form.addRow("", self.no_timeout_check)
 
@@ -124,7 +149,7 @@ class CustomCommandDialog(QDialog):
         self.ok_btn.setObjectName("okBtn")
         self.ok_btn.setFixedHeight(32)
         self.ok_btn.setMinimumWidth(140)
-        self.ok_btn.clicked.connect(self.accept)
+        self.ok_btn.clicked.connect(self._on_ok_clicked)
         btn_layout.addWidget(self.ok_btn)
 
         btn_layout.addSpacing(10)
@@ -165,6 +190,17 @@ class CustomCommandDialog(QDialog):
         self.loop_count_spin.setEnabled(False)
         self.preset_hint.setVisible(True)
 
+    def _on_ok_clicked(self):
+        """确定前先做校验：失败不关闭对话框"""
+        name = self.name_edit.text().strip()
+        cmd_text = self.command_edit.toPlainText().strip()
+        if not name:
+            show_toast(self, "指令名称不能为空", duration=2000)
+            return
+        if not cmd_text:
+            show_toast(self, "命令内容不能为空", duration=2000)
+            return
+        self.accept()
     # ------------------------------------------------------------------
     # 获取结果
     # ------------------------------------------------------------------

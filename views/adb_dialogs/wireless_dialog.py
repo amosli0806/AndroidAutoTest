@@ -41,10 +41,6 @@ class WirelessDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        title = QLabel("📶 无线联调")
-        title.setObjectName("titleLabel")
-        layout.addWidget(title)
-
         # 版本警告横幅（默认隐藏）
         self.warning_label = QLabel(
             "⚠️ Android 12 及以上不支持本功能。请在开发者选项中开启「无线调试」并使用系统配对功能。"

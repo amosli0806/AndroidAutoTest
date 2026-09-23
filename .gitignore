@@ -1,0 +1,52 @@
+# ---------- 运行环境 / 构建产物（绝不能提交） ----------
+# 这些是"跑起来/打包出来"的东西，体积大且平台相关：
+#   .venv 700+MB、dist 600+MB、build 几十 MB —— 提交上去仓库直接废掉
+.venv/
+venv/
+dist/
+build/
+dist_updater/
+build_updater/
+*.spec.bak
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---------- 用户数据（绝对不提交） ----------
+# data/ 是本机跑出来的真实数据：项目/用例/元素库/语音用例/性能数据，
+# 里面还有 config.json（含本机输出目录、快捷键等个人设置）。
+# 换台机器首次启动会自动创建空的 data/，不需要也不应该进仓库。
+data/
+
+# ---------- 运行期产生的日志与导出文件 ----------
+# app_debug.log 里含本机绝对路径、设备序列号等，不适合公开
+app_debug.log
+*.log
+cases_export.json
+elements_export.json
+reports/
+screenshots/
+
+# ---------- 分发用的压缩包 ----------
+# 发布产物由 CI 生成并上传到 Release，不进仓库
+*.7z
+*.zip
+
+# ---------- 一次性的个人工具脚本 ----------
+# 这两个是当时把某个 Excel 导入语音用例库的一次性脚本：
+# 里面带着内部项目代号、绝对桌面路径和唤醒词，跟产品代码无关，不入公开仓库
+tools/import_navigation_voice.py
+tools/import_more_sheets.py
+
+# ---------- IDE / 编辑器 ----------
+.idea/
+.vscode/
+*.swp
+
+# ---------- 工作助手本地记忆（不进公开仓库） ----------
+.workbuddy/
+
+# ---------- 系统杂物 ----------
+Thumbs.db
+desktop.ini
+.DS_Store

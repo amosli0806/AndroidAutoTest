@@ -1,6 +1,8 @@
 # services/preset_commands.py
 """捕虫师内置预设命令列表"""
 
+
+
 PRESET_COMMANDS = [
     {
         "id": 1,  # 命令的唯一标识符，预设命令 ID 固定为 1-4
@@ -42,61 +44,61 @@ PRESET_COMMANDS = [
         "id": 5,
         "name": "地图引擎日志",
         "command_text": "pull /sdcard/BaiduMapAuto/naviautoenginelog/ \"{output_dir}/{safe_device_serial}/\"",
-        "description": "本田23M24M25M26M引擎日志",
+        "description": "23M24M25M26M引擎日志",
         "show_stop_button": True,
         "is_preset": True,
         "no_timeout": True  # 新增
     },
     {
         "id": 6,
-        "name": "本田车机日志27M（3DAA）",
+        "name": "车机日志27M（3DAA）",
         "command_text": "pull /mnt/vendor/log/Logcat \"{output_dir}/{safe_device_serial}/\"",
-        "description": "本田27M车机日志",
+        "description": "27M车机日志",
         "show_stop_button": True,
         "is_preset": True,
         "no_timeout": True  # 新增
     },
     {
         "id": 7,
-        "name": "本田车机日志26/27.5M（3A0W/30AW）",
+        "name": "车机日志26/27.5M（3A0W/30AW）",
         "command_text": "pull /data/persistlogs/hsaelog \"{output_dir}/{safe_device_serial}/\"",
-        "description": "本田26M车机日志",
+        "description": "26M车机日志",
         "show_stop_button": True,
         "is_preset": True,
         "no_timeout": True  # 新增
     },
     {
         "id": 8,
-        "name": "本田车机日志25M（33WA）",
+        "name": "车机日志25M（33WA）",
         "command_text": "pull /data/hsaelog \"{output_dir}/{safe_device_serial}/\"",
-        "description": "本田25M车机日志",
+        "description": "25M车机日志",
         "show_stop_button": True,
         "is_preset": True,
         "no_timeout": True  # 新增
     },
     {
         "id": 9,
-        "name": "本田车机日志23/24M（30EA/31YA）",
+        "name": "车机日志23/24M（30EA/31YA）",
         "command_text": "pull /data/misc/logd \"{output_dir}/{safe_device_serial}/\"",
-        "description": "本田23M/24M车机日志",
+        "description": "23M/24M车机日志",
         "show_stop_button": True,
         "is_preset": True,
         "no_timeout": True  # 新增
     },
     {
         "id": 10,
-        "name": "本田TSU日志",
+        "name": "TSU日志",
         "command_text": "pull /storage/emulated/0/cxlog \"{output_dir}/{safe_device_serial}/\"",
-        "description": "本田TSU日志",
+        "description": "TSU日志",
         "show_stop_button": True,
         "is_preset": True,
         "no_timeout": True  # 新增
     },
     {
         "id": 11,
-        "name": "本田ANR/Crash/墓碑日志",
+        "name": "ANR/Crash/墓碑日志",
         "command_text": "pull /data/anr \"{output_dir}/{safe_device_serial}/\"; pull /storage/emulated/0/Android/data/com.baidu.naviauto/files/xcrash \"{output_dir}/{safe_device_serial}/\"; pull /data/tombstones \"{output_dir}/{safe_device_serial}/\";",
-        "description": "本田ANR/Crash/墓碑日志",
+        "description": "ANR/Crash/墓碑日志",
         "show_stop_button": True,
         "is_preset": True,
         "no_timeout": True  # 新增

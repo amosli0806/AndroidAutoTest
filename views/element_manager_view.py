@@ -548,7 +548,7 @@ class ElementEditDialog(QDialog):
         self.loc_type_combo.setObjectName("locTypeCombo")
 
         self.loc_value_edit = QLineEdit()
-        self.loc_value_edit.setPlaceholderText("例如：com.baidu.naviauto:id/zoomout_btn")
+        self.loc_value_edit.setPlaceholderText("例如：com.example.app:id/btn")
 
         self.remark_edit = QLineEdit()
         self.remark_edit.setPlaceholderText("可选备注信息")

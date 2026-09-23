@@ -22,8 +22,6 @@ class PerfService:
         # 流量采集需要记录上次字节数
         self._last_rx = 0
         self._last_tx = 0
-        # 卡顿累计
-        self._last_jank_count = 0
         # CPU 差分计算用
         self._last_cpu_ticks = None
         self._last_cpu_time = 0.0
@@ -49,29 +47,17 @@ class PerfService:
             except Exception as e:
                 sample.errors.append(f"mem:{e}")
 
-        # FPS 与卡顿共用一份 dumpsys gfxinfo 输出，避免重复采集
-        if 'fps' in metrics or 'jank' in metrics:
+        if 'fps' in metrics:
             try:
                 gfx_out = shell_text(self.device, f"dumpsys gfxinfo {package}")
             except Exception as e:
                 gfx_out = ""
-                if 'fps' in metrics:
-                    sample.errors.append(f"fps:{e}")
-                if 'jank' in metrics:
-                    sample.errors.append(f"jank:{e}")
+                sample.errors.append(f"fps:{e}")
 
-            if 'fps' in metrics:
-                try:
-                    sample.fps = self._parse_fps(gfx_out)
-                except Exception as e:
-                    sample.errors.append(f"fps:{e}")
-            if 'jank' in metrics:
-                try:
-                    sample.jank_count = self._parse_jank(gfx_out)
-                    # 同时记录累计总帧数，用于精确计算卡顿率
-                    sample.total_frames = self._parse_total_frames(gfx_out)
-                except Exception as e:
-                    sample.errors.append(f"jank:{e}")
+            try:
+                sample.fps = self._parse_fps(gfx_out)
+            except Exception as e:
+                sample.errors.append(f"fps:{e}")
 
         if 'traffic' in metrics:
             try:
@@ -187,32 +173,6 @@ class PerfService:
         if delta_time <= 0 or delta_frames < 0:
             return 0
         return min(int(delta_frames / delta_time), 240)
-
-    def _parse_total_frames(self, out: str) -> int:
-        """从 gfxinfo 输出里解析累计总帧数"""
-        if not out:
-            return 0
-        m = re.search(r"Total frames rendered:\s*(\d+)", out)
-        if m:
-            return int(m.group(1))
-        return 0
-
-    # ============================================================
-    # 卡顿
-    # ============================================================
-    def _collect_jank(self, package: str) -> int:
-        out = shell_text(self.device, f"dumpsys gfxinfo {package}")
-        return self._parse_jank(out)
-
-    def _parse_jank(self, out: str) -> int:
-        if not out:
-            return self._last_jank_count
-        m = re.search(r"Janky frames:\s*(\d+)", out)
-        if m:
-            count = int(m.group(1))
-            self._last_jank_count = count
-            return count
-        return self._last_jank_count
 
     # ============================================================
     # 流量

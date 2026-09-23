@@ -35,6 +35,10 @@ class TaskScheduler(QObject):
         for task in tasks:
             if not task.enabled or not task.next_run:
                 continue
+            # 这个任务还在跑（或已在队列里等待）：本次到期时刻就由正在跑的那一轮消费掉，
+            # 不再重复投递。否则一个跑得比 60 秒慢的任务会被反复触发、反复入队。
+            if self.controller.is_task_busy(task.id):
+                continue
             if task.next_run <= now:
                 # 触发执行
                 self.task_triggered.emit(task.id)

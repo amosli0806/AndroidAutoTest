@@ -2,11 +2,18 @@
 from PyQt6.QtWidgets import QTreeView, QMenu, QMessageBox, QInputDialog, QAbstractItemView, QLabel
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
-from models.project_model import TreeNode, ProjectModel
-from utils.icons import IconManager
+import qtawesome as qta
+from models.project_model import TreeNode, ProjectModel, new_node_id
+from utils import tree_state
 from utils.dialogs import InputDialog, ConfirmDeleteDialog, WarningDialog
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
+
+# 树节点图标：与「语音播报」页的分组/用例图标保持同一套（同族图标 + 同色），
+# 那边是 fa6s.folder #f0b429 / fa6s.comment-dots #8a9099，两页放一起看才是一套东西。
+# 原来走 IconManager 的 Qt 标准图标（SP_DirClosedIcon 等），是系统风格的蓝色文件夹。
+ICON_COLOR_GROUP = "#f0b429"    # 琥珀：项目 / 功能模块
+ICON_COLOR_CASE = "#8a9099"     # 中性灰：用例
 
 
 class ProjectTreeView(QTreeView):
@@ -30,6 +37,10 @@ class ProjectTreeView(QTreeView):
         self.setSizePolicy(self.sizePolicy().horizontalPolicy(), self.sizePolicy().verticalPolicy())
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
+        # 展开状态持久化：默认全折叠，记住用户上次展开的项目/模块（存 data/config.json）
+        self._tree_state = tree_state.bind_view(self, "project_tree")
+
+
         self.placeholder_label = QLabel("右键创建用例", self)
         self.placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.placeholder_label.setStyleSheet("color: #999; font-size: 16px; background-color: transparent;")
@@ -41,7 +52,13 @@ class ProjectTreeView(QTreeView):
         from PyQt6.QtGui import QPalette, QColor
         pal = self.palette()
         pal.setColor(QPalette.ColorRole.Highlight, QColor(0, 0, 0, 0))
+        # 关键：让 viewport 的底色透明。
+        # QTreeView 的圆角边框画在外层 view 上，但 viewport 会用它自己的
+        # palette.Base 再铺一层方块底，把四角露成直角。这两步一起做，
+        # QSS 里的 border-radius 才能真正在四角显出来。
+        pal.setColor(QPalette.ColorRole.Base, QColor(0, 0, 0, 0))
         self.setPalette(pal)
+        self.viewport().setAutoFillBackground(False)
 
     def apply_theme(self, theme_mode: ThemeMode = None):
         """应用主题到视图（由主窗口调用）"""
@@ -58,8 +75,12 @@ class ProjectTreeView(QTreeView):
         if has_wp:
             self.setStyleSheet("""
                 #ProjectTreeView {
-                    background-color: rgba(232, 234, 237, 0.85);
+                    /* 0.85 与中央区域叠加后壁纸几乎看不见了，改成与深色主题一致的 0.7，
+                       让「项目管理」和「步骤列表」透出壁纸的程度对齐 */
+                    background-color: rgba(232, 234, 237, 0.7);
                     border: none;
+                    border-radius: 6px;
+                    padding: 4px;
                     outline: none;
                 }
                 #ProjectTreeView::item {
@@ -80,14 +101,7 @@ class ProjectTreeView(QTreeView):
                 #ProjectTreeView::item:hover:!selected {
                     background-color: rgba(223, 226, 230, 0.7);
                 }
-                #ProjectTreeView::branch {
-                    background: transparent;
-                }
-                #ProjectTreeView::branch:selected,
-                #ProjectTreeView::branch:selected:active,
-                #ProjectTreeView::branch:selected:!active {
-                    background: transparent;
-                }
+                /* 同 theme.PROJECT_TREE_LIGHT：不写 ::branch 规则，否则展开/折叠箭头不画 */
                 #ProjectTreeView QScrollBar:vertical {
                     width: 6px;
                     background: #e0e0e0;
@@ -117,10 +131,8 @@ class ProjectTreeView(QTreeView):
         self.refresh()
 
     def refresh(self):
-        # 保存当前展开状态
-        expanded_ids = self._save_expanded_state()
-        # 判断是否为首次加载（无保存状态且有数据）
-        is_first_load = not expanded_ids and self.model_obj and self.model_obj.root_nodes
+        # 重建前先把当前展开态收下来（setModel 会把展开态全部丢掉）
+        self._tree_state.snapshot()
 
         model = QStandardItemModel()
         if self.model_obj and self.model_obj.root_nodes:
@@ -128,52 +140,14 @@ class ProjectTreeView(QTreeView):
                 item = self._create_item(node)
                 model.appendRow(item)
             self.setModel(model)
-            if is_first_load:
-                self.expandAll()
-            else:
-                self._restore_expanded_state(expanded_ids)
+            # 按上次记录还原展开态；没有记录（首次运行）就保持全折叠
+            self._tree_state.restore()
             self.placeholder_label.hide()
         else:
             self.setModel(model)
+            self._tree_state.restore()
             self.placeholder_label.show()
             self.placeholder_label.setGeometry(0, 0, self.width(), self.height())
-
-    def _save_expanded_state(self):
-        """保存当前所有展开节点的ID"""
-        expanded_ids = set()
-        model = self.model()
-        if model is None:
-            return expanded_ids
-        for i in range(model.rowCount()):
-            root_index = model.index(i, 0)
-            self._collect_expanded(root_index, expanded_ids)
-        return expanded_ids
-
-    def _restore_expanded_state(self, expanded_ids):
-        """恢复指定ID列表的节点为展开状态"""
-        model = self.model()
-        if model is None:
-            return
-        for i in range(model.rowCount()):
-            root_index = model.index(i, 0)
-            self._restore_expanded_recursive(root_index, expanded_ids)
-
-    def _restore_expanded_recursive(self, index, expanded_ids):
-        node_id = index.data(Qt.ItemDataRole.UserRole)
-        if node_id and node_id in expanded_ids:
-            self.setExpanded(index, True)
-        for row in range(self.model().rowCount(index)):
-            child_index = self.model().index(row, 0, index)
-            self._restore_expanded_recursive(child_index, expanded_ids)
-
-    def _collect_expanded(self, index, expanded_ids):
-        if self.isExpanded(index):
-            node_id = index.data(Qt.ItemDataRole.UserRole)
-            if node_id:
-                expanded_ids.add(node_id)
-        for row in range(self.model().rowCount(index)):
-            child_index = self.model().index(row, 0, index)
-            self._collect_expanded(child_index, expanded_ids)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -186,11 +160,11 @@ class ProjectTreeView(QTreeView):
         item.setData(node.type, Qt.ItemDataRole.UserRole + 1)
         item.setEditable(False)
         if node.type == 'project':
-            icon = IconManager.get_icon('folder_open')
+            icon = qta.icon("fa6s.folder-open", color=ICON_COLOR_GROUP)
         elif node.type == 'folder':
-            icon = IconManager.get_icon('folder')
+            icon = qta.icon("fa6s.folder", color=ICON_COLOR_GROUP)
         else:
-            icon = IconManager.get_icon('doc')
+            icon = qta.icon("fa6s.comment-dots", color=ICON_COLOR_CASE)
         item.setIcon(icon)
         if node.children:
             for child in node.children:
@@ -199,6 +173,15 @@ class ProjectTreeView(QTreeView):
         return item
 
     def show_context_menu(self, pos):
+        # 图标颜色跟主题走：qta 出的是位图，QSS 改不了颜色，只能建菜单时按主题选。
+        # 取色与「语音管理 ▾」下拉菜单、语音页右键菜单保持一致。
+        is_dark = Settings.get_theme_mode() == THEME_MODE_DARK
+        icon_color = "#bbbbbb" if is_dark else "#555555"
+        icon_add = qta.icon('fa6s.plus', color=icon_color)
+        icon_copy = qta.icon('fa6s.copy', color=icon_color)
+        icon_rename = qta.icon('fa6s.pen', color=icon_color)
+        icon_delete = qta.icon('fa6s.trash', color=icon_color)
+
         # 获取选中的节点（仅用例类型）
         selected_indexes = self.selectedIndexes()
         selected_cases = []
@@ -212,7 +195,8 @@ class ProjectTreeView(QTreeView):
         # 如果有多个用例被选中，显示"删除选中"菜单
         if len(selected_cases) > 1:
             menu = QMenu()
-            delete_action = menu.addAction(f"删除选中的 {len(selected_cases)} 个用例")
+            delete_action = menu.addAction(
+                icon_delete, f"删除选中的 {len(selected_cases)} 个用例")
             delete_action.triggered.connect(lambda: self._batch_delete_cases(selected_cases))
             menu.exec(self.viewport().mapToGlobal(pos))
             return
@@ -221,7 +205,7 @@ class ProjectTreeView(QTreeView):
         index = self.indexAt(pos)
         if not index.isValid():
             menu = QMenu()
-            create_project = menu.addAction("创建项目")
+            create_project = menu.addAction(icon_add, "创建项目")
             create_project.triggered.connect(lambda: self._prompt_create(None, 'project'))
             menu.exec(self.viewport().mapToGlobal(pos))
             return
@@ -236,33 +220,31 @@ class ProjectTreeView(QTreeView):
 
         # 根据节点类型添加菜单项
         if node_type == 'project':
-            create_folder = menu.addAction("创建功能模块")
+            create_folder = menu.addAction(icon_add, "创建功能模块")
             create_folder.triggered.connect(lambda: self._prompt_create(node_id, 'folder'))
             menu.addSeparator()
             # 复制项目
-            copy_project = menu.addAction("复制项目")
+            copy_project = menu.addAction(icon_copy, "复制项目")
             copy_project.triggered.connect(lambda: self.copy_node_signal.emit(node_id, None))
         elif node_type == 'folder':
-            create_case = menu.addAction("创建用例")
+            create_case = menu.addAction(icon_add, "创建用例")
             create_case.triggered.connect(lambda: self._prompt_create(node_id, 'case'))
             menu.addSeparator()
             # 复制功能模块（父节点为当前节点的父节点）
             parent = self.model_obj.get_parent_and_index(node_id)[0]
             parent_id = parent.id if parent else None
-            copy_folder = menu.addAction("复制功能模块")
+            copy_folder = menu.addAction(icon_copy, "复制功能模块")
             copy_folder.triggered.connect(lambda: self.copy_node_signal.emit(node_id, parent_id))
         elif node_type == 'case':
-            copy_case = menu.addAction("复制用例")
+            copy_case = menu.addAction(icon_copy, "复制用例")
             copy_case.triggered.connect(lambda: self._copy_case(node_id))
             menu.addSeparator()
 
         # 重命名和删除（对所有类型都可用）
-        rename_action = menu.addAction("重命名")
+        rename_action = menu.addAction(icon_rename, "重命名")
         rename_action.triggered.connect(lambda: self.context_menu_signal.emit(node_id, "rename"))
-        delete_action = menu.addAction("删除")
+        delete_action = menu.addAction(icon_delete, "删除")
         delete_action.triggered.connect(lambda: self.context_menu_signal.emit(node_id, "delete"))
-        menu.addAction(rename_action)
-        menu.addAction(delete_action)
 
         menu.exec(self.viewport().mapToGlobal(pos))
 
@@ -298,7 +280,7 @@ class ProjectTreeView(QTreeView):
             new_name = f"{node.name} 副本{counter}"
             counter += 1
 
-        new_case = TreeNode(id=f"case_{id(new_name)}", name=new_name, type='case')
+        new_case = TreeNode(id=new_node_id('case'), name=new_name, type='case')
         parent.children.append(new_case)
         self.model_obj.save()
         self.refresh()

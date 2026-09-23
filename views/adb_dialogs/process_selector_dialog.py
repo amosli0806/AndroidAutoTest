@@ -44,10 +44,6 @@ class ProcessSelectorDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
 
-        title = QLabel("📦 选择应用")
-        title.setObjectName("titleLabel")
-        layout.addWidget(title)
-
         # 搜索行
         search_layout = QHBoxLayout()
         self.search_edit = QLineEdit()

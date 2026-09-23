@@ -6,6 +6,7 @@ import os
 from models.command import Command
 from services.preset_commands import PRESET_COMMANDS
 from services.adb_commands import ADB_COMMANDS
+from utils.local_commands import load_local_commands
 from utils.settings import Settings
 
 
@@ -17,10 +18,21 @@ class CommandManager:
 
     def load(self):
         """加载预设 + 自定义命令"""
-        PRESET_IDS = {c['id'] for c in PRESET_COMMANDS if c.get('is_preset')}
+        # 站点私有预设（data/local_commands.json）：跟客户/项目绑定的命令不进仓库代码，
+        # 由这里合并进来，用起来和内置预设没区别。文件不存在就是空列表。
+        local_presets = load_local_commands()["presets"]
 
-        # 1. 预设命令
+        # 1. 预设命令 = 内置通用条目 + 本地私有条目
+        preset_defs = list(PRESET_COMMANDS) + local_presets
+        PRESET_IDS = {c['id'] for c in preset_defs if c.get('is_preset')}
+
         self.commands = [Command(**cmd) for cmd in PRESET_COMMANDS]
+        # 本地条目逐条容错：这个文件用户可以手写，写坏一条不该让整个列表起不来
+        for cmd_data in local_presets:
+            try:
+                self.commands.append(Command(**cmd_data))
+            except Exception as e:
+                logging.getLogger(__name__).warning("本地预设命令格式有误，已跳过：%s (%s)", cmd_data, e)
         for cmd in self.commands:
             if cmd.is_preset:
                 cmd.interval = None
@@ -77,11 +89,15 @@ class CommandManager:
             return []
         kw = keyword.lower()
         results = []
-        for cmd in ADB_COMMANDS:
-            if (kw in cmd["command"].lower() or
-                    kw in cmd["category"].lower() or
-                    kw in cmd["description"].lower()):
-                results.append(cmd.copy())
+        # 内置通用指令库 + 本地私有指令库（data/local_commands.json 的 adb 段）
+        for cmd in list(ADB_COMMANDS) + load_local_commands()["adb"]:
+            try:
+                if (kw in cmd["command"].lower() or
+                        kw in cmd["category"].lower() or
+                        kw in cmd["description"].lower()):
+                    results.append(cmd.copy())
+            except Exception:
+                continue        # 本地文件里写坏的条目直接跳过
         return results
 
     def search_all(self, keyword):

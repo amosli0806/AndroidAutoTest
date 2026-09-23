@@ -6,12 +6,15 @@ import qtawesome as qta
 from PyQt6.QtWidgets import (QScrollArea, QWidget, QGridLayout, QGroupBox,
                              QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
                              QLineEdit, QSpinBox, QDoubleSpinBox, QPushButton,
-                             QSizePolicy, QMessageBox, QToolButton)
+                             QSizePolicy, QMessageBox, QToolButton,
+                             QWIDGETSIZE_MAX)
 from PyQt6.QtCore import pyqtSignal, Qt, QPoint
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPolygon
 
 from utils.dialogs import WarningDialog
 from utils.icons import IconManager
+from utils.settings import Settings
+from models.voice_model import get_wake_word
 from views.element_selector_dialog import ElementSelectorDialog
 from utils.toast import show_toast
 from utils.theme import Theme, ThemeMode
@@ -47,6 +50,9 @@ def _get_spinbox_arrow_url(color: str, direction: str) -> str:
 class ActionCardView(QScrollArea):
     add_step_signal = pyqtSignal(str, dict, str)
 
+    # 卡片区每行放几张（原来写死在 _build_cards 里的 max_cols）
+    CARD_COLUMNS = 2
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("ActionCardView")
@@ -55,35 +61,173 @@ class ActionCardView(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.container = QWidget()
+        self.container.setObjectName("ActionCardScrollContainer")
         self.container.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
         self.setWidget(self.container)
+        # QScrollArea.setWidget() 会给内层 widget 打开 autoFillBackground，它会用调色板
+        # 底色（浅色 #f5f6fa / 深色 #3c3c3c）刷一层实底：既跟「动作卡片」分组区域的底色
+        # 有色差，有壁纸时还会把壁纸整块挡掉。这里关掉，底色统一由分组区域决定
+        # （配合主题里的 #ActionCardScrollContainer { background: transparent; }）。
+        self.container.setAutoFillBackground(False)
         self.layout = QGridLayout(self.container)
         self.layout.setSpacing(10)
         self.layout.setHorizontalSpacing(10)
         self.layout.setVerticalSpacing(10)
         self.layout.setColumnStretch(0, 0)
         self.layout.setColumnStretch(1, 0)
+        # 按展示顺序保存卡片控件：隐藏时**只从布局里摘掉、不销毁**，
+        # 所以已经填好的参数还在，重新勾上就原样回来
+        self._cards = []
+        self._visible_types = set()
+        # 一张卡片都不显示时顶上这句（放在网格里居中）
+        self._empty_hint = QLabel("已隐藏全部动作卡片，点上方「动作卡片 ▾」重新勾选")
+        self._empty_hint.setObjectName("ActionCardEmptyHint")
+        self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_hint.setStyleSheet(
+            "color: #999; font-size: 14px; background: transparent;")
+        self._empty_hint.hide()
+        self._wake_word_applied = ""     # 上次自动填进「播报文案」的唤醒词
         self._build_cards()
+        self._visible_types = self._load_visible_types()
+        # 全部显示时 _build_cards 已经把位置排好了，不用再走一遍重排
+        if len(self._visible_types) != len(self._cards):
+            self._relayout_cards()
         # 移除滚动条样式，由主题控制
 
     def set_element_controller(self, controller):
         """设置元素控制器，用于选择元素"""
         self.element_controller = controller
-        for i in range(self.layout.count()):
-            widget = self.layout.itemAt(i).widget()
-            if isinstance(widget, ActionCard):
-                widget.set_element_controller(controller)
+        # 走 self._cards 而不是 self.layout：隐藏的卡片不在布局里，但重新勾上后
+        # 一样要能选元素，所以控制器得给它装上
+        for card in self._cards:
+            card.set_element_controller(controller)
 
     def apply_theme(self, theme_mode: ThemeMode):
         """应用主题到所有动作卡片（保留彩色标题）"""
         # 应用自身滚动条样式
         Theme.apply_theme_to_widget(self, theme_mode)
-        for i in range(self.layout.count()):
-            widget = self.layout.itemAt(i).widget()
-            if isinstance(widget, ActionCard):
-                widget.apply_theme(theme_mode)
+        # 同上：隐藏的卡片也要跟着换主题，否则重新勾上时是旧配色
+        for card in self._cards:
+            card.apply_theme(theme_mode)
+
+    def refresh_voice_default(self):
+        """把「语音播报」卡片的播报文案刷成当前配置的唤醒词。
+
+        设置里改完唤醒词后由主窗口调用（见 MainWindow.on_settings）。只在用户
+        **没动过**这个输入框时才刷（空着，或还是上次自动填进去的那句唤醒词），
+        免得把用户手打的指令覆盖掉。
+        """
+        card = next((c for c in self._cards if c.config['type'] == 'voice'), None)
+        if card is None:
+            return
+        field = card.fields.get('voiceText')
+        if not isinstance(field, QLineEdit):
+            return
+        current = field.text().strip()
+        if current and current != self._wake_word_applied:
+            return
+        self._wake_word_applied = get_wake_word()
+        field.setText(self._wake_word_applied)
+
+    # ------------------------------------------------------------------
+    # 「动作卡片 ▾」：显示哪些卡片（勾选结果记在 config.json）
+    # ------------------------------------------------------------------
+    def card_types(self) -> list:
+        """按展示顺序返回所有卡片类型"""
+        return [card.config['type'] for card in self._cards]
+
+    def card_titles(self) -> dict:
+        """{卡片类型: 标题}，给下拉菜单生成菜单项用"""
+        return {card.config['type']: card.config['title'] for card in self._cards}
+
+    def visible_card_types(self) -> set:
+        """当前显示的卡片类型"""
+        return set(self._visible_types)
+
+    def set_visible_card_types(self, types, persist=True) -> bool:
+        """设置要显示哪些卡片（None = 全部），并重排卡片区。
+
+        persist=True 时把勾选结果写进 config.json（下次打开应用照旧）。
+        返回是否真的发生了变化。
+        """
+        all_types = self.card_types()
+        if types is None:
+            new_types = set(all_types)
+        else:
+            # 过滤掉已经不存在的类型（卡片清单以后有增删时，老配置不会带坏界面）
+            new_types = {t for t in types if t in all_types}
+        if new_types == self._visible_types:
+            return False
+        self._visible_types = new_types
+        if persist:
+            Settings.save_visible_action_cards(sorted(new_types))
+        self._relayout_cards()
+        return True
+
+    def _load_visible_types(self) -> set:
+        """读上次勾选结果；没记录 = 全部显示"""
+        all_types = self.card_types()
+        saved = Settings.load_visible_action_cards()
+        if saved is None:
+            return set(all_types)
+        return {t for t in saved if t in all_types}
+
+    def _relayout_cards(self):
+        """按当前显示范围重排卡片区：只把要显示的卡片放进网格，剩下的藏起来。
+
+        两个实现要点：
+        1. **只摘不销毁**（takeAt 不会删除控件），用户填到一半的参数不会因为勾掉
+           别的卡片而丢；
+        2. 复用同一个 QGridLayout，别重建。实测（Qt6/offscreen）takeAt 之后
+           rowCount 不会回收，但空行不产生幽灵间距 —— "18 张摘到剩 3 张"与
+           "一开始就摆 3 张"的 sizeHint().height() 完全相同（72 == 72）；
+           而重建布局要用 QWidget.setLayout 摘旧布局，那会把卡片 reparent 到
+           临时宿主上，宿主一销毁卡片就跟着没了。
+        """
+        while self.layout.count():
+            self.layout.takeAt(0)
+
+        # 复位高度：上一轮"同行等高"打的固定高度要清掉，否则单独一行时会留一条空档
+        for card in self._cards:
+            card.setMinimumHeight(0)
+            card.setMaximumHeight(QWIDGETSIZE_MAX)
+
+        row = col = 0
+        row_cards = []
+        for card in self._cards:
+            if card.config['type'] not in self._visible_types:
+                card.hide()
+                continue
+            card.show()
+            self.layout.addWidget(card, row, col)
+            if col == 0:
+                row_cards.append([card])
+            else:
+                row_cards[-1].append(card)
+            col += 1
+            if col >= self.CARD_COLUMNS:
+                col = 0
+                row += 1
+
+        # 同行两个卡片高度一致（与 _build_cards 里的处理保持一致）
+        for cards in row_cards:
+            if len(cards) == 2:
+                max_h = max(c.sizeHint().height() for c in cards)
+                cards[0].setFixedHeight(max_h)
+                cards[1].setFixedHeight(max_h)
+
+        if row_cards:
+            self._empty_hint.hide()
+        else:
+            self.layout.addWidget(self._empty_hint, 0, 0, 1, self.CARD_COLUMNS)
+            self._empty_hint.show()
+
 
     def _build_cards(self):
+        # 语音播报卡片的默认文案 = 当前配置的唤醒词（设置 → 语音播报 → 唤醒词）。
+        # 记下这个值：用户没动过输入框时，设置里改了唤醒词要能跟着刷新（见 refresh_voice_default）
+        wake_word = get_wake_word()
+        self._wake_word_applied = wake_word
         configs = [
             {'type': 'click', 'title': '点击', 'fields': [
                 {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
@@ -152,7 +296,7 @@ class ActionCardView(QScrollArea):
                 {'key': 'apkPath', 'label': '安装包路径', 'type': 'line'}
             ]},
             {'type': 'screenshot', 'title': '截图', 'fields': [
-                {'key': 'savePath', 'label': ' 保存路径 ：', 'type': 'line', 'default': 'C:/Users/15735/Desktop/'},
+                {'key': 'savePath', 'label': ' 保存路径 ：', 'type': 'line', 'default': Settings.get_output_dir()},
                 {'key': 'fileName', 'label': '文件名前缀', 'type': 'line', 'default': 'screenshot'}
             ]},
             {'type': 'input', 'title': '输入', 'fields': [
@@ -172,6 +316,13 @@ class ActionCardView(QScrollArea):
                 {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
                 {'key': 'expected_value', 'label': '预 期 值 ：', 'type': 'line'},
                 {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 5}
+            ]},
+            {'type': 'voice', 'title': '语音播报', 'fields': [
+                # 播报文案默认给当前配置的唤醒词（设置 → 语音播报 → 唤醒词）：
+                # 用例里第一句通常就是唤醒词，省得每次手打一遍
+                {'key': 'voiceText', 'label': '播报文案：', 'type': 'line', 'required': True,
+                 'default': wake_word},
+                {'key': 'afterDelay', 'label': '播后等待：', 'type': 'spin', 'default': 2}
             ]}
         ]
 
@@ -193,19 +344,23 @@ class ActionCardView(QScrollArea):
             'drag_drop', 'gesture_zoom',
             # 第八行
             'gesture_seq', 'screenshot',
+            # 第九行
+            'voice',
         ]
         type_to_cfg = {c['type']: c for c in configs}
         configs_sorted = [type_to_cfg[t] for t in ordered_types if t in type_to_cfg]
 
         row, col = 0, 0
-        max_cols = 2
+        max_cols = self.CARD_COLUMNS
         row_cards = []
+        self._cards = []
         for cfg in configs_sorted:
             card = ActionCard(cfg)
             card.add_step.connect(self._on_add_step)
             card.setMaximumWidth(340)
             card.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             self.layout.addWidget(card, row, col)
+            self._cards.append(card)
 
             if col == 0:
                 row_cards.append([card])
@@ -251,6 +406,7 @@ class ActionCard(QGroupBox):
         'input': '#f39c12',
         'wait': '#95a5a6',
         'assert': '#ff9800',
+        'voice': '#00bcd4',
     }
 
     PLACEHOLDER_MAP = {

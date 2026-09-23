@@ -17,6 +17,9 @@ import logging
 
 class TaskController(QObject):
     task_executed = pyqtSignal(str, str)
+    # 消息中心用（纯新增）：定时任务执行结果 / 未能执行的原因
+    task_finished = pyqtSignal(str, int, int)   # 任务名, 通过数, 失败数
+    task_skipped = pyqtSignal(str, str)         # 任务名, 原因
 
     def __init__(self, task_model: TaskModel, task_view: TaskView,
                  suite_model: SuiteModel, project_model: ProjectModel,
@@ -40,6 +43,7 @@ class TaskController(QObject):
         self._pending_tasks = []  # [(task, case_ids), ...]
         self._running_thread = None
         self._running_worker = None
+        self._running_task_id = None  # 正在执行的任务 id（同一任务只允许跑一份）
 
         # 连接视图信号
         self.task_view.task_added.connect(self._on_add_task)
@@ -145,9 +149,33 @@ class TaskController(QObject):
     def _on_task_triggered(self, task_id):
         self._execute_task(task_id, manual=False)
 
+    def is_task_busy(self, task_id) -> bool:
+        """该任务是否正在执行、或已经在队列里等待执行
+
+        调度器（TaskScheduler）也会用它来跳过已经到期但正在执行中的任务，
+        避免同一个任务被重复投递。
+        """
+        if self._running_task_id is not None and self._running_task_id == task_id:
+            return True
+        return any(t.id == task_id for t, _ in self._pending_tasks)
+
     def _execute_task(self, task_id, manual=False):
         task = self.task_model.get_task_by_id(task_id)
         if not task or not task.enabled:
+            return
+
+        # 闸门（兜底）：调度器已经会跳过执行中的任务，这里再挡一道，
+        # 防止其它入口（手动执行等）把同一个任务投递成多份。
+        # 调度器每 60 秒检查一次，而 next_run 只有执行结束后才会推进，
+        # 少了这道闸门，一个长任务（比如循环 10 次）在运行期间会被反复触发、
+        # 反复入队，表现就是「10 次循环跑完之后还在不停地跑」。
+        if self.is_task_busy(task_id):
+            self.logs_view.add_log(
+                f"[定时] 任务 '{task.name}' 正在执行中，本次触发已跳过", "warning"
+            )
+            if manual:
+                # 手动点「立即执行」时给个明确反馈，否则用户会觉得点击没反应
+                show_toast("该任务正在执行中，请稍后再试")
             return
 
         if not self.device_service.check_device_online():
@@ -156,6 +184,7 @@ class TaskController(QObject):
             self.task_model.save()
             self.task_view.refresh_list()
             show_toast(f"设备未连接")
+            self.task_skipped.emit(task.name, "设备未连接")
             return
 
         suite = self.suite_model.get_suite_by_name(task.suite_name)
@@ -165,6 +194,7 @@ class TaskController(QObject):
             self.task_model.save()
             self.task_view.refresh_list()
             show_toast(f"执行失败：套件不存在")
+            self.task_skipped.emit(task.name, f"套件「{task.suite_name}」不存在")
             return
 
         case_ids = []
@@ -178,6 +208,7 @@ class TaskController(QObject):
             self.task_model.save()
             self.task_view.refresh_list()
             show_toast(f"执行失败：套件无用例")
+            self.task_skipped.emit(task.name, f"套件「{task.suite_name}」无可执行用例")
             return
 
         # 加入执行队列（同一时刻只跑一个任务，防止 device 对象被并发调用导致崩溃）
@@ -217,6 +248,7 @@ class TaskController(QObject):
         # 保存引用，防止被垃圾回收
         self._running_thread = thread
         self._running_worker = worker
+        self._running_task_id = task.id
 
         worker.progress.connect(self._on_worker_progress)
         worker.finished.connect(thread.quit)
@@ -224,6 +256,7 @@ class TaskController(QObject):
         thread.finished.connect(thread.deleteLater)
 
         thread.started.connect(worker.run)
+        self.exec_controller.execution_state_changed.emit(True)
         thread.start()
 
     def _on_worker_progress(self, message, log_type):
@@ -244,6 +277,8 @@ class TaskController(QObject):
         )
 
         task = self.task_model.get_task_by_id(task_id)
+        # 消息中心：定时任务结果留痕（纯新增信号，失败不再只躺在默认隐藏的日志面板里）
+        self.task_finished.emit(task.name if task else task_id, stats[0], stats[1])
         if task:
             self.task_model.update_task(task_id,
                                         last_result=result,
@@ -265,6 +300,10 @@ class TaskController(QObject):
         # 清空当前 running 引用
         self._running_thread = None
         self._running_worker = None
+        self._running_task_id = None
+
+        # 通知 ADB 工具箱：本次执行结束
+        self.exec_controller.execution_state_changed.emit(False)
 
         # 队列里还有任务，稍后执行下一个（稍延迟一点，让设备状态稳定）
         if self._pending_tasks:

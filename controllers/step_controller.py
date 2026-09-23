@@ -19,6 +19,7 @@ from views.step_list_view import StepListView
 from views.action_card_view import ActionCardView
 from views.element_selector_dialog import ElementSelectorDialog
 from utils.toast import show_toast
+from utils.adb_path import get_adb_path
 from utils.theme import ThemeMode
 import qtawesome as qta
 
@@ -324,7 +325,8 @@ class StepController(QObject):
                 'keyName': '按键名称', 'action': '操作', 'packageName': '包名/应用名',
                 'apkPath': '安装包路径', 'savePath': '保存路径', 'fileName': '文件名前缀',
                 'assert_type': '断言类型', 'expected_value': '预期值', 'timeout': '超时(秒)',
-                'element_id': '元素ID'
+                'element_id': '元素ID',
+                'voiceText': '播报文案', 'afterDelay': '播后等待(秒)'
             }
 
             # 各字段控件的样式由 dialog 层的 #UpdateStepDialog QSS 统一控制
@@ -722,11 +724,13 @@ class StepController(QObject):
                 break
 
             ts, x, y = item
+            print(f"[dump worker] 开始反查 ({x},{y})，队列剩余 {self._dump_queue.qsize()}")
             try:
                 elem = self._get_element_at(int(x), int(y))
             except Exception as e:
                 print(f"[dump worker] ({x},{y}) 反查异常: {e}")
                 elem = None
+            print(f"[dump worker] ({x},{y}) 反查结果: {elem}")
 
             with self._element_cache_lock:
                 self._element_cache[(ts, int(x), int(y))] = elem
@@ -769,7 +773,6 @@ class StepController(QObject):
         if self._touch_max_x and self._touch_max_y and self._screen_width and self._screen_height:
             ratio_x = self._touch_max_x / self._screen_width
             ratio_y = self._touch_max_y / self._screen_height
-            # 两个比例理论上应该接近（触摸插值倍数）
             if ratio_x > 0 and ratio_y > 0:
                 drift = abs(ratio_x - ratio_y) / max(ratio_x, ratio_y)
                 if drift > 0.2:
@@ -778,21 +781,28 @@ class StepController(QObject):
                 else:
                     print(f"[录制] 量程比例正常: 触摸插值倍数 ≈ {ratio_x:.2f}")
 
+        # 兼容两种 getevent 输出格式：
+        #   指定设备:  [ 12.345678] 0003 0035 00000f3c
+        #   不指定设备: [ 12.345678] /dev/input/event0: 0003 0035 00000f3c
         event_pattern = re.compile(
-            r'\[\s*([\d.]+)\]\s+[^:]+:\s+([0-9a-f]{4})\s+([0-9a-f]{4})\s+([0-9a-f]+)'
+            r'\[\s*([\d.]+)\]\s+'
+            r'(?:[^\s:]+:\s+)?'  # 可选的 "devicePath: " 前缀
+            r'([0-9a-f]{4})\s+'
+            r'([0-9a-f]{4})\s+'
+            r'([0-9a-f]+)'
         )
 
         # ★ 只监听选定的触摸设备（车机多屏场景关键）
         device_path = dev.get('path')
         if device_path:
-            cmd = ['adb', 'shell', 'getevent', '-t', device_path]
+            cmd = [get_adb_path(), 'shell', 'getevent', '-t', device_path]
         else:
-            cmd = ['adb', 'shell', 'getevent', '-t']
+            cmd = [get_adb_path(), 'shell', 'getevent', '-t']
 
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,  # ★ 合并到 stdout，方便看错误
             text=True,
             bufsize=1,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
@@ -800,6 +810,117 @@ class StepController(QObject):
 
         # 保存引用，停止录制时可强制终止
         self._getevent_process = process
+
+        # ============ 以下是主循环（上一轮漏掉的部分）============
+        touch_down = False
+        current_x = 0
+        current_y = 0
+        down_time = 0
+        down_x = 0
+        down_y = 0
+
+        # 调试统计
+        _read_lines = 0
+        _matched_lines = 0
+        _sample_printed = 0
+
+        while not self._stop_event.is_set():
+            line = process.stdout.readline()
+            if not line:
+                if process.poll() is not None:
+                    break
+                else:
+                    continue
+            line = line.strip()
+            if not line:
+                continue
+            if 'add device' in line:
+                continue
+
+            _read_lines += 1
+            # 打印前 5 条原始行，便于核对格式
+            if _sample_printed < 5:
+                print(f"[录制] 原始行[{_sample_printed}]: {line!r}")
+                _sample_printed += 1
+
+            match = event_pattern.match(line)
+            if not match:
+                continue
+
+            _matched_lines += 1
+
+            timestamp = float(match.group(1))
+            ev_type = int(match.group(2), 16)
+            ev_code = int(match.group(3), 16)
+            ev_value = int(match.group(4), 16)
+
+            if ev_type == 3:
+                if ev_code == 0x35:
+                    current_x = ev_value
+                elif ev_code == 0x36:
+                    current_y = ev_value
+
+            elif ev_type == 1 and ev_code == 330:
+                if ev_value == 1 and not touch_down:
+                    # ========== down 事件 ==========
+                    touch_down = True
+                    down_time = timestamp
+
+                    # ★ 把触摸屏原始坐标换算为屏幕坐标
+                    screen_x, screen_y = self._raw_to_screen(current_x, current_y)
+                    down_x = screen_x
+                    down_y = screen_y
+
+                    self._events.append({
+                        'type': 'down',
+                        'x': screen_x,
+                        'y': screen_y,
+                        'timestamp': timestamp
+                    })
+
+                    # down 时立即推入 dump 队列
+                    if self._dump_queue is not None:
+                        try:
+                            self._dump_queue.put_nowait(
+                                (timestamp, screen_x, screen_y)
+                            )
+                        except Exception:
+                            pass
+
+                elif ev_value == 0 and touch_down:
+                    # ========== up 事件 ==========
+                    touch_down = False
+                    screen_x, screen_y = self._raw_to_screen(current_x, current_y)
+
+                    self._events.append({
+                        'type': 'up',
+                        'x': screen_x,
+                        'y': screen_y,
+                        'timestamp': timestamp
+                    })
+
+                    # swipe 判定（用换算后的屏幕坐标）
+                    dx = screen_x - down_x
+                    dy = screen_y - down_y
+                    if (dx * dx + dy * dy) ** 0.5 >= 80:
+                        with self._element_cache_lock:
+                            key = (down_time, int(down_x), int(down_y))
+                            if key in self._element_cache:
+                                self._element_cache[key] = None
+
+        print(f"[录制] 循环退出：读到 {_read_lines} 行，正则匹配 {_matched_lines} 行")
+
+        try:
+            process.terminate()
+        except Exception:
+            pass
+        try:
+            process.wait(timeout=2)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
 
     def _detect_touch_devices(self):
         """
@@ -820,7 +941,7 @@ class StepController(QObject):
         """
         try:
             result = subprocess.run(
-                ['adb', 'shell', 'getevent', '-p'],
+                [get_adb_path(), 'shell', 'getevent', '-p'],
                 capture_output=True, text=True, timeout=8,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             )
@@ -944,15 +1065,22 @@ class StepController(QObject):
         if not mx or not my or mx <= 0 or my <= 0:
             return raw_x, raw_y
 
+        # 量程和屏幕分辨率几乎 1:1 时直接返回（车机上常见），避免浮点误差
+        if (mx == self._screen_width - 1 and my == self._screen_height - 1):
+            return raw_x, raw_y
+
         sx = int(round(raw_x / mx * self._screen_width))
         sy = int(round(raw_y / my * self._screen_height))
 
-        # 越界保护：换算后如果超出屏幕范围，说明量程探测可能错了
-        if sx < 0 or sx > self._screen_width or sy < 0 or sy > self._screen_height:
+        # 越界保护：换算后如果超出屏幕像素索引范围，说明量程探测可能错了
+        # 注意：像素索引有效范围是 [0, screen_width - 1]，
+        # 所以判断要用 >= 而不是 >，否则 sx == screen_width 会漏网
+        if sx < 0 or sx >= self._screen_width or sy < 0 or sy >= self._screen_height:
             print(f"[录制] ⚠ 换算越界: raw=({raw_x},{raw_y}) → screen=({sx},{sy}), "
                   f"量程=({mx},{my}), 分辨率=({self._screen_width},{self._screen_height})")
-            # 越界时不做换算，让坐标保持原始值，至少不会更糟
-            return raw_x, raw_y
+            # 越界时钳制到有效范围，而不是保留原始值
+            sx = max(0, min(sx, self._screen_width - 1))
+            sy = max(0, min(sy, self._screen_height - 1))
 
         return sx, sy
 
@@ -1660,29 +1788,52 @@ class StepController(QObject):
                 return None
 
             xml_str = None
-            if hasattr(device, 'dump'):
-                try:
+            # uiautomator2 标准 API 是 dump_hierarchy()，不是 dump()。
+            # 兼容不同版本：优先 dump_hierarchy，回退到 dump。
+            try:
+                if hasattr(device, 'dump_hierarchy'):
+                    xml_str = device.dump_hierarchy()
+                elif hasattr(device, 'dump'):
                     xml_str = device.dump()
-                except Exception as e:
-                    print(f"uiautomator2 dump 失败: {e}")
+                else:
+                    print("[反查] 当前 uiautomator2 版本无 dump 方法")
                     xml_str = None
+            except Exception as e:
+                print(f"[反查] uiautomator2 dump 失败: {e}")
+                xml_str = None
+
+            # ★ 调试：dump 是否拿到了内容
+            if xml_str:
+                print(f"[反查] dump 长度: {len(xml_str)} 字符")
+            else:
+                print(f"[反查] dump 为空，尝试备用方案")
 
             if xml_str is None:
                 try:
                     temp_file = os.path.join(tempfile.gettempdir(), f"ui_dump_{int(time.time())}.xml")
                     local_file = os.path.join(tempfile.gettempdir(), f"ui_dump_local_{int(time.time())}.xml")
-                    subprocess.run(['adb', 'shell', 'uiautomator', 'dump', temp_file],
-                                   capture_output=True, timeout=5, check=False)
-                    subprocess.run(['adb', 'pull', temp_file, local_file],
-                                   capture_output=True, timeout=5, check=False)
-                    if os.path.exists(local_file):
-                        with open(local_file, 'r', encoding='utf-8') as f:
-                            xml_str = f.read()
-                        os.remove(local_file)
-                    subprocess.run(['adb', 'shell', 'rm', temp_file],
-                                   capture_output=True, timeout=2, check=False)
+
+                    # 先试 --compressed（绕过 idle 检测），失败再试普通模式
+                    for extra_args in (['--compressed'], []):
+                        cmd = [get_adb_path(), 'shell', 'uiautomator', 'dump'] + extra_args + [temp_file]
+                        r = subprocess.run(cmd, capture_output=True, timeout=8, check=False)
+                        out = (r.stdout or b'') + (r.stderr or b'')
+                        if b'could not get idle state' in out or b'ERROR' in out:
+                            print(f"[反查] 备用 dump 失败（{'--compressed' if extra_args else '普通'}）: "
+                                  f"{out.decode('utf-8', errors='ignore').strip()}")
+                            continue
+                        # 拉取
+                        subprocess.run([get_adb_path(), 'pull', temp_file, local_file],
+                                       capture_output=True, timeout=5, check=False)
+                        if os.path.exists(local_file):
+                            with open(local_file, 'r', encoding='utf-8') as f:
+                                xml_str = f.read()
+                            os.remove(local_file)
+                            subprocess.run([get_adb_path(), 'shell', 'rm', temp_file],
+                                           capture_output=True, timeout=2, check=False)
+                            break
                 except Exception as e:
-                    print(f"备用 dump 失败: {e}")
+                    print(f"[反查] 备用 dump 异常: {e}")
                     return None
 
             if not xml_str:
@@ -1695,9 +1846,50 @@ class StepController(QObject):
             return None
 
     def _find_element_in_xml(self, node, x, y):
+        """
+        找到包含坐标 (x, y) 的、最有语义信息的最深层节点。
+
+        策略：
+        1. 递归收集所有 bounds 覆盖该坐标的节点
+        2. 优先从"有 resource-id / text / content-desc 的属性节点"里选面积最小的
+           （面积小 = 更靠近用户实际点击的那个控件）
+        3. 如果所有命中节点都没属性，选面积最小的那个作为兜底
+           （说明 App 是自绘 UI，这时反查失败是合理的）
+        """
+        candidates = []  # [(area, info, has_attr), ...]
+        self._collect_matching_nodes(node, x, y, candidates)
+
+        if not candidates:
+            return None
+
+        # 优先：有属性的节点里，面积最小的
+        with_attr = [c for c in candidates if c[2]]
+        if with_attr:
+            with_attr.sort(key=lambda c: c[0])
+            area, info, _ = with_attr[0]
+            print(f"[反查] ({x},{y}) 命中 {len(candidates)} 个节点，"
+                  f"其中 {len(with_attr)} 个有属性，选中面积最小的：")
+            print(f"          area={area}px², "
+                  f"class={info['className']!r}, "
+                  f"rid={info['resourceId']!r}, "
+                  f"text={info['text']!r}, "
+                  f"desc={info['description']!r}")
+            return info
+
+        # 兜底：全都没属性，取面积最小的（自绘控件，反查注定失败）
+        candidates.sort(key=lambda c: c[0])
+        area, info, _ = candidates[0]
+        print(f"[反查] ({x},{y}) 命中 {len(candidates)} 个节点，"
+              f"但都没有可用属性，选面积最小的作为兜底：")
+        print(f"          area={area}px², class={info['className']!r}")
+        return info
+
+    def _collect_matching_nodes(self, node, x, y, candidates):
+        """递归收集所有 bounds 覆盖坐标 (x, y) 的节点。
+        candidates 每个元素: (area, info_dict, has_attr_bool)"""
+        import re
         bounds = node.get('bounds')
         if bounds:
-            import re
             match = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
             if match:
                 left = int(match.group(1))
@@ -1705,15 +1897,18 @@ class StepController(QObject):
                 right = int(match.group(3))
                 bottom = int(match.group(4))
                 if left <= x <= right and top <= y <= bottom:
+                    area = max(0, (right - left)) * max(0, (bottom - top))
+                    rid = (node.get('resource-id') or '').strip()
+                    text = (node.get('text') or '').strip()
+                    desc = (node.get('content-desc') or '').strip()
+                    has_attr = bool(rid or text or desc)
                     info = {
-                        'resourceId': node.get('resource-id'),
-                        'text': node.get('text'),
-                        'description': node.get('content-desc'),
-                        'className': node.get('class'),  # ← 新增
+                        'resourceId': rid,
+                        'text': text,
+                        'description': desc,
+                        'className': node.get('class'),
                     }
-                    return info
+                    candidates.append((area, info, has_attr))
+
         for child in node:
-            result = self._find_element_in_xml(child, x, y)
-            if result:
-                return result
-        return None
+            self._collect_matching_nodes(child, x, y, candidates)

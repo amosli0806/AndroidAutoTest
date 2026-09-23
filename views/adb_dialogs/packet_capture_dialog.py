@@ -213,10 +213,6 @@ class PacketCaptureDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
 
-        title = QLabel("📡 网络抓包 (tcpdump)")
-        title.setObjectName("titleLabel")
-        layout.addWidget(title)
-
         warning = QLabel(
             "⚠️ 抓包需要设备已 root，且工具已部署到 /data/local/tmp/tcpdump。"
             "抓取结果保存为 pcap 文件，可用 Wireshark 分析。"
