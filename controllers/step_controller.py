@@ -718,8 +718,10 @@ class StepController(QObject):
 
     def _dump_worker(self):
         """
-        独立线程：从 _dump_queue 取 (ts, x, y)，立即 dump 并按坐标反查。
-        - 只被 down 事件喂数据，无轮询开销
+        独立线程：从 _dump_queue 取 (ts, x, y)，先等页面稳定再 dump 反查。
+        - 由 up 事件（tap）喂数据，无轮询开销
+        - 反查前先 sleep 一小段，等点击触发的动画/路由切换稳定下来，
+          提高 dump 到的 UI 与用户实际点击目标的一致性
         - dump 失败时缓存 None，生成步骤时退化为坐标
         """
         import queue as _queue
@@ -736,6 +738,9 @@ class StepController(QObject):
                 break
 
             ts, x, y = item
+            # 页面稳定等待：点击后 UI 可能还在动（动画、列表刷新、路由切换），
+            # 稍等片刻让界面落定，再 dump 反查才准。等的是这段 sleep，不阻塞录制主循环。
+            time.sleep(0.35)
             print(f"[dump worker] 开始反查 ({x},{y})，队列剩余 {self._dump_queue.qsize()}")
             try:
                 elem = self._get_element_at(int(x), int(y))
@@ -890,14 +895,9 @@ class StepController(QObject):
                         'timestamp': timestamp
                     })
 
-                    # down 时立即推入 dump 队列
-                    if self._dump_queue is not None:
-                        try:
-                            self._dump_queue.put_nowait(
-                                (timestamp, screen_x, screen_y)
-                            )
-                        except Exception:
-                            pass
+                    # 不再在 down 瞬间 dump：点击会触发页面动画/路由切换，
+                    # 此时 dump 到的可能是点击前的旧 UI，反查出的控件对应不上。
+                    # 改为 up 后、页面稳定了再反查（见 up 分支）。
 
                 elif ev_value == 0 and touch_down:
                     # ========== up 事件 ==========
@@ -914,11 +914,22 @@ class StepController(QObject):
                     # swipe 判定（用换算后的屏幕坐标）
                     dx = screen_x - down_x
                     dy = screen_y - down_y
-                    if (dx * dx + dy * dy) ** 0.5 >= 80:
+                    is_swipe = (dx * dx + dy * dy) ** 0.5 >= 80
+                    if is_swipe:
+                        # 滑动不反查（起点坐标会被置 None，生成步骤时退化为坐标滑动）
                         with self._element_cache_lock:
                             key = (down_time, int(down_x), int(down_y))
                             if key in self._element_cache:
                                 self._element_cache[key] = None
+                    else:
+                        # tap：抬手后才反查。dump worker 拿到后会先等页面稳定再 dump
+                        if self._dump_queue is not None:
+                            try:
+                                self._dump_queue.put_nowait(
+                                    (down_time, down_x, down_y)
+                                )
+                            except Exception:
+                                pass
 
         print(f"[录制] 循环退出：读到 {_read_lines} 行，正则匹配 {_matched_lines} 行")
 
@@ -1227,7 +1238,15 @@ class StepController(QObject):
 
                     # 优先级：资源ID > 文本 > 描述
                     if rid:
-                        return dict(base, locationType='资源ID', locationValue=rid)
+                        params = dict(base, locationType='资源ID', locationValue=rid)
+                        # 资源ID 有重复时带上实例序号，回放时精确定位到第 N 个
+                        if (elem.get('resourceIdCount') or 1) > 1:
+                            params['instance'] = elem.get('instance', 0)
+                        # 双保险：同时保留文本，资源ID 失效时回放可退回文本定位
+                        if text and len(text) <= 60:
+                            params['fallbackType'] = '文本'
+                            params['fallbackValue'] = text
+                        return params
                     if text and len(text) <= 60:
                         return dict(base, locationType='文本', locationValue=text)
                     if desc:
@@ -1879,13 +1898,24 @@ class StepController(QObject):
         if with_attr:
             with_attr.sort(key=lambda c: c[0])
             area, info, _ = with_attr[0]
+            # 若选中了带 resourceId 的节点，统计全树同 rid 的节点数并计算序号，
+            # 解决「列表项共用同一 rid」导致回放点错行的问题。
+            if info.get('resourceId'):
+                count, instance = self._compute_instance(
+                    node, info['resourceId'], info.get('bounds'))
+                info['resourceIdCount'] = count
+                info['instance'] = instance
+            else:
+                info['resourceIdCount'] = 1
+                info['instance'] = 0
             print(f"[反查] ({x},{y}) 命中 {len(candidates)} 个节点，"
                   f"其中 {len(with_attr)} 个有属性，选中面积最小的：")
             print(f"          area={area}px², "
                   f"class={info['className']!r}, "
                   f"rid={info['resourceId']!r}, "
                   f"text={info['text']!r}, "
-                  f"desc={info['description']!r}")
+                  f"desc={info['description']!r}, "
+                  f"ridCount={info['resourceIdCount']}, instance={info['instance']}")
             return info
 
         # 兜底：全都没属性，取面积最小的（自绘控件，反查注定失败）
@@ -1895,6 +1925,39 @@ class StepController(QObject):
               f"但都没有可用属性，选面积最小的作为兜底：")
         print(f"          area={area}px², class={info['className']!r}")
         return info
+
+    def _compute_instance(self, root, target_rid, target_bounds):
+        """统计整棵 UI 树里 resourceId == target_rid 的节点数，并计算
+        target_bounds 对应节点在这些同类节点中的序号（按 top、left 排序）。
+
+        返回 (count, instance)。instance 从 0 起；target_bounds 为空时返回 (count, 0)。
+        """
+        siblings = []   # [(top, left, bounds)]
+        def walk(node):
+            rid = (node.get('resource-id') or '').strip()
+            if rid == target_rid:
+                b = node.get('bounds')
+                if b:
+                    m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', b)
+                    if m:
+                        left = int(m.group(1)); top = int(m.group(2))
+                        right = int(m.group(3)); bottom = int(m.group(4))
+                        siblings.append((top, left, (left, top, right, bottom)))
+            for child in node:
+                walk(child)
+        walk(root)
+
+        count = len(siblings)
+        if count == 0 or target_bounds is None:
+            return count, 0
+
+        siblings.sort(key=lambda t: (t[0], t[1]))   # 按 top 再 left 排序
+        instance = 0
+        for idx, (_, _, b) in enumerate(siblings):
+            if b == target_bounds:
+                instance = idx
+                break
+        return count, instance
 
     def _collect_matching_nodes(self, node, x, y, candidates):
         """递归收集所有 bounds 覆盖坐标 (x, y) 的节点。
@@ -1919,6 +1982,8 @@ class StepController(QObject):
                         'text': text,
                         'description': desc,
                         'className': node.get('class'),
+                        # 保留 bounds，供后续计算「同类元素序号」(instance) 用
+                        'bounds': (left, top, right, bottom),
                     }
                     candidates.append((area, info, has_attr))
 

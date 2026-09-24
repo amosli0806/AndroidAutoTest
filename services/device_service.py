@@ -289,9 +289,17 @@ class DeviceService:
         return sx, sy, ex, ey
 
     # ---------- 以下为动作方法 ----------
-    def _get_ui_object(self, loc_type, loc_value):
+    def _get_ui_object(self, loc_type, loc_value, instance=None):
         if loc_type == '资源ID':
-            return self.device(resourceId=loc_value)
+            sel = self.device(resourceId=loc_value)
+            # 资源ID 重复时，用 instance 精确定位到第 N 个（录制时算出来的序号）
+            if instance is not None:
+                try:
+                    instance = int(instance)
+                    sel = sel.instance(instance)
+                except (TypeError, ValueError):
+                    pass
+            return sel
         elif loc_type == '坐标':
             return None
         elif loc_type == '文本':
@@ -325,6 +333,32 @@ class DeviceService:
             return True
         return bool(obj.exists(timeout=timeout))
 
+    def _resolve_ui_object(self, params):
+        """取元素对象：主定位等元素出现，失败时自动退到 fallback 定位（双保险）。
+
+        录制/反查时会同时保留资源ID和文本：资源ID 可能因 App 升级失效，
+        文本可能因状态变化失效 —— 一个失配就退回另一个，降低步骤偶发失败率。
+        返回可用的 ui object；都失败时抛 ValueError。
+        """
+        loc_type = params.get('locationType')
+        loc_value = params.get('locationValue')
+        obj = self._get_ui_object(loc_type, loc_value, params.get('instance'))
+        if obj is None:
+            return None                     # 坐标定位：无需元素对象
+
+        if self._wait_for_object(obj, params):
+            return obj
+
+        # 主定位超时，尝试 fallback
+        fb_type = params.get('fallbackType')
+        fb_value = params.get('fallbackValue')
+        if fb_type and fb_value:
+            fb_obj = self._get_ui_object(fb_type, fb_value, None)
+            if fb_obj is not None and self._wait_for_object(fb_obj, params):
+                return fb_obj
+
+        raise ValueError(f"等待元素出现超时：{loc_type} = {loc_value}")
+
     def _perform_click(self, params):
         loc_type = params.get('locationType')
         loc_value = params.get('locationValue')
@@ -332,9 +366,7 @@ class DeviceService:
             x, y = self._resolve_coord(params)
             self.device.click(x, y)
         else:
-            obj = self._get_ui_object(loc_type, loc_value)
-            if not self._wait_for_object(obj, params):
-                raise ValueError(f"等待元素出现超时：{loc_type} = {loc_value}")
+            obj = self._resolve_ui_object(params)
             obj.click()
 
     def _perform_double_click(self, params):
@@ -346,9 +378,7 @@ class DeviceService:
             time.sleep(0.05)
             self.device.click(x, y)
         else:
-            obj = self._get_ui_object(loc_type, loc_value)
-            if not self._wait_for_object(obj, params):
-                raise ValueError(f"等待元素出现超时：{loc_type} = {loc_value}")
+            obj = self._resolve_ui_object(params)
             obj.click()
             time.sleep(0.05)
             obj.click()
@@ -361,9 +391,7 @@ class DeviceService:
             x, y = self._resolve_coord(params)
             self.device.long_click(x, y, duration=ms / 1000)
         else:
-            obj = self._get_ui_object(loc_type, loc_value)
-            if not self._wait_for_object(obj, params):
-                raise ValueError(f"等待元素出现超时：{loc_type} = {loc_value}")
+            obj = self._resolve_ui_object(params)
             obj.long_click(duration=ms / 1000)
 
     def _perform_input(self, params):
@@ -376,9 +404,7 @@ class DeviceService:
             time.sleep(0.5)
             self.device.send_keys(text)
         else:
-            obj = self._get_ui_object(loc_type, loc_value)
-            if not self._wait_for_object(obj, params):
-                raise ValueError(f"等待元素出现超时：{loc_type} = {loc_value}")
+            obj = self._resolve_ui_object(params)
             obj.set_text(text)
 
     def _perform_wait(self, params):
