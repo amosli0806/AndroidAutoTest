@@ -437,6 +437,18 @@ class StepController(QObject):
                 label_text = label_map.get(key, key)
                 form.addRow(f"{label_text}:", widget)
 
+            # 元素操作步骤（点击/双击/长按/输入）补一个「超时(秒)」控件：
+            # 老步骤/录制步骤的 params 里没有 timeout 字段，遍历时不会生成该控件，
+            # 但执行端默认会等 10 秒。这里补上，让用户编辑老步骤时也能看到并调整。
+            _ELEMENT_ACTION_TYPES = ('click', 'double_click', 'long_press', 'input')
+            if step.type in _ELEMENT_ACTION_TYPES and 'timeout' not in step.params:
+                timeout_spin = QSpinBox()
+                timeout_spin.setRange(0, 999999)
+                timeout_spin.setValue(10)          # 与执行端 DEFAULT_ELEMENT_WAIT_TIMEOUT 一致
+                timeout_spin.setStyleSheet(spin_style)
+                param_widgets['timeout'] = timeout_spin
+                form.addRow("超时(秒):", timeout_spin)
+
             btn_layout = QHBoxLayout()
             btn_layout.setSpacing(12)
 
