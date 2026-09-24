@@ -329,6 +329,8 @@ class StepController(QObject):
                 'apkPath': '安装包路径', 'savePath': '保存路径', 'fileName': '文件名前缀',
                 'assert_type': '断言类型', 'expected_value': '预期值', 'timeout': '超时(秒)',
                 'element_id': '元素ID',
+                'instance': '实例序号',
+                'fallbackType': '备用定位方式', 'fallbackValue': '备用定位值',
                 'voiceText': '播报文案', 'afterDelay': '播后等待(秒)'
             }
 
@@ -353,14 +355,16 @@ class StepController(QObject):
                 if key in INTERNAL_KEYS:
                     continue
                 widget = None
-                if key in ('locationType', 'fromLocationType', 'toLocationType'):
+                if key in ('locationType', 'fromLocationType', 'toLocationType', 'fallbackType'):
                     widget = QComboBox()
-                    widget.addItems(self.FIELD_OPTIONS[key])
+                    # fallbackType（备用定位方式）复用 locationType 的选项集
+                    widget.addItems(self.FIELD_OPTIONS.get(key, self.FIELD_OPTIONS['locationType']))
                     index = widget.findText(str(value))
                     if index >= 0:
                         widget.setCurrentIndex(index)
                     widget.setStyleSheet(combo_style)
-                    loc_type_widgets[key] = widget
+                    if key != 'fallbackType':
+                        loc_type_widgets[key] = widget
                 elif key == 'action':
                     widget = QComboBox()
                     if step.type in self.ACTION_OPTIONS:
@@ -409,7 +413,9 @@ class StepController(QObject):
                     container_layout_widget = QHBoxLayout()
                     container_layout_widget.addWidget(widget)
                     select_btn = QToolButton()
-                    select_btn.setIcon(qta.icon('fa6s.folder-open', color='#555555'))
+                    # 图标颜色跟随弹窗主题（暗色弹窗上深灰图标看不清，与动作卡片同规则）
+                    _sel_icon_color = "#bbbbbb" if _is_dark_dlg else "#555555"
+                    select_btn.setIcon(qta.icon('fa6s.folder-open', color=_sel_icon_color))
                     select_btn.setFixedSize(24, 24)
                     select_btn.setStyleSheet("border: none; background: transparent;")
                     select_btn.setToolTip("从元素库选择")
@@ -438,6 +444,13 @@ class StepController(QObject):
                     param_widgets[key] = widget
 
                 label_text = label_map.get(key, key)
+                # 技术字段加 tooltip 说明用途（录制生成的定位增强字段）
+                if key == 'instance':
+                    widget.setToolTip("资源ID 在当前页面有重复时的序号（从 0 开始），一般保持录制值即可")
+                elif key == 'fallbackType':
+                    widget.setToolTip("备用定位方式：主定位（资源ID）失效时自动改用此方式重试")
+                elif key == 'fallbackValue':
+                    widget.setToolTip("备用定位值：与备用定位方式配套使用")
                 form.addRow(f"{label_text}:", widget)
 
             # 元素操作步骤（点击/双击/长按/输入）补一个「超时(秒)」控件：
