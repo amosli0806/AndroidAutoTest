@@ -820,10 +820,14 @@ class AdbCommandPool(QObject):
     command_finished = pyqtSignal(int, str, bool, str)    # cmd_id, cmd_name, success, tag
     command_stopped = pyqtSignal(int, str, str)           # cmd_id, cmd_name, tag
 
+    # 主项目正在执行用例时，这些命令会改动设备状态、或把正在跑的用例顶掉，必须挡住。
+    # 「只读采集」类**不要**放进来：logcat / 录屏 / 截图 / pull 导出日志 恰恰是用例
+    # 执行期间最需要的 —— 跑到一半发现问题，就要现场把日志和视频捞出来。
+    # 注：remount 对应预设「权限获取」（root; remount），它会 remount /system，
+    # 直接把设备状态改掉，正在跑的用例必挂，所以必须留在名单里。
     HIGH_IMPACT_KEYWORDS = (
-        'monkey', 'logcat', 'screenrecord', 'tcpdump',
-        'meminfo', 'dumpsys', 'reboot', 'pm clear',
-        'force-stop', 'netem', 'tc ',
+        'monkey', 'tcpdump', 'meminfo', 'dumpsys', 'reboot',
+        'pm clear', 'force-stop', 'netem', 'tc ', 'remount',
     )
 
     def __init__(self, parent=None):

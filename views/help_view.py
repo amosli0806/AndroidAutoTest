@@ -322,7 +322,8 @@ class HelpView(QFrame):
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 主项目正在执行用例时，高风险命令（monkey / logcat / screenrecord / tcpdump 等）会被自动禁用，避免干扰测试。
+                    ⚠️ 主项目正在执行用例时，会改动设备状态的命令（权限获取 / monkey / tcpdump / reboot 等）会被自动禁用，避免干扰测试；
+                    而 logcat、录屏、截图、导出日志（pull）这类<b>只读采集</b>命令仍可正常执行 —— 用例跑到一半出问题，正好用它把现场日志和视频捞出来。
                 </div>
                 """,
 
@@ -364,7 +365,8 @@ class HelpView(QFrame):
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 主项目正在执行用例时，高风险命令（monkey / logcat / screenrecord / tcpdump 等）会被自动禁用，避免干扰测试。
+                    ⚠️ 主项目正在执行用例时，会改动设备状态的命令（权限获取 / monkey / tcpdump / reboot 等）会被自动禁用，避免干扰测试；
+                    而 logcat、录屏、截图、导出日志（pull）这类<b>只读采集</b>命令仍可正常执行 —— 用例跑到一半出问题，正好用它把现场日志和视频捞出来。
                 </div>
                 """
             },
@@ -557,7 +559,7 @@ class HelpView(QFrame):
                 "功能规划": """
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🔌 接口自动化</h2>
                 <p style="font-size: 15px;">
-                    <b>接口自动化</b> 是驭虫师即将推出的能力模块，用于对 HTTP / WebSocket / gRPC 等接口进行自动化测试。
+                    <b>接口自动化</b> 是虫师即将推出的能力模块，用于对 HTTP / WebSocket / gRPC 等接口进行自动化测试。
                 </p>
 
                 <h3 style="font-size: 16px; margin-top: 20px;">🎯 规划中的核心能力</h3>

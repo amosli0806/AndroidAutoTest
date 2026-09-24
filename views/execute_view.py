@@ -3,7 +3,7 @@ import qtawesome as qta
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QTreeView, QLabel, QSpinBox, QCheckBox,
                              QComboBox, QMessageBox, QSizePolicy)
-from PyQt6.QtCore import pyqtSignal, Qt, QModelIndex
+from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QIcon
 from models.project_model import ProjectModel, TreeNode
 from models.suite_model import SuiteModel
@@ -11,7 +11,7 @@ from utils import tree_state
 from utils.toast import show_toast
 from utils.dialogs import InputDialog, WarningDialog, ConfirmDeleteDialog, ErrorDialog
 from utils.theme import ThemeMode, Theme
-from PyQt6.QtWidgets import QCheckBox, QStyleOptionButton, QStyle
+from PyQt6.QtWidgets import QCheckBox, QStyleOptionButton, QStyleOptionViewItem, QStyle
 from PyQt6.QtGui import QPainter, QPen, QColor
 
 # 树节点图标：与「项目管理」树的 _create_item（views/project_tree_view.py）
@@ -45,9 +45,76 @@ class BorderedCheckBox(QCheckBox):
         except Exception:
             pass
 
+class _CaseTreeView(QTreeView):
+    """整行可勾选的用例树：点行内任意位置都能勾选/取消，不必对准那个小方框。
+
+    与「语音播报」页的 _ClickAnywhereCheckTree 同一套做法（views/voice_view.py）：
+    为什么不直接连 clicked 信号去改状态 —— 点在复选框本身时 Qt 自己已经切过一次
+    （QStyledItemDelegate::editorEvent 负责 indicator 的点击），再切一次就抵掉了，
+    表现就是"点复选框勾不上"。所以这里在 mousePressEvent 里按落点分流，
+    保证任何位置都恰好切换一次：
+      - 分支列（缩进 + 展开箭头）-> 交给基类，否则点箭头会把展开/收起吃掉
+      - 复选框本身              -> 也交给基类，走 Qt 那一次切换
+      - 其余位置（图标/文案/右侧空白）-> 自己切换并消费事件
+    部分选中（父节点）按 Qt 的老规矩回到「全选」。
+    """
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return super().mousePressEvent(event)
+        pos = event.position().toPoint()
+        index = self.indexAt(pos)
+        model = self.model()
+        item = model.itemFromIndex(index) if index.isValid() else None
+        if item is None or not item.isCheckable():
+            return super().mousePressEvent(event)
+
+        # 分支列不碰：缩进列的宽度 = indentation * (深度 + 1)
+        depth, parent = 0, item.parent()
+        while parent is not None:
+            depth += 1
+            parent = parent.parent()
+        if pos.x() < self.indentation() * (depth + 1):
+            return super().mousePressEvent(event)
+
+        if self._hit_check_indicator(index, pos):
+            return super().mousePressEvent(event)
+
+        state = item.checkState()
+        item.setCheckState(
+            Qt.CheckState.Unchecked if state == Qt.CheckState.Checked
+            else Qt.CheckState.Checked)
+        event.accept()
+
+    def _hit_check_indicator(self, index, pos) -> bool:
+        """落点是否在复选框矩形内（delegate 拿到的 rect 就是 Qt 画 indicator 的位置）"""
+        opt = QStyleOptionViewItem()
+        self.itemDelegate().initStyleOption(opt, index)
+        opt.rect = self.visualRect(index)
+        rect = self.style().subElementRect(
+            QStyle.SubElement.SE_ItemViewItemCheckIndicator, opt, self)
+        return rect.isValid() and rect.contains(pos)
+
 class ExecuteView(QWidget):
     execute_selected = pyqtSignal(list)
     generate_report_signal = pyqtSignal()
+    # 执行中点「停止」：请求中止正在跑的这一轮
+    stop_requested = pyqtSignal()
+
+    # 执行中「执行」按钮变成红色的「停止」（配色与 ADB 工具箱行内按钮同一套）
+    STOP_BTN_QSS = """
+        QPushButton {
+            background-color: #e74c3c;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 4px;
+            font-weight: 500;
+            min-width: 90px;
+        }
+        QPushButton:hover { background-color: #f05a4a; }
+        QPushButton:pressed { background-color: #c0392b; }
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -58,6 +125,8 @@ class ExecuteView(QWidget):
         self.suite_model = SuiteModel()
         self._suppress_suite_signal = False
         self._task_view = None
+        # 主题里的主按钮样式，「执行/停止」来回切时要用它把蓝色恢复回来
+        self._primary_btn_style = None
         self.setup_ui()
         # 移除原有的硬编码样式，由主题系统控制
         self._refresh_suite_combo()
@@ -203,6 +272,10 @@ class ExecuteView(QWidget):
                 existing = lbl.styleSheet() or ""
                 lbl.setStyleSheet(existing + f" color: {label_color}; background: transparent;")
 
+        # 记下主按钮样式：执行中「停止」要切回「执行」时靠它恢复蓝色
+        self._primary_btn_style = btn_style
+        self._update_buttons()
+
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -285,7 +358,7 @@ class ExecuteView(QWidget):
         layout.addLayout(toolbar_row2)
 
         # ---------- 用例树 ----------
-        self.tree_view = QTreeView()
+        self.tree_view = _CaseTreeView()
         self.tree_view.setHeaderHidden(True)
         self.tree_view.setIndentation(20)
         self.tree_view.setStyleSheet("""
@@ -300,7 +373,8 @@ class ExecuteView(QWidget):
         """)
         self.tree_view.setItemsExpandable(True)
         self.tree_view.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
-        self.tree_view.clicked.connect(self._on_tree_item_clicked)
+        # 勾选不再走 clicked 信号：点击分流在 _CaseTreeView.mousePressEvent 里做
+        # （点复选框时 Qt 自己已经切过一次，这里再切一次就会互相抵掉）
         self.tree_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.tree_view.setMinimumWidth(0)
         layout.addWidget(self.tree_view)
@@ -395,15 +469,6 @@ class ExecuteView(QWidget):
                 item.appendRow(child_item)
         return item
 
-    def _on_tree_item_clicked(self, index: QModelIndex):
-        if not index.isValid():
-            return
-        item = self.model.itemFromIndex(index)
-        if item and item.isCheckable():
-            current_state = item.checkState()
-            new_state = Qt.CheckState.Unchecked if current_state == Qt.CheckState.Checked else Qt.CheckState.Checked
-            item.setCheckState(new_state)
-
     def _on_data_changed(self, top_left, bottom_right):
         if self._updating:
             return
@@ -463,8 +528,9 @@ class ExecuteView(QWidget):
             traverse(self.model.item(i))
 
         can_execute = checked_count > 0 and not self._executing
-        self.execute_btn.setEnabled(can_execute)
-        self.execute_btn.setIcon(self.execute_icon_enabled if can_execute else QIcon())
+        # 执行中按钮本身就是「停止」，必须可点；空闲时要有勾选才可点
+        self.execute_btn.setEnabled(can_execute or self._executing)
+        self._apply_execute_btn_state(can_execute)
 
         all_checked = (total_checkable > 0 and checked_count == total_checkable)
         can_select_all = not all_checked and not self._executing
@@ -491,6 +557,19 @@ class ExecuteView(QWidget):
         else:
             self.save_suite_btn.setIcon(QIcon())
 
+    def _apply_execute_btn_state(self, can_execute: bool):
+        """「执行」按钮的两种样子：空闲 = 蓝色「执行」，执行中 = 红色「停止」"""
+        if self._executing:
+            self.execute_btn.setText("停止")
+            self.execute_btn.setIcon(qta.icon('fa6s.stop', color='white'))
+            self.execute_btn.setStyleSheet(self.STOP_BTN_QSS)
+            return
+        self.execute_btn.setText("执行")
+        if self._primary_btn_style:
+            self.execute_btn.setStyleSheet(self._primary_btn_style)
+        # 没勾选用例时按钮是灰的，这时不显示图标（与改造前一致）
+        self.execute_btn.setIcon(self.execute_icon_enabled if can_execute else QIcon())
+
     def _get_checked_ids(self):
         ids = []
         for i in range(self.model.rowCount()):
@@ -507,6 +586,10 @@ class ExecuteView(QWidget):
         return ids
 
     def _execute(self):
+        # 执行中：这个按钮已经是「停止」了，点它就是请求中止正在跑的这一轮
+        if self._executing:
+            self.stop_requested.emit()
+            return
         ids = self._get_checked_ids()
         if ids:
             self._executing = True
