@@ -118,6 +118,22 @@ class AdbToolboxController(QObject):
         self.view.refresh_commands()
         self.log_emitted.emit(f"<span style='color:{log_colors.log_color(log_colors.RESULT)};'>🔄 命令列表已刷新</span>")
 
+    def _start_command(self, command, serial, output_dir) -> bool:
+        """按「这条命令现在能不能跑」决定要不要启动它。
+
+        被拦下时（主项目正在执行用例 + 高风险命令）：按钮留在「执行」、原因写进日志，
+        返回 False —— 绝不能先把按钮切成「启动中」再没人收尾，那正是"卡在启动中"的原因。
+        """
+        ok, reason = self.pool.can_execute(command)
+        if not ok:
+            self.view.set_command_state(command.id, 'idle')
+            self.log_emitted.emit(
+                f"<span style='color:{log_colors.log_color(log_colors.WARNING)};'>⚠️ {reason}</span>")
+            return False
+        self.view.set_command_state(command.id, 'starting')
+        self.pool.execute_command(command, serial, output_dir, tag='user')
+        return True
+
     def _on_execute_selected(self, commands):
         serial = self._get_serial()
         if not serial:
@@ -136,8 +152,7 @@ class AdbToolboxController(QObject):
 
         output_dir = Settings.get_output_dir()
         for cmd in commands:
-            self.view.set_command_state(cmd.id, 'starting')
-            self.pool.execute_command(cmd, serial, output_dir, tag='user')
+            self._start_command(cmd, serial, output_dir)
 
     def _on_execute_single(self, command):
         serial = self._get_serial()
@@ -145,9 +160,7 @@ class AdbToolboxController(QObject):
             show_toast(self.view, "未检测到设备", duration=2000)
             self.view.set_command_state(command.id, 'idle')
             return
-        output_dir = Settings.get_output_dir()
-        self.view.set_command_state(command.id, 'starting')
-        self.pool.execute_command(command, serial, output_dir, tag='user')
+        self._start_command(command, serial, Settings.get_output_dir())
 
     def _on_stop(self, command):
         self.pool.stop_command(command.id)

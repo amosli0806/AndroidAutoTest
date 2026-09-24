@@ -113,9 +113,10 @@ class AdbCommandItemWidget(QWidget):
 
     def _on_click(self):
         if self.state == 'idle':
-            self.set_state('starting')
-            # 延迟 120ms 再发信号，让 UI 先把"启动中..."渲染出来
-            QTimer.singleShot(300, lambda: self.execute_clicked.emit(self.command))
+            # 不在这里切「启动中」：能不能跑要先由控制器判定（主项目正在执行用例时，
+            # 高风险命令会被拦下）。被拦下的命令按钮必须留在「执行」，
+            # 否则先切成「启动中」再没人收尾，就永远卡在「启动中」了。
+            self.execute_clicked.emit(self.command)
         elif self.state == 'running':
             self.set_state('stopping')
             QTimer.singleShot(2000, lambda: self.stop_clicked.emit(self.command))

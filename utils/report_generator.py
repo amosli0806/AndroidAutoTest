@@ -37,7 +37,7 @@ class ReportGenerator:
         <html>
         <head>
             <meta charset="UTF-8">
-            <title>驭虫师 - 测试报告</title>
+            <title>虫师 - 测试报告</title>
             <style>
                 body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background: #f5f6fa; }}
                 .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
@@ -62,7 +62,7 @@ class ReportGenerator:
         </head>
         <body>
             <div class="container">
-                <h1>🐞 驭虫师 - 测试执行报告</h1>
+                <h1>🐞 虫师 - 测试执行报告</h1>
                 <p>生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
 
                 <div class="summary">
@@ -126,7 +126,7 @@ class ReportGenerator:
         html += """
                 </div>
                 <div class="footer">
-                    <p>报告由驭虫师自动生成 · 仅供内部参考</p>
+                    <p>报告由虫师自动生成 · 仅供内部参考</p>
                 </div>
             </div>
         </body>

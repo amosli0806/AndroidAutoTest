@@ -32,6 +32,18 @@ class ExecutionWorker(QObject):
         self.loop_count = loop_count
         self.stop_on_fail = stop_on_fail
         self._abort = False
+        # 区分「用户点了停止」和「失败停止标志触发」：收尾时只给前者打一条停止日志
+        self._aborted_by_user = False
+
+    def request_abort(self):
+        """请求中止本轮执行。
+
+        跨线程只置一个 bool（CPython 下赋值是原子的），不碰任何界面对象；
+        worker 在每个用例、每个步骤开始前检查它，所以会在**当前步骤跑完后**停下 ——
+        一个带超时的步骤（比如等元素）最长要等它自己超时结束。
+        """
+        self._aborted_by_user = True
+        self._abort = True
 
     def _format_error(self, e):
         # 如果是 DeviceService 抛出的友好错误（RuntimeError），直接返回其消息
@@ -162,6 +174,13 @@ class ExecutionWorker(QObject):
                     )
                     case_failed = True
 
+                # 中途被停止：这个用例没跑完，既不算通过也不算失败 —— 半截用例记成
+                # 「执行通过」会直接骗人。已经失败的用例照常走下面的失败记账。
+                if self._abort and not case_failed:
+                    self.progress.emit(
+                        f"  ⏹ 用例 \"{case_name}\" 未执行完（已停止）", "warning")
+                    break
+
                 if case_failed:
                     self.progress.emit(f"  ✗ 用例 \"{case_name}\" 执行失败", "error")
                     if self.stop_on_fail:
@@ -171,6 +190,8 @@ class ExecutionWorker(QObject):
                 else:
                     self.progress.emit(f"  ✓ 用例 \"{case_name}\" 执行通过", "success")
 
+        if self._aborted_by_user:
+            self.progress.emit("⏹ 已按你的请求停止本轮执行", "warning")
         self.finished.emit()
 
 
@@ -193,10 +214,13 @@ class ExecutionController(QObject):
 
         self.exec_view.set_model(project_model)
         self.exec_view.execute_selected.connect(self._execute_cases)
+        # 执行页的「停止」（执行中那个按钮）→ 中止本轮
+        self.exec_view.stop_requested.connect(self.stop_execution)
 
         self.logs_view.set_model(exec_model)
         self.thread = None
         self.worker = None
+        self._stop_requested = False
 
     def apply_theme(self, theme_mode: ThemeMode):
         """应用主题到控制器（占位方法，保持接口一致性）"""
@@ -247,6 +271,7 @@ class ExecutionController(QObject):
 
         self.exec_model.reset()
         self.logs_view.update_stats()
+        self._stop_requested = False      # 新一轮执行，清掉上一轮的停止标记
 
         self.thread = QThread()
         self.worker = ExecutionWorker(
@@ -267,6 +292,18 @@ class ExecutionController(QObject):
 
         self.exec_view.set_executing(True)
         self.execution_state_changed.emit(True)
+
+    def stop_execution(self):
+        """用户点了「停止」：让正在跑的这一轮收尾退出。
+
+        只作用于「执行页手动执行」这条路径；定时任务不接这个入口（按需求不需要）。
+        """
+        if self.worker is None or self._stop_requested:
+            return
+        self._stop_requested = True
+        self.worker.request_abort()
+        self.logs_view.add_log(
+            "⏹ 已请求停止：当前步骤跑完就停下，后续用例不再执行", "warning")
 
     def _device_dependent_step_names(self, case_ids, limit=3):
         """挑出这些用例里「需要设备」的步骤名，用来把拒绝原因说清楚。

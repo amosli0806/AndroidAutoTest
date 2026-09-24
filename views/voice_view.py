@@ -25,7 +25,7 @@ import json
 import os
 import time
 
-from PyQt6.QtCore import QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QRectF, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QDoubleSpinBox, QFileDialog, QFrame,
@@ -172,7 +172,11 @@ class _BorderedTreeItemDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(QPen(pen_color, 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(rect.adjusted(0, 0, -1, -1))
+        # 半像素对齐：rect 的边界落在像素中心上，1px 的边框才会正好压在
+        # 原生方框那一圈像素上（14x14），和里面的方块同心。
+        # 早先写的是 rect.adjusted(0, 0, -1, -1)：边框比原生方框小 1px 且偏左上，
+        # 加上抗锯齿在左上溢出 1px，视觉上外框就比方块偏左上，方块看着像「偏右下角」。
+        painter.drawRect(QRectF(rect).adjusted(0.5, 0.5, -0.5, -0.5))
         painter.restore()
 
 
@@ -755,8 +759,8 @@ class VoiceView(QWidget):
 
         # ---- 右栏：勾选树（分组 → 语音用例，用例可勾选）----
         checked_before = self._collect_checked_case_ids()
-        # 之前有过勾选 → 按记录恢复；从未勾过（首次填充）→ 全部默认勾上
-        restore_by_record = bool(checked_before)
+        # 默认全部不勾选：只恢复"之前勾过的"。首次进入右栏时一个都不勾，
+        # 免得用户还没看清有哪些用例，就已经是一副"全选好了"的样子。
 
         self.check_tree.blockSignals(True)
         # 重建前先把当前展开态收下来（clear() 会把展开态全部丢掉）
@@ -784,8 +788,7 @@ class VoiceView(QWidget):
                 # 与左侧的选中态解耦（左侧点击不再联动右侧视觉）
                 case_item.setIcon(
                     0, qta.icon("fa6s.comment-dots", color="#8a9099"))
-                checked = ((voice_case.id in checked_before)
-                           if restore_by_record else True)
+                checked = voice_case.id in checked_before
                 case_item.setCheckState(
                     0,
                     Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
