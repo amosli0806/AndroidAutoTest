@@ -11,7 +11,7 @@ import sys
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QMessageBox, QDialog, QVBoxLayout, QFormLayout, QLineEdit, QComboBox, \
     QSpinBox, QDoubleSpinBox, QScrollArea, QWidget, QHBoxLayout, QToolButton, QLabel, QFrame, \
-    QPushButton, QGraphicsDropShadowEffect, QListView
+    QPushButton, QGraphicsDropShadowEffect, QListView, QCheckBox
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from models.step_model import StepModel, Step
 from utils.dialogs import WarningDialog, ConfirmDeleteDialog, ErrorDialog
