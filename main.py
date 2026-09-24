@@ -339,6 +339,24 @@ def cleanup_unused_data(project_model, step_model, suite_model):
 
 
 def main():
+    # ---------- 子进程无黑窗补丁（必须在任何 adb 调用之前）----------
+    # 虫师打包为无控制台 GUI 后，第三方库（adbutils/u2 等）内部 spawn 的控制台
+    # 子进程（adb/…）没带 CREATE_NO_WINDOW，Windows 会给每个子进程新开一个黑色
+    # 控制台窗 —— 设备插拔/重连时一次冒好几个（用户实测反馈）。
+    # 统一兜底：调用方没显式传 creationflags 的一律补上。输出经管道捕获不受影响；
+    # 自己传过 flags 的调用（DeviceWatcher 等）保持原样；GUI 子进程（scrcpy）不受影响。
+    if sys.platform == 'win32':
+        import subprocess as _subprocess
+        _orig_popen = _subprocess.Popen
+        _CREATE_NO_WINDOW = 0x08000000
+
+        def _popen_no_console(*args, **kwargs):
+            if not kwargs.get('creationflags'):
+                kwargs['creationflags'] = _CREATE_NO_WINDOW
+            return _orig_popen(*args, **kwargs)
+
+        _subprocess.Popen = _popen_no_console
+
     # 封面上的第一句人话（在它之前显示的是 spec 里的 text_default「正在启动…」，
     # 因为模块导入阶段 main() 还没开始跑）
     splash_update("正在加载数据…")

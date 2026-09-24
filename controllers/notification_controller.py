@@ -12,9 +12,8 @@
 """
 import os
 import subprocess
-import time
 
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QObject, QTimer
 
 from models.notification_model import LEVEL_ERROR, LEVEL_INFO
 
@@ -34,23 +33,23 @@ PAGE_PERF = 8
 
 
 class NotificationController(QObject):
+    # 「ADB 连接中断」告警防抖（秒）：断开后在这个时间内恢复的不告警。
+    # 设备插拔/开关 USB 调试会让设备端 adbd 重启、USB 重新枚举，track-devices
+    # 长连接撞上 protocol fault 短暂退出几秒即自愈——这种抖动不值得打扰用户。
+    ADB_DOWN_DEBOUNCE_MS = 10_000
+
     def __init__(self, service, main_window, parent=None):
         super().__init__(parent)
         self.service = service
         self.main_window = main_window
-        # track-devices 长连接上次是否处于「断开」状态：用于只对状态翻转留痕
+        # track-devices 长连接上次是否处于「已告警断开」状态：
+        # True = 已发过「中断」告警（恢复时要发「已恢复」）；False = 无需留痕
         self._adb_link_down = False
-        # 是否在启动宽限期内静默过「中断」：静默过的话，恢复时也静默，避免冒一条
-        # 没头没尾的「已恢复」
-        self._adb_link_suppressed = False
-        # 启动时刻：启动后前 ADB_STARTUP_GRACE 秒内的「中断」静默不告警。
-        # 原因：启动时 ensure_adb_server → u2 连接（推 u2.jar/起 uiautomator）会短暂
-        # 占用/重置 adb 的 socket，此时 track-devices 长连接撞上 protocol fault 秒退，
-        # 消息面板就冒一对「中断/恢复」——是启动时序的必然抖动，不是设备真断了。
-        self._started_at = time.monotonic()
-
-    # 启动宽限期（秒）：覆盖 u2 初始化 + track-devices 首连的窗口
-    ADB_STARTUP_GRACE = 8.0
+        # 防抖倒计时：断开后 ADB_DOWN_DEBOUNCE_MS 内恢复则静默
+        self._adb_down_timer = QTimer(self)
+        self._adb_down_timer.setSingleShot(True)
+        self._adb_down_timer.setInterval(self.ADB_DOWN_DEBOUNCE_MS)
+        self._adb_down_timer.timeout.connect(self._emit_adb_down)
 
     # ------------------------------------------------------------------
     # 动作路由
@@ -161,26 +160,25 @@ class NotificationController(QObject):
     def on_adb_watcher_status(self, ok):
         """track-devices 长连接状态变化 —— 信号来自 main.py 里的 DeviceWatcher。
 
-        只对「状态翻转」留痕：长连接每次重连成功都会 emit(True)，连不上时每轮
-        重试也会 emit(False)，不判翻转就会变成刷屏。
-
-        启动宽限期内的「中断」静默：见 __init__ 里 _started_at 的注释——
-        那是启动时序（u2 初始化争抢 adb socket）造成的必然抖动，不是设备真断。
+        告警防抖（用户实测反馈：设备插拔/开关调试时「中断→恢复」闪动太吵）：
+        收到「断开」不立即告警，先起 ADB_DOWN_DEBOUNCE 秒的倒计时——
+        - 倒计时内恢复（设备插拔/USB 重枚举的常规抖动，几秒自愈）→ 完全静默
+        - 倒计时结束仍未恢复（真断了/拔掉没插回）→ 才告警「中断」
+        恢复提示「已恢复」只在已告警过「中断」时才发，避免无头消息。
         """
         if ok:
+            if self._adb_down_timer.isActive():
+                self._adb_down_timer.stop()          # 抖动内恢复：静默，不告警
             if self._adb_link_down:
                 self._adb_link_down = False
-                if not self._adb_link_suppressed:
-                    self.service.info(SOURCE_ADB, "ADB 连接已恢复")
-                self._adb_link_suppressed = False
+                self.service.info(SOURCE_ADB, "ADB 连接已恢复")
             return
-        if self._adb_link_down:
-            return
-        # 启动后前 ADB_STARTUP_GRACE 秒内的断开：只静默重连，不打扰用户
-        if time.monotonic() - self._started_at < self.ADB_STARTUP_GRACE:
-            self._adb_link_down = True
-            self._adb_link_suppressed = True
-            return
+        if self._adb_link_down or self._adb_down_timer.isActive():
+            return                                    # 已在告警/已在倒计时
+        self._adb_down_timer.start()
+
+    def _emit_adb_down(self):
+        """防抖倒计时结束仍未恢复：确认真断线，此时才告警。"""
         self._adb_link_down = True
         self.service.warning(SOURCE_ADB, "ADB 连接中断，正在重连…")
 
