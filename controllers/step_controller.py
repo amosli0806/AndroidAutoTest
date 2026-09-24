@@ -743,7 +743,10 @@ class StepController(QObject):
             ts, x, y = item
             # 页面稳定等待：点击后 UI 可能还在动（动画、列表刷新、路由切换），
             # 稍等片刻让界面落定，再 dump 反查才准。等的是这段 sleep，不阻塞录制主循环。
-            time.sleep(0.35)
+            # 若队列里还有待处理项（用户连续快速点击），跳过 sleep —— 排队时间已自然
+            # 覆盖了稳定等待，再睡只会让整体反查更慢。
+            if self._dump_queue.qsize() == 0:
+                time.sleep(0.35)
             print(f"[dump worker] 开始反查 ({x},{y})，队列剩余 {self._dump_queue.qsize()}")
             try:
                 elem = self._get_element_at(int(x), int(y))
@@ -1180,6 +1183,9 @@ class StepController(QObject):
         )
 
         # ---- 4. 异步生成步骤 ----
+        # 提示用户正在生成（反查 + 生成需要几秒，没有反馈会像卡死）
+        show_toast(message=f"正在生成步骤（{tap_count} 次点击反查中），请稍候…", duration=3000)
+
         def process_events():
             try:
                 steps = self._build_steps_from_events(events_copy)
@@ -1357,26 +1363,43 @@ class StepController(QObject):
         软键盘打字在触摸 getevent 里只有点击软键盘键位的坐标，拿不到字符本身，
         所以靠「录制结束时反查输入框的最终文本」来还原输入内容。
         返回 dict（input 步骤）或 None（不是输入框/没文字，保持普通 click）。
+
+        性能关键：判断「是否输入框」优先用 dump worker 的缓存（tap 反查结果），
+        **零额外 dump 开销**；只有确认是输入框、需要拿最终输入文字时才额外 dump
+        一次（此时页面正停在输入框上，text 是用户打完的最终值）。
+        之前版本对每个 tap 无条件重新 dump 一次（不走缓存），反查时间直接翻倍，
+        且停止后页面已切换、反查出的是错误控件（用户实测日志定位到此问题）。
         """
         if not prefer_element:
             return None
         x, y = int(gesture['start_x']), int(gesture['start_y'])
-        try:
-            elem = self._get_element_at(x, y)
-        except Exception:
-            elem = None
-        if not elem:
+
+        # 1) 先查缓存：dump worker 在 tap 反查时已存过该坐标的元素信息
+        key = (gesture['down_time'], x, y)
+        with self._element_cache_lock:
+            elem = self._element_cache.get(key)
+
+        if elem is None:
+            # 缓存 miss（该 tap 没有反查记录）：保守起见不额外 dump，保持 click
             return None
 
+        # 2) 用缓存的 className 判断是否输入框（类名不随打字变化，缓存值可信）
         cls = (elem.get('className') or '').strip()
         if not any(m in cls for m in self._INPUT_FIELD_CLASS_MARKERS):
             return None
 
-        text = (elem.get('text') or '').strip()
+        # 3) 确认是输入框：再反查一次拿**最终输入文字**
+        #    （缓存里的 text 是点击时刻的值——当时用户还没打字，是空/旧值）
+        try:
+            final_elem = self._get_element_at(x, y)
+        except Exception:
+            final_elem = None
+        text = ((final_elem or {}).get('text') or '').strip()
         if not text:
+            # 没拿到最终文字（页面已切换/输入框为空）：退回普通 click
             return None
 
-        # 构造 input 步骤：定位到该输入框，输入 text
+        # 4) 构造 input 步骤：定位到该输入框，输入 text
         params = {
             'screenWidth': self._screen_width,
             'screenHeight': self._screen_height,
@@ -1384,18 +1407,15 @@ class StepController(QObject):
             'normalizedY': round(y / (self._screen_height or 1920), 4),
             'text': text,
         }
-        rid = (elem.get('resourceId') or '').strip()
+        rid = ((final_elem or elem).get('resourceId') or '').strip()
         if rid:
             params['locationType'] = '资源ID'
             params['locationValue'] = rid
-            if (elem.get('resourceIdCount') or 1) > 1:
-                params['instance'] = elem.get('instance', 0)
-        elif text:
+            if ((final_elem or elem).get('resourceIdCount') or 1) > 1:
+                params['instance'] = (final_elem or elem).get('instance', 0)
+        else:
             params['locationType'] = '文本'
             params['locationValue'] = text
-        else:
-            params['locationType'] = '坐标'
-            params['locationValue'] = f"{x},{y}"
 
         name = f"输入 {text[:20]}{'…' if len(text) > 20 else ''}"
         return {'type': 'input', 'params': params, 'name': name}
