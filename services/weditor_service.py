@@ -4,6 +4,7 @@ import time
 import os
 import sys
 import socket
+import threading
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import QLabel
@@ -15,7 +16,12 @@ class WeditorService:
     def __init__(self):
         self.process = None
         self.web_view = None
+        # 启动锁：防止并发调用 _start_process_and_wait 时重复 spawn weditor
+        # （实测竞态：第一次还在等端口监听时第二次进来检测不到端口，又起一份
+        #  —— 会出现两个 weditor 实例、两份 ipyshell，弹多个 python 窗口）
+        self._start_lock = threading.Lock()
         self._fix_weditor_version()
+        self._patch_weditor_shell()
 
     def apply_theme(self, theme_mode: ThemeMode):
         """应用主题到服务（占位方法，保持接口一致性）"""
@@ -45,6 +51,48 @@ except Exception:
         except Exception as e:
             print(f"修复 weditor 失败: {e}")
 
+    def _patch_weditor_shell(self):
+        """给 weditor 的 ipyshell 子进程补 CREATE_NO_WINDOW。
+
+        weditor 无控制台运行（虫师 spawn 时已加 CREATE_NO_WINDOW）时，它内部
+        spawn 的 ipython（shell.py，无任何窗口标志）会新建控制台 → 弹 "python"
+        窗口。设备插拔触发 weditor 页面重连时就会出现，用户实测反馈。
+        补丁幂等（带标记），仿 _fix_weditor_version 的启动时自动修复模式；
+        weditor 升级后文件被覆盖，下次启动会自动重打。
+        """
+        try:
+            import weditor
+            shell_file = os.path.join(
+                os.path.dirname(weditor.__file__), 'web', 'handlers', 'shell.py')
+            if not os.path.exists(shell_file):
+                return
+            with open(shell_file, 'r', encoding='utf-8') as f:
+                src = f.read()
+            if 'CHONGSHI-NO-CONSOLE' in src:
+                return
+            old = "        self.proc = subprocess.Popen(*args, **kwargs)"
+            new = ("        # CHONGSHI-NO-CONSOLE: 无控制台运行时 ipython 子进程会弹黑窗\n"
+                   "        if IS_WINDOWS and 'creationflags' not in kwargs:\n"
+                   "            kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW\n"
+                   "        self.proc = subprocess.Popen(*args, **kwargs)")
+            if old not in src:
+                return
+            src = src.replace(old, new, 1)
+            with open(shell_file, 'w', encoding='utf-8') as f:
+                f.write(src)
+            # 清掉字节码缓存，确保补丁下次启动生效
+            pycache = os.path.join(os.path.dirname(shell_file), '__pycache__')
+            if os.path.isdir(pycache):
+                for name in os.listdir(pycache):
+                    if name.startswith('shell.') and name.endswith('.pyc'):
+                        try:
+                            os.remove(os.path.join(pycache, name))
+                        except OSError:
+                            pass
+            print("已补丁 weditor ipyshell（无黑窗）")
+        except Exception as e:
+            print(f"补丁 weditor shell 失败: {e}")
+
     def _is_port_open(self, port, timeout=0.5):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
@@ -65,6 +113,12 @@ except Exception:
 
     def _start_process_and_wait(self, port=17310):
         """启动进程并等待端口，返回端口号，供线程调用，不创建任何 GUI 对象"""
+        # 启动锁：并发调用（设备变化时可能多线程触发）只允许起一份 weditor。
+        # 无锁实测会出现两个实例、两份 ipyshell，各弹一个 python 窗口。
+        with self._start_lock:
+            return self._start_process_and_wait_locked(port)
+
+    def _start_process_and_wait_locked(self, port=17310):
         # 如果已有服务运行，直接返回端口
         if self._is_port_open(port):
             return port
