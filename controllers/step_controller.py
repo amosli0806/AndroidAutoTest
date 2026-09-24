@@ -1474,57 +1474,150 @@ class StepController(QObject):
         return gestures
 
     def _on_steps_preview(self, steps):
-        """录制生成的步骤预览（GUI 线程）：弹对话框让用户勾选要保留的步骤。"""
+        """录制生成的步骤预览（GUI 线程）：弹对话框让用户勾选要保留的步骤。
+
+        UI 参照「更新步骤」弹窗的风格（圆角容器 + 标题 + 分割线 + 主题适配）。
+        """
         if not steps:
             show_toast(message="未识别到操作")
             return
 
-        # 导入所需控件（在方法内导入，避免顶部 import 堆叠）
         from PyQt6.QtWidgets import QCheckBox
+        from utils.settings import Settings as _Settings, THEME_MODE_DARK as _TMD
+
+        is_dark = _Settings.get_theme_mode() == _TMD
+        # 主题配色（与「更新步骤」弹窗同一组取值）
+        if is_dark:
+            container_bg, container_border = "#3c3c3c", "#555"
+            title_fg, sub_fg, text_fg, dim_fg = "#ffffff", "#999999", "#eeeeee", "#8a8a8a"
+            item_bg, item_border = "#2d2d2d", "#454545"
+            ghost_bg, ghost_fg, ghost_hover = "#555555", "#eeeeee", "#666666"
+        else:
+            container_bg, container_border = "#ffffff", "#d0d0d0"
+            title_fg, sub_fg, text_fg, dim_fg = "#1a1a1a", "#999999", "#333333", "#aaaaaa"
+            item_bg, item_border = "#f7f8fa", "#e0e0e0"
+            ghost_bg, ghost_fg, ghost_hover = "#f0f0f0", "#333333", "#e0e0e0"
+
+        type_names = {'click': '点击', 'double_click': '双击', 'long_press': '长按',
+                      'input': '输入', 'swipe': '滑动', 'wait': '等待',
+                      'assert': '断言', 'voice': '语音'}
 
         dlg = QDialog(self.step_view)
         dlg.setWindowTitle("录制完成 - 确认步骤")
-        dlg.setFixedSize(520, 440)
+        dlg.setFixedSize(540, 480)
+        dlg.setStyleSheet(f"""
+            QDialog {{ background-color: {container_bg}; }}
+            QLabel {{ background: transparent; }}
+            QScrollArea {{ background: transparent; border: none; }}
+            QScrollArea > QWidget > QWidget {{ background: transparent; }}
+            QCheckBox {{ background: transparent; }}
+        """)
 
         root = QVBoxLayout(dlg)
-        root.setContentsMargins(16, 16, 16, 16)
+        root.setContentsMargins(22, 20, 22, 18)
         root.setSpacing(10)
 
-        tip = QLabel(f"共录制到 {len(steps)} 个步骤，请确认要保留的步骤：")
-        root.addWidget(tip)
+        title = QLabel("录制完成")
+        title.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {title_fg};")
+        root.addWidget(title)
+
+        sub = QLabel(f"共录制到 {len(steps)} 个步骤，请勾选要保留的步骤：")
+        sub.setStyleSheet(f"font-size: 12px; color: {sub_fg};")
+        root.addWidget(sub)
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background-color: {container_border}; max-height: 1px;")
+        root.addWidget(divider)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         root.addWidget(scroll, 1)
 
         list_widget = QWidget()
         list_layout = QVBoxLayout(list_widget)
         list_layout.setSpacing(6)
-        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setContentsMargins(0, 4, 0, 4)
 
-        # 每个步骤一个复选框，默认全选
         checks = []
         for i, s in enumerate(steps):
-            lt = s.get('params', {}).get('locationType', '')
-            lv = s.get('params', {}).get('locationValue', '')
+            p = s.get('params', {})
+            lt = p.get('locationType', '')
+            lv = p.get('locationValue', '')
             if lt == '资源ID' and '/' in lv:
                 lv = lv.split('/')[-1]
-            summary = f"第{i+1}步 {s.get('name','')}"
-            if lv:
-                summary += f"  · {lt}:{lv[:24]}"
-            cb = QCheckBox(summary)
+            tname = type_names.get(s.get('type', ''), s.get('type', ''))
+
+            row = QWidget()
+            row.setObjectName(f"stepRow{i}")
+            row.setStyleSheet(f"""
+                QWidget#stepRow{i} {{
+                    background-color: {item_bg};
+                    border: 1px solid {item_border};
+                    border-radius: 8px;
+                }}
+            """)
+            row_lay = QHBoxLayout(row)
+            row_lay.setContentsMargins(12, 8, 12, 8)
+            row_lay.setSpacing(10)
+
+            cb = QCheckBox()
             cb.setChecked(True)
-            list_layout.addWidget(cb)
+            cb.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
+            row_lay.addWidget(cb)
+
+            info_lay = QVBoxLayout()
+            info_lay.setSpacing(2)
+            name_label = QLabel(f"第{i+1}步 · {tname} · {s.get('name', '')}")
+            name_label.setStyleSheet(f"font-size: 13px; font-weight: 500; color: {text_fg};")
+            name_label.setWordWrap(True)
+            info_lay.addWidget(name_label)
+            if lv:
+                loc_label = QLabel(f"{lt}：{lv[:36]}{'…' if len(lv) > 36 else ''}")
+                loc_label.setStyleSheet(f"font-size: 11px; color: {dim_fg};")
+                loc_label.setWordWrap(True)
+                info_lay.addWidget(loc_label)
+            row_lay.addLayout(info_lay, 1)
+
+            # 勾选状态联动行样式：未勾选时整行变暗，一眼看出会被丢弃
+            def _sync(checked, n=name_label, l=loc_label if lv else None):
+                n.setStyleSheet(f"font-size: 13px; font-weight: 500; color: "
+                                f"{text_fg if checked else dim_fg};")
+                if l is not None:
+                    l.setStyleSheet(f"font-size: 11px; color: {dim_fg};")
+            cb.toggled.connect(_sync)
+
+            list_layout.addWidget(row)
             checks.append(cb)
+
         list_layout.addStretch()
         scroll.setWidget(list_widget)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
+        ghost_style = f"""
+            QPushButton {{
+                background-color: {ghost_bg}; color: {ghost_fg};
+                border: none; border-radius: 6px;
+                padding: 6px 14px; font-size: 13px;
+            }}
+            QPushButton:hover {{ background-color: {ghost_hover}; }}
+        """
+        primary_style = """
+            QPushButton {
+                background-color: #1976d2; color: white;
+                border: none; border-radius: 6px;
+                padding: 6px 18px; font-size: 13px; font-weight: 500;
+            }
+            QPushButton:hover { background-color: #1565c0; }
+        """
+
         all_btn = QPushButton("全选")
         none_btn = QPushButton("全不选")
+        all_btn.setStyleSheet(ghost_style)
+        none_btn.setStyleSheet(ghost_style)
         all_btn.clicked.connect(lambda: [c.setChecked(True) for c in checks])
         none_btn.clicked.connect(lambda: [c.setChecked(False) for c in checks])
         btn_row.addWidget(all_btn)
@@ -1532,7 +1625,10 @@ class StepController(QObject):
         btn_row.addStretch()
 
         cancel_btn = QPushButton("取消")
+        cancel_btn.setStyleSheet(ghost_style)
         ok_btn = QPushButton("确认添加")
+        ok_btn.setStyleSheet(primary_style)
+        ok_btn.setFixedSize(100, 32)
         ok_btn.setDefault(True)
         cancel_btn.clicked.connect(dlg.reject)
         ok_btn.clicked.connect(dlg.accept)
