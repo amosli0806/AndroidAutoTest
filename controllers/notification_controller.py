@@ -12,6 +12,7 @@
 """
 import os
 import subprocess
+import time
 
 from PyQt6.QtCore import QObject
 
@@ -39,6 +40,17 @@ class NotificationController(QObject):
         self.main_window = main_window
         # track-devices 长连接上次是否处于「断开」状态：用于只对状态翻转留痕
         self._adb_link_down = False
+        # 是否在启动宽限期内静默过「中断」：静默过的话，恢复时也静默，避免冒一条
+        # 没头没尾的「已恢复」
+        self._adb_link_suppressed = False
+        # 启动时刻：启动后前 ADB_STARTUP_GRACE 秒内的「中断」静默不告警。
+        # 原因：启动时 ensure_adb_server → u2 连接（推 u2.jar/起 uiautomator）会短暂
+        # 占用/重置 adb 的 socket，此时 track-devices 长连接撞上 protocol fault 秒退，
+        # 消息面板就冒一对「中断/恢复」——是启动时序的必然抖动，不是设备真断了。
+        self._started_at = time.monotonic()
+
+    # 启动宽限期（秒）：覆盖 u2 初始化 + track-devices 首连的窗口
+    ADB_STARTUP_GRACE = 8.0
 
     # ------------------------------------------------------------------
     # 动作路由
@@ -151,13 +163,23 @@ class NotificationController(QObject):
 
         只对「状态翻转」留痕：长连接每次重连成功都会 emit(True)，连不上时每轮
         重试也会 emit(False)，不判翻转就会变成刷屏。
+
+        启动宽限期内的「中断」静默：见 __init__ 里 _started_at 的注释——
+        那是启动时序（u2 初始化争抢 adb socket）造成的必然抖动，不是设备真断。
         """
         if ok:
             if self._adb_link_down:
                 self._adb_link_down = False
-                self.service.info(SOURCE_ADB, "ADB 连接已恢复")
+                if not self._adb_link_suppressed:
+                    self.service.info(SOURCE_ADB, "ADB 连接已恢复")
+                self._adb_link_suppressed = False
             return
         if self._adb_link_down:
+            return
+        # 启动后前 ADB_STARTUP_GRACE 秒内的断开：只静默重连，不打扰用户
+        if time.monotonic() - self._started_at < self.ADB_STARTUP_GRACE:
+            self._adb_link_down = True
+            self._adb_link_suppressed = True
             return
         self._adb_link_down = True
         self.service.warning(SOURCE_ADB, "ADB 连接中断，正在重连…")
