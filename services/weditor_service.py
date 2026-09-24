@@ -3,6 +3,7 @@ import subprocess
 import time
 import os
 import sys
+import atexit
 import socket
 import threading
 from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -22,6 +23,10 @@ class WeditorService:
         self._start_lock = threading.Lock()
         self._fix_weditor_version()
         self._patch_weditor_shell()
+        # 退出清理：主进程关闭时终止 weditor 子进程，避免孤儿化残留
+        # （实测残留：weditor 双实例+ipyshell 在虫师退出后继续存活并占着 17310 端口，
+        #  下次启动复用旧进程，旧进程里的旧代码还会继续弹窗）
+        atexit.register(self.stop)
 
     def apply_theme(self, theme_mode: ThemeMode):
         """应用主题到服务（占位方法，保持接口一致性）"""
