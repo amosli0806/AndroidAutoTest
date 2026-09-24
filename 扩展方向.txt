@@ -1,20 +1,25 @@
-===== 发版（2026-09-24 起用脚本，一条命令搞定）=====
+===== 发版（2026-09-24 起用脚本，灵活可控）=====
 
-推荐方式（自动）：在项目目录 D:\AndroidAutoTest 打开命令行，执行
-    python release.py 1.1.5              # 发 1.1.5：自动改版本号→写 CHANGELOG 占位→commit→push main→打 tag 推送（触发 CI）
-    python release.py 1.1.5 --dry-run    # 只演练，不改文件、不提交
-脚本自动做 5 件事：改 utils/version.py 的版本号与构建时间 → 在 CHANGELOG.md 顶部插入 "## v1.1.5" 占位段 → git add+commit+push main → git tag+push tag（触发 CI 自动打包发版）。
-要点：
-  - 幂等：重复执行安全（同名 tag 会先删本地再重打）。
-  - CHANGELOG 插入的是占位文字：可发版前先手动改好 CHANGELOG.md（脚本检测到该版本段已存在则不覆盖），或发完到 GitHub 网页编辑 Release 正文。
-  - 发版前先 git pull 拉最新，避免覆盖别人改动。
-  - 成功标准：push tag 后看到 "* [new tag] v1.1.5"；结果看 https://github.com/amosli0806/AndroidAutoTest/releases
+脚本 release.py 支持多种模式（在项目目录 D:\AndroidAutoTest 打开命令行）：
+    python release.py                     # 交互式菜单，逐步选要做什么（最直观）
+    python release.py push                # 只上传代码到 GitHub main（不改版本号、不发版）
+    python release.py 1.1.6               # 完整发版：改版本号→提交→推送→打 tag（触发 CI）
+    python release.py 1.1.6 --no-release  # 改版本号 + 推送 main，但暂不打 tag 不发版
+    python release.py 1.1.6 --dry-run     # 演练：只预览会改什么，不改文件、不提交
+    python release.py --tag-only v1.1.6   # 版本号已改好时，只补打 tag 触发发版
 
-手动方式（脚本出问题时兜底，四步）：
-  1. 改 utils/version.py 的 APP_VERSION 为 1.1.5
-  2. 在 CHANGELOG.md 顶部加 "## v1.1.5" 段写说明
-  3. git add -A && git commit -m "发布 v1.1.5" && git push origin main   ← 先传代码（不触发发版）
-  4. git tag v1.1.5 && git push origin v1.1.5   ← 打 tag 触发 CI：校验版本→打包主程序+更新器→自测→压 zip→建 Release
+日常节奏建议：
+  - 平时改完代码 → 跑 `python release.py push` 同步到 GitHub（安全、不发版）。
+  - 攒够一批改动想发版 → 跑 `python release.py 1.1.6`（自动改版本号+写 CHANGELOG 占位+提交+推送+打 tag）。
+  - 发版前先 git pull 拉最新；脚本幂等，重复执行安全（同名 tag 会先删本地再重打）。
+  - CHANGELOG 插入的是占位文字：发版前先手动改好 CHANGELOG.md 该版本段（脚本检测到已存在则不覆盖），或发完到网页编辑 Release 正文。注意别删掉 `## vX.Y.Z` 标题行。
+  - 成功标准：push tag 后看到 "* [new tag] v1.1.6"；结果看 https://github.com/amosli0806/AndroidAutoTest/releases
+
+手动兜底（脚本出问题时）：
+  1. 改 utils/version.py 的 APP_VERSION
+  2. 在 CHANGELOG.md 顶部加 "## vX.Y.Z" 段写说明
+  3. git add -A && git commit -m "发布 vX.Y.Z" && git push origin main   ← 先传代码
+  4. git tag vX.Y.Z && git push origin vX.Y.Z   ← 打 tag 触发 CI 发版
 
 虫师 - 扩展方向与功能规划（基于 V1.0.1 代码实际梳理，复核于 2026-09-21）
 
