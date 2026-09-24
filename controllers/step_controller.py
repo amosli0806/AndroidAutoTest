@@ -1477,8 +1477,8 @@ class StepController(QObject):
         """录制生成的步骤预览（GUI 线程）：弹对话框让用户确认要保留的步骤。
 
         交互设计（用户反馈迭代后定稿）：
-        - 简洁复选框列表（恢复初始布局），复选框 indicator 叠加明显边框/主题蓝底
-          （参考执行清单「复选框叠边框提高可见性」的先例，暗色下清晰可见）
+        - 复选框用执行页同款 BorderedCheckBox：Fusion 默认绘制（勾选显示 √），
+          叠加明显边框，暗色下清晰——**不要**用 QSS 设 ::indicator，会丢 √ 变色块
         - 整行可点击：复选框占满整行宽度，点击行内任意位置即可切换
         - 副标题实时显示「已选择 N / M」
         """
@@ -1486,18 +1486,18 @@ class StepController(QObject):
             show_toast(message="未识别到操作")
             return
 
-        from PyQt6.QtWidgets import QSizePolicy
         from utils.settings import Settings as _Settings, THEME_MODE_DARK as _TMD
+        from views.execute_view import BorderedCheckBox
 
         is_dark = _Settings.get_theme_mode() == _TMD
         if is_dark:
             container_bg, container_border = "#3c3c3c", "#555"
             title_fg, sub_fg, text_fg = "#ffffff", "#999999", "#eeeeee"
-            indicator_border = "#90caf9"          # 未勾选：浅蓝边框，暗色下清晰
+            row_hover = "#333333"
         else:
             container_bg, container_border = "#ffffff", "#d0d0d0"
             title_fg, sub_fg, text_fg = "#1a1a1a", "#999999", "#333333"
-            indicator_border = "#888888"          # 未勾选：灰色边框
+            row_hover = "#f2f4f7"
 
         type_names = {'click': '点击', 'double_click': '双击', 'long_press': '长按',
                       'input': '输入', 'swipe': '滑动', 'wait': '等待',
@@ -1513,33 +1513,28 @@ class StepController(QObject):
             QLabel {{ background: transparent; }}
             QScrollArea {{ background: transparent; border: none; }}
             QScrollArea > QWidget > QWidget {{ background: transparent; }}
+            /* 只给 QCheckBox 设文字色，**不设 ::indicator**——
+               让 Fusion 绘制默认带 √ 的复选框（执行页同款做法） */
             QCheckBox {{
                 color: {text_fg};
                 font-size: 13px;
                 spacing: 10px;
-                padding: 6px 4px;
+                padding: 7px 8px;
                 background: transparent;
+                border-radius: 6px;
             }}
-            /* 复选框叠明显边框（同执行清单的做法），暗色下清晰可见 */
-            QCheckBox::indicator {{
-                width: 18px;
-                height: 18px;
-                border: 2px solid {indicator_border};
-                border-radius: 4px;
-                background: transparent;
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: #1976d2;
-                border: 2px solid #1976d2;
-            }}
-            QCheckBox::indicator:hover {{
-                border-color: #1976d2;
+            QCheckBox:hover {{
+                background-color: {row_hover};
             }}
         """)
 
         root = QVBoxLayout(dlg)
-        root.setContentsMargins(20, 18, 20, 16)
+        root.setContentsMargins(22, 20, 22, 18)
         root.setSpacing(10)
+
+        title = QLabel("录制完成")
+        title.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {title_fg};")
+        root.addWidget(title)
 
         sub = QLabel("")
         sub.setStyleSheet(f"font-size: 12px; color: {sub_fg};")
@@ -1573,9 +1568,10 @@ class StepController(QObject):
             if lv:
                 summary += f"（{lt}：{lv[:28]}{'…' if len(lv) > 28 else ''}）"
 
-            cb = QCheckBox(summary)
+            cb = BorderedCheckBox(summary)
             cb.setChecked(True)
             # 占满整行宽度：点击行内任意位置（含文字右侧空白）都能切换勾选
+            from PyQt6.QtWidgets import QSizePolicy
             cb.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             list_layout.addWidget(cb)
             checks.append(cb)
