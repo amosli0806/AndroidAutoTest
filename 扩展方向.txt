@@ -4,6 +4,12 @@ cd D:\AndroidAutoTest
 git push -u origin main  可能弹浏览器让你授权（凭据管理器）。授权完推约 19MB。这一步不会触发 CI（工作流只监听 tag）
 git tag v1.1.3  本地静默完成，没有任何输出
 git push origin v1.1.3  推 tag → GitHub Actions 开始跑：校验版本 → 打包主程序+更新器 → 更新器自测 → 压 zip → 建 Release。约 5~10 分钟
+
+1. 改代码 + 改版本号（utils/version.py 改成 1.1.5）
+2. 更新 CHANGELOG.md 写这版的说明
+3. git commit + git push   ← 把代码传上去
+4. git tag v1.1.5 + git push  ← 打版本标签，CI 就自动开始打包发版
+
 虫师 - 扩展方向与功能规划（基于 V1.0.1 代码实际梳理，复核于 2026-09-21）
 
 说明：本文档以当前源码为准重新校对，覆盖主窗口 8 个功能入口（ADB工具箱 / 自动化编辑 / 应用可视化 / 自动化执行 / 应用元素库 / 接口自动化 / 性能检测 / 语音播报）。
