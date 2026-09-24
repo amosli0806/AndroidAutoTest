@@ -229,7 +229,14 @@ class DeviceWatcher(QThread):
                     proc.wait(timeout=2)
                 except Exception:
                     pass
-            if proc.poll() is None:      # 还没死透：别读 stderr，会阻塞
+            if proc.poll() is None:
+                # 僵死：terminate 后仍没退出（常见于 adb server 被外部杀掉/版本
+                # 互踩时子进程挂在 socket 上）。以前这里静默 return，诊断盲区——
+                # 2026-09-25 排查「连接中断」时 06:21:26 的那次断开就没留下任何记录。
+                logger.warning(
+                    "track-devices 结束: 进程僵死未退出（terminate 后 2s 仍存活），"
+                    "无法读取退出码/stderr。多与 adb server 被外部重启/版本冲突有关"
+                    "（系统 PATH 里的 adb 与虫师内置 adb 版本不一致时会互踢 server）")
                 return
             err = b""
             if proc.stderr is not None:
