@@ -26,6 +26,8 @@ import qtawesome as qta
 
 class StepController(QObject):
     steps_ready = pyqtSignal(list)
+    # 录制生成的步骤预览信号：后台线程生成完 → 投递到 GUI 线程弹预览对话框
+    steps_preview = pyqtSignal(list)
 
     FIELD_OPTIONS = {
         'locationType': ['资源ID', '坐标', '文本', '描述', 'XPath'],
@@ -78,6 +80,7 @@ class StepController(QObject):
         self._touch_max_y = None
 
         self.steps_ready.connect(self._apply_steps_to_model)
+        self.steps_preview.connect(self._on_steps_preview)
 
         self.step_view.step_dropped.connect(self._on_step_dropped)
         self.step_view.update_step.connect(self._on_update_step)
@@ -1180,11 +1183,11 @@ class StepController(QObject):
         def process_events():
             try:
                 steps = self._build_steps_from_events(events_copy)
-                self.steps_ready.emit(steps)
+                self.steps_preview.emit(steps)
             except Exception:
                 import traceback
                 traceback.print_exc()
-                self.steps_ready.emit([])
+                self.steps_preview.emit([])
 
         threading.Thread(target=process_events, daemon=True).start()
 
@@ -1298,12 +1301,20 @@ class StepController(QObject):
                         'name': make_name('长按', params),
                     })
                 else:
-                    params = make_loc_params(g['start_x'], g['start_y'], g)
-                    steps.append({
-                        'type': 'click',
-                        'params': params,
-                        'name': make_name('点击', params),
-                    })
+                    # 输入框识别：点击坐标若落在输入框上、且该框里已有文字，
+                    # 就把这步升级为「输入」步骤（点击输入框 + 输入文字），
+                    # 覆盖「点输入框 → 打字」这类软键盘操作（触摸 getevent 拿不到字符，
+                    # 只能靠录制结束时反查输入框的最终文本）。
+                    input_step = self._try_build_input_step(g, prefer_element)
+                    if input_step:
+                        steps.append(input_step)
+                    else:
+                        params = make_loc_params(g['start_x'], g['start_y'], g)
+                        steps.append({
+                            'type': 'click',
+                            'params': params,
+                            'name': make_name('点击', params),
+                        })
             else:
                 dx = g['end_x'] - g['start_x']
                 dy = g['end_y'] - g['start_y']
@@ -1336,6 +1347,58 @@ class StepController(QObject):
             i += 1
 
         return steps
+
+    # 输入框 class 特征：uiautomator2 dump 里可输入文字的控件类名
+    _INPUT_FIELD_CLASS_MARKERS = ('EditText', 'AutoCompleteTextView', 'SearchView')
+
+    def _try_build_input_step(self, gesture, prefer_element):
+        """判断一次 tap 是否落在输入框上、且该框里已有文字；是则构造 input 步骤。
+
+        软键盘打字在触摸 getevent 里只有点击软键盘键位的坐标，拿不到字符本身，
+        所以靠「录制结束时反查输入框的最终文本」来还原输入内容。
+        返回 dict（input 步骤）或 None（不是输入框/没文字，保持普通 click）。
+        """
+        if not prefer_element:
+            return None
+        x, y = int(gesture['start_x']), int(gesture['start_y'])
+        try:
+            elem = self._get_element_at(x, y)
+        except Exception:
+            elem = None
+        if not elem:
+            return None
+
+        cls = (elem.get('className') or '').strip()
+        if not any(m in cls for m in self._INPUT_FIELD_CLASS_MARKERS):
+            return None
+
+        text = (elem.get('text') or '').strip()
+        if not text:
+            return None
+
+        # 构造 input 步骤：定位到该输入框，输入 text
+        params = {
+            'screenWidth': self._screen_width,
+            'screenHeight': self._screen_height,
+            'normalizedX': round(x / (self._screen_width or 1080), 4),
+            'normalizedY': round(y / (self._screen_height or 1920), 4),
+            'text': text,
+        }
+        rid = (elem.get('resourceId') or '').strip()
+        if rid:
+            params['locationType'] = '资源ID'
+            params['locationValue'] = rid
+            if (elem.get('resourceIdCount') or 1) > 1:
+                params['instance'] = elem.get('instance', 0)
+        elif text:
+            params['locationType'] = '文本'
+            params['locationValue'] = text
+        else:
+            params['locationType'] = '坐标'
+            params['locationValue'] = f"{x},{y}"
+
+        name = f"输入 {text[:20]}{'…' if len(text) > 20 else ''}"
+        return {'type': 'input', 'params': params, 'name': name}
 
     def _detect_gestures(self, events):
         gestures = []
@@ -1376,6 +1439,83 @@ class StepController(QObject):
             else:
                 i += 1
         return gestures
+
+    def _on_steps_preview(self, steps):
+        """录制生成的步骤预览（GUI 线程）：弹对话框让用户勾选要保留的步骤。"""
+        if not steps:
+            show_toast(message="未识别到操作")
+            return
+
+        # 导入所需控件（在方法内导入，避免顶部 import 堆叠）
+        from PyQt6.QtWidgets import QCheckBox
+
+        dlg = QDialog(self.step_view)
+        dlg.setWindowTitle("录制完成 - 确认步骤")
+        dlg.setFixedSize(520, 440)
+
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
+
+        tip = QLabel(f"共录制到 {len(steps)} 个步骤，请确认要保留的步骤：")
+        root.addWidget(tip)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        root.addWidget(scroll, 1)
+
+        list_widget = QWidget()
+        list_layout = QVBoxLayout(list_widget)
+        list_layout.setSpacing(6)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 每个步骤一个复选框，默认全选
+        checks = []
+        for i, s in enumerate(steps):
+            lt = s.get('params', {}).get('locationType', '')
+            lv = s.get('params', {}).get('locationValue', '')
+            if lt == '资源ID' and '/' in lv:
+                lv = lv.split('/')[-1]
+            summary = f"第{i+1}步 {s.get('name','')}"
+            if lv:
+                summary += f"  · {lt}:{lv[:24]}"
+            cb = QCheckBox(summary)
+            cb.setChecked(True)
+            list_layout.addWidget(cb)
+            checks.append(cb)
+        list_layout.addStretch()
+        scroll.setWidget(list_widget)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        all_btn = QPushButton("全选")
+        none_btn = QPushButton("全不选")
+        all_btn.clicked.connect(lambda: [c.setChecked(True) for c in checks])
+        none_btn.clicked.connect(lambda: [c.setChecked(False) for c in checks])
+        btn_row.addWidget(all_btn)
+        btn_row.addWidget(none_btn)
+        btn_row.addStretch()
+
+        cancel_btn = QPushButton("取消")
+        ok_btn = QPushButton("确认添加")
+        ok_btn.setDefault(True)
+        cancel_btn.clicked.connect(dlg.reject)
+        ok_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        root.addLayout(btn_row)
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            show_toast(message="已取消添加")
+            return
+
+        selected = [s for s, c in zip(steps, checks) if c.isChecked()]
+        if not selected:
+            show_toast(message="未选择任何步骤")
+            return
+        self.steps_ready.emit(selected)
 
     def _apply_steps_to_model(self, steps_data):
         if not steps_data:
