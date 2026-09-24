@@ -232,18 +232,21 @@ class ActionCardView(QScrollArea):
             {'type': 'click', 'title': '点击', 'fields': [
                 {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
                  'options': ['资源ID', '坐标', '文本', '描述', 'XPath']},
-                {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True}
+                {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
+                {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 10}
             ]},
             {'type': 'double_click', 'title': '双击', 'fields': [
                 {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
                  'options': ['资源ID', '坐标', '文本', '描述', 'XPath']},
-                {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True}
+                {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
+                {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 10}
             ]},
             {'type': 'long_press', 'title': '长按', 'fields': [
                 {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
                  'options': ['资源ID', '坐标', '文本', '描述', 'XPath']},
                 {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
-                {'key': 'longPressMs', 'label': '长按毫秒：', 'type': 'spin', 'default': 1000}
+                {'key': 'longPressMs', 'label': '长按毫秒：', 'type': 'spin', 'default': 1000},
+                {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 10}
             ]},
             {'type': 'swipe', 'title': '滑动', 'fields': [
                 {'key': 'direction', 'label': '方 向 ：', 'type': 'select',
@@ -303,7 +306,8 @@ class ActionCardView(QScrollArea):
                 {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
                  'options': ['资源ID', '坐标', '文本', '描述', 'XPath']},
                 {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
-                {'key': 'text', 'label': '输入文字：', 'type': 'line', 'required': True}
+                {'key': 'text', 'label': '输入文字：', 'type': 'line', 'required': True},
+                {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 10}
             ]},
             {'type': 'wait', 'title': '等待', 'fields': [
                 {'key': 'duration', 'label': '  秒  数  ：', 'type': 'spin', 'default': 3, 'required': True}

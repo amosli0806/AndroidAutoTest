@@ -303,6 +303,28 @@ class DeviceService:
         else:
             raise ValueError(f"未知定位方式: {loc_type}")
 
+    # 元素操作前的默认等待超时（秒）：页面/动画没渲染完时，先等元素出现再点，
+    # 避免「页面还没出来就操作」导致的偶发失败。步骤参数里可传 timeout 覆盖。
+    DEFAULT_ELEMENT_WAIT_TIMEOUT = 10
+
+    def _wait_for_object(self, obj, params):
+        """等元素出现（带超时）。等到返回 True；超时返回 False。
+
+        uiautomator2 的 click/input 不会自己等元素，找不到就立刻抛「元素不存在」，
+        所以这里在操作前用 exists(timeout=…) 主动等，给页面渲染留时间。
+        默认超时 10 秒，步骤参数里的 timeout 可覆盖；坐标定位无需等待。
+        """
+        if obj is None:
+            return True
+        timeout = params.get('timeout', self.DEFAULT_ELEMENT_WAIT_TIMEOUT)
+        try:
+            timeout = float(timeout)
+        except (TypeError, ValueError):
+            timeout = self.DEFAULT_ELEMENT_WAIT_TIMEOUT
+        if timeout <= 0:
+            return True
+        return bool(obj.exists(timeout=timeout))
+
     def _perform_click(self, params):
         loc_type = params.get('locationType')
         loc_value = params.get('locationValue')
@@ -311,6 +333,8 @@ class DeviceService:
             self.device.click(x, y)
         else:
             obj = self._get_ui_object(loc_type, loc_value)
+            if not self._wait_for_object(obj, params):
+                raise ValueError(f"等待元素出现超时：{loc_type} = {loc_value}")
             obj.click()
 
     def _perform_double_click(self, params):
@@ -323,6 +347,8 @@ class DeviceService:
             self.device.click(x, y)
         else:
             obj = self._get_ui_object(loc_type, loc_value)
+            if not self._wait_for_object(obj, params):
+                raise ValueError(f"等待元素出现超时：{loc_type} = {loc_value}")
             obj.click()
             time.sleep(0.05)
             obj.click()
@@ -336,6 +362,8 @@ class DeviceService:
             self.device.long_click(x, y, duration=ms / 1000)
         else:
             obj = self._get_ui_object(loc_type, loc_value)
+            if not self._wait_for_object(obj, params):
+                raise ValueError(f"等待元素出现超时：{loc_type} = {loc_value}")
             obj.long_click(duration=ms / 1000)
 
     def _perform_input(self, params):
@@ -349,6 +377,8 @@ class DeviceService:
             self.device.send_keys(text)
         else:
             obj = self._get_ui_object(loc_type, loc_value)
+            if not self._wait_for_object(obj, params):
+                raise ValueError(f"等待元素出现超时：{loc_type} = {loc_value}")
             obj.set_text(text)
 
     def _perform_wait(self, params):
