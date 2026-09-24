@@ -296,6 +296,34 @@ class HelpView(QFrame):
     def _get_help_content(self):
         """返回所有帮助章节和子主题的 HTML 内容"""
         return {
+                        "⚙️ 环境准备": {
+                "安装 adb": f"""
+                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">⚙️ 环境准备：安装 adb</h2>
+                <p style="font-size: 15px;">
+                    虫师通过 <b>adb</b>（Android Debug Bridge）与安卓设备通信，需要电脑上
+                    已安装 adb 并加入 <b>系统 PATH</b>。未安装时启动虫师会提示
+                    「未检测到 adb」，此时无法连接设备。
+                </p>
+
+                {self._get_steps_html([
+                    {'image': '', 'desc': '① 下载 Google 官方 platform-tools：https://developer.android.com/tools/releases/platform-tools（国内可搜「platform-tools 下载」选可靠镜像）'},
+                    {'image': '', 'desc': '② 解压到任意目录，例如 D:\\platform-tools（内含 adb.exe）'},
+                    {'image': '', 'desc': '③ 把该目录加入系统 PATH：此电脑右键 → 属性 → 高级系统设置 → 环境变量 → 选中 Path → 编辑 → 新建 → 填入目录路径'},
+                    {'image': '', 'desc': '④ 验证：打开新的命令行窗口，输入 adb version，能显示版本号即成功'},
+                    {'image': '', 'desc': '⑤ 重启虫师，顶部设备下拉框应能发现已连接的设备'},
+                ])}
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 <b>手机端</b>还需开启「开发者选项 → USB 调试」；车机/电视设备请在系统设置里找到
+                    开发者选项开启 adb 调试。首次连接设备时，设备上会弹「是否允许 USB 调试」授权框，点允许。
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    ⚠️ 无线设备（adb connect ip:port）连接后若提示 offline，多为设备端未授权或网络不通，
+                    可在设备上重新授权或改用 USB 连接。
+                </div>
+                """,
+            },
                         "🔧 ADB工具箱": {
                 "使用说明": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🔧 ADB工具箱</h2>

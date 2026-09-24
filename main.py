@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QPalette, QColor, QIcon, QFont
 from PyQt6.QtCore import QTimer, Qt, QThread, QObject, pyqtSignal, pyqtSlot, QProcess
 
-from utils.adb_path import get_adb_path
+from utils.adb_path import get_adb_path, adb_installed
 from utils.dialogs import ErrorDialog
 from views.main_window import MainWindow
 from models.project_model import ProjectModel
@@ -345,19 +345,15 @@ def main():
 
     # ---------- 统一 adb 二进制 ----------
     # uiautomator2 的设备操作最终都走 adbutils，而 adbutils 解析 adb 的优先级是：
-    #   ADBUTILS_ADB_PATH 环境变量 > PATH 里的 adb > 它自带的 adb
-    # 这里把 adbutils 钉到内置 adb，保证整个进程（长连接 / 设备列表 / 用例执行）
-    # 只用同一个二进制 —— 本机就装着三份 adb（内置 36.0.0、PATH 与 Android SDK
-    # 各一份 37.0.0），混用会让"用哪个 adb"这件事变得不可预期。
-    # 注：**包版本号不同并不会让 client 杀掉 server**（实测 36/37 互相连同一个
-    # server 都正常，版本比对看的是协议号 1.0.41，不是 platform-tools 包版本），
-    # 所以别再拿"版本不一致会杀 server"当理由 —— 长连接断开的真原因见
-    # DeviceWatcher 的注释（server 重建期 spawn 秒退）。
-    # 必须放在任何一次 adb 调用之前；adb_path() 是每次调用时现读环境变量的，
-    # 不缓存，所以在这里设置就来得及。
-    _bundled_adb = get_adb_path()
-    if os.path.isfile(_bundled_adb):
-        os.environ["ADBUTILS_ADB_PATH"] = _bundled_adb
+    # ---------- adb：统一用系统 PATH 里的一份（2026-09-25 起不再内置）----------
+    # tools/adb.exe 已移除。此前通过 ADBUTILS_ADB_PATH 把 uiautomator2/adbutils
+    # 钉到内置 adb 的逻辑随之删除 —— 现在全系统只有一份 adb（PATH 里的），
+    # u2/adbutils/DeviceWatcher/工具箱走的都是同一个，无版本一致性顾虑。
+    # 没装 adb 的环境：启动预扫会检测并在消息中心提示，帮助中心有安装指引。
+    if not adb_installed():
+        logger.warning(
+            "未检测到 adb（系统 PATH 里没有）。请安装 Android platform-tools 并加入 "
+            "PATH，安装指引见帮助中心「环境准备」。")
 
     def global_exception_hook(exc_type, exc_value, exc_tb):
         logging.getLogger(__name__).critical(
