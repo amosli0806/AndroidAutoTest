@@ -151,6 +151,35 @@ def _remove_with_retry(path: str, attempts: int = 4, delay: float = 1.5) -> bool
     return not os.path.exists(path)
 
 
+def stop_legacy_adb_server(internal_dir: str):
+    """停掉旧版本内置 adb 起的 adb server（升级收尾的前置清理）。
+
+    为什么必须做：1.1.4 及之前的包在 _internal/tools/ 里带 adb.exe，虫师运行时
+    它会拉起一个常驻的 adb server 进程（daemon，主程序退出也不死）。升级把
+    _internal 改名 .old 后，server 进程还锁着 .old 里的 adb.exe，第 4 步的
+    「删除 .old」永远失败，用户只能手动去任务管理器杀 adb 才能删掉
+    （1.1.4 -> 1.1.6 升级实测反馈）。
+
+    做法：用旧 adb 自己发 `kill-server`——server 按 5037 端口全局唯一，
+    无论它是哪个 adb 起的都会被停掉；其他程序的 adb（如 Android Studio）
+    不走这个 exe，且 server 停掉后它们会自动重连，无实质影响。
+    """
+    adb = os.path.join(internal_dir, "tools", "adb.exe")
+    if not os.path.isfile(adb):
+        return
+    try:
+        subprocess.run(
+            [adb, "kill-server"],
+            timeout=8,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=0x08000000,   # CREATE_NO_WINDOW
+        )
+        log.info("已停掉旧内置 adb 的 server（%s）", adb)
+    except Exception as e:
+        log.warning("停旧 adb server 失败（忽略，不影响更新本身）: %s", e)
+
+
 def swap(src: str, dst: str):
     """把 src 里的新版本换进 dst。失败时抛异常，调用方负责回滚。
 
@@ -160,6 +189,11 @@ def swap(src: str, dst: str):
     internal_src = os.path.join(src, INTERNAL_DIR)
     internal_dst = os.path.join(dst, INTERNAL_DIR)
     internal_bak = internal_dst + BACKUP_SUFFIX
+
+    # 前置清理：旧版本内置 adb 的 server 可能还活着，锁着旧目录里的 adb.exe ——
+    # 不停掉它，下面的「清上次 .old」和「删除 .old」都会失败
+    stop_legacy_adb_server(internal_dst)
+    stop_legacy_adb_server(internal_bak)
 
     # 上一次更新留下的 .old 先清掉（可能被杀软占着，多试几次；还不行就换个名字继续）
     if os.path.exists(internal_bak):
