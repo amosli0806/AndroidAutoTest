@@ -14,6 +14,28 @@ import weditor
 
 _weditor_dir = os.path.dirname(weditor.__file__)
 
+# ---------- 打包前修复 weditor 0.7.3 的 version.py（幂等） ----------
+# 它引用 pkg_resources（setuptools，Python 3.13 / PyInstaller 环境没有），
+# 且 except 分支写坏会直接 NameError 崩掉整个启动（weditor.exe 实测）。
+# 修成 importlib.metadata 版。必须在 Analysis 之前执行——PYZ 封的是打包时快照，
+# 运行时改文件无效（虫师进程内的 _fix_weditor_version 只救源码模式）。
+_version_py = os.path.join(_weditor_dir, "web", "version.py")
+if os.path.exists(_version_py):
+    with open(_version_py, "r", encoding="utf-8") as _f:
+        _src = _f.read()
+    if "pkg_resources" in _src:
+        _fixed = (
+            "# coding: utf-8\n#\n\n"
+            "try:\n"
+            "    import importlib.metadata\n"
+            '    __version__ = importlib.metadata.version("weditor")\n'
+            "except Exception:\n"
+            '    __version__ = "unknown"\n'
+        )
+        with open(_version_py, "w", encoding="utf-8") as _f:
+            _f.write(_fixed)
+        print("[weditor.spec] 已修复 weditor/web/version.py（pkg_resources -> importlib.metadata）")
+
 a = Analysis(
     ["weditor_launcher.py"],
     pathex=[],
