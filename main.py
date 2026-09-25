@@ -694,6 +694,11 @@ def main():
     # ---------- Weditor ----------
     weditor_svc = WeditorService()
     main_window.set_weditor_service(weditor_svc)
+    # 退出清理第二道防线：事件循环退出时立即杀 weditor 服务进程。
+    # QWebEngine 应用退出时 Chromium 清理可能跳过 atexit（实测 1.1.8 残留
+    # weditor.exe），aboutToQuit 在事件循环退出时就发出，时机更早更可靠；
+    # 第三道防线是 spawn 时的 Job Object（父死子亡，系统级保证）。
+    app.aboutToQuit.connect(weditor_svc.stop)
 
     # ---------- 设备刷新 ----------
     last_devices = []

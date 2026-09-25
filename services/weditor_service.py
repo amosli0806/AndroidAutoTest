@@ -12,6 +12,74 @@ from PyQt6.QtWidgets import QLabel
 from PyQt6.QtCore import Qt
 from utils.theme import ThemeMode
 
+CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+
+
+def _bind_kill_on_close(process):
+    """把子进程绑定到 Windows Job Object（KILL_ON_JOB_CLOSE）。
+
+    为什么需要：应用可视化用了 QWebEngineView，WebEngine 应用退出时会走
+    Chromium 自己的清理路径（可能直接结束进程），**Python 的 atexit 不可靠**
+    ——实测 1.1.8 关闭虫师后 weditor.exe 仍残留（atexit 没执行）。
+    Job Object 是 Windows 的「父死子亡」系统机制：虫师进程退出时 Job 句柄
+    随之关闭，系统自动杀掉绑定的 weditor.exe——无论主程序是正常退出、
+    崩溃还是被强杀，物理上杜绝残留。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        class _IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                (n, ctypes.c_ulonglong)
+                for n in ("ReadOperationCount", "WriteOperationCount",
+                          "OtherOperationCount", "ReadTransferCount",
+                          "WriteTransferCount", "OtherTransferCount")
+            ]
+
+        class _BASIC_LIMITS(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.c_uint32),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", ctypes.c_uint32),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", ctypes.c_uint32),
+                ("SchedulingClass", ctypes.c_uint32),
+            ]
+
+        class _EXTENDED_LIMITS(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _BASIC_LIMITS),
+                ("IoInfo", _IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        k32 = ctypes.windll.kernel32
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            return
+        info = _EXTENDED_LIMITS()
+        info.BasicLimitInformation.LimitFlags = 0x2000   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not k32.SetInformationJobObject(
+                job, 9, ctypes.byref(info), ctypes.sizeof(info)):   # 9 = ExtendedLimitInformation
+            k32.CloseHandle(job)
+            return
+        if not k32.AssignProcessToJobObject(job, int(process._handle)):
+            k32.CloseHandle(job)
+            return
+        # 句柄故意不关：持有在当前进程，虫师退出时句柄关闭 -> 触发 KILL_ON_JOB_CLOSE
+        process._kill_on_close_job = job
+    except Exception as e:
+        # Job 绑定失败不影响正常功能，退出清理还有 atexit / aboutToQuit 兜底
+        print(f"[weditor] Job Object 绑定失败（退出清理降级为 atexit）: {e}")
+
 
 class WeditorService:
     def __init__(self):
@@ -26,6 +94,9 @@ class WeditorService:
         # 退出清理：主进程关闭时终止 weditor 子进程，避免孤儿化残留
         # （实测残留：weditor 双实例+ipyshell 在虫师退出后继续存活并占着 17310 端口，
         #  下次启动复用旧进程，旧进程里的旧代码还会继续弹窗）
+        # 注意：atexit 只是兜底之一——QWebEngine 应用退出时 WebEngine 可能跳过
+        # atexit，所以主防线是 spawn 时的 Job Object（_bind_kill_on_close）
+        # 和 main.py 里的 app.aboutToQuit 连接，三者互相兜底。
         atexit.register(self.stop)
 
     def apply_theme(self, theme_mode: ThemeMode):
@@ -152,9 +223,11 @@ except Exception:
                 self._build_weditor_command(port),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                creationflags=CREATE_NO_WINDOW,
                 text=True
             )
+            # Windows：绑定 Job Object（父死子亡），杜绝任何退出路径下的进程残留
+            _bind_kill_on_close(self.process)
         except Exception as e:
             raise Exception(f"无法启动 weditor 进程: {e}")
 
@@ -206,8 +279,28 @@ except Exception:
         return self.web_view
 
     def stop(self):
-        if self.process:
-            self.process.terminate()
-            self.process.wait()
+        """终止 weditor 服务进程（加固版：terminate -> 等待 -> kill 三段式）。
+
+        之前的版本 terminate 后无限 wait——进程僵死时会挂死退出流程；
+        且依赖 atexit 的退出路径在 QWebEngine 应用里不可靠（WebEngine 退出时
+        走 Chromium 清理可能跳过 atexit）。现在主防线是 Job Object
+        （见 _bind_kill_on_close），这里的三段式只是主动清理的兜底。
+        """
+        if not self.process:
+            return
+        try:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=3)
+                except Exception:
+                    self.process.kill()          # terminate 没杀掉，升级为 kill
+                    try:
+                        self.process.wait(timeout=3)
+                    except Exception:
+                        pass                      # 最后交由 Job Object 兜底
+        except Exception as e:
+            print(f"[weditor] 停止服务进程异常（忽略）: {e}")
+        finally:
             self.process = None
             self.web_view = None
