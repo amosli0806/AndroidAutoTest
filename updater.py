@@ -180,6 +180,48 @@ def stop_legacy_adb_server(internal_dir: str):
         log.warning("停旧 adb server 失败（忽略，不影响更新本身）: %s", e)
 
 
+def stop_legacy_weditor(install_dir: str):
+    """停掉旧版本分发的 weditor 可视化服务（升级收尾的前置清理）。
+
+    为什么必须做：1.1.6 起包里带 tools/weditor.exe（应用可视化的常驻服务）。
+    主程序正常退出时 atexit 会 terminate 它，但残留路径依然存在——异常退出、
+    terminate 后进程未及时退场、或旧版包的清理逻辑有缺口——它活着就锁住
+    .old/tools/weditor.exe，「删除 .old」失败（1.1.6 -> 1.1.7 升级实测反馈，
+    与 adb server 锁 .old 是同一类问题）。
+
+    做法：先用 weditor 自带的 `--quit` 协议优雅请求退出（它会通知 17310 端口
+    的服务停机），等一拍后 `taskkill /F /IM weditor.exe` 兜底强杀。weditor.exe
+    是本包专属分发的名字，误伤面极小（真有用户自装的 weditor 被停，重启即可）。
+    """
+    exe = os.path.join(install_dir, "tools", "weditor.exe")
+    if not os.path.isfile(exe):
+        return
+    # 1) 优雅退出：weditor 自带 --quit（通知本机服务停机）
+    try:
+        subprocess.run(
+            [exe, "--quit"],
+            timeout=6,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=0x08000000,
+        )
+        time.sleep(1.5)   # 给优雅退出留一拍
+    except Exception as e:
+        log.warning("weditor --quit 失败（继续用 taskkill 兜底）: %s", e)
+    # 2) 兜底强杀：确认进程没了（或优雅失败）时强杀同名进程
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/IM", "weditor.exe"],
+            timeout=6,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=0x08000000,
+        )
+        log.info("已清理旧版 weditor 服务进程（%s）", exe)
+    except Exception as e:
+        log.warning("taskkill weditor.exe 失败（忽略，不影响更新本身）: %s", e)
+
+
 def swap(src: str, dst: str):
     """把 src 里的新版本换进 dst。失败时抛异常，调用方负责回滚。
 
@@ -190,10 +232,13 @@ def swap(src: str, dst: str):
     internal_dst = os.path.join(dst, INTERNAL_DIR)
     internal_bak = internal_dst + BACKUP_SUFFIX
 
-    # 前置清理：旧版本内置 adb 的 server 可能还活着，锁着旧目录里的 adb.exe ——
-    # 不停掉它，下面的「清上次 .old」和「删除 .old」都会失败
+    # 前置清理：旧版本内置 adb 的 server / weditor 服务进程可能还活着，
+    # 锁着旧目录里的 adb.exe / weditor.exe —— 不停掉它们，
+    # 下面的「清上次 .old」和「删除 .old」都会失败
     stop_legacy_adb_server(internal_dst)
     stop_legacy_adb_server(internal_bak)
+    stop_legacy_weditor(dst)
+    stop_legacy_weditor(internal_bak)
 
     # 上一次更新留下的 .old 先清掉（可能被杀软占着，多试几次；还不行就换个名字继续）
     if os.path.exists(internal_bak):
