@@ -73,6 +73,10 @@ class StepListView(QListWidget):
 
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         self.currentItemChanged.connect(self._on_current_item_changed)
+        # 选中态同步必须挂在 itemSelectionChanged：Qt 点击时先发 currentItemChanged
+        # 后更新选择集，只挂 currentItemChanged 会让 selectedItems() 拿到上一次的
+        # 选择，卡片选中态滞后一次点击（用户实测：点第二张卡时第一张才亮）
+        self.itemSelectionChanged.connect(self._sync_selected_cards)
         # 初始化时直接应用一次滚动条样式（亮色），保证即使 apply_theme 未触发也有效
         self._apply_scrollbar_style(ThemeMode.LIGHT)
         # 初始化时也屏蔽选中高亮，防止第一次选中时露出 #1976d2
