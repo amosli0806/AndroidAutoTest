@@ -76,23 +76,11 @@ def _create_toast(parent, message, duration):
         if top_level is not None and top_level.isVisible():
             parent = top_level
 
-    # **归一到顶层窗口 + 作为子控件浮层**（不再创建独立顶层窗口）：
-    # Windows + PyQt6.11 下，独立 Tool 窗口即使设了 FramelessWindowHint，
-    # 窗口管理器仍会给它套标题栏（标题显示进程名 "python"，用户实测）。
-    # 改成主窗口的子控件浮层后：无标题栏、不进任务栏、不闪独立窗，
-    # 且随主窗口移动/最小化，行为与系统 toast 语义一致。
-    if parent is not None:
-        parent = parent.window()
-
     _current_toast = Toast(parent, message, duration)
 
 
 class Toast(QWidget):
-    """轻提示 Toast，主窗口内底部居中浮层，带滑入/滑出动画。
-
-    定位用 parent 的局部坐标（不再 mapToGlobal 到屏幕）——因为 Toast 现在是
-    主窗口的**子控件**，坐标天然跟随主窗口，窗口管理器完全不经手。
-    """
+    """轻提示 Toast，底部居中，带滑入/滑出动画"""
 
     def __init__(self, parent=None, message="", duration=2000):
         super().__init__(parent)
@@ -101,25 +89,30 @@ class Toast(QWidget):
         self.message = message
         self._is_closing = False
 
-        # 作为主窗口内的子控件浮层：明确普通 Widget 类型（绝不做顶层窗口）
-        self.setWindowFlags(Qt.WindowType.Widget)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # 用 FramelessWindowHint + Dialog 组合：Dialog 比 Tool 在 Windows 下对无边框
+        # 支持更稳（Tool 会被窗口管理器套标题栏显示进程名）。WindowStaysOnTopHint
+        # 让提示浮在主窗口之上，ShowWithoutActivating 不抢焦点。
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Dialog
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
         self.setFixedWidth(450)
         self.setFixedHeight(80)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(20, 12, 20, 12)
 
         self.label = QLabel(message, self)
-        self.label.setObjectName("ToastLabel")
         self.label.setStyleSheet("""
             QLabel {
                 color: white;
                 font-size: 14px;
                 font-weight: 500;
-                background-color: rgba(30, 30, 30, 0.92);
+                background-color: rgba(0, 0, 0, 0.85);
                 border-radius: 8px;
                 padding: 10px 20px;
             }
@@ -130,19 +123,18 @@ class Toast(QWidget):
 
         self.adjustSize()
 
-        # 定位：parent 局部坐标，底部居中上浮 50px（Toast 现为 parent 的子控件）
-        if parent is not None:
+        if parent:
             parent_rect = parent.rect()
-            self.target_x = (parent_rect.width() - self.width()) // 2
-            self.target_y = parent_rect.height() - self.height() - 50
+            parent_center = parent.mapToGlobal(parent_rect.center())
+            self.target_x = parent_center.x() - self.width() // 2
+            self.target_y = parent.mapToGlobal(parent_rect.bottomRight()).y() - self.height() - 50
         else:
             screen = QApplication.primaryScreen().geometry()
             self.target_x = screen.center().x() - self.width() // 2
             self.target_y = screen.bottom() - self.height() - 50
 
         self.move(self.target_x, self.target_y + 100)
-        self.setWindowOpacity(1.0)
-        self.raise_()   # 置于主窗口内所有控件之上
+        self.setWindowOpacity(0.0)
 
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
@@ -175,9 +167,10 @@ class Toast(QWidget):
 
         self.slide_out.finished.connect(self._safe_close)
 
-        self.show()
-        self.raise_()
+        self.slide_in.start()
         self.fade_in.start()
+
+        self.show()
 
     def _start_fade_out(self):
         if not self._is_closing:
