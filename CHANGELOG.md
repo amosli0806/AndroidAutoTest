@@ -9,6 +9,8 @@
 
 ## 未发布（下一个版本）
 
+- 修复：**show_toast 线程安全化** —— 设备插拔时某个后台线程直接创建 Toast（QWidget），Qt 铁律「GUI 对象只能在 GUI 线程创建」被打破，导致 Toast 窗口标志/样式全部失效：白底、带 "python" 标题栏、一闪而过（用户实测的白色横条弹窗）。现在任意线程调用 show_toast 都会自动投递到 GUI 线程执行，Toast 恢复正常的黑底白字无边框样式
+
 - 修复：设备插拔时界面短暂闪出一个黑白填充空窗口的问题 —— 根因是设备抖动（adb 列表多次变化）触发 update_device_list 反复 clear()+addItem 重绘下拉框，Windows 下 Qt6.11 把关联浮动窗口（可视化 Dock）短暂渲染成独立窗口。已给设备列表更新加内容去重，列表无变化时不再重绘
 
 - 修复：设备连接/断开时持续弹出黑色控制台窗口的**根本问题** —— 真凶是 adb 37.x 的 `track-devices` 长连接在 Windows 上会自建隐藏控制台（conhost.exe），即使带 CREATE_NO_WINDOW 也拦不住（psutil 抓进程树实锤 conhost 的父正是 track-devices 的 adb.exe）。已将设备监听从「track-devices 长连接」改为「2 秒低频轮询 adb devices」，普通 devices 不产生控制台，弹窗从根上消失（代价是设备变化发现延迟最多 2 秒，对自动化工具可接受）

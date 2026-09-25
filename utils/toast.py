@@ -1,8 +1,83 @@
 # utils/toast.py
+"""轻提示 Toast。
+
+线程安全：show_toast 可以从**任意线程**调用。QWidget 只能在 GUI 线程创建，
+在 worker 线程（QThread/线程池）里直接创建 Toast 会产生未定义行为——
+窗口标志失效（弹标题栏）、透明背景失效（白底）、样式错乱（2026-09-25 用户
+实测：设备插拔时闪白色横条窗、标题栏显示 "python"）。
+非 GUI 线程调用时会自动经信号队列投递回 GUI 线程执行。
+"""
 from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QApplication, QMainWindow
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint
+from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QPoint, QObject, pyqtSignal, QThread
 
 _current_toast = None
+
+
+class _ToastBridge(QObject):
+    """跨线程 toast 投递桥：信号在创建它的线程（GUI）上接收，队列投递保证
+    worker 线程的调用最终在 GUI 线程里真正创建 Toast。"""
+    _show_requested = pyqtSignal(str, int)
+
+    def __init__(self):
+        super().__init__()
+        self._show_requested.connect(self._on_show)
+
+    def _on_show(self, message, duration):
+        _create_toast(None, message, duration)   # GUI 线程：定位交给顶层窗口
+
+
+_bridge = None
+
+
+def _get_bridge():
+    global _bridge
+    if _bridge is None:
+        _bridge = _ToastBridge()
+    return _bridge
+
+
+def _on_gui_thread():
+    app = QApplication.instance()
+    return app is not None and QThread.currentThread() is app.thread()
+
+
+def show_toast(parent=None, message="", duration=2000):
+    global _current_toast
+    close_current_toast()
+    # 兼容旧调用：如果 parent 是字符串，说明只传了消息，parent 应为 None
+    if isinstance(parent, str):
+        message = parent
+        parent = None
+
+    # 线程安全闸门：非 GUI 线程调用时，parent 引用跨线程传递不可靠（可能已销毁），
+    # 统一转投 GUI 线程、以顶层窗口为基准定位（toast 消息本身才是重点）。
+    if not _on_gui_thread():
+        _get_bridge()._show_requested.emit(message, duration)
+        return
+    _create_toast(parent, message, duration)
+
+
+def _create_toast(parent, message, duration):
+    global _current_toast
+    if parent is None:
+        parent = QApplication.activeWindow()
+    if parent is None:
+        for widget in QApplication.topLevelWidgets():
+            if isinstance(widget, QMainWindow):
+                parent = widget
+                break
+
+    # 传入的父控件若当前不可见，通常是一个还没显示过的功能页：它还没被布局撑开
+    # （尺寸仍是 640x480 之类的默认值），坐标也还是旧的，以它为基准算出来的
+    # toast 位置会飘到界面上奇怪的地方。这种情况改挂到顶层窗口上，落点才稳定。
+    # 注意只在"不可见"时才改，可见父控件的定位结果保持不变。
+    if parent is not None and not parent.isVisible():
+        top_level = parent.window()
+        if top_level is not None and top_level.isVisible():
+            parent = top_level
+
+    _current_toast = Toast(parent, message, duration)
+
 
 class Toast(QWidget):
     """轻提示 Toast，底部居中，带滑入/滑出动画"""
@@ -121,30 +196,3 @@ def close_current_toast():
                 anim.stop()
         _current_toast.close()
         _current_toast = None
-
-
-def show_toast(parent=None, message="", duration=2000):
-    global _current_toast
-    close_current_toast()
-    # 兼容旧调用：如果 parent 是字符串，说明只传了消息，parent 应为 None
-    if isinstance(parent, str):
-        message = parent
-        parent = None
-    if parent is None:
-        parent = QApplication.activeWindow()
-    if parent is None:
-        for widget in QApplication.topLevelWidgets():
-            if isinstance(widget, QMainWindow):
-                parent = widget
-                break
-
-    # 传入的父控件若当前不可见，通常是一个还没显示过的功能页：它还没被布局撑开
-    # （尺寸仍是 640x480 之类的默认值），坐标也还是旧的，以它为基准算出来的
-    # toast 位置会飘到界面上奇怪的地方。这种情况改挂到顶层窗口上，落点才稳定。
-    # 注意只在"不可见"时才改，可见父控件的定位结果保持不变。
-    if parent is not None and not parent.isVisible():
-        top_level = parent.window()
-        if top_level is not None and top_level.isVisible():
-            parent = top_level
-
-    _current_toast = Toast(parent, message, duration)
