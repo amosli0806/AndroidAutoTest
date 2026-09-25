@@ -1135,6 +1135,7 @@ class MainWindow(QMainWindow):
         self.device_status_label = QLabel("○ 未连接设备")
         self.device_status_label.setStyleSheet("padding: 2px 8px; color: #c0392b; background: transparent;")
         self.statusBar().addWidget(self.device_status_label)
+        self._last_device_list = None   # update_device_list 的内容去重基线
         self.apply_shortcuts()
         # ---------- 应用可视化 Dock ----------
         self.setup_visualize_dock()
@@ -3353,6 +3354,12 @@ class MainWindow(QMainWindow):
         self.device_service = service
 
     def update_device_list(self, devices):
+        # 内容没变化就不重绘：设备插拔瞬间 adb 列表会抖动，2 秒轮询 + devices_changed
+        # 会连续多次调用这里，clear()+addItem 反复触发下拉框重绘，Windows 下 Qt6.11
+        # 会把关联的浮动窗口（可视化 Dock 等）短暂渲染成独立窗口闪一下。
+        if getattr(self, '_last_device_list', None) == devices:
+            return
+        self._last_device_list = devices
         self.device_combo.clear()
         if not devices:
             self.device_combo.addItem("未检测到设备")
