@@ -50,3 +50,5 @@ tools/import_more_sheets.py
 Thumbs.db
 desktop.ini
 .DS_Store
+dist_weditor/
+build_weditor/
