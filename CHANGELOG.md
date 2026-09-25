@@ -9,6 +9,8 @@
 
 ## 未发布（下一个版本）
 
+- 修复：设备连接/断开时持续弹出黑色控制台窗口的**根本问题** —— 真凶是 adb 37.x 的 `track-devices` 长连接在 Windows 上会自建隐藏控制台（conhost.exe），即使带 CREATE_NO_WINDOW 也拦不住（psutil 抓进程树实锤 conhost 的父正是 track-devices 的 adb.exe）。已将设备监听从「track-devices 长连接」改为「2 秒低频轮询 adb devices」，普通 devices 不产生控制台，弹窗从根上消失（代价是设备变化发现延迟最多 2 秒，对自动化工具可接受）
+
 - 修复：设备插拔/开关 USB 调试时消息面板「中断→恢复」闪动刷屏 —— 改为防抖告警：断开后 10 秒内恢复的完全静默（这类抖动是设备端 adbd 重启/USB 重枚举的正常现象），持续断开超过 10 秒才提示「中断」，恢复时提示「已恢复」
 - 修复：设备重连时连续弹出黑色控制台窗口的问题 —— 三重来源全堵：①uiautomator2 依赖 adbutils 内部 spawn adb 未隐藏窗口；②weditor 的 ipyshell 子进程（python 窗口）无窗口标志；③weditor 服务并发启动竞态导致双实例双份弹窗。子进程统一补 CREATE_NO_WINDOW + weditor 启动自动打补丁（幂等，升级后自动重打）+ 启动加锁防重复
 - 修复：关闭虫师后 weditor 子进程（含 ipyshell）不退出、孤儿化残留的问题 —— 退出时自动终止

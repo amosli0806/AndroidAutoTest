@@ -150,102 +150,70 @@ class _UpdateCheckSignal(QObject):
 
 
 class DeviceWatcher(QThread):
-    """监听 adb 设备变化（adb track-devices 长连接）"""
+    """监听 adb 设备变化。
+
+    2026-09-25 起从「adb track-devices 长连接」改为「低频轮询 adb devices」。
+    为什么弃用长连接：adb 37.x 的 track-devices 在 Windows 上会自己 spawn 一个
+    隐藏控制台（conhost.exe），即使 Popen 带了 CREATE_NO_WINDOW 也拦不住 ——
+    设备插拔/重连时反复起停 track-devices 就反复弹黑窗（用户实测反馈，psutil
+    抓进程树确认 conhost 的父正是 track-devices 的 adb.exe）。改成轮询后，
+    普通 `adb devices` 不产生任何控制台，弹窗从根上消失。
+    代价：设备变化发现延迟从「即时」变成「最多一个轮询周期（2 秒）」，对自动化
+    工具完全可接受（本来也有 5 秒兜底轮询）。
+    """
     devices_changed = pyqtSignal()
     watcher_status = pyqtSignal(bool)   # True=正常连接，False=断开重连中
     link_error = pyqtSignal(str)        # 失败原因：只写日志，不进消息中心免得刷屏
 
-    # 连续失败时退避（秒）：server 处于坏状态时没必要每 5 秒敲一次
-    RETRY_DELAYS = (1.0, 2.0, 5.0, 10.0)
+    POLL_INTERVAL = 2.0                 # 轮询周期（秒）
 
     def __init__(self, adb_path, parent=None):
         super().__init__(parent)
         self.adb_path = adb_path
         self._stop = False
 
-    def run(self):
+    def _list_devices(self):
+        """跑一次 adb devices，返回 (ok, devices_list)。失败返回 (False, [])。"""
         import subprocess
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-        attempt = 0
+        try:
+            r = subprocess.run(
+                [self.adb_path, 'devices'],
+                capture_output=True, text=True, timeout=5,
+                encoding='utf-8', errors='replace',
+                creationflags=creationflags,
+            )
+            if r.returncode != 0:
+                return False, []
+            devices = []
+            for line in r.stdout.strip().split('\n')[1:]:
+                if line.strip() and 'device' in line and 'offline' not in line:
+                    devices.append(line.split()[0])
+            return True, devices
+        except Exception as e:
+            self.link_error.emit(f"{type(e).__name__}: {e}")
+            return False, []
 
+    def run(self):
+        last_devices = None
+        last_ok = None
         while not self._stop:
-            proc = None
-            try:
-                proc = subprocess.Popen(
-                    [self.adb_path, 'track-devices'],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    creationflags=creationflags,
-                )
+            ok, devices = self._list_devices()
 
-                # 关键：**先读到数据才算连上**，连上之后才报「已恢复」。
-                # 原来 Popen 之后立刻 emit(True)，而 server 正在重建时这个进程会秒退，
-                # 于是每轮都冒一对「已恢复 / 已中断」—— 消息面板看着像不停抽风。
-                connected = False
-                while not self._stop:
-                    header = proc.stdout.read(4)
-                    if not header or len(header) < 4:
-                        break
-                    try:
-                        n = int(header, 16)
-                    except ValueError:
-                        break
-                    if not connected:
-                        connected = True
-                        attempt = 0
-                        self.watcher_status.emit(True)
-                    proc.stdout.read(n)
-                    self.devices_changed.emit()
-            except Exception as e:
-                self.link_error.emit(f"{type(e).__name__}: {e}")
-            finally:
-                # 断开：无论正常或异常都通知一次（消息中心按状态翻转去重）
-                self.watcher_status.emit(False)
-                if proc is not None:
-                    self._terminate_and_log(proc)
+            # 状态翻转才 emit（下游 on_adb_watcher_status 只对翻转留痕）
+            if ok != last_ok:
+                self.watcher_status.emit(ok)
+                last_ok = ok
+            # 设备列表变化才 emit（下游 refresh_devices 据此刷新界面）
+            if ok and devices != last_devices:
+                self.devices_changed.emit()
+                last_devices = devices
 
-            if self._stop:
-                return
-            delay = self.RETRY_DELAYS[min(attempt, len(self.RETRY_DELAYS) - 1)]
-            attempt += 1
             # 分片等待，便于快速响应 stop
-            for _ in range(int(delay * 10)):
+            for _ in range(int(self.POLL_INTERVAL * 10)):
                 if self._stop:
                     return
                 time.sleep(0.1)
-
-    @staticmethod
-    def _terminate_and_log(proc):
-        """收尾：结束子进程，并把退出码 / stderr 记进 app_debug.log。
-
-        以前 stderr 丢进 DEVNULL，强杀 adb 之后常见的
-        "error: protocol fault (couldn't read status): connection reset"
-        这类真原因就再也查不到了。流先断、进程还活着的情况也要记（先收尸再读）。
-        """
-        try:
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=2)
-                except Exception:
-                    pass
-            if proc.poll() is None:
-                # 僵死：terminate 后仍没退出（常见于 adb server 被外部杀掉/版本
-                # 互踩时子进程挂在 socket 上）。以前这里静默 return，诊断盲区——
-                # 2026-09-25 排查「连接中断」时 06:21:26 的那次断开就没留下任何记录。
-                logger.warning(
-                    "track-devices 结束: 进程僵死未退出（terminate 后 2s 仍存活），"
-                    "无法读取退出码/stderr。多与 adb server 被外部重启/版本冲突有关"
-                    "（系统 PATH 里的 adb 与虫师内置 adb 版本不一致时会互踢 server）")
-                return
-            err = b""
-            if proc.stderr is not None:
-                err = proc.stderr.read() or b""
-            text = err.decode("utf-8", "replace").strip()
-            logger.warning("track-devices 结束: 退出码=%s, stderr=%s",
-                           proc.returncode, text[:200] or "(空)")
-        except Exception:
-            pass
 
     def stop(self):
         self._stop = True
@@ -823,16 +791,16 @@ def main():
     # 旧设备 ID 上，一直不更新。所以改成无条件低频轮询：每次只是一次
     # `adb devices` 子进程（几十毫秒，get_devices 内部带 5 秒超时），
     # 换来几秒内 UI 状态一定收敛。长连接仍然是快路径。
-    fallback_timer = QTimer()
-    fallback_timer.timeout.connect(refresh_devices)
+    # 注：DeviceWatcher 已改为 2 秒轮询（见类注释），原 5 秒 fallback_timer 与它
+    # 职责重叠，已移除 —— 设备变化由 watcher 轮询统一驱动。
 
     def _on_startup_scan(devices):
-        """后台预扫结果落到界面（GUI 线程），随后才挂上长连接与兜底轮询。"""
+        """后台预扫结果落到界面（GUI 线程），随后才挂上设备变化监听。"""
         # 设备已经在后台线程里连好了，这里不要再连一次
         apply_device_list(devices, do_connect=False)
-        # 长连接排在这里（而不是预扫之前）启动：server 正在重建时 track-devices 会秒退
+        # 设备变化监听（轮询 adb devices）排在这里启动：预扫完成后再监听，
+        # 避免和预扫同时跑 adb devices 造成无谓的重复
         device_watcher.start()
-        fallback_timer.start(5000)
 
     # 显式声明排队投递：预扫在后台线程里 emit，这里必须回到 GUI 线程再碰界面
     scan_signal.devices_ready.connect(_on_startup_scan, Qt.ConnectionType.QueuedConnection)
