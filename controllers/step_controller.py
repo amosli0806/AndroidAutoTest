@@ -1494,10 +1494,12 @@ class StepController(QObject):
             container_bg, container_border = "#3c3c3c", "#555"
             title_fg, sub_fg, text_fg = "#ffffff", "#999999", "#eeeeee"
             row_hover = "#333333"
+            list_bg, list_border = "#333333", "#4a4a4a"      # 列表卡片：比容器深一档
         else:
             container_bg, container_border = "#ffffff", "#d0d0d0"
             title_fg, sub_fg, text_fg = "#1a1a1a", "#999999", "#333333"
             row_hover = "#f2f4f7"
+            list_bg, list_border = "#fafbfc", "#e3e6ea"      # 列表卡片：浅灰底
 
         type_names = {'click': '点击', 'double_click': '双击', 'long_press': '长按',
                       'input': '输入', 'swipe': '滑动', 'wait': '等待',
@@ -1511,7 +1513,12 @@ class StepController(QObject):
                 background-color: {container_bg};
             }}
             QLabel {{ background: transparent; }}
-            QScrollArea {{ background: transparent; border: none; }}
+            /* 步骤列表卡片：圆角边框 + 微底色，与容器区分层次 */
+            QScrollArea {{
+                background-color: {list_bg};
+                border: 1px solid {list_border};
+                border-radius: 10px;
+            }}
             QScrollArea > QWidget > QWidget {{ background: transparent; }}
             /* 只给 QCheckBox 设文字色，**不设 ::indicator**——
                让 Fusion 绘制默认带 √ 的复选框（执行页同款做法） */
@@ -1519,7 +1526,7 @@ class StepController(QObject):
                 color: {text_fg};
                 font-size: 13px;
                 spacing: 10px;
-                padding: 7px 8px;
+                padding: 8px 12px;
                 background: transparent;
                 border-radius: 6px;
             }}
@@ -1548,12 +1555,14 @@ class StepController(QObject):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)   # 去掉原生边框，用 QSS 圆角边框
         root.addWidget(scroll, 1)
 
         list_widget = QWidget()
         list_layout = QVBoxLayout(list_widget)
-        list_layout.setSpacing(2)
-        list_layout.setContentsMargins(0, 2, 0, 2)
+        list_layout.setSpacing(3)
+        # 内边距：让首尾行与卡片边框留出呼吸空间
+        list_layout.setContentsMargins(8, 8, 8, 8)
 
         checks = []
         for i, s in enumerate(steps):
