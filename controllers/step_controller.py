@@ -85,6 +85,7 @@ class StepController(QObject):
         self.step_view.step_dropped.connect(self._on_step_dropped)
         self.step_view.update_step.connect(self._on_update_step)
         self.step_view.delete_step.connect(self._on_delete_step)
+        self.step_view.delete_steps.connect(self._on_delete_steps)
         self.step_view.duplicate_step.connect(self._on_duplicate_step)
         self.action_view.add_step_signal.connect(self._on_add_step_from_card)
 
@@ -695,6 +696,21 @@ class StepController(QObject):
             return
 
         self.model.remove_step(step_id, self.current_case_id)
+        self.refresh_steps()
+
+    def _on_delete_steps(self, step_ids):
+        """批量删除选中的步骤（步骤列表 Ctrl 多选 + Delete/右键菜单）"""
+        if not step_ids:
+            return
+        if not ConfirmDeleteDialog.ask(
+                self.step_view,
+                title="确认批量删除",
+                message=f"确定要删除选中的 {len(step_ids)} 个步骤吗？",
+                detail="删除后这些步骤将不可恢复。"
+        ):
+            return
+        for step_id in step_ids:
+            self.model.remove_step(step_id, self.current_case_id)
         self.refresh_steps()
 
     def _on_duplicate_step(self, step_id):

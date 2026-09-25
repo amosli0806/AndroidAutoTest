@@ -2,7 +2,7 @@
 import os
 
 import qtawesome as qta
-from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy
+from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy, QMenu
 from PyQt6.QtCore import pyqtSignal, Qt, QMimeData, QTimer, QSize
 from PyQt6.QtGui import QDrag, QResizeEvent
 from models.step_model import Step
@@ -34,6 +34,7 @@ class StepListView(QListWidget):
     step_dropped = pyqtSignal(int, int)
     update_step = pyqtSignal(int)
     delete_step = pyqtSignal(int)
+    delete_steps = pyqtSignal(list)     # 批量删除：选中步骤的 id 列表
     duplicate_step = pyqtSignal(int)
     recording_state_changed = pyqtSignal(bool)
 
@@ -55,7 +56,9 @@ class StepListView(QListWidget):
         self.setAcceptDrops(True)
         self.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        # 多选模式（与项目树一致）：Ctrl 点选 / Shift 范围选 / Ctrl+A 全选，
+        # 配合 Delete 键与右键菜单批量删除
+        self.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.setSpacing(2)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -240,15 +243,47 @@ class StepListView(QListWidget):
         self._refresh_visible_items()
 
     def _on_current_item_changed(self, current, previous):
+        self._sync_selected_cards()
+
+    def _selected_steps(self):
+        """当前多选中的步骤 id 列表（按列表显示顺序）"""
+        ids = []
+        for item in self.selectedItems():
+            w = self.itemWidget(item)
+            if w is not None and w.step is not None:
+                ids.append(w.step.id)
+        return ids
+
+    def _sync_selected_cards(self):
+        """把 QListWidget 的多选状态同步到每张卡片的选中边框"""
+        selected_widgets = {id(self.itemWidget(it)) for it in self.selectedItems()}
         for i in range(self.count()):
             item = self.item(i)
             widget = self.itemWidget(item)
             if widget:
-                widget.set_selected(False)
-        if current:
-            widget = self.itemWidget(current)
-            if widget:
-                widget.set_selected(True)
+                widget.set_selected(id(widget) in selected_widgets)
+
+    def keyPressEvent(self, event):
+        # Delete/Backspace 批量删除选中的步骤（与项目树操作习惯一致）
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            ids = self._selected_steps()
+            if ids:
+                self.delete_steps.emit(ids)
+                return
+        super().keyPressEvent(event)
+
+    def contextMenuEvent(self, event):
+        ids = self._selected_steps()
+        if not ids:
+            return
+        menu = QMenu(self)
+        if len(ids) == 1:
+            act = menu.addAction(qta.icon('fa6s.trash-can', color='#e74c3c'), "删除此步骤")
+        else:
+            act = menu.addAction(qta.icon('fa6s.trash-can', color='#e74c3c'),
+                                 f"删除选中步骤（{len(ids)} 个）")
+        if menu.exec(event.globalPos()) == act:
+            self.delete_steps.emit(ids)
 
     def set_steps(self, steps):
         self._original_steps = steps[:] if steps else []
@@ -347,6 +382,11 @@ class StepListView(QListWidget):
         self.update()
 
     def dropEvent(self, event):
+        # 多选拖拽防护：数据层的 step_dropped 只支持单步移动，
+        # 多选拖拽会造成 UI 与数据错乱——直接忽略并还原显示
+        if event.source() is self and len(self.selectedItems()) > 1:
+            event.ignore()
+            return
         from_index = self.currentRow()
         super().dropEvent(event)
         to_index = self.currentRow()
