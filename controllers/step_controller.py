@@ -195,6 +195,47 @@ class StepController(QObject):
                         background: transparent;
                         border: none;
                     }
+                    /* 细滚动条（与动作卡片区域一致观感） */
+                    #UpdateStepDialog QScrollBar:vertical {
+                        width: 6px;
+                        background: transparent;
+                        border-radius: 3px;
+                        margin: 0px;
+                    }
+                    #UpdateStepDialog QScrollBar::handle:vertical {
+                        background: #555555;
+                        border-radius: 3px;
+                        min-height: 20px;
+                    }
+                    #UpdateStepDialog QScrollBar::handle:vertical:hover {
+                        background: #777777;
+                    }
+                    #UpdateStepDialog QScrollBar:horizontal {
+                        height: 6px;
+                        background: transparent;
+                        border-radius: 3px;
+                        margin: 0px;
+                    }
+                    #UpdateStepDialog QScrollBar::handle:horizontal {
+                        background: #555555;
+                        border-radius: 3px;
+                        min-width: 20px;
+                    }
+                    #UpdateStepDialog QScrollBar::add-line:vertical,
+                    #UpdateStepDialog QScrollBar::sub-line:vertical,
+                    #UpdateStepDialog QScrollBar::add-line:horizontal,
+                    #UpdateStepDialog QScrollBar::sub-line:horizontal {
+                        height: 0px;
+                        width: 0px;
+                        background: transparent;
+                        border: none;
+                    }
+                    #UpdateStepDialog QScrollBar::add-page:vertical,
+                    #UpdateStepDialog QScrollBar::sub-page:vertical,
+                    #UpdateStepDialog QScrollBar::add-page:horizontal,
+                    #UpdateStepDialog QScrollBar::sub-page:horizontal {
+                        background: transparent;
+                    }
                     #UpdateStepDialog QComboBox QAbstractItemView {
                         background-color: #3c3c3c;
                         color: #eee;
@@ -247,6 +288,47 @@ class StepController(QObject):
                     #UpdateStepDialog QScrollArea > QWidget > QWidget {
                         background: transparent;
                         border: none;
+                    }
+                    /* 细滚动条（与动作卡片区域一致观感） */
+                    #UpdateStepDialog QScrollBar:vertical {
+                        width: 6px;
+                        background: transparent;
+                        border-radius: 3px;
+                        margin: 0px;
+                    }
+                    #UpdateStepDialog QScrollBar::handle:vertical {
+                        background: #c9ced6;
+                        border-radius: 3px;
+                        min-height: 20px;
+                    }
+                    #UpdateStepDialog QScrollBar::handle:vertical:hover {
+                        background: #aeb5bf;
+                    }
+                    #UpdateStepDialog QScrollBar:horizontal {
+                        height: 6px;
+                        background: transparent;
+                        border-radius: 3px;
+                        margin: 0px;
+                    }
+                    #UpdateStepDialog QScrollBar::handle:horizontal {
+                        background: #c9ced6;
+                        border-radius: 3px;
+                        min-width: 20px;
+                    }
+                    #UpdateStepDialog QScrollBar::add-line:vertical,
+                    #UpdateStepDialog QScrollBar::sub-line:vertical,
+                    #UpdateStepDialog QScrollBar::add-line:horizontal,
+                    #UpdateStepDialog QScrollBar::sub-line:horizontal {
+                        height: 0px;
+                        width: 0px;
+                        background: transparent;
+                        border: none;
+                    }
+                    #UpdateStepDialog QScrollBar::add-page:vertical,
+                    #UpdateStepDialog QScrollBar::sub-page:vertical,
+                    #UpdateStepDialog QScrollBar::add-page:horizontal,
+                    #UpdateStepDialog QScrollBar::sub-page:horizontal {
+                        background: transparent;
                     }
                     #UpdateStepDialog QComboBox QAbstractItemView {
                         background-color: white;
