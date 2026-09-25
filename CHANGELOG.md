@@ -9,6 +9,8 @@
 
 ## 未发布（下一个版本）
 
+- 修复：**打开消息中心页插拔设备时闪窗的真正根因** —— 消息中心 `refresh()` 清空旧消息行时用了 `widget.setParent(None)`，对当前可见的行会先把它变成无父的独立顶层窗口再销毁，Qt 在 Windows 下短暂闪现空窗口。改为先 `hide()` 再 `deleteLater()`，不再摘 parent
+
 - 修复：**show_toast 线程安全化 + 窗口标志优化** —— 设备插拔时后台线程直接创建 Toast（QWidget）违反 Qt「GUI 对象只能在 GUI 线程创建」铁律，导致白底带标题栏弹窗。现任意线程调用 show_toast 自动投递回 GUI 线程执行；Toast 恢复独立窗口 + 黑底白字无边框，窗口标志改用 FramelessWindowHint + Dialog（比 Tool 在 Windows 下无边框更稳）
 
 - 修复：设备插拔时界面短暂闪出一个黑白填充空窗口的问题 —— 根因是设备抖动（adb 列表多次变化）触发 update_device_list 反复 clear()+addItem 重绘下拉框，Windows 下 Qt6.11 把关联浮动窗口（可视化 Dock）短暂渲染成独立窗口。已给设备列表更新加内容去重，列表无变化时不再重绘

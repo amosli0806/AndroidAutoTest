@@ -173,11 +173,15 @@ class NotificationCenterView(QWidget):
 
     # ---------------- 刷新 ----------------
     def refresh(self):
+        # 清空旧行：先 hide 再 deleteLater，**不要 setParent(None)**。
+        # 对当前可见的 widget 执行 setParent(None) 会先把它变成无父的独立顶层
+        # 窗口再销毁，Qt 在 Windows 下会短暂闪现这个空窗口（用户实测：打开消息
+        # 中心页插拔设备时，设备变化触发 refresh，每个旧消息行都闪一下独立窗）。
         while self._list_layout.count():
             item = self._list_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                widget.setParent(None)
+                widget.hide()
                 widget.deleteLater()
         self._rows = []
 
