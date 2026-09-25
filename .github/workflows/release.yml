@@ -66,6 +66,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: 打包 weditor 独立服务（weditor.spec，应用可视化依赖）
+        run: pyinstaller weditor.spec --noconfirm --distpath dist_weditor --workpath build_weditor
+
       - name: 打包主程序（main.spec）
         run: pyinstaller main.spec --noconfirm
 
@@ -85,11 +88,12 @@ jobs:
           missing = [p for p in (
               os.path.join("dist", "虫师", "虫师.exe"),
               os.path.join("dist", "虫师", "_internal"),
+              os.path.join("dist", "虫师", "_internal", "tools", "weditor.exe"),
               os.path.join("dist_updater", "updater.exe"),
           ) if not os.path.exists(p)]
           if missing:
               sys.exit("产物缺失：" + "、".join(missing))
-          print("artifacts ok: exe / _internal / updater.exe present")
+          print("artifacts ok: exe / _internal / tools+ / weditor.exe / updater.exe present")
 
       - name: 压更新包（不含 data/ 等运行期数据）
         shell: python

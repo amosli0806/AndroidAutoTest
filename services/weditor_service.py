@@ -116,6 +116,24 @@ except Exception:
             time.sleep(0.2)
         return False
 
+    def _build_weditor_command(self, port=17310):
+        """按运行形态构造 weditor 启动命令。
+
+        - 源码模式：[venv python, -m, weditor, ...]
+        - 打包模式：[tools/weditor.exe, ...] —— sys.executable 是虫师.exe，
+          不支持 -m weditor（1.1.4~1.1.6 打包版应用可视化一直坏在这个点）；
+          独立 exe 由 weditor.spec 打出、随主包 tools/ 分发。
+        """
+        if getattr(sys, "frozen", False):
+            cand = os.path.join(sys._MEIPASS, "tools", "weditor.exe")
+            if os.path.exists(cand):
+                return [cand, "-p", str(port), "-q"]
+            raise Exception(
+                "未找到内置的 weditor.exe（安装目录 _internal/tools 下），"
+                "请重新下载完整版虫师安装包"
+            )
+        return [sys.executable, "-m", "weditor", "-p", str(port), "-q"]
+
     def _start_process_and_wait(self, port=17310):
         """启动进程并等待端口，返回端口号，供线程调用，不创建任何 GUI 对象"""
         # 启动锁：并发调用（设备变化时可能多线程触发）只允许起一份 weditor。
@@ -131,7 +149,7 @@ except Exception:
         # 启动新进程
         try:
             self.process = subprocess.Popen(
-                [sys.executable, "-m", "weditor", "-p", str(port), "-q"],
+                self._build_weditor_command(port),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
