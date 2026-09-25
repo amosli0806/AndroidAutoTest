@@ -399,11 +399,18 @@ class VoiceView(QWidget):
         self.voice_menu = QMenu(self.voice_menu_btn)
         self.voice_menu.setObjectName("VoiceMenu")  # 供主题 QSS 精确定位
         self.voice_menu.addAction(
-            qta.icon('fa6s.file-import', color='#555555'), "导入语音用例",
+            qta.icon('fa6s.file-import', color='#555555'), "导入文案到当前用例",
             self._on_import_phrases)
         self.voice_menu.addAction(
-            qta.icon('fa6s.file-export', color='#555555'), "导出语音用例",
+            qta.icon('fa6s.file-export', color='#555555'), "导出当前用例文案",
             self._on_export_phrases)
+        self.voice_menu.addSeparator()
+        self.voice_menu.addAction(
+            qta.icon('fa6s.folder-open', color='#555555'), "导入全部语音用例",
+            self._on_import_all)
+        self.voice_menu.addAction(
+            qta.icon('fa6s.folder-tree', color='#555555'), "导出全部语音用例",
+            self._on_export_all)
         self.voice_menu_btn.setMenu(self.voice_menu)
         title_row.addWidget(self.voice_menu_btn)
         # 说明：本页是"电脑扬声器放音、车机麦克风拾取"的纯播报，跟 App 操作无关，
@@ -962,6 +969,59 @@ class VoiceView(QWidget):
             return
         self._reload_tree()
         self._reload_steps()
+
+    def _on_export_all(self):
+        """全量导出：分组 -> 用例 -> 文案 整棵树，换机器/换项目时用。
+
+        与「导出当前用例文案」（单用例的文案包）不同，这个文件包含分组与
+        用例结构，配合「导入全部语音用例」可以完整还原。
+        """
+        total_cases = len(self.model.cases)
+        if not total_cases:
+            self.status_label.setText("还没有语音用例可导出")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出全部语音用例", "voice_cases_all.json",
+            "JSON Files (*.json)")
+        if not path:
+            return
+        try:
+            data = self.model.export_all()
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            n_groups = len(data.get("groups", []))
+            self.status_label.setText(
+                f"已导出 {n_groups} 个分组 / {total_cases} 个用例到 "
+                f"{os.path.basename(path)}")
+        except Exception as e:
+            ErrorDialog.show_error(self, "导出失败",
+                                   f"导出全部语音用例时出错：\n{e}")
+
+    def _on_import_all(self):
+        """全量导入：按「导出全部语音用例」的格式还原分组/用例/文案（追加式）。
+
+        合并规则：同名分组复用现有分组；分组内同名用例跳过；其余新建。
+        """
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入全部语音用例", "", "JSON Files (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            stats = self.model.import_all(data)
+        except ValueError as e:
+            ErrorDialog.show_error(self, "导入失败", str(e))
+            return
+        except Exception as e:
+            ErrorDialog.show_error(self, "导入失败",
+                                   f"导入全部语音用例时出错：\n{e}")
+            return
+        self._reload_tree()
+        self.status_label.setText(
+            f"已导入：新建 {stats['groups']} 个分组 / {stats['cases']} 个用例 / "
+            f"{stats['phrases']} 条文案"
+            + (f"，跳过同名用例 {stats['skipped']} 个" if stats["skipped"] else ""))
 
     def _on_export_phrases(self):
         """把当前语音用例导成 JSON，方便换机器/换项目复用"""

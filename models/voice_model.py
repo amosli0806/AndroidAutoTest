@@ -373,6 +373,68 @@ class VoiceModel:
         return {"name": case.name,
                 "phrases": [p.to_dict() for p in case.phrases]}
 
+    def export_all(self) -> dict:
+        """全量导出：分组 -> 用例 -> 文案，整棵树打包成一个 dict。
+
+        与 export_case（单用例文案包）不同，这个格式包含分组与用例结构，
+        配合 import_all 可以在换机器/换项目时完整还原整棵语音用例树。
+        """
+        cases_by_group = {}
+        for c in self.cases:
+            cases_by_group.setdefault(c.group_id, []).append(c)
+        groups = []
+        for g in self.groups:
+            groups.append({
+                "name": g.name,
+                "cases": [
+                    {"name": c.name,
+                     "phrases": [p.to_dict() for p in c.phrases]}
+                    for c in cases_by_group.get(g.id, [])
+                ],
+            })
+        return {"format": "voice-cases-all", "version": 1, "groups": groups}
+
+    def import_all(self, data) -> dict:
+        """全量导入：按 export_all 的格式重建分组/用例/文案（追加式）。
+
+        合并规则（都是追加，不覆盖已有数据）：
+        - 同名分组已存在 -> 复用现有分组（不新建、不改名）
+        - 该分组内同名用例已存在 -> 跳过该用例（避免文案重复）
+        - 其余分组/用例新建，文案（含 delay）原样带入
+        返回统计 {"groups": 新建分组数, "cases": 新建用例数,
+                  "skipped": 同名跳过的用例数, "phrases": 导入文案数}
+        """
+        if not isinstance(data, dict) or data.get("format") != "voice-cases-all":
+            raise ValueError("不是全量语音用例文件（缺少 format 标记），"
+                             "请选择「导出全部语音用例」生成的 JSON")
+        stats = {"groups": 0, "cases": 0, "skipped": 0, "phrases": 0}
+        for gdata in (data.get("groups") or []):
+            gname = str(gdata.get("name", "")).strip() or "导入分组"
+            group = next((g for g in self.groups if g.name == gname), None)
+            if group is None:
+                group = self.add_group(gname)
+                stats["groups"] += 1
+            existing_names = {c.name for c in self.cases
+                              if c.group_id == group.id}
+            for cdata in (gdata.get("cases") or []):
+                cname = str(cdata.get("name", "")).strip() or "导入用例"
+                if cname in existing_names:
+                    stats["skipped"] += 1
+                    continue
+                case = self.add_case(cname, group.id)
+                stats["cases"] += 1
+                for pdata in (cdata.get("phrases") or []):
+                    try:
+                        self.add_phrase(
+                            case.id,
+                            text=str(pdata.get("text", "")),
+                            delay=float(pdata.get("delay", 0) or 0))
+                        stats["phrases"] += 1
+                    except Exception:
+                        pass
+        self.save()
+        return stats
+
     def import_phrases(self, case_id: str, phrases) -> int:
         """把外部文案追加到指定用例；phrases 支持 dict / 字符串两种元素"""
         case = self.get_case(case_id)
