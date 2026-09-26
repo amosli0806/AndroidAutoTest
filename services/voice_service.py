@@ -263,13 +263,15 @@ class EdgeTtsEngine(WindowsSapiEngine):
         self._cancel = False
 
     # ---------------- 可用性 ----------------
+    _voices_cache = None   # 进程级音色缓存（edge 音色列表是网络拉取，拉一次复用）
+
     @staticmethod
     def is_available() -> bool:
-        try:
-            import edge_tts  # noqa: F401
-            return True
-        except ImportError:
-            return False
+        # 用 find_spec 只检查模块是否存在，不真正 import ——
+        # 设置页打开时会遍历所有引擎的可用性，若这里真 import edge_tts/aiohttp
+        # 会冷加载几百 ms~1s，导致设置页「等几秒才弹」。
+        import importlib.util
+        return importlib.util.find_spec("edge_tts") is not None
 
     # ---------------- 配置覆盖 ----------------
     def _apply_cfg(self, voice):
@@ -296,14 +298,16 @@ class EdgeTtsEngine(WindowsSapiEngine):
     # ---------------- 音色列表 ----------------
     def list_voices(self):
         import edge_tts
-        voices = _run_async(edge_tts.list_voices())
-        # 中文（zh-*）排前面，其余按 Locale / ShortName 排
-        voices = sorted(voices, key=lambda v: (
-            not str(v["Locale"]).startswith("zh-"),
-            v["Locale"], v["ShortName"]))
-        return [{"id": v["ShortName"],
-                 "label": f"{v['ShortName']}（{v['Locale']}）"}
+        if EdgeTtsEngine._voices_cache is None:
+            voices = _run_async(edge_tts.list_voices())
+            # 中文（zh-*）排前面，其余按 Locale / ShortName 排
+            voices = sorted(voices, key=lambda v: (
+                not str(v["Locale"]).startswith("zh-"),
+                v["Locale"], v["ShortName"]))
+            EdgeTtsEngine._voices_cache = [
+                {"id": v["ShortName"], "label": f"{v['ShortName']}（{v['Locale']}）"}
                 for v in voices]
+        return EdgeTtsEngine._voices_cache
 
     # ---------------- 合成 ----------------
     def _synth_to(self, text, path):
