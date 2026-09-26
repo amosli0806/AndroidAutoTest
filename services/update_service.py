@@ -64,6 +64,12 @@ DOWNLOAD_MIRROR_OVERRIDE_ENV = "CHONGSHI_DOWNLOAD_MIRROR"
 _CONNECT_TIMEOUT = 5
 _READ_TIMEOUT = 15
 
+# 下载大文件（300MB+ 的更新包经国内镜像）专用：
+# 读超时 15s 对流式下载太苛刻——镜像某一段卡 15s 就整个失败（用户实测）。
+# 断点续传 + 重试次数见 download_asset。
+_DOWNLOAD_READ_TIMEOUT = 60
+_DOWNLOAD_ATTEMPTS = 3
+
 
 @dataclass
 class UpdateInfo:
@@ -259,6 +265,11 @@ def download_asset(info: UpdateInfo, dest_dir: str,
 
     progress(已下载, 总字节) 用于驱动进度条；cancel() 返回 True 时中断并删除半成品。
     下载中先写 .part 再改名，避免半截文件被当成下载完成。
+
+    大文件健壮性（296MB+ 的包经国内镜像下载，镜像抽风很常见）：
+      * 读超时 60s（API 的 15s 对流式下载太苛刻，某段卡 15s 就整个失败）
+      * 断点续传：失败后从 .part 已有字节数带 Range 头继续（镜像不支持则从头）
+      * 最多尝试 3 次，全部失败才把错误抛给用户
     """
     if not info.asset_url:
         raise RuntimeError("该 Release 里没有可用的更新包")
@@ -268,25 +279,32 @@ def download_asset(info: UpdateInfo, dest_dir: str,
 
     url = _download_url(info.asset_url)
     logger.info("下载更新包（镜像=%s）：%s", _mirror_prefix() or "直连", url)
-    with requests.get(url, stream=True, timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT)) as resp:
-        resp.raise_for_status()
-        total = int(resp.headers.get("Content-Length") or info.asset_size or 0)
-        done = 0
-        with open(part, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=256 * 1024):
-                if cancel and cancel():
-                    f.close()
-                    os.remove(part)
-                    raise RuntimeError("已取消")
-                if not chunk:
-                    continue
-                f.write(chunk)
-                done += len(chunk)
-                if progress:
-                    progress(done, total)
 
-    os.replace(part, target)
-    logger.info("更新包已下载: %s (%d 字节)", target, done)
+    last_error = None
+    for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
+        try:
+            _download_once(url, part, info, progress, cancel)
+            os.replace(part, target)
+            logger.info("更新包已下载: %s", target)
+            break
+        except RuntimeError as e:
+            if "已取消" in str(e):
+                raise                     # 用户主动取消，不重试
+            last_error = e
+            logger.warning("下载中断（第 %d/%d 次）：%s",
+                           attempt, DOWNLOAD_ATTEMPTS, str(e)[:120])
+            if attempt < DOWNLOAD_ATTEMPTS:
+                time.sleep(2)             # 稍等再续传
+        except Exception as e:
+            last_error = e
+            logger.warning("下载中断（第 %d/%d 次）：%s",
+                           attempt, DOWNLOAD_ATTEMPTS, str(e)[:120])
+            if attempt < DOWNLOAD_ATTEMPTS:
+                time.sleep(2)
+    else:
+        raise RuntimeError(
+            f"下载更新包失败（已自动重试 {DOWNLOAD_ATTEMPTS - 1} 次）："
+            f"{str(last_error)[:150]}")
 
     # 校验：GitHub 的资产带 digest（sha256:...）时逐个字节核对；没有就只保证 zip 自身完整
     expect = info.sha256
@@ -302,6 +320,38 @@ def download_asset(info: UpdateInfo, dest_dir: str,
         logger.warning("该 Release 资产没有 digest 字段，跳过 sha256 校验（仅校验 zip 完整性）")
 
     return target
+
+
+def _download_once(url, part, info, progress, cancel):
+    """单次下载尝试：支持从 .part 已有字节断点续传（镜像支持 Range 时）。
+
+    - 206 Partial Content：续传成功，从断点追加
+    - 200 OK：镜像忽略了 Range，从头发，已有 .part 作废
+    """
+    done = os.path.getsize(part) if os.path.exists(part) else 0
+    headers = {"Range": f"bytes={done}-"} if done > 0 else {}
+    file_mode = "ab" if done > 0 else "wb"
+
+    with requests.get(url, stream=True,
+                      timeout=(_CONNECT_TIMEOUT, _DOWNLOAD_READ_TIMEOUT),
+                      headers=headers) as resp:
+        if done > 0 and resp.status_code == 200:
+            done = 0                       # 镜像不支持 Range，推倒重来
+            file_mode = "wb"
+        resp.raise_for_status()
+        total = (int(resp.headers.get("Content-Length") or 0) + done) \
+            or info.asset_size or 0
+        with open(part, file_mode) as f:
+            for chunk in resp.iter_content(chunk_size=256 * 1024):
+                if cancel and cancel():
+                    f.close()
+                    raise RuntimeError("已取消")
+                if not chunk:
+                    continue
+                f.write(chunk)
+                done += len(chunk)
+                if progress:
+                    progress(done, total)
 
 
 # ---------- 暂存与解压：下载 -> 校验 -> 解压 -> 交给 updater.exe ----------
