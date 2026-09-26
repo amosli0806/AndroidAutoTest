@@ -342,7 +342,11 @@ class ExecuteView(QWidget):
         # 执行按钮已改为图标按钮，_primary_btn_style 在上方按主题生成的是
         # 34px 图标版；这里一旦覆盖回 90px 文字版，_update_buttons 就会把
         # 执行按钮重新撑宽套蓝底（历史上「执行按钮还显示之前的宽度和背景」的根因）
-        self.tree_view.setStyleSheet(self._tree_qss())   # indicator 颜色跟随主题
+        self.tree_view.setStyleSheet(self._tree_qss())
+        # 树复选框边框色跟随主题（delegate 是自绘的，QSS 管不到）
+        check_border = "#b8b8b8" if theme_mode == ThemeMode.DARK else "#5a5a5a"
+        if getattr(self, "_check_delegate", None) is not None:
+            self._check_delegate.set_border_colors(check_border, "#ffffff")
         self._rebuild_icons()
         self._update_buttons()
 
@@ -466,6 +470,15 @@ class ExecuteView(QWidget):
         self.model = QStandardItemModel()
         self.tree_view.setModel(self.model)
         self.model.dataChanged.connect(self._on_data_changed)
+        # 树节点复选框：与语音播报页的用例树同款 —— Fusion 原生绘制 +
+        # delegate 叠一圈清晰边框（QSS indicator 的 1px 边框高 DPI 下看不清）
+        from views.voice_view import _BorderedTreeItemDelegate
+        self._check_delegate = _BorderedTreeItemDelegate(
+            border_color="#5a5a5a",          # 亮色主题边框（暗色在 apply_theme 刷新）
+            selected_border_color="#ffffff",
+            parent=self.tree_view,
+        )
+        self.tree_view.setItemDelegate(self._check_delegate)
         # 展开状态持久化：默认全折叠，记住用户上次展开的项目/模块（存 data/config.json）
         self._tree_state = tree_state.bind_view(self.tree_view, "execute_tree")
 
@@ -477,62 +490,22 @@ class ExecuteView(QWidget):
         self._executing = False
 
     def _tree_qss(self) -> str:
-        """用例树的样式：行高 + 复选框 indicator（勾选 = 蓝底白勾），颜色跟主题。"""
-        theme_mode = getattr(self, "_current_theme_mode", ThemeMode.LIGHT)
-        is_dark = theme_mode == ThemeMode.DARK
-        # 生成白色勾号 png（一次生成，缓存复用；QSS 的 image 只认文件路径）
-        check_png = ""
-        try:
-            import os as _os
-            from utils.app_paths import data_path
-            png_path = data_path("check_white_12.png")
-            if not _os.path.exists(png_path):
-                pixmap = qta.icon('fa6s.check', color='white').pixmap(12, 12)
-                pixmap.save(png_path, "PNG")
-            if _os.path.exists(png_path):
-                check_png = png_path.replace("\\", "/")
-        except Exception:
-            check_png = ""   # 生成失败时退化为纯蓝底（无勾号，仍可辨认）
+        """用例树的样式：行高。
 
-        checked_rule = "background-color: #1976d2; border-color: #1976d2;"
-        if check_png:
-            checked_rule += f" image: url({check_png});"
-
-        if is_dark:
-            indicator = f"""
-            QTreeView::indicator {{
-                width: 15px;
-                height: 15px;
-                border: 1px solid #777;
-                border-radius: 3px;
-                background-color: #2b2b2b;
-            }}
-            QTreeView::indicator:hover {{ border-color: #90caf9; }}
-            QTreeView::indicator:checked {{ {checked_rule} }}
-            """
-        else:
-            indicator = f"""
-            QTreeView::indicator {{
-                width: 15px;
-                height: 15px;
-                border: 1px solid #b8bdc4;
-                border-radius: 3px;
-                background-color: #ffffff;
-            }}
-            QTreeView::indicator:hover {{ border-color: #1976d2; }}
-            QTreeView::indicator:checked {{ {checked_rule} }}
-            """
-
-        return f"""
-            QTreeView {{
+        复选框 indicator 不在这里写样式 —— 与语音播报页保持一致，走
+        Fusion 原生绘制 + _BorderedTreeItemDelegate 叠边框（见 apply_theme）。
+        曾经在这里写过 ::indicator 规则（蓝底白勾），但未勾选态的 1px 边框
+        在高 DPI 下渲染得极淡几乎不可见，与语音页观感不一致。
+        """
+        return """
+            QTreeView {
                 padding: 4px;
-            }}
-            QTreeView::item {{
+            }
+            QTreeView::item {
                 height: 30px !important;
                 min-height: 30px !important;
                 max-height: 30px !important;
-            }}
-            {indicator}
+            }
         """
 
     # ---------- 定时任务视图管理 ----------
