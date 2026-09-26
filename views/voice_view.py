@@ -43,9 +43,6 @@ from utils import tree_state
 from utils.dialogs import ConfirmDeleteDialog, ErrorDialog, InputDialog
 from utils.theme import ThemeMode
 
-# 导入/导出语音文案的默认文件名
-PHRASES_FILE_NAME = "voice_phrases.json"
-
 
 class _PlaybackWorker(QThread):
     """按顺序播报若干条文案，可循环、可被 stop() 打断。
@@ -399,17 +396,10 @@ class VoiceView(QWidget):
         self.voice_menu = QMenu(self.voice_menu_btn)
         self.voice_menu.setObjectName("VoiceMenu")  # 供主题 QSS 精确定位
         self.voice_menu.addAction(
-            qta.icon('fa6s.file-import', color='#555555'), "导入文案到当前用例",
-            self._on_import_phrases)
-        self.voice_menu.addAction(
-            qta.icon('fa6s.file-export', color='#555555'), "导出当前用例文案",
-            self._on_export_phrases)
-        self.voice_menu.addSeparator()
-        self.voice_menu.addAction(
-            qta.icon('fa6s.folder-open', color='#555555'), "导入全部语音用例",
+            qta.icon('fa6s.file-import', color='#555555'), "导入用例",
             self._on_import_all)
         self.voice_menu.addAction(
-            qta.icon('fa6s.folder-tree', color='#555555'), "导出全部语音用例",
+            qta.icon('fa6s.file-export', color='#555555'), "导出用例",
             self._on_export_all)
         self.voice_menu_btn.setMenu(self.voice_menu)
         title_row.addWidget(self.voice_menu_btn)
@@ -1022,55 +1012,6 @@ class VoiceView(QWidget):
             f"已导入：新建 {stats['groups']} 个分组 / {stats['cases']} 个用例 / "
             f"{stats['phrases']} 条文案"
             + (f"，跳过同名用例 {stats['skipped']} 个" if stats["skipped"] else ""))
-
-    def _on_export_phrases(self):
-        """把当前语音用例导成 JSON，方便换机器/换项目复用"""
-        case = self._current_case()
-        if case is None:
-            self.status_label.setText("先在左侧选一个语音用例")
-            return
-        if not case.phrases:
-            self.status_label.setText("当前用例还没有文案可导出")
-            return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "导出语音文案", PHRASES_FILE_NAME, "JSON Files (*.json)")
-        if not path:
-            return
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(self.model.export_case(case.id), f,
-                          ensure_ascii=False, indent=2)
-            self.status_label.setText(
-                f"已导出 {len(case.phrases)} 条到 {os.path.basename(path)}")
-        except Exception as e:
-            ErrorDialog.show_error(self, "导出失败",
-                                   f"导出语音文案时出错：\n{e}")
-
-    def _on_import_phrases(self):
-        """把 JSON 里的文案追加成当前用例的文案。
-
-        兼容两种格式：{"phrases": [...]}（本页导出的）和裸数组 [...]。
-        """
-        case = self._current_case()
-        if case is None:
-            self.status_label.setText("先在左侧选一个语音用例")
-            return
-        path, _ = QFileDialog.getOpenFileName(
-            self, "导入语音文案", "", "JSON Files (*.json)")
-        if not path:
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            phrases = data.get("phrases") if isinstance(data, dict) else data
-            if not isinstance(phrases, list):
-                raise ValueError("文件里找不到 phrases 列表")
-            added = self.model.import_phrases(case.id, phrases)
-            self._reload_steps()
-            self.status_label.setText(f"已导入 {added} 条语音文案")
-        except Exception as e:
-            ErrorDialog.show_error(self, "导入失败",
-                                   f"导入语音文案时出错：\n{e}")
 
     # ------------------------------------------------------------------
     # 中栏编辑
