@@ -3,7 +3,7 @@ import qtawesome as qta
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QTreeView, QLabel, QSpinBox, QCheckBox,
                              QComboBox, QMessageBox, QSizePolicy)
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import pyqtSignal, Qt, QSize
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QIcon
 from models.project_model import ProjectModel, TreeNode
 from models.suite_model import SuiteModel
@@ -281,81 +281,110 @@ class ExecuteView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        # ---------- 第一行工具栏 ----------
-        toolbar_row1 = QHBoxLayout()
-        toolbar_row1.setContentsMargins(8, 4, 8, 0)
-        toolbar_row1.setSpacing(6)
+        # ---------- 工具栏（单行：纯按钮只显示图标，悬停见 tooltip） ----------
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(8, 4, 8, 4)
+        toolbar.setSpacing(6)
 
-        self.select_all_btn = QPushButton("全选")
+        def _icon_btn(icon_name, tip, enabled=True):
+            """图标-only 按钮：固定 34x28，图标居中，语义走 tooltip。"""
+            btn = QPushButton()
+            btn.setIcon(qta.icon(icon_name, color='white'))
+            btn.setIconSize(QSize(15, 15))
+            btn.setFixedSize(34, 28)
+            btn.setToolTip(tip)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setEnabled(enabled)
+            # 覆盖主题 QPushButton 的左右 padding，避免 34px 宽被撑爆
+            # （背景/边框/悬停等仍走主题 QSS）
+            btn.setStyleSheet("padding: 2px;")
+            return btn
+
+        self.select_all_btn = QPushButton()
         self.select_all_btn_icon = qta.icon('fa6s.check-double', color='white')
         self.select_all_btn.setIcon(self.select_all_btn_icon)
+        self.select_all_btn.setIconSize(QSize(15, 15))
+        self.select_all_btn.setFixedSize(34, 28)
+        self.select_all_btn.setToolTip("全选")
+        self.select_all_btn.setStyleSheet("padding: 2px;")
         self.select_all_btn.clicked.connect(self.select_all)
-        # 样式由主题控制，不设置硬编码样式
 
-        self.deselect_all_btn = QPushButton("取消全选")
-        self.deselect_all_btn_icon = qta.icon('fa6s.square', color='white')
-        self.deselect_all_btn.setIcon(QIcon())
+        self.deselect_all_btn = QPushButton()
+        self.deselect_all_btn_icon = qta.icon('fa6s.square-minus', color='white')
+        self.deselect_all_btn.setIcon(self.deselect_all_btn_icon)
+        self.deselect_all_btn.setIconSize(QSize(15, 15))
+        self.deselect_all_btn.setFixedSize(34, 28)
+        self.deselect_all_btn.setToolTip("取消全选")
+        self.deselect_all_btn.setStyleSheet("padding: 2px;")
         self.deselect_all_btn.setEnabled(False)
         self.deselect_all_btn.clicked.connect(self.deselect_all)
 
-        self.execute_btn = QPushButton("执行")
+        self.execute_btn = QPushButton()
         self.execute_icon_enabled = qta.icon('fa6s.play', color='white')
-        self.execute_btn.setIcon(QIcon())
+        self.execute_btn.setIcon(QIcon())   # 空闲且无勾选时是灰态占位
+        self.execute_btn.setIconSize(QSize(15, 15))
+        self.execute_btn.setFixedSize(34, 28)
+        self.execute_btn.setToolTip("执行")
+        self.execute_btn.setStyleSheet("padding: 2px;")
         self.execute_btn.setEnabled(False)
         self.execute_btn.clicked.connect(self._execute)
 
-        self.loop_label = QLabel("循环次数:")
+        self.loop_label = QLabel("循环")
         self.loop_spin = QSpinBox()
         self.loop_spin.setRange(1, 999)
         self.loop_spin.setValue(1)
-        self.loop_spin.setFixedWidth(80)
+        self.loop_spin.setFixedWidth(62)
+        self.loop_spin.setToolTip("循环次数")
 
         self.stop_on_fail_check = BorderedCheckBox("失败停止")
 
-
-        toolbar_row1.addWidget(self.select_all_btn)
-        toolbar_row1.addWidget(self.deselect_all_btn)
-        toolbar_row1.addWidget(self.execute_btn)
-        toolbar_row1.addWidget(self.loop_label)
-        toolbar_row1.addWidget(self.loop_spin)
-        toolbar_row1.addWidget(self.stop_on_fail_check)
-        toolbar_row1.addStretch()
-
-        layout.addLayout(toolbar_row1)
-
-        # ---------- 第二行工具栏 ----------
-        toolbar_row2 = QHBoxLayout()
-        toolbar_row2.setContentsMargins(8, 0, 8, 4)
-        toolbar_row2.setSpacing(6)
-
-        self.suite_label = QLabel("套件:")
+        # 套件与报告相关控件（图标化，悬停见 tooltip）
         self.suite_combo = QComboBox()
         from utils.widget_helpers import prepare_combo_view
         prepare_combo_view(self.suite_combo)
-        self.suite_combo.setMinimumWidth(150)
+        self.suite_combo.setMinimumWidth(130)
         self.suite_combo.currentTextChanged.connect(self._on_suite_selected)
 
-        self.save_suite_btn = QPushButton("保存套件")
+        self.save_suite_btn = QPushButton()
         self.save_suite_btn.setIcon(qta.icon('fa6s.floppy-disk', color='white'))
+        self.save_suite_btn.setIconSize(QSize(15, 15))
+        self.save_suite_btn.setFixedSize(34, 28)
+        self.save_suite_btn.setToolTip("保存套件")
+        self.save_suite_btn.setStyleSheet("padding: 2px;")
         self.save_suite_btn.clicked.connect(self._save_current_as_suite)
 
-        self.del_suite_btn = QPushButton("删除套件")
+        self.del_suite_btn = QPushButton()
         self.del_suite_btn.setIcon(qta.icon('fa6s.trash-can', color='white'))
+        self.del_suite_btn.setIconSize(QSize(15, 15))
+        self.del_suite_btn.setFixedSize(34, 28)
+        self.del_suite_btn.setToolTip("删除套件")
+        self.del_suite_btn.setStyleSheet("padding: 2px;")
         self.del_suite_btn.clicked.connect(self._delete_selected_suite)
 
-        self.report_btn = QPushButton("测试报告")
-        self.report_btn.setIcon(QIcon())
+        self.report_btn = QPushButton()
+        self.report_btn.setIcon(qta.icon('fa6s.file-lines', color='white'))
+        self.report_btn.setIconSize(QSize(15, 15))
+        self.report_btn.setFixedSize(34, 28)
+        self.report_btn.setToolTip("测试报告")
+        self.report_btn.setStyleSheet("padding: 2px;")
         self.report_btn.setEnabled(False)
         self.report_btn.clicked.connect(self._on_report_clicked)
 
-        toolbar_row2.addWidget(self.suite_label)
-        toolbar_row2.addWidget(self.suite_combo)
-        toolbar_row2.addWidget(self.save_suite_btn)
-        toolbar_row2.addWidget(self.del_suite_btn)
-        toolbar_row2.addWidget(self.report_btn)
-        toolbar_row2.addStretch()
+        toolbar.addWidget(self.select_all_btn)
+        toolbar.addWidget(self.deselect_all_btn)
+        toolbar.addWidget(self.execute_btn)
+        toolbar.addSpacing(4)
+        toolbar.addWidget(self.suite_combo)
+        toolbar.addWidget(self.save_suite_btn)
+        toolbar.addWidget(self.del_suite_btn)
+        toolbar.addWidget(self.report_btn)
+        toolbar.addSpacing(4)
+        toolbar.addWidget(self.loop_label)
+        toolbar.addWidget(self.loop_spin)
+        toolbar.addWidget(self.stop_on_fail_check)
+        toolbar.addStretch()
 
-        layout.addLayout(toolbar_row2)
+        layout.addLayout(toolbar)
 
         # ---------- 用例树 ----------
         self.tree_view = _CaseTreeView()
@@ -535,12 +564,11 @@ class ExecuteView(QWidget):
         all_checked = (total_checkable > 0 and checked_count == total_checkable)
         can_select_all = not all_checked and not self._executing
         self.select_all_btn.setEnabled(can_select_all)
-        self.select_all_btn.setIcon(self.select_all_btn_icon if can_select_all else QIcon())
+        # 图标-only 按钮：禁用态保留图标由 Qt 自动灰化（清空会变成空白按钮难辨认）
 
         none_checked = (checked_count == 0)
         can_deselect_all = not none_checked and not self._executing
         self.deselect_all_btn.setEnabled(can_deselect_all)
-        self.deselect_all_btn.setIcon(self.deselect_all_btn_icon if can_deselect_all else QIcon())
 
         self.loop_spin.setEnabled(not self._executing)
         self.stop_on_fail_check.setEnabled(not self._executing)
@@ -548,23 +576,15 @@ class ExecuteView(QWidget):
         self.save_suite_btn.setEnabled(not self._executing)
         is_suite_selected = self.suite_combo.currentText() != "(无套件)" and self.suite_combo.count() > 1
         self.del_suite_btn.setEnabled(not self._executing and is_suite_selected)
-        if not self._executing and is_suite_selected:
-            self.del_suite_btn.setIcon(qta.icon('fa6s.trash-can', color='white'))
-        else:
-            self.del_suite_btn.setIcon(QIcon())
-        if not self._executing:
-            self.save_suite_btn.setIcon(qta.icon('fa6s.floppy-disk', color='white'))
-        else:
-            self.save_suite_btn.setIcon(QIcon())
 
     def _apply_execute_btn_state(self, can_execute: bool):
-        """「执行」按钮的两种样子：空闲 = 蓝色「执行」，执行中 = 红色「停止」"""
+        """「执行」按钮的两种样子：空闲 = 蓝色播放图标，执行中 = 红色停止图标（tooltip 同步）"""
         if self._executing:
-            self.execute_btn.setText("停止")
             self.execute_btn.setIcon(qta.icon('fa6s.stop', color='white'))
+            self.execute_btn.setToolTip("停止")
             self.execute_btn.setStyleSheet(self.STOP_BTN_QSS)
             return
-        self.execute_btn.setText("执行")
+        self.execute_btn.setToolTip("执行")
         if self._primary_btn_style:
             self.execute_btn.setStyleSheet(self._primary_btn_style)
         # 没勾选用例时按钮是灰的，这时不显示图标（与改造前一致）
