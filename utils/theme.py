@@ -589,7 +589,7 @@ class Theme:
         }
         #ExecuteView QTreeView {
             padding: 4px;
-            margin: 10px;
+            margin: 4px 4px 0 0;
             border: 1px solid #d0d0d0;
             border-radius: 4px;
             background-color: #e8eaed;
@@ -613,7 +613,7 @@ class Theme:
         }
         #ExecuteView QTreeView {
             padding: 4px;
-            margin: 10px;
+            margin: 4px 4px 0 0;
             border: 1px solid #555;
             border-radius: 4px;
             background-color: #373737;
