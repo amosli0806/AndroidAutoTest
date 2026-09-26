@@ -403,15 +403,28 @@ class EdgeTtsEngine(WindowsSapiEngine):
         threading.Thread(target=self._async_worker, args=(text,), daemon=True).start()
 
     def _async_worker(self, text):
+        """合成 + **同步播放**都跑在本线程：SVSF_DEFAULT 播完才返回，
+        流的生命周期天然安全（不会异步起播后被提前 Close/删除）。
+
+        为什么不用 SVSF_ASYNC + WaitUntilDone 轮询：异步起播存在「间隙」——
+        SpeakStream 立即返回时播放器可能还没真正开始消费流，此时
+        WaitUntilDone 会过早返回 True，导致流被提前 Close、wav 被提前删除，
+        实测报 com_error 0x80030002（文件未找到）/无声（1.1.8 后反馈）。
+        """
         try:
             self._synth_wav(text, self._async_wav_path)
             if self._cancel:
+                self._cleanup_async_wav()
                 self._async_state = "done"
                 return
             self._async_state = "playing"
-            self._play_file(self._async_wav_path, SVSF_ASYNC)
+            # 同步播放：阻塞在本线程直到播完（stop() 的 PURGE 会打断它提前返回）
+            self._play_file(self._async_wav_path, SVSF_DEFAULT)
+            self._cleanup_async_wav()
+            self._async_state = "done"
         except Exception as e:
-            print(f"[weditor/edge] 异步播报失败: {type(e).__name__}: {str(e)[:150]}")
+            print(f"[voice/edge] 异步播报失败: {type(e).__name__}: {str(e)[:150]}")
+            self._cleanup_async_wav()
             self._async_state = "done"
 
     def _cleanup_async_wav(self):
@@ -424,27 +437,14 @@ class EdgeTtsEngine(WindowsSapiEngine):
             self._async_wav_path = None
 
     def wait_done(self, timeout_ms: int = 100) -> bool:
-        """区分「合成中 / 播放中 / 完成」——合成有网络延迟，不能只看 SpVoice。"""
-        state = self._async_state
-        if state == "synthing":
-            return False
-        if state == "playing":
-            try:
-                if self._voice().WaitUntilDone(timeout_ms):
-                    self._async_state = "done"
-                    self._cleanup_async_wav()
-                    return True
-            except Exception:
-                self._async_state = "done"
-                self._cleanup_async_wav()
-                return True
-            return False
-        return True
+        """播放是否完成。worker 线程里是同步播放，状态迁移即真实进度：
+        synthing（网络合成中）/ playing（正在播）/ done（完成或失败）。"""
+        return self._async_state != "synthing" and self._async_state != "playing"
 
     def stop(self):
         self._cancel = True
-        self._async_state = "done"
-        self._cleanup_async_wav()
+        # PURGE 打断正在进行的同步 SpeakStream —— worker 线程里那次调用会
+        # 立即返回并自己把状态置为 done、清理临时文件
         try:
             self._voice().Speak("", SVSF_ASYNC | SVSFPURGE_BEFORE_SPEAK)
         except Exception:
