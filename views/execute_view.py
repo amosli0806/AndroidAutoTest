@@ -511,6 +511,9 @@ class ExecuteView(QWidget):
                 height: 30px !important;
                 min-height: 30px !important;
                 max-height: 30px !important;
+                /* 必须显式透明：::item 规则存在但没写 background 时，
+                   壁纸的半透明树底上原生勾选框会被填充成纯黑方块 */
+                background: transparent;
             }
         """
 

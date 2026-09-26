@@ -2919,6 +2919,10 @@ class MainWindow(QMainWindow):
                     color: {text_color};
                     border: none;
                     outline: none;
+                    /* 必须显式透明：::item 规则存在但没写 background 时，
+                       QStyleSheetStyle 的 item 背景绘制路径会退化，壁纸的
+                       半透明树底上原生勾选框会被填充成纯黑方块 */
+                    background: transparent;
                 }}
                 /* 选中态不画高亮底色（曾用浅蓝 #d0e4f7，会盖住 delegate 叠的
                    复选框边框、显得复选框「消失」）：与语音播报页用例树一致，
