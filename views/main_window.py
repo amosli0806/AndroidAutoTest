@@ -2982,16 +2982,14 @@ class MainWindow(QMainWindow):
             tree_view = getattr(self._execute_view_ref, 'tree_view', None)
             if tree_view is not None:
                 pal = tree_view.palette()
+                # Base 必须用实色且壁纸/无壁纸取值一致：Fusion 原生勾选框的
+                # 框体填充用 Base 画，壁纸模式曾用带透明度的 Base（视觉意图是
+                # 融合壁纸），实际会把勾选框渲染成看不清勾选态的黑块。
+                # 实色后壁纸下的勾选框与日夜模式逐像素同源。
                 if is_dark:
-                    if has_wallpaper:
-                        base_color = QColor(60, 60, 60, 200)
-                    else:
-                        base_color = QColor(60, 60, 60)
+                    base_color = QColor(60, 60, 60)
                 else:
-                    if has_wallpaper:
-                        base_color = QColor(255, 255, 255, 220)
-                    else:
-                        base_color = QColor(255, 255, 255)
+                    base_color = QColor(255, 255, 255)
 
                 # 复选框背景
                 pal.setColor(QPalette.ColorRole.Base, base_color)
@@ -3003,12 +3001,6 @@ class MainWindow(QMainWindow):
                 vp = tree_view.viewport()
                 if vp is not None:
                     vp.setPalette(pal)
-
-            # 同步壁纸状态给执行视图：壁纸模式下树的调色板带透明度/透明 Highlight，
-            # Fusion 原生 indicator 会画成黑块，执行视图会改走显式 QSS indicator
-            # （日夜模式不受影响，仍走原生绘制与语音播报页同源）
-            if hasattr(self._execute_view_ref, 'set_wallpaper_mode'):
-                self._execute_view_ref.set_wallpaper_mode(has_wallpaper)
 
     def _apply_bottom_log_theme(self, is_dark, has_wallpaper=False):
         """捕虫师日志面板：圆角 + 主题背景（兼容壁纸）"""

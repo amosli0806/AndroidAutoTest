@@ -133,10 +133,6 @@ class ExecuteView(QWidget):
         self._icon_color = ("#e0e0e0"
                             if Settings.get_theme_mode() == THEME_MODE_DARK
                             else "#444444")
-        # 壁纸模式标记（由主窗口 _apply_execute_page_theme 同步）：
-        # 壁纸下树的调色板被注入透明 Highlight / 带透明度 Base，
-        # 原生 Fusion indicator 会画成黑块，需切显式 QSS indicator（见 _tree_qss）
-        self._has_wallpaper = False
         self.setup_ui()
         # 移除原有的硬编码样式，由主题系统控制
         self._refresh_suite_combo()
@@ -496,18 +492,18 @@ class ExecuteView(QWidget):
         self._executing = False
 
     def _tree_qss(self) -> str:
-        """用例树的样式：行高 + 底色，复选框 indicator 默认不写规则。
+        """用例树的样式：行高 + 底色，复选框 indicator 不写规则。
 
-        日夜模式（无壁纸）：indicator 不写 QSS 规则时走 Fusion 原生绘制，
-        与语音播报页的用例树完全同源。树的其余样式（item 高度、底色）仍由
-        这里控制；复选框外圈边框由 _BorderedTreeItemDelegate 叠加（见 apply_theme）。
+        indicator 不写 QSS 规则时走 Fusion 原生绘制，与语音播报页的用例树
+        完全同源（含勾号粗细、三态灰块等细节）。树的其余样式（item 高度、
+        底色）仍由这里控制；复选框外圈边框由 _BorderedTreeItemDelegate 叠加
+        （见 apply_theme）。
 
-        壁纸模式：主窗口给树注入了透明 Highlight / 带透明度 Base 的调色板
-        （用于压掉 branch 蓝条），Fusion 原生 indicator 用 Base 画框体填充，
-        会退化成看不清勾选态的黑块 —— 此时改用显式 QSS indicator（不依赖
-        调色板）。日夜模式不受影响，仍走原生绘制。
+        壁纸模式注意：树调色板不得给 Base 设透明度（历史方案，导致原生
+        勾选框渲染成黑块），必须与日夜模式一致用实色 —— 见主窗口
+        _apply_execute_page_theme 的 palette 处理。
         """
-        base_qss = """
+        return """
             QTreeView {
                 padding: 4px;
             }
@@ -517,55 +513,6 @@ class ExecuteView(QWidget):
                 max-height: 30px !important;
             }
         """
-        if not self._has_wallpaper:
-            return base_qss
-
-        is_dark = getattr(self, "_current_theme_mode", None) == ThemeMode.DARK
-        if is_dark:
-            box_bg, mark_color = "#2e3136", "#e6e6e6"   # 深底浅勾（同暗色 Fusion 观感）
-        else:
-            box_bg, mark_color = "#ffffff", "#3c3c3c"   # 白底深勾（同亮色 Fusion 观感）
-
-        # 勾号/横线 png：QSS 的 image 只认文件路径，qtawesome 画一次缓存到 data/
-        check_png = self._indicator_png('fa6s.check', mark_color,
-                                        f"tree_check_{mark_color[1:]}.png")
-        minus_png = self._indicator_png('fa6s.minus', mark_color,
-                                        f"tree_minus_{mark_color[1:]}.png")
-
-        rules = f"""
-            QTreeView::indicator {{
-                background-color: {box_bg};
-                border-radius: 2px;
-            }}
-        """
-        if check_png:
-            rules += f"QTreeView::indicator:checked {{ image: url({check_png}); }}\n"
-        if minus_png:
-            rules += "QTreeView::indicator:indeterminate " \
-                     f"{{ image: url({minus_png}); }}\n"
-        return base_qss + rules
-
-    def _indicator_png(self, icon_name: str, color: str, cache_name: str) -> str:
-        """qtawesome 画 indicator 小图标并缓存到 data/，返回文件路径（失败返回空）"""
-        try:
-            import os as _os
-            from utils.app_paths import data_path
-            png_path = data_path(cache_name)
-            if not _os.path.exists(png_path):
-                qta.icon(icon_name, color=color).pixmap(12, 12).save(png_path, "PNG")
-            if _os.path.exists(png_path):
-                return png_path.replace("\\", "/")
-        except Exception:
-            pass
-        return ""
-
-    def set_wallpaper_mode(self, has_wallpaper: bool):
-        """主窗口同步壁纸状态：壁纸模式切换时重刷树的 indicator 样式"""
-        if getattr(self, "_has_wallpaper", False) == has_wallpaper:
-            return
-        self._has_wallpaper = has_wallpaper
-        if getattr(self, "tree_view", None) is not None:
-            self.tree_view.setStyleSheet(self._tree_qss())
 
     # ---------- 定时任务视图管理 ----------
     def set_task_view(self, task_view):
