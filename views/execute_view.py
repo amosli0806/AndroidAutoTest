@@ -111,8 +111,9 @@ class ExecuteView(QWidget):
             border-radius: 4px;
             min-width: 34px;
             max-width: 34px;
-            min-height: 28px;
-            max-height: 28px;
+            /* 内容盒 24 + padding 2x2 = 总高 28，与套件下拉框一致（无边框） */
+            min-height: 24px;
+            max-height: 24px;
         }
         QPushButton:hover { background-color: #f05a4a; }
         QPushButton:pressed { background-color: #c0392b; }
@@ -268,7 +269,7 @@ class ExecuteView(QWidget):
                     border-radius: 4px;
                     padding: 2px;
                     min-width: 34px; max-width: 34px;
-                    min-height: 28px; max-height: 28px;
+                    min-height: 22px; max-height: 22px;
                 }
                 QPushButton#ToolIconBtn:hover { background-color: #4a4a4a; }
                 QPushButton#ToolIconBtn:disabled { background-color: #333; }
@@ -281,9 +282,9 @@ class ExecuteView(QWidget):
                     border-radius: 4px;
                     padding: 2px;
                     min-width: 34px; max-width: 34px;
-                    min-height: 28px; max-height: 28px;
+                    min-height: 22px; max-height: 22px;
                 }
-                QPushButton#ExecIconBtn:enabled { background-color: #1976d2; border: none; }
+                QPushButton#ExecIconBtn:enabled { background-color: #1976d2; border: 1px solid transparent; }
                 QPushButton#ExecIconBtn:enabled:hover { background-color: #1565c0; }
                 QPushButton#ExecIconBtn:disabled { background-color: #333; }
             """
@@ -295,7 +296,7 @@ class ExecuteView(QWidget):
                     border-radius: 4px;
                     padding: 2px;
                     min-width: 34px; max-width: 34px;
-                    min-height: 28px; max-height: 28px;
+                    min-height: 22px; max-height: 22px;
                 }
                 QPushButton#ToolIconBtn:hover { background-color: #e8eaee; }
                 QPushButton#ToolIconBtn:disabled { background-color: #eee; }
@@ -307,9 +308,9 @@ class ExecuteView(QWidget):
                     border-radius: 4px;
                     padding: 2px;
                     min-width: 34px; max-width: 34px;
-                    min-height: 28px; max-height: 28px;
+                    min-height: 22px; max-height: 22px;
                 }
-                QPushButton#ExecIconBtn:enabled { background-color: #1976d2; border: none; }
+                QPushButton#ExecIconBtn:enabled { background-color: #1976d2; border: 1px solid transparent; }
                 QPushButton#ExecIconBtn:enabled:hover { background-color: #1565c0; }
                 QPushButton#ExecIconBtn:disabled { background-color: #eee; }
             """
