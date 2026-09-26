@@ -143,6 +143,7 @@ class ExecuteView(QWidget):
 
     def apply_theme(self, theme_mode: ThemeMode):
         """应用主题到视图（由主窗口调用）"""
+        self._current_theme_mode = theme_mode
         # 先应用整体样式（通过 objectName）
         Theme.apply_theme_to_widget(self, theme_mode)
 
@@ -337,8 +338,11 @@ class ExecuteView(QWidget):
                 existing = lbl.styleSheet() or ""
                 lbl.setStyleSheet(existing + f" color: {label_color}; background: transparent;")
 
-        # 记下主按钮样式：执行中「停止」要切回「执行」时靠它恢复蓝色
-        self._primary_btn_style = btn_style
+        # 注意：不能再把文字按钮样式（btn_style）赋给 _primary_btn_style——
+        # 执行按钮已改为图标按钮，_primary_btn_style 在上方按主题生成的是
+        # 34px 图标版；这里一旦覆盖回 90px 文字版，_update_buttons 就会把
+        # 执行按钮重新撑宽套蓝底（历史上「执行按钮还显示之前的宽度和背景」的根因）
+        self.tree_view.setStyleSheet(self._tree_qss())   # indicator 颜色跟随主题
         self._rebuild_icons()
         self._update_buttons()
 
@@ -356,11 +360,13 @@ class ExecuteView(QWidget):
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        # 布局间距 8px = 容器 QSS padding 8px：工具栏与树的间距和树到
+        # 容器左/右/下的间距完全一致（树的 QSS margin 已归零）
+        layout.setSpacing(8)
 
         # ---------- 工具栏（单行：纯按钮只显示图标，悬停见 tooltip） ----------
         toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(8, 4, 8, 4)
+        toolbar.setContentsMargins(8, 4, 8, 0)
         toolbar.setSpacing(6)
 
         self.toggle_select_btn = QPushButton()
@@ -444,16 +450,10 @@ class ExecuteView(QWidget):
         self.tree_view = _CaseTreeView()
         self.tree_view.setHeaderHidden(True)
         self.tree_view.setIndentation(20)
-        self.tree_view.setStyleSheet("""
-            QTreeView {
-                padding: 4px;
-            }
-            QTreeView::item {
-                height: 30px !important;
-                min-height: 30px !important;
-                max-height: 30px !important;
-            }
-        """)
+        # indicator 必须显式给样式：不写时由 Fusion 按 palette 绘制，系统暗色
+        # palette 下亮色主题里会渲染成深色方块。勾选态 = 蓝底 + 白勾（勾号
+        # 用 qtawesome 生成 png 缓存到 data/，QSS 的 image 只认文件路径）。
+        self.tree_view.setStyleSheet(self._tree_qss())
         self.tree_view.setItemsExpandable(True)
         self.tree_view.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
         # 勾选不再走 clicked 信号：点击分流在 _CaseTreeView.mousePressEvent 里做
@@ -461,6 +461,65 @@ class ExecuteView(QWidget):
         self.tree_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.tree_view.setMinimumWidth(0)
         layout.addWidget(self.tree_view)
+
+    def _tree_qss(self) -> str:
+        """用例树的样式：行高 + 复选框 indicator（勾选 = 蓝底白勾），颜色跟主题。"""
+        theme_mode = getattr(self, "_current_theme_mode", ThemeMode.LIGHT)
+        is_dark = theme_mode == ThemeMode.DARK
+        # 生成白色勾号 png（一次生成，缓存复用；QSS 的 image 只认文件路径）
+        check_png = ""
+        try:
+            import os as _os
+            from utils.app_paths import data_path
+            png_path = data_path("check_white_12.png")
+            if not _os.path.exists(png_path):
+                pixmap = qta.icon('fa6s.check', color='white').pixmap(12, 12)
+                pixmap.save(png_path, "PNG")
+            if _os.path.exists(png_path):
+                check_png = png_path.replace("\\", "/")
+        except Exception:
+            check_png = ""   # 生成失败时退化为纯蓝底（无勾号，仍可辨认）
+
+        checked_rule = "background-color: #1976d2; border-color: #1976d2;"
+        if check_png:
+            checked_rule += f" image: url({check_png});"
+
+        if is_dark:
+            indicator = f"""
+            QTreeView::indicator {{
+                width: 15px;
+                height: 15px;
+                border: 1px solid #777;
+                border-radius: 3px;
+                background-color: #2b2b2b;
+            }}
+            QTreeView::indicator:hover {{ border-color: #90caf9; }}
+            QTreeView::indicator:checked {{ {checked_rule} }}
+            """
+        else:
+            indicator = f"""
+            QTreeView::indicator {{
+                width: 15px;
+                height: 15px;
+                border: 1px solid #b8bdc4;
+                border-radius: 3px;
+                background-color: #ffffff;
+            }}
+            QTreeView::indicator:hover {{ border-color: #1976d2; }}
+            QTreeView::indicator:checked {{ {checked_rule} }}
+            """
+
+        return f"""
+            QTreeView {{
+                padding: 4px;
+            }}
+            QTreeView::item {{
+                height: 30px !important;
+                min-height: 30px !important;
+                max-height: 30px !important;
+            }}
+            {indicator}
+        """
 
         # ---------- 其他初始化 ----------
         self.model = QStandardItemModel()
