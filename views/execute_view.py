@@ -454,9 +454,8 @@ class ExecuteView(QWidget):
         self.tree_view = _CaseTreeView()
         self.tree_view.setHeaderHidden(True)
         self.tree_view.setIndentation(20)
-        # indicator 必须显式给样式：不写时由 Fusion 按 palette 绘制，系统暗色
-        # palette 下亮色主题里会渲染成深色方块。勾选态 = 蓝底 + 白勾（勾号
-        # 用 qtawesome 生成 png 缓存到 data/，QSS 的 image 只认文件路径）。
+        # indicator 不写 QSS 规则：走 Fusion 原生绘制（蓝底白勾），
+        # 与语音播报页用例树的复选框样式同源一致
         self.tree_view.setStyleSheet(self._tree_qss())
         self.tree_view.setItemsExpandable(True)
         self.tree_view.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
@@ -490,47 +489,21 @@ class ExecuteView(QWidget):
         self._executing = False
 
     def _tree_qss(self) -> str:
-        """用例树的样式：行高 + 复选框 indicator（必须显式定义）。
+        """用例树的样式：行高 + 底色，复选框 indicator 不写规则。
 
-        为什么 indicator 必须写 QSS：树一旦有样式表，indicator 就不再走
-        原生绘制路径 —— 壁纸模式（透明背景 + 自定义调色板）下原生绘制会
-        退化成黑色实心方块，看不到勾选状态。
-
-        样式与语音播报页的树复选框对齐：白底方块 + 勾选时蓝色对勾
-        （亮/暗/壁纸三种场景统一白底，边框由 _BorderedTreeItemDelegate
-        叠加，见 apply_theme）。
+        indicator 不写 QSS 规则时走 Fusion 原生绘制（蓝底白勾），与语音
+        播报页的用例树完全同源。树的其余样式（item 高度、底色）仍由这里
+        控制；复选框外圈边框由 _BorderedTreeItemDelegate 叠加（见 apply_theme）。
         """
-        # 蓝勾 png：QSS 的 image 只认文件路径，qtawesome 画一次缓存到 data/
-        check_png = ""
-        try:
-            import os as _os
-            from utils.app_paths import data_path
-            png_path = data_path("check_blue_12.png")
-            if not _os.path.exists(png_path):
-                qta.icon('fa6s.check', color='#1976d2').pixmap(12, 12).save(
-                    png_path, "PNG")
-            if _os.path.exists(png_path):
-                check_png = png_path.replace("\\", "/")
-        except Exception:
-            check_png = ""
-
-        checked_rule = f"image: url({check_png});" if check_png else \
-            "background-color: #1976d2;"   # 兜底：生成失败时蓝底可辨认
-
-        return f"""
-            QTreeView {{
+        return """
+            QTreeView {
                 padding: 4px;
-            }}
-            QTreeView::item {{
+            }
+            QTreeView::item {
                 height: 30px !important;
                 min-height: 30px !important;
                 max-height: 30px !important;
-            }}
-            QTreeView::indicator {{
-                border-radius: 2px;
-                background-color: #ffffff;
-            }}
-            QTreeView::indicator:checked {{ {checked_rule} }}
+            }
         """
 
     # ---------- 定时任务视图管理 ----------
