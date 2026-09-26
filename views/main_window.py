@@ -2893,8 +2893,6 @@ class MainWindow(QMainWindow):
 
         # 执行面板
         if self._execute_view_ref is not None:
-            selected_bg = '#1e3a5f' if is_dark else '#d0e4f7'
-            selected_fg = '#ffffff' if is_dark else '#1a1a1a'
             # 必须不透明：半透明色会被 QTreeView 的「缩进列 / 内容列」两个单元格
             # 以不同次数叠加，导致同一行出现色差（与项目树 PROJECT_TREE_DARK 同样处理）
             hover_bg = '#4a4a4a' if is_dark else '#dfe2e6'
@@ -2922,16 +2920,21 @@ class MainWindow(QMainWindow):
                     border: none;
                     outline: none;
                 }}
+                /* 选中态不画高亮底色（曾用浅蓝 #d0e4f7，会盖住 delegate 叠的
+                   复选框边框、显得复选框「消失」）：与语音播报页用例树一致，
+                   选择只保留逻辑意义（焦点/键盘导航），无视觉高亮。四个伪状态
+                   都要写 —— 树失焦时 Qt 会换另一套高亮色，只写 :selected 会出现
+                   「点了别处选中行就变样」 */
                 #ExecuteView QTreeView::item:selected,
                 #ExecuteView QTreeView::item:selected:active,
                 #ExecuteView QTreeView::item:selected:!active,
                 #ExecuteView QTreeView::item:selected:focus {{
-                    background-color: {selected_bg};
-                    color: {selected_fg};
+                    background-color: transparent;
+                    color: {text_color};
                     border: none;
                     outline: none;
                 }}
-                #ExecuteView QTreeView::item:hover:!selected {{
+                #ExecuteView QTreeView::item:hover {{
                     background-color: {hover_bg};
                 }}
                 /* 这里刻意不写 ::branch 规则：只要给 ::branch 指定了任何属性
@@ -3000,6 +3003,12 @@ class MainWindow(QMainWindow):
                 vp = tree_view.viewport()
                 if vp is not None:
                     vp.setPalette(pal)
+
+            # 同步壁纸状态给执行视图：壁纸模式下树的调色板带透明度/透明 Highlight，
+            # Fusion 原生 indicator 会画成黑块，执行视图会改走显式 QSS indicator
+            # （日夜模式不受影响，仍走原生绘制与语音播报页同源）
+            if hasattr(self._execute_view_ref, 'set_wallpaper_mode'):
+                self._execute_view_ref.set_wallpaper_mode(has_wallpaper)
 
     def _apply_bottom_log_theme(self, is_dark, has_wallpaper=False):
         """捕虫师日志面板：圆角 + 主题背景（兼容壁纸）"""
