@@ -508,9 +508,10 @@ class ExecuteView(QWidget):
         return """
             QTreeView {
                 padding: 4px;
-                /* 显式归零：主窗口面板 QSS 的树 margin 会在此处级联叠加，
-                   导致工具栏与树之间出现额外空隙；widget 级规则优先级最高 */
-                margin: 0px;
+                /* 上边距归零：工具栏与树之间只留布局 spacing(8px)；
+                   左/下/右保留 10px，树边框与执行区边框的间距不变（与
+                   主窗口面板 QSS 的取值保持一致） */
+                margin: 0px 10px 10px 10px;
             }
             QTreeView::item {
                 height: 30px !important;

@@ -2905,9 +2905,10 @@ class MainWindow(QMainWindow):
                 }}
                 #ExecuteView QTreeView {{
                     padding: 4px;
-                    /* 间距统一由布局 spacing(8px) 控制，这里不再给 margin——
-                       否则工具栏与树之间会叠出 18px 的大空隙（theme.py 里同为 0） */
-                    margin: 0px;
+                    /* 上边距归零：工具栏与树之间只留布局 spacing(8px)——
+                       此前这里的 margin:10px 会叠出 18px 大空隙；
+                       左/下/右保留 10px，树边框与面板边框间距不变 */
+                    margin: 0px 10px 10px 10px;
                     border: 1px solid {panel_border};
                     border-radius: 4px;
                     background-color: {inner_view_bg};
