@@ -462,6 +462,20 @@ class ExecuteView(QWidget):
         self.tree_view.setMinimumWidth(0)
         layout.addWidget(self.tree_view)
 
+        # ---------- 其他初始化 ----------
+        self.model = QStandardItemModel()
+        self.tree_view.setModel(self.model)
+        self.model.dataChanged.connect(self._on_data_changed)
+        # 展开状态持久化：默认全折叠，记住用户上次展开的项目/模块（存 data/config.json）
+        self._tree_state = tree_state.bind_view(self.tree_view, "execute_tree")
+
+        self.placeholder = QLabel("无自动化执行", self)
+        self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.placeholder.setStyleSheet("color: #999; font-size: 16px;")
+        self.placeholder.hide()
+
+        self._executing = False
+
     def _tree_qss(self) -> str:
         """用例树的样式：行高 + 复选框 indicator（勾选 = 蓝底白勾），颜色跟主题。"""
         theme_mode = getattr(self, "_current_theme_mode", ThemeMode.LIGHT)
@@ -520,20 +534,6 @@ class ExecuteView(QWidget):
             }}
             {indicator}
         """
-
-        # ---------- 其他初始化 ----------
-        self.model = QStandardItemModel()
-        self.tree_view.setModel(self.model)
-        self.model.dataChanged.connect(self._on_data_changed)
-        # 展开状态持久化：默认全折叠，记住用户上次展开的项目/模块（存 data/config.json）
-        self._tree_state = tree_state.bind_view(self.tree_view, "execute_tree")
-
-        self.placeholder = QLabel("无自动化执行", self)
-        self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.placeholder.setStyleSheet("color: #999; font-size: 16px;")
-        self.placeholder.hide()
-
-        self._executing = False
 
     # ---------- 定时任务视图管理 ----------
     def set_task_view(self, task_view):
