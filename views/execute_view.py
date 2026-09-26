@@ -297,7 +297,7 @@ class ExecuteView(QWidget):
             btn.setEnabled(enabled)
             # 覆盖主题 QPushButton 的左右 padding，避免 34px 宽被撑爆
             # （背景/边框/悬停等仍走主题 QSS）
-            btn.setStyleSheet("padding: 2px;")
+            btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
             return btn
 
         self.select_all_btn = QPushButton()
@@ -306,7 +306,7 @@ class ExecuteView(QWidget):
         self.select_all_btn.setIconSize(QSize(15, 15))
         self.select_all_btn.setFixedSize(34, 28)
         self.select_all_btn.setToolTip("全选")
-        self.select_all_btn.setStyleSheet("padding: 2px;")
+        self.select_all_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.select_all_btn.clicked.connect(self.select_all)
 
         self.deselect_all_btn = QPushButton()
@@ -315,7 +315,7 @@ class ExecuteView(QWidget):
         self.deselect_all_btn.setIconSize(QSize(15, 15))
         self.deselect_all_btn.setFixedSize(34, 28)
         self.deselect_all_btn.setToolTip("取消全选")
-        self.deselect_all_btn.setStyleSheet("padding: 2px;")
+        self.deselect_all_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.deselect_all_btn.setEnabled(False)
         self.deselect_all_btn.clicked.connect(self.deselect_all)
 
@@ -325,7 +325,7 @@ class ExecuteView(QWidget):
         self.execute_btn.setIconSize(QSize(15, 15))
         self.execute_btn.setFixedSize(34, 28)
         self.execute_btn.setToolTip("执行")
-        self.execute_btn.setStyleSheet("padding: 2px;")
+        self.execute_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.execute_btn.setEnabled(False)
         self.execute_btn.clicked.connect(self._execute)
 
@@ -350,7 +350,7 @@ class ExecuteView(QWidget):
         self.save_suite_btn.setIconSize(QSize(15, 15))
         self.save_suite_btn.setFixedSize(34, 28)
         self.save_suite_btn.setToolTip("保存套件")
-        self.save_suite_btn.setStyleSheet("padding: 2px;")
+        self.save_suite_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.save_suite_btn.clicked.connect(self._save_current_as_suite)
 
         self.del_suite_btn = QPushButton()
@@ -358,7 +358,7 @@ class ExecuteView(QWidget):
         self.del_suite_btn.setIconSize(QSize(15, 15))
         self.del_suite_btn.setFixedSize(34, 28)
         self.del_suite_btn.setToolTip("删除套件")
-        self.del_suite_btn.setStyleSheet("padding: 2px;")
+        self.del_suite_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.del_suite_btn.clicked.connect(self._delete_selected_suite)
 
         self.report_btn = QPushButton()
@@ -366,7 +366,7 @@ class ExecuteView(QWidget):
         self.report_btn.setIconSize(QSize(15, 15))
         self.report_btn.setFixedSize(34, 28)
         self.report_btn.setToolTip("测试报告")
-        self.report_btn.setStyleSheet("padding: 2px;")
+        self.report_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.report_btn.setEnabled(False)
         self.report_btn.clicked.connect(self._on_report_clicked)
 
