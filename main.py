@@ -315,15 +315,22 @@ def main():
     # 自己传过 flags 的调用（DeviceWatcher 等）保持原样；GUI 子进程（scrcpy）不受影响。
     if sys.platform == 'win32':
         import subprocess as _subprocess
-        _orig_popen = _subprocess.Popen
         _CREATE_NO_WINDOW = 0x08000000
 
-        def _popen_no_console(*args, **kwargs):
-            if not kwargs.get('creationflags'):
-                kwargs['creationflags'] = _CREATE_NO_WINDOW
-            return _orig_popen(*args, **kwargs)
+        class _PopenNoConsole(_subprocess.Popen):
+            """没显式传 creationflags 的子进程一律补 CREATE_NO_WINDOW（防黑窗）。
 
-        _subprocess.Popen = _popen_no_console
+            必须包装成**类**而不是函数：asyncio.windows_utils 会执行
+            `class Popen(subprocess.Popen)` 继承它，把 Popen 换成普通函数
+            会让 import asyncio 直接崩（实测 1.1.8 后接 edge-tts 时爆出
+            "argument 'code' must be code, not str"）。
+            """
+            def __init__(self, *args, **kwargs):
+                if not kwargs.get('creationflags'):
+                    kwargs['creationflags'] = _CREATE_NO_WINDOW
+                super().__init__(*args, **kwargs)
+
+        _subprocess.Popen = _PopenNoConsole
 
     # 封面上的第一句人话（在它之前显示的是 spec 里的 text_default「正在启动…」，
     # 因为模块导入阶段 main() 还没开始跑）
