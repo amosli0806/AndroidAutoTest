@@ -255,6 +255,19 @@ class EdgeTtsEngine(WindowsSapiEngine):
     # 无指定音色时的默认（晓晓，中文女声）
     _DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
 
+    # 中文音色官方命名映射（ShortName 人名段 -> 中文名），展示给用户的是中文
+    _ZH_VOICE_NAMES = {
+        "Xiaoxiao": "晓晓", "Xiaoyi": "晓伊", "Yunjian": "云健", "Yunxi": "云希",
+        "Yunxia": "云夏", "Yunyang": "云扬", "Xiaobei": "晓北", "Xiaoni": "晓妮",
+        "HiuGaai": "曌佳", "HiuMaan": "曌曼", "WanLung": "云龙",
+        "HsiaoChen": "晓臣", "HsiaoYu": "晓雨", "YunJhe": "云哲",
+    }
+    # 地区文案（Locale -> 中文描述）
+    _ZH_LOCALE_LABELS = {
+        "zh-CN": "普通话", "zh-CN-liaoning": "辽宁话", "zh-CN-shaanxi": "陕西话",
+        "zh-HK": "粤语", "zh-TW": "台湾话",
+    }
+
     def __init__(self):
         super().__init__()
         self._async_state = "idle"     # idle / synthing / playing / done
@@ -298,13 +311,22 @@ class EdgeTtsEngine(WindowsSapiEngine):
         import edge_tts
         if EdgeTtsEngine._voices_cache is None:
             voices = _run_async(edge_tts.list_voices())
-            # 中文（zh-*）排前面，其余按 Locale / ShortName 排
-            voices = sorted(voices, key=lambda v: (
-                not str(v["Locale"]).startswith("zh-"),
-                v["Locale"], v["ShortName"]))
-            EdgeTtsEngine._voices_cache = [
-                {"id": v["ShortName"], "label": f"{v['ShortName']}（{v['Locale']}）"}
-                for v in voices]
+            # 只保留中国相关音色（普通话/辽宁/陕西/粤语/台湾），且展示为中文文案
+            # —— 322 个音色里绝大多数是外语，对车机中文播报毫无用处，全列出来
+            #    只会让用户在几百项里翻找
+            items = []
+            for v in voices:
+                locale = str(v.get("Locale", ""))
+                if not locale.startswith("zh-"):
+                    continue
+                short = v["ShortName"]
+                stem = short.rsplit("-", 1)[-1].replace("Neural", "")
+                name = self._ZH_VOICE_NAMES.get(stem, stem)
+                gender = "女" if v.get("Gender") == "Female" else "男"
+                area = self._ZH_LOCALE_LABELS.get(locale, locale)
+                items.append({"id": short, "label": f"{name}（{gender}·{area}）"})
+            items.sort(key=lambda x: x["id"])   # zh-CN < zh-CN-liaoning < ... < zh-TW，顺序自然合理
+            EdgeTtsEngine._voices_cache = items
         return EdgeTtsEngine._voices_cache
 
     # ---------------- 合成 ----------------
