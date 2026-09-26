@@ -108,9 +108,11 @@ class UpdateProgressDialog(QDialog):
         if is_dark:
             bg, border, title_color, body = "#3c3c3c", "#555", "#ffffff", "#cccccc"
             bar_bg, ghost_bg, ghost_fg = "#2b2b2b", "#555", "#eeeeee"
+            ghost_hover = "#666666"          # 夜间模式悬停：比底色略亮，白字仍清晰
         else:
             bg, border, title_color, body = "#ffffff", "#d0d0d0", "#1a1a1a", "#555555"
             bar_bg, ghost_bg, ghost_fg = "#f0f0f0", "#f0f0f0", "#333333"
+            ghost_hover = "#e0e0e0"
 
         self.setStyleSheet(f"""
             #UpdateProgressDialog {{
@@ -155,7 +157,7 @@ class UpdateProgressDialog(QDialog):
                 font-size: 13px;
             }}
             #UpdateProgressDialog QPushButton#ProgressCancelBtn:hover {{
-                background-color: #e0e0e0;
+                background-color: {ghost_hover};
             }}
             #UpdateProgressDialog QPushButton#ProgressCancelBtn:disabled {{
                 color: #aaaaaa;

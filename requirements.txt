@@ -6,6 +6,7 @@ altgraph==0.17.5
 attrs==26.1.0
 cached-property==1.5.2
 certifi==2026.7.22
+cffi==2.1.1
 charset-normalizer==3.4.9
 click==8.4.2
 colorama==0.4.6
@@ -24,6 +25,7 @@ logger==1.4
 logzero==1.7.0
 lxml==6.1.1
 MarkupSafe==3.0.3
+miniaudio==1.71
 multidict==6.9.1
 numpy==2.5.3
 openpyxl==3.1.5
