@@ -26,7 +26,7 @@ import os
 import time
 
 from PyQt6.QtCore import QRectF, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtGui import QColor, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QDoubleSpinBox, QFileDialog, QFrame,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -118,7 +118,7 @@ class _PlaybackWorker(QThread):
 
 
 class _BorderedTreeItemDelegate(QStyledItemDelegate):
-    """给 QTreeWidget 节点上的复选框叠一圈明显的边框。
+    """树节点复选框：修正在原生绘制上叠加清晰边框的 delegate。
 
     为什么不能复用 BorderedCheckBox：那是给真正的 QCheckBox 控件用的，
     通过 subElementRect(SE_CheckBoxIndicator) 拿位置。而树节点上的复选框
@@ -126,6 +126,8 @@ class _BorderedTreeItemDelegate(QStyledItemDelegate):
 
     这里用 delegate 先让基类正常绘制（保留勾号 / 减号 / 部分选中的方块），
     再用 SE_ItemViewItemCheckIndicator 拿到复选框矩形，叠一圈边框。
+    paint() 里还会修正被 QSS 规则污染的调色板 Base（见 paint 内注释），
+    否则壁纸的半透明树底下勾选框会变成黑块。
     """
 
     def __init__(self, border_color, selected_border_color, parent=None):
@@ -138,6 +140,17 @@ class _BorderedTreeItemDelegate(QStyledItemDelegate):
         self._selected_border_color = QColor(selected_border_color)
 
     def paint(self, painter, option, index):
+        # 树的 ::item 规则带 background（哪怕 transparent）时，QStyleSheetStyle
+        # 会把规则笔刷配置进绘制调色板（QRenderRule::configurePalette）；壁纸的
+        # 半透明树底下，这个 Base 变成不透明黑，Fusion 原生勾选框的框体填充
+        # （用 palette.base() 画渐变）在选中/聚焦行就被填充成纯黑方块（日夜模式
+        # 下 Base 是透明笔刷所以无此问题）。这里把 Base 置回全透明 —— 勾选框
+        # 内部本来就不画填充（日夜模式已验证的观感），内部由行底透出。
+        # 注意：PyQt6 里直接 option.palette.setBrush(...) 会段错误，必须
+        # 拷贝一份 QPalette 改完再整体赋值回去。
+        fixed_palette = QPalette(option.palette)
+        fixed_palette.setBrush(QPalette.ColorRole.Base, QColor(0, 0, 0, 0))
+        option.palette = fixed_palette
         super().paint(painter, option, index)
 
         opt = QStyleOptionViewItem(option)
