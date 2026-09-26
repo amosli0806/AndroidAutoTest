@@ -374,8 +374,9 @@ class ExecuteView(QWidget):
         self.toggle_select_btn.clicked.connect(self._on_toggle_select)
 
         self.execute_btn = QPushButton()
-        self.execute_icon_enabled = qta.icon('fa6s.play', color=self._icon_color)
-        self.execute_btn.setIcon(QIcon())   # 空闲且无勾选时是灰态占位
+        self.execute_icon_enabled = qta.icon('fa6s.play', color='white')          # 启用：蓝底白
+        self.execute_icon_disabled = qta.icon('fa6s.play', color=self._icon_color)  # 禁用：灰底深
+        self.execute_btn.setIcon(self.execute_icon_disabled)
         self.execute_btn.setIconSize(QSize(15, 15))
         self.execute_btn.setFixedSize(34, 28)
         self.execute_btn.setObjectName("ExecIconBtn")
