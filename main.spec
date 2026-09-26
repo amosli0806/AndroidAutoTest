@@ -73,6 +73,11 @@ a = Analysis(
         'models.voice_model',
         'services.voice_service',
         'views.voice_view',
+        # ---------- 新增：Edge 在线语音（edge-tts，函数级 import） ----------
+        # edge_tts 是 EdgeTtsEngine 里函数级 import 的异步库；aiohttp 是它的
+        # 运行时依赖（有官方 hook，这里显式登记更稳，避免动态导入漏掉子模块）。
+        'edge_tts',
+        'aiohttp',
         # ---------- 新增：检查更新 ----------
         # 更新相关的对话框/服务都是函数级导入（点菜单、点更新才用），显式登记避免打包漏掉
         'services.update_service',

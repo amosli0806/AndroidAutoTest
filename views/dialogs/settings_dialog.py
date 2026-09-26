@@ -509,8 +509,11 @@ class SettingsDialog(QDialog):
         form.setSpacing(12)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.voice_engine_label = QLabel("—")
-        form.addRow("引擎:", self.voice_engine_label)
+        self.voice_engine_combo = QComboBox()
+        self.voice_engine_combo.setMinimumWidth(340)
+        self.voice_engine_combo.currentIndexChanged.connect(
+            self._on_voice_engine_changed)
+        form.addRow("引擎:", self.voice_engine_combo)
 
         self.voice_tone_combo = QComboBox()
         self.voice_tone_combo.setMinimumWidth(340)
@@ -548,7 +551,10 @@ class SettingsDialog(QDialog):
             "音色和输出设备由「语音播报」页与用例里的语音步骤共用，保存后立即生效。"
             "响度直接用电脑的系统音量，程序内不再单独调音量。"
             "唤醒词是「语音播报」页「唤醒词」按钮追加到用例末尾的那句，留空则用默认的"
-            f"「{DEFAULT_WAKE_WORD}」。"
+            f"「{DEFAULT_WAKE_WORD}」。\n"
+            "引擎可选「Windows 内置语音」（离线，音色来自系统）或「Edge 在线语音」"
+            "（需联网，微软在线音色，普通话更自然）。系统音色偏少时，可到 "
+            "Windows 设置 → 时间和语言 → 语音 → 添加语音，装更多语言包。"
         )
         hint.setObjectName("SettingsPageSubtitle")
         hint.setWordWrap(True)
@@ -558,31 +564,29 @@ class SettingsDialog(QDialog):
         return page
 
     def _load_voice_config(self):
-        """把音色/输出设备选项灌进下拉框，并回填已保存的选择"""
+        """把引擎/音色/输出设备选项灌进下拉框，并回填已保存的选择"""
         from models.voice_model import DEFAULT_WAKE_WORD, VoiceModel
         from services.voice_service import VoiceError, get_voice_service
 
         service = get_voice_service()
         settings = VoiceModel().settings
-        self.voice_engine_label.setText(
-            service.engine_label() if service.is_available() else "不可用")
 
         self.wake_word_edit.setText(
             (settings.get("wake_word") or "").strip() or DEFAULT_WAKE_WORD)
 
-
-        self.voice_tone_combo.clear()
-        if service.is_available():
-            try:
-                for item in service.list_voices():
-                    self.voice_tone_combo.addItem(item["label"], item["id"])
-            except VoiceError:
-                pass
-        if self.voice_tone_combo.count() == 0:
-            self.voice_tone_combo.addItem("（本机没有可用音色）", "")
-        idx = self.voice_tone_combo.findData(settings.get("voice_id") or "")
+        # 引擎下拉（blockSignals 避免 setCurrentIndex 触发 _on_voice_engine_changed 重复刷新）
+        self.voice_engine_combo.blockSignals(True)
+        self.voice_engine_combo.clear()
+        for e in service.available_engines():
+            label = e["label"] + ("" if e["available"] else "（不可用）")
+            self.voice_engine_combo.addItem(label, e["key"])
+        idx = self.voice_engine_combo.findData(settings.get("engine") or "")
         if idx >= 0:
-            self.voice_tone_combo.setCurrentIndex(idx)
+            self.voice_engine_combo.setCurrentIndex(idx)
+        self.voice_engine_combo.blockSignals(False)
+
+        # 按当前引擎填音色
+        self._load_voice_tones()
 
         self.voice_device_combo.clear()
         self.voice_device_combo.addItem("系统默认输出设备", "")
@@ -596,6 +600,35 @@ class SettingsDialog(QDialog):
         if idx >= 0:
             self.voice_device_combo.setCurrentIndex(idx)
 
+    def _load_voice_tones(self):
+        """按当前引擎 key 切引擎，并灌该引擎的音色列表。"""
+        from models.voice_model import VoiceModel
+        from services.voice_service import VoiceError, get_voice_service
+
+        service = get_voice_service()
+        engine_key = self.voice_engine_combo.currentData() or ""
+        if engine_key:
+            service.set_engine(engine_key)
+
+        self.voice_tone_combo.clear()
+        if service.is_available():
+            try:
+                for item in service.list_voices():
+                    self.voice_tone_combo.addItem(item["label"], item["id"])
+            except VoiceError:
+                pass
+        if self.voice_tone_combo.count() == 0:
+            self.voice_tone_combo.addItem("（本机没有可用音色）", "")
+        # 音色 id 是分引擎的：切引擎后旧 id 找不到，自然停在第一个（需重选）
+        saved_voice = VoiceModel().settings.get("voice_id") or ""
+        idx = self.voice_tone_combo.findData(saved_voice)
+        if idx >= 0:
+            self.voice_tone_combo.setCurrentIndex(idx)
+
+    def _on_voice_engine_changed(self, _index):
+        """用户切换引擎时刷新音色下拉。"""
+        self._load_voice_tones()
+
     def _apply_voice_selection(self):
         """把下拉里**当前**的选择套到引擎上，但不落盘。
 
@@ -608,6 +641,9 @@ class SettingsDialog(QDialog):
         if not service.is_available():
             return
         try:
+            engine_key = self.voice_engine_combo.currentData() or ""
+            if engine_key:
+                service.set_engine(engine_key)
             service.set_voice(self.voice_tone_combo.currentData() or "")
             service.set_output_device(self.voice_device_combo.currentData() or "")
         except VoiceError as e:
@@ -620,6 +656,7 @@ class SettingsDialog(QDialog):
         if not hasattr(self, "voice_tone_combo"):
             return
         VoiceModel().set_settings(
+            engine=self.voice_engine_combo.currentData() or "",
             voice_id=self.voice_tone_combo.currentData() or "",
             device_id=self.voice_device_combo.currentData() or "",
             # 留空也存空串：语音页取空值时回落到 DEFAULT_WAKE_WORD

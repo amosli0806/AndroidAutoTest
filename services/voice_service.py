@@ -20,6 +20,8 @@
 """
 import threading
 import time
+import os
+import tempfile
 
 # SAPI 的音频输出设备类别（枚举扬声器要用）
 SAPI_AUDIO_OUTPUT_CATEGORY = (
@@ -236,19 +238,207 @@ class WindowsSapiEngine:
             pass
 
 
+class EdgeTtsEngine(WindowsSapiEngine):
+    """微软 Edge 在线语音（edge-tts），音色多、自然度高，需要联网。
+
+    合成用 edge-tts（异步），播放复用 SAPI 的 SpVoice —— SpVoice 在这里只当
+    「能指定输出设备、可被打断」的播放器，不做 TTS 合成。所以本引擎仍依赖
+    Windows 的 SAPI 组件（虫师本就依赖 pywin32），只是不再依赖系统的 TTS 音色：
+    没有中文音色的机器，也能用 edge 在线音色念出标准中文。
+    """
+
+    key = "edge_tts"
+    label = "Edge 在线语音"
+
+    # edge-tts 有效语速范围（百分比字符串），映射自 SAPI 的 -10~10
+    _RATE_PCT_MIN, _RATE_PCT_MAX = -50, 100
+    # 无指定音色时的默认（晓晓，中文女声）
+    _DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
+    # 异步播报的临时文件（固定名，覆盖式，避免每次合成泄漏一个文件）
+    _ASYNC_TMP = os.path.join(tempfile.gettempdir(), "chongshi_edge_tts.mp3")
+
+    def __init__(self):
+        super().__init__()
+        self._async_state = "idle"     # idle / synthing / playing / done
+        self._cancel = False
+
+    # ---------------- 可用性 ----------------
+    @staticmethod
+    def is_available() -> bool:
+        try:
+            import edge_tts  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    # ---------------- 配置覆盖 ----------------
+    def _apply_cfg(self, voice):
+        # SpVoice 只当播放器：不设 TTS 音色 token、不设 Rate（语速在合成侧控制），
+        # 只套输出设备与音量
+        try:
+            voice.Volume = SAPI_FULL_VOLUME
+            if self._cfg["device_id"]:
+                self._select_device(voice, self._cfg["device_id"])
+        except Exception:
+            pass
+
+    def set_rate(self, rate):
+        # edge 语速是合成参数，不落 SpVoice.Rate
+        self._cfg["rate"] = max(RATE_MIN, min(RATE_MAX, int(rate)))
+
+    def set_voice(self, voice_id):
+        self._cfg["voice_id"] = voice_id or None
+
+    def _rate_str(self) -> str:
+        pct = max(self._RATE_PCT_MIN, min(self._RATE_PCT_MAX, int(self._cfg["rate"]) * 10))
+        return f"{'+' if pct >= 0 else ''}{pct}%"
+
+    # ---------------- 音色列表 ----------------
+    def list_voices(self):
+        import edge_tts
+        voices = _run_async(edge_tts.list_voices())
+        # 中文（zh-*）排前面，其余按 Locale / ShortName 排
+        voices = sorted(voices, key=lambda v: (
+            not str(v["Locale"]).startswith("zh-"),
+            v["Locale"], v["ShortName"]))
+        return [{"id": v["ShortName"],
+                 "label": f"{v['ShortName']}（{v['Locale']}）"}
+                for v in voices]
+
+    # ---------------- 合成 ----------------
+    def _synth_to(self, text, path):
+        import edge_tts
+        voice_id = self._cfg.get("voice_id") or self._DEFAULT_VOICE
+        communicate = edge_tts.Communicate(text, voice_id, rate=self._rate_str())
+        _run_async(communicate.save(path))
+
+    def _play_file(self, path, flags):
+        import win32com.client
+        voice = self._voice()
+        stream = win32com.client.Dispatch("SAPI.SpFileStream")
+        stream.Open(path)
+        try:
+            voice.SpeakStream(stream, flags)
+        finally:
+            stream.Close()
+
+    # ---------------- 播报 ----------------
+    def speak(self, text) -> float:
+        """同步：合成 + 播放，播完才返回。"""
+        text = (text or "").strip()
+        if not text:
+            return 0.0
+        started = time.time()
+        fd, path = tempfile.mkstemp(suffix=".mp3")
+        os.close(fd)
+        try:
+            self._synth_to(text, path)
+            self._play_file(path, SVSF_DEFAULT)
+        finally:
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+        return time.time() - started
+
+    def speak_async(self, text):
+        text = (text or "").strip()
+        if not text:
+            return
+        self._cancel = False
+        self._async_state = "synthing"
+        threading.Thread(target=self._async_worker, args=(text,), daemon=True).start()
+
+    def _async_worker(self, text):
+        try:
+            self._synth_to(text, self._ASYNC_TMP)
+            if self._cancel:
+                self._async_state = "done"
+                return
+            self._async_state = "playing"
+            self._play_file(self._ASYNC_TMP, SVSF_ASYNC)
+        except Exception:
+            self._async_state = "done"
+
+    def wait_done(self, timeout_ms: int = 100) -> bool:
+        """区分「合成中 / 播放中 / 完成」——合成有网络延迟，不能只看 SpVoice。"""
+        state = self._async_state
+        if state == "synthing":
+            return False
+        if state == "playing":
+            try:
+                if self._voice().WaitUntilDone(timeout_ms):
+                    self._async_state = "done"
+                    return True
+            except Exception:
+                self._async_state = "done"
+                return True
+            return False
+        return True
+
+    def stop(self):
+        self._cancel = True
+        self._async_state = "done"
+        try:
+            self._voice().Speak("", SVSF_ASYNC | SVSFPURGE_BEFORE_SPEAK)
+        except Exception:
+            pass
+
+
+def _run_async(coro):
+    """在当前线程独立跑一个 asyncio 协程，同步等待结果。
+
+    edge-tts 是异步库，播报跑在 QThread 里，每个线程都要独立 event loop。
+    用 new_event_loop 而非 asyncio.run，避免「当前线程已有 loop」时的冲突。
+    """
+    import asyncio
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
 class VoiceService:
-    """语音播报的统一入口。引擎可插拔，v1 只有 Windows 内置 SAPI。"""
+    """语音播报的统一入口。引擎可插拔：Windows 内置 SAPI / Edge 在线语音。"""
+
+    # 引擎注册表（顺序即默认优先级）
+    ENGINE_CLASSES = [WindowsSapiEngine, EdgeTtsEngine]
 
     def __init__(self, engine=None):
         self._engine = engine
         self._engine_resolved = engine is not None
+        self._engine_key = None
 
     def _get_engine(self):
         if not self._engine_resolved:
             self._engine_resolved = True
-            if WindowsSapiEngine.is_available():
-                self._engine = WindowsSapiEngine()
+            # 按配置 key 解析；未指定则按注册表顺序选第一个可用的（SAPI 优先）
+            for cls in self.ENGINE_CLASSES:
+                if cls.is_available() and (self._engine_key is None or cls.key == self._engine_key):
+                    self._engine = cls()
+                    self._engine_key = cls.key
+                    break
         return self._engine
+
+    def available_engines(self) -> list:
+        """返回 [{key, label, available}]，供设置页引擎下拉使用。"""
+        return [{"key": c.key, "label": c.label, "available": c.is_available()}
+                for c in self.ENGINE_CLASSES]
+
+    def current_engine_key(self) -> str:
+        engine = self._get_engine()
+        return engine.key if engine else ""
+
+    def set_engine(self, key) -> bool:
+        """切换到指定引擎（不可用则返回 False）。切换后需重新 set_voice 选音色。"""
+        for cls in self.ENGINE_CLASSES:
+            if cls.key == key and cls.is_available():
+                self._engine = cls()
+                self._engine_key = key
+                self._engine_resolved = True
+                return True
+        return False
 
     def is_available(self) -> bool:
         return self._get_engine() is not None
@@ -260,7 +450,7 @@ class VoiceService:
     def _require(self):
         engine = self._get_engine()
         if engine is None:
-            raise VoiceError("本机没有可用的语音引擎（需要 Windows 内置 TTS）")
+            raise VoiceError("本机没有可用的语音引擎（需要 Windows 内置 TTS 或联网使用 Edge 在线语音）")
         return engine
 
     # ---------------- 透传 ----------------
@@ -289,7 +479,23 @@ class VoiceService:
         return self._require().get_cfg()
 
     def apply_cfg(self, cfg):
-        self._require().apply_cfg(cfg)
+        """批量套用配置。cfg 可含 engine（引擎 key）、voice_id、rate、device_id。"""
+        if not cfg:
+            return
+        # 先定引擎，再灌该引擎自己的配置
+        engine_key = cfg.get("engine") or ""
+        if engine_key:
+            if self.set_engine(engine_key):
+                pass
+            elif not self._get_engine():
+                return
+        engine = self._require()
+        if cfg.get("voice_id"):
+            engine.set_voice(cfg["voice_id"])
+        if cfg.get("rate") is not None:
+            engine.set_rate(cfg["rate"])
+        if cfg.get("device_id"):
+            engine.set_output_device(cfg["device_id"])
 
     def speak(self, text) -> float:
         """阻塞播报（用例步骤用）。返回耗时秒数。"""
