@@ -400,6 +400,7 @@ class ExecuteView(QWidget):
         self.loop_spin.setRange(1, 999)
         self.loop_spin.setValue(1)
         self.loop_spin.setFixedWidth(62)
+        self.loop_spin.setFixedHeight(28)   # 与图标按钮同高，避免撑高工具栏行
         self.loop_spin.setToolTip("循环次数")
 
         self.stop_on_fail_check = BorderedCheckBox("失败停止")
@@ -409,6 +410,7 @@ class ExecuteView(QWidget):
         from utils.widget_helpers import prepare_combo_view
         prepare_combo_view(self.suite_combo)
         self.suite_combo.setMinimumWidth(130)
+        self.suite_combo.setFixedHeight(28)  # 与图标按钮同高，避免撑高工具栏行
         self.suite_combo.currentTextChanged.connect(self._on_suite_selected)
 
         self.save_suite_btn = QPushButton()
@@ -506,6 +508,9 @@ class ExecuteView(QWidget):
         return """
             QTreeView {
                 padding: 4px;
+                /* 显式归零：主窗口面板 QSS 的树 margin 会在此处级联叠加，
+                   导致工具栏与树之间出现额外空隙；widget 级规则优先级最高 */
+                margin: 0px;
             }
             QTreeView::item {
                 height: 30px !important;
