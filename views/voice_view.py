@@ -243,6 +243,7 @@ class _PhraseRow(QFrame):
     """一条文案的编辑行（按下标回调，因为文案是按下标存的）。"""
 
     play_requested = pyqtSignal(int)
+    copy_requested = pyqtSignal(int)
     remove_requested = pyqtSignal(int)
     text_changed = pyqtSignal(int, str)
     delay_changed = pyqtSignal(int, float)
@@ -293,6 +294,17 @@ class _PhraseRow(QFrame):
         self.play_btn.clicked.connect(lambda: self.play_requested.emit(self.index))
         layout.addWidget(self.play_btn)
 
+        # 复制：把这一条文案连播后等待一起复制一份，插在它后面
+        self.copy_btn = QToolButton()
+        self.copy_btn.setObjectName("PhraseCopyBtn")
+        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.copy_btn.setFixedSize(26, 26)
+        self.copy_btn.setAutoRaise(True)
+        self.copy_btn.setToolTip("复制这一条")
+        self.copy_btn.clicked.connect(lambda: self.copy_requested.emit(self.index))
+        layout.addWidget(self.copy_btn)
+
         self.del_btn = QToolButton()
         self.del_btn.setObjectName("PhraseDelBtn")
         self.del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -319,6 +331,7 @@ class _PhraseRow(QFrame):
             play_color = "#1976d2"  # 主题蓝
             del_color = "#e74c3c"  # 主题红
         self.play_btn.setIcon(qta.icon('fa6s.play', color=play_color))
+        self.copy_btn.setIcon(qta.icon('fa6s.copy', color=play_color))
         self.del_btn.setIcon(qta.icon('fa6s.trash-can', color=del_color))
 
 class VoiceView(QWidget):
@@ -651,11 +664,46 @@ class VoiceView(QWidget):
         return False
 
     def _on_tree_selection_changed(self):
+        # 执行播报中不允许切换用例：切换会重建中栏编辑行，打乱正在进行的
+        # 播报联动。提示并还原选中（勾选树的勾选变化不影响进行中的播报，
+        # 那边不加限制）。
+        if self._playback_running():
+            from utils.toast import show_toast
+            show_toast(self, "执行中，请先停止再切换用例", duration=1500)
+            self.tree.blockSignals(True)
+            try:
+                target = self._find_case_item(self._current_case_id)
+                if target is not None:
+                    self.tree.setCurrentItem(target)
+            finally:
+                self.tree.blockSignals(False)
+            return
         items = self.tree.selectedItems()
         kind = items[0].data(0, self.ROLE_KIND) if items else None
         self._current_case_id = (
             items[0].data(0, self.ROLE_ID) if items and kind == "case" else None)
         self._reload_steps()
+
+    def _find_case_item(self, case_id):
+        """在左树里按用例 id 找节点（找不到返回 None）。"""
+        if not case_id:
+            return None
+
+        def walk(item):
+            if (item.data(0, self.ROLE_ID) == case_id
+                    and item.data(0, self.ROLE_KIND) == "case"):
+                return item
+            for i in range(item.childCount()):
+                got = walk(item.child(i))
+                if got is not None:
+                    return got
+            return None
+
+        for i in range(self.tree.topLevelItemCount()):
+            got = walk(self.tree.topLevelItem(i))
+            if got is not None:
+                return got
+        return None
 
     def _current_case(self):
         if not self._current_case_id:
@@ -758,6 +806,7 @@ class VoiceView(QWidget):
             for i, phrase in enumerate(phrases):
                 row = _PhraseRow(i, phrase, self._container)
                 row.play_requested.connect(self._on_play_one)
+                row.copy_requested.connect(self._on_copy_phrase)
                 row.remove_requested.connect(self._on_remove_phrase)
                 row.text_changed.connect(self._on_text_changed)
                 row.delay_changed.connect(self._on_delay_changed)
@@ -1067,6 +1116,14 @@ class VoiceView(QWidget):
         self.model.remove_phrase(case.id, index)
         self._reload_steps()
 
+    def _on_copy_phrase(self, index):
+        case = self._current_case()
+        if case is None:
+            return
+        if self.model.copy_phrase(case.id, index):
+            self._reload_steps()
+            self.status_label.setText(f"已复制第 {index + 1} 条，插在它后面")
+
     def _on_text_changed(self, index, text):
         case = self._current_case()
         if case is None:
@@ -1213,7 +1270,11 @@ class VoiceView(QWidget):
             for btn in buttons:
                 btn.setFixedWidth(width)
 
-    def _sync_play_buttons(self, running=False):
+    def _sync_play_buttons(self, running=None):
+        # running 不传时自动探测：勾选树执行中保持可用，其勾选变化回调
+        # 会走到这里，不能被当成"非运行态"把按钮重新放开
+        if running is None:
+            running = self._playback_running()
         available = self.service.is_available()
         has_checked = bool(self._collect_checked_case_ids())
         # 一条都没勾选时直接禁用，比点了再弹提示更直观
@@ -1225,13 +1286,18 @@ class VoiceView(QWidget):
         self.none_btn.setEnabled(not running)
         self.loop_spin.setEnabled(not running)
         self.rate_spin.setEnabled(available and not running)
-        self.check_tree.setEnabled(not running)
-        self.tree.setEnabled(not running)
+        # 左右两棵树执行中不再 setEnabled(False)：禁用会把整个树的图标
+        # 压成灰样式（用户反馈"执行中树图标变了"）。树保持可用，交互
+        # 风险在各自的处理入口里按 running 状态拦截（见下面两个方法）。
         for row in self._rows:
             row.play_btn.setEnabled(available and not running)
+            row.copy_btn.setEnabled(not running)
             row.del_btn.setEnabled(not running)
             row.text_edit.setEnabled(not running)
             row.delay_spin.setEnabled(not running)
+
+    def _playback_running(self) -> bool:
+        return self._worker is not None and self._worker.isRunning()
 
     def _start_playback(self, items, loop_count, label):
         if self._worker is not None and self._worker.isRunning():
@@ -1248,6 +1314,12 @@ class VoiceView(QWidget):
         self._worker.start()
 
     def _on_play_one(self, index):
+        # 执行中不允许再点单条试听：SAPI 是同一播放器实例，会打断正在
+        # 进行的播报队列
+        if self._playback_running():
+            from utils.toast import show_toast
+            show_toast(self, "执行中，请先停止再试听", duration=1500)
+            return
         case = self._current_case()
         if case is None or not (0 <= index < len(case.phrases)):
             return
