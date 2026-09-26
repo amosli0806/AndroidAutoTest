@@ -273,6 +273,34 @@ class EdgeTtsEngine(WindowsSapiEngine):
         self._async_state = "idle"     # idle / synthing / playing / done
         self._cancel = False
 
+    # ---------------- 预热 ----------------
+    _warmup_done = False
+    _warmup_lock = threading.Lock()
+
+    def warmup(self):
+        """后台预热：首次 import edge_tts / aiohttp / asyncio。
+
+        这三个模块首次加载要几百 ms~数秒（aiohttp 的依赖冷加载尤其慢），
+        若不预热，第一次播报会在 worker 线程里现场加载，表现为「点执行后
+        好一会儿才出声 / 一开始没声音」。启动时切到在线引擎后由
+        apply_cfg 触发一次（进程内幂等），之后任何线程 import 都命中缓存。
+        预热失败不影响使用：首播仍会走惰性加载，只在这里留条日志。
+        """
+        with EdgeTtsEngine._warmup_lock:
+            if EdgeTtsEngine._warmup_done:
+                return
+            EdgeTtsEngine._warmup_done = True
+
+        def _do():
+            try:
+                import edge_tts   # noqa: F401
+                import aiohttp    # noqa: F401
+                import asyncio    # noqa: F401
+            except Exception as e:
+                print(f"[voice/edge] 预热失败：{type(e).__name__}: {str(e)[:100]}")
+
+        threading.Thread(target=_do, daemon=True).start()
+
     # ---------------- 可用性 ----------------
     _voices_cache = None   # 进程级音色缓存（edge 音色列表是网络拉取，拉一次复用）
     _VOICES_CACHE_FILE = None   # 磁盘缓存路径（惰性求值，见 _voices_cache_path）
@@ -630,6 +658,8 @@ class VoiceService:
             elif not self._get_engine():
                 return
         engine = self._require()
+        if getattr(engine, "warmup", None) is not None:
+            engine.warmup()
         if cfg.get("voice_id"):
             engine.set_voice(cfg["voice_id"])
         if cfg.get("rate") is not None:
