@@ -254,8 +254,6 @@ class EdgeTtsEngine(WindowsSapiEngine):
     _RATE_PCT_MIN, _RATE_PCT_MAX = -50, 100
     # 无指定音色时的默认（晓晓，中文女声）
     _DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
-    # 异步播报的临时文件（固定名，覆盖式，避免每次合成泄漏一个文件）
-    _ASYNC_TMP = os.path.join(tempfile.gettempdir(), "chongshi_edge_tts.mp3")
 
     def __init__(self):
         super().__init__()
@@ -310,11 +308,36 @@ class EdgeTtsEngine(WindowsSapiEngine):
         return EdgeTtsEngine._voices_cache
 
     # ---------------- 合成 ----------------
-    def _synth_to(self, text, path):
+    # 合成超时：国内到微软语音服务的连接时好时坏（实测最长挂 20s+ 才报
+    # ConnectionTimeoutError），必须设上限让失败尽快浮出来
+    _SYNTH_TIMEOUT = 12
+
+    def _synth_wav(self, text, wav_path):
+        """edge-tts 合成（内存中收 mp3 块）→ miniaudio 解码 → 写 wav。
+
+        为什么不直接把 mp3 交给 SAPI 播：SpFileStream 播 mp3 依赖系统 ACM
+        解码器，实测会截断（「你好本田」只念出个「在」）甚至无声（1.1.8 反馈）。
+        miniaudio 自带 mp3 解码，在内存里转成标准 wav，SAPI 播 wav 是原生路径。
+        """
         import edge_tts
         voice_id = self._cfg.get("voice_id") or self._DEFAULT_VOICE
         communicate = edge_tts.Communicate(text, voice_id, rate=self._rate_str())
-        _run_async(communicate.save(path))
+        mp3 = bytearray()
+
+        async def _collect():
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    mp3.extend(chunk["data"])
+
+        try:
+            _run_async(_collect(), timeout=self._SYNTH_TIMEOUT)
+        except Exception as e:
+            raise VoiceError(
+                f"在线语音合成失败（{str(e)[:60]}）—— 请检查网络，"
+                "或在设置里切换回「Windows 内置语音」")
+        if not mp3:
+            raise VoiceError("在线语音合成失败（服务未返回音频，请检查网络）")
+        _decode_mp3_to_wav(bytes(mp3), wav_path)
 
     def _play_file(self, path, flags):
         import win32com.client
@@ -333,14 +356,14 @@ class EdgeTtsEngine(WindowsSapiEngine):
         if not text:
             return 0.0
         started = time.time()
-        fd, path = tempfile.mkstemp(suffix=".mp3")
+        fd, wav_path = tempfile.mkstemp(prefix="chongshi_edge_", suffix=".wav")
         os.close(fd)
         try:
-            self._synth_to(text, path)
-            self._play_file(path, SVSF_DEFAULT)
+            self._synth_wav(text, wav_path)
+            self._play_file(wav_path, SVSF_DEFAULT)
         finally:
             try:
-                os.remove(path)
+                os.remove(wav_path)
             except Exception:
                 pass
         return time.time() - started
@@ -351,18 +374,32 @@ class EdgeTtsEngine(WindowsSapiEngine):
             return
         self._cancel = False
         self._async_state = "synthing"
+        # 唯一临时文件：固定名会被「上一条还在播、下一条开始合成」的覆盖冲突打坏
+        import uuid
+        self._async_wav_path = os.path.join(
+            tempfile.gettempdir(), f"chongshi_edge_{uuid.uuid4().hex[:8]}.wav")
         threading.Thread(target=self._async_worker, args=(text,), daemon=True).start()
 
     def _async_worker(self, text):
         try:
-            self._synth_to(text, self._ASYNC_TMP)
+            self._synth_wav(text, self._async_wav_path)
             if self._cancel:
                 self._async_state = "done"
                 return
             self._async_state = "playing"
-            self._play_file(self._ASYNC_TMP, SVSF_ASYNC)
-        except Exception:
+            self._play_file(self._async_wav_path, SVSF_ASYNC)
+        except Exception as e:
+            print(f"[weditor/edge] 异步播报失败: {type(e).__name__}: {str(e)[:150]}")
             self._async_state = "done"
+
+    def _cleanup_async_wav(self):
+        path = getattr(self, "_async_wav_path", None)
+        if path:
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+            self._async_wav_path = None
 
     def wait_done(self, timeout_ms: int = 100) -> bool:
         """区分「合成中 / 播放中 / 完成」——合成有网络延迟，不能只看 SpVoice。"""
@@ -373,9 +410,11 @@ class EdgeTtsEngine(WindowsSapiEngine):
             try:
                 if self._voice().WaitUntilDone(timeout_ms):
                     self._async_state = "done"
+                    self._cleanup_async_wav()
                     return True
             except Exception:
                 self._async_state = "done"
+                self._cleanup_async_wav()
                 return True
             return False
         return True
@@ -383,14 +422,15 @@ class EdgeTtsEngine(WindowsSapiEngine):
     def stop(self):
         self._cancel = True
         self._async_state = "done"
+        self._cleanup_async_wav()
         try:
             self._voice().Speak("", SVSF_ASYNC | SVSFPURGE_BEFORE_SPEAK)
         except Exception:
             pass
 
 
-def _run_async(coro):
-    """在当前线程独立跑一个 asyncio 协程，同步等待结果。
+def _run_async(coro, timeout=None):
+    """在当前线程独立跑一个 asyncio 协程，同步等待结果（可设超时）。
 
     edge-tts 是异步库，播报跑在 QThread 里，每个线程都要独立 event loop。
     用 new_event_loop 而非 asyncio.run，避免「当前线程已有 loop」时的冲突。
@@ -398,9 +438,29 @@ def _run_async(coro):
     import asyncio
     loop = asyncio.new_event_loop()
     try:
+        if timeout:
+            return loop.run_until_complete(asyncio.wait_for(coro, timeout=timeout))
         return loop.run_until_complete(coro)
     finally:
         loop.close()
+
+
+def _decode_mp3_to_wav(mp3_bytes: bytes, wav_path: str):
+    """mp3 bytes -> miniaudio 解码 -> 标准 16bit wav 文件。
+
+    edge-tts 输出固定是 mp3（硬编码），SAPI 的 SpFileStream 播 mp3 依赖系统
+    ACM 解码器、实测会截断/无声；miniaudio 自带 mp3 解码，转成 wav 后走
+    SAPI 原生播放路径，完整可靠。
+    """
+    import wave
+    import miniaudio
+    decoded = miniaudio.decode(mp3_bytes, nchannels=1, sample_rate=24000,
+                               output_format=miniaudio.SampleFormat.SIGNED16)
+    with wave.open(wav_path, "wb") as w:
+        w.setnchannels(decoded.nchannels)
+        w.setsampwidth(2)      # SIGNED16
+        w.setframerate(decoded.sample_rate)
+        w.writeframes(decoded.samples.tobytes())
 
 
 class VoiceService:
