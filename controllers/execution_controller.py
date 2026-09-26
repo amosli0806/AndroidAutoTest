@@ -352,9 +352,12 @@ class ExecutionController(QObject):
                 self.logs_view.set_ai_available(True)
 
     def generate_report(self):
-        os.makedirs("reports", exist_ok=True)
+        # 报告存到「设置 → 输出目录」（与截图/ADB 导出等一致），不再是项目下的 reports/
+        from utils.settings import Settings
+        output_dir = Settings.get_output_dir()
+        os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        file_path = f"reports/TestReport_{timestamp}.html"
+        file_path = os.path.join(output_dir, f"TestReport_{timestamp}.html")
         try:
             report_path = ReportGenerator.generate(self.exec_model, file_path)
 

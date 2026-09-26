@@ -503,7 +503,7 @@ class HelpView(QFrame):
                     {'image': 'execute_6_generate_report.png', 'desc': '执行完成后点击"测试报告"，生成 HTML 报告（含截图）'},
                 ])}
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 报告默认保存在 reports/ 目录，文件名包含时间戳。
+                    💡 报告保存在「设置 → 输出目录」指定的位置，文件名包含时间戳。
                 </div>
                 """,
 

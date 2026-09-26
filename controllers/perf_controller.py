@@ -486,9 +486,11 @@ class PerfController(QObject):
             session = self.current_session
 
         from PyQt6.QtWidgets import QFileDialog
+        from utils.settings import Settings
         path, _ = QFileDialog.getSaveFileName(
             self.view, "导出 CSV",
-            f"perf_{session.name}.csv", "CSV Files (*.csv)"
+            os.path.join(Settings.get_output_dir(), f"perf_{session.name}.csv"),
+            "CSV Files (*.csv)"
         )
         if not path:
             return
@@ -539,10 +541,12 @@ class PerfController(QObject):
         session = self.current_session or self.model.sessions[-1]
 
         from utils.perf_report import PerfReportGenerator
+        from utils.settings import Settings
         from PyQt6.QtWidgets import QFileDialog
         import os
 
-        reports_dir = os.path.join(os.getcwd(), "reports")
+        # 默认存到「设置 → 输出目录」，与其他报告/导出一致
+        reports_dir = Settings.get_output_dir()
         os.makedirs(reports_dir, exist_ok=True)
         default_path = os.path.join(
             reports_dir,
