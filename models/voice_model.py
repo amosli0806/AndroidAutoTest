@@ -366,13 +366,12 @@ class VoiceModel:
         return True
 
     def copy_phrase(self, case_id: str, index: int) -> bool:
-        """复制第 index 条文案，副本紧插在它后面（方便在其基础上改文案）。"""
+        """复制第 index 条文案，副本追加到整个列表的末尾。"""
         case = self.get_case(case_id)
         if case is None or not (0 <= index < len(case.phrases)):
             return False
         src = case.phrases[index]
-        case.phrases.insert(index + 1,
-                            VoicePhrase(text=src.text, delay=src.delay))
+        case.phrases.append(VoicePhrase(text=src.text, delay=src.delay))
         self.save()
         return True
 

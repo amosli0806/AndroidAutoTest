@@ -301,7 +301,6 @@ class _PhraseRow(QFrame):
         self.copy_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.copy_btn.setFixedSize(26, 26)
         self.copy_btn.setAutoRaise(True)
-        self.copy_btn.setToolTip("复制这一条")
         self.copy_btn.clicked.connect(lambda: self.copy_requested.emit(self.index))
         layout.addWidget(self.copy_btn)
 
@@ -1122,7 +1121,7 @@ class VoiceView(QWidget):
             return
         if self.model.copy_phrase(case.id, index):
             self._reload_steps()
-            self.status_label.setText(f"已复制第 {index + 1} 条，插在它后面")
+            self.status_label.setText(f"已复制第 {index + 1} 条，加到末尾")
 
     def _on_text_changed(self, index, text):
         case = self._current_case()
