@@ -371,8 +371,9 @@ class ExecuteView(QWidget):
         layout.setSpacing(8)
 
         # ---------- 工具栏（单行：纯按钮只显示图标，悬停见 tooltip） ----------
+        # 上下边距归零：面板 padding 8 与布局 spacing 8 对称，工具栏行垂直居中
         toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(8, 4, 8, 0)
+        toolbar.setContentsMargins(8, 0, 8, 0)
         toolbar.setSpacing(6)
 
         self.toggle_select_btn = QPushButton()
