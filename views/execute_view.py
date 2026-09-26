@@ -11,6 +11,7 @@ from utils import tree_state
 from utils.toast import show_toast
 from utils.dialogs import InputDialog, WarningDialog, ConfirmDeleteDialog, ErrorDialog
 from utils.theme import ThemeMode, Theme
+from utils.settings import Settings, THEME_MODE_DARK
 from PyQt6.QtWidgets import QCheckBox, QStyleOptionButton, QStyleOptionViewItem, QStyle
 from PyQt6.QtGui import QPainter, QPen, QColor
 
@@ -105,12 +106,13 @@ class ExecuteView(QWidget):
     STOP_BTN_QSS = """
         QPushButton {
             background-color: #e74c3c;
-            color: white;
             border: none;
-            padding: 5px 12px;
+            padding: 2px;
             border-radius: 4px;
-            font-weight: 500;
-            min-width: 90px;
+            min-width: 34px;
+            max-width: 34px;
+            min-height: 28px;
+            max-height: 28px;
         }
         QPushButton:hover { background-color: #f05a4a; }
         QPushButton:pressed { background-color: #c0392b; }
@@ -127,6 +129,10 @@ class ExecuteView(QWidget):
         self._task_view = None
         # 主题里的主按钮样式，「执行/停止」来回切时要用它把蓝色恢复回来
         self._primary_btn_style = None
+        # 工具栏图标颜色：跟随主题（亮色深图标 / 暗色浅图标），apply_theme 时刷新
+        self._icon_color = ("#e0e0e0"
+                            if Settings.get_theme_mode() == THEME_MODE_DARK
+                            else "#444444")
         self.setup_ui()
         # 移除原有的硬编码样式，由主题系统控制
         self._refresh_suite_combo()
@@ -251,10 +257,67 @@ class ExecuteView(QWidget):
             """
             checkbox_style = "QCheckBox { color: #333; }"
 
+        # 工具栏图标按钮：独立主题样式（不套文字按钮的深蓝大按钮样式）
+        self._icon_color = "#e0e0e0" if theme_mode == ThemeMode.DARK else "#444444"
+        if theme_mode == ThemeMode.DARK:
+            icon_btn_style = """
+                QPushButton#ToolIconBtn {
+                    background-color: #3c3c3c;
+                    border: 1px solid #555;
+                    border-radius: 4px;
+                    padding: 2px;
+                    min-width: 34px; max-width: 34px;
+                    min-height: 28px; max-height: 28px;
+                }
+                QPushButton#ToolIconBtn:hover { background-color: #4a4a4a; }
+                QPushButton#ToolIconBtn:disabled { background-color: #333; }
+            """
+            # 主操作（执行）：蓝底白图标，保持醒目
+            self._primary_btn_style = """
+                QPushButton#ExecIconBtn {
+                    background-color: #1976d2;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 2px;
+                    min-width: 34px; max-width: 34px;
+                    min-height: 28px; max-height: 28px;
+                }
+                QPushButton#ExecIconBtn:hover { background-color: #1565c0; }
+                QPushButton#ExecIconBtn:disabled { background-color: #555; }
+            """
+        else:
+            icon_btn_style = """
+                QPushButton#ToolIconBtn {
+                    background-color: #f5f6f8;
+                    border: 1px solid #d0d0d0;
+                    border-radius: 4px;
+                    padding: 2px;
+                    min-width: 34px; max-width: 34px;
+                    min-height: 28px; max-height: 28px;
+                }
+                QPushButton#ToolIconBtn:hover { background-color: #e8eaee; }
+                QPushButton#ToolIconBtn:disabled { background-color: #eee; }
+            """
+            self._primary_btn_style = """
+                QPushButton#ExecIconBtn {
+                    background-color: #1976d2;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 2px;
+                    min-width: 34px; max-width: 34px;
+                    min-height: 28px; max-height: 28px;
+                }
+                QPushButton#ExecIconBtn:hover { background-color: #1565c0; }
+                QPushButton#ExecIconBtn:disabled { background-color: #b0b0b0; }
+            """
+
         # 应用样式到各控件（使用 findChildren 或直接设置）
         for btn in self.findChildren(QPushButton):
-            # 排除 report_btn 等特殊按钮（保留其原有样式）
-            if btn.objectName() not in ("reportBtn", "save_suite_btn", "del_suite_btn"):
+            if btn.objectName() == "ToolIconBtn":
+                btn.setStyleSheet(icon_btn_style)
+            elif btn.objectName() == "ExecIconBtn":
+                btn.setStyleSheet(self._primary_btn_style)
+            elif btn.objectName() not in ("reportBtn", "save_suite_btn", "del_suite_btn"):
                 btn.setStyleSheet(btn_style)
         for combo in self.findChildren(QComboBox):
             combo.setStyleSheet(combo_style)
@@ -274,7 +337,18 @@ class ExecuteView(QWidget):
 
         # 记下主按钮样式：执行中「停止」要切回「执行」时靠它恢复蓝色
         self._primary_btn_style = btn_style
+        self._rebuild_icons()
         self._update_buttons()
+
+    def _rebuild_icons(self):
+        """主题切换后按当前主题色重建工具栏图标（图标-only 按钮的可见性命脉）。"""
+        c = self._icon_color
+        self.select_all_btn_icon = qta.icon('fa6s.check-double', color=c)
+        self.deselect_all_btn_icon = qta.icon('fa6s.square-minus', color=c)
+        self.execute_icon_enabled = qta.icon('fa6s.play', color=c)
+        self.save_suite_btn.setIcon(qta.icon('fa6s.floppy-disk', color=c))
+        self.del_suite_btn.setIcon(qta.icon('fa6s.trash-can', color=c))
+        self.report_btn.setIcon(qta.icon('fa6s.file-lines', color=c))
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -286,46 +360,32 @@ class ExecuteView(QWidget):
         toolbar.setContentsMargins(8, 4, 8, 4)
         toolbar.setSpacing(6)
 
-        def _icon_btn(icon_name, tip, enabled=True):
-            """图标-only 按钮：固定 34x28，图标居中，语义走 tooltip。"""
-            btn = QPushButton()
-            btn.setIcon(qta.icon(icon_name, color='white'))
-            btn.setIconSize(QSize(15, 15))
-            btn.setFixedSize(34, 28)
-            btn.setToolTip(tip)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setEnabled(enabled)
-            # 覆盖主题 QPushButton 的左右 padding，避免 34px 宽被撑爆
-            # （背景/边框/悬停等仍走主题 QSS）
-            btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
-            return btn
-
         self.select_all_btn = QPushButton()
-        self.select_all_btn_icon = qta.icon('fa6s.check-double', color='white')
+        self.select_all_btn_icon = qta.icon('fa6s.check-double', color=self._icon_color)
         self.select_all_btn.setIcon(self.select_all_btn_icon)
         self.select_all_btn.setIconSize(QSize(15, 15))
         self.select_all_btn.setFixedSize(34, 28)
+        self.select_all_btn.setObjectName("ToolIconBtn")
         self.select_all_btn.setToolTip("全选")
-        self.select_all_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.select_all_btn.clicked.connect(self.select_all)
 
         self.deselect_all_btn = QPushButton()
-        self.deselect_all_btn_icon = qta.icon('fa6s.square-minus', color='white')
+        self.deselect_all_btn_icon = qta.icon('fa6s.square-minus', color=self._icon_color)
         self.deselect_all_btn.setIcon(self.deselect_all_btn_icon)
         self.deselect_all_btn.setIconSize(QSize(15, 15))
         self.deselect_all_btn.setFixedSize(34, 28)
+        self.deselect_all_btn.setObjectName("ToolIconBtn")
         self.deselect_all_btn.setToolTip("取消全选")
-        self.deselect_all_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.deselect_all_btn.setEnabled(False)
         self.deselect_all_btn.clicked.connect(self.deselect_all)
 
         self.execute_btn = QPushButton()
-        self.execute_icon_enabled = qta.icon('fa6s.play', color='white')
+        self.execute_icon_enabled = qta.icon('fa6s.play', color=self._icon_color)
         self.execute_btn.setIcon(QIcon())   # 空闲且无勾选时是灰态占位
         self.execute_btn.setIconSize(QSize(15, 15))
         self.execute_btn.setFixedSize(34, 28)
+        self.execute_btn.setObjectName("ExecIconBtn")
         self.execute_btn.setToolTip("执行")
-        self.execute_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.execute_btn.setEnabled(False)
         self.execute_btn.clicked.connect(self._execute)
 
@@ -346,27 +406,27 @@ class ExecuteView(QWidget):
         self.suite_combo.currentTextChanged.connect(self._on_suite_selected)
 
         self.save_suite_btn = QPushButton()
-        self.save_suite_btn.setIcon(qta.icon('fa6s.floppy-disk', color='white'))
+        self.save_suite_btn.setIcon(qta.icon('fa6s.floppy-disk', color=self._icon_color))
         self.save_suite_btn.setIconSize(QSize(15, 15))
         self.save_suite_btn.setFixedSize(34, 28)
+        self.save_suite_btn.setObjectName("ToolIconBtn")
         self.save_suite_btn.setToolTip("保存套件")
-        self.save_suite_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.save_suite_btn.clicked.connect(self._save_current_as_suite)
 
         self.del_suite_btn = QPushButton()
-        self.del_suite_btn.setIcon(qta.icon('fa6s.trash-can', color='white'))
+        self.del_suite_btn.setIcon(qta.icon('fa6s.trash-can', color=self._icon_color))
         self.del_suite_btn.setIconSize(QSize(15, 15))
         self.del_suite_btn.setFixedSize(34, 28)
+        self.del_suite_btn.setObjectName("ToolIconBtn")
         self.del_suite_btn.setToolTip("删除套件")
-        self.del_suite_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.del_suite_btn.clicked.connect(self._delete_selected_suite)
 
         self.report_btn = QPushButton()
-        self.report_btn.setIcon(qta.icon('fa6s.file-lines', color='white'))
+        self.report_btn.setIcon(qta.icon('fa6s.file-lines', color=self._icon_color))
         self.report_btn.setIconSize(QSize(15, 15))
         self.report_btn.setFixedSize(34, 28)
+        self.report_btn.setObjectName("ToolIconBtn")
         self.report_btn.setToolTip("测试报告")
-        self.report_btn.setStyleSheet("padding: 2px; min-width: 34px; max-width: 34px; min-height: 28px; max-height: 28px;")
         self.report_btn.setEnabled(False)
         self.report_btn.clicked.connect(self._on_report_clicked)
 
@@ -444,7 +504,7 @@ class ExecuteView(QWidget):
     def set_report_enabled(self, enabled: bool):
         self.report_btn.setEnabled(enabled)
         if enabled:
-            self.report_btn.setIcon(qta.icon('fa6s.file-lines', color='white'))
+            self.report_btn.setIcon(qta.icon('fa6s.file-lines', color=self._icon_color))
         else:
             self.report_btn.setIcon(QIcon())
 
