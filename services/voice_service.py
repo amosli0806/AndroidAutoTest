@@ -275,6 +275,7 @@ class EdgeTtsEngine(WindowsSapiEngine):
 
     # ---------------- 可用性 ----------------
     _voices_cache = None   # 进程级音色缓存（edge 音色列表是网络拉取，拉一次复用）
+    _VOICES_CACHE_FILE = None   # 磁盘缓存路径（惰性求值，见 _voices_cache_path）
 
     @staticmethod
     def is_available() -> bool:
@@ -283,6 +284,13 @@ class EdgeTtsEngine(WindowsSapiEngine):
         # 会冷加载几百 ms~1s，导致设置页「等几秒才弹」。
         import importlib.util
         return importlib.util.find_spec("edge_tts") is not None
+
+    @classmethod
+    def _voices_cache_path(cls):
+        if cls._VOICES_CACHE_FILE is None:
+            from utils.app_paths import data_path
+            cls._VOICES_CACHE_FILE = data_path("edge_voices_cache.json")
+        return cls._VOICES_CACHE_FILE
 
     # ---------------- 配置覆盖 ----------------
     def _apply_cfg(self, voice):
@@ -308,26 +316,72 @@ class EdgeTtsEngine(WindowsSapiEngine):
 
     # ---------------- 音色列表 ----------------
     def list_voices(self):
+        # 1) 进程内缓存命中：秒回
+        if EdgeTtsEngine._voices_cache is not None:
+            return EdgeTtsEngine._voices_cache
+        # 2) 磁盘缓存命中：秒回 + 后台静默刷新（避免每次启动设置页都卡 1~5s 网络）
+        cached = self._load_voices_from_disk()
+        if cached:
+            EdgeTtsEngine._voices_cache = cached
+            threading.Thread(target=self._refresh_voices_async, daemon=True).start()
+            return cached
+        # 3) 首次（无任何缓存）：同步拉网络（只发生一次，之后走磁盘缓存）
+        voices = self._fetch_voices()
+        EdgeTtsEngine._voices_cache = voices
+        self._save_voices_to_disk(voices)
+        return voices
+
+    def _fetch_voices(self):
         import edge_tts
-        if EdgeTtsEngine._voices_cache is None:
-            voices = _run_async(edge_tts.list_voices())
-            # 只保留中国相关音色（普通话/辽宁/陕西/粤语/台湾），且展示为中文文案
-            # —— 322 个音色里绝大多数是外语，对车机中文播报毫无用处，全列出来
-            #    只会让用户在几百项里翻找
-            items = []
-            for v in voices:
-                locale = str(v.get("Locale", ""))
-                if not locale.startswith("zh-"):
-                    continue
-                short = v["ShortName"]
-                stem = short.rsplit("-", 1)[-1].replace("Neural", "")
-                name = self._ZH_VOICE_NAMES.get(stem, stem)
-                gender = "女" if v.get("Gender") == "Female" else "男"
-                area = self._ZH_LOCALE_LABELS.get(locale, locale)
-                items.append({"id": short, "label": f"{name}（{gender}·{area}）"})
-            items.sort(key=lambda x: x["id"])   # zh-CN < zh-CN-liaoning < ... < zh-TW，顺序自然合理
-            EdgeTtsEngine._voices_cache = items
-        return EdgeTtsEngine._voices_cache
+        voices = _run_async(edge_tts.list_voices())
+        # 只保留中国相关音色（普通话/辽宁/陕西/粤语/台湾），且展示为中文文案
+        # —— 322 个音色里绝大多数是外语，对车机中文播报毫无用处
+        items = []
+        for v in voices:
+            locale = str(v.get("Locale", ""))
+            if not locale.startswith("zh-"):
+                continue
+            short = v["ShortName"]
+            stem = short.rsplit("-", 1)[-1].replace("Neural", "")
+            name = self._ZH_VOICE_NAMES.get(stem, stem)
+            gender = "女" if v.get("Gender") == "Female" else "男"
+            area = self._ZH_LOCALE_LABELS.get(locale, locale)
+            items.append({"id": short, "label": f"{name}（{gender}·{area}）"})
+        items.sort(key=lambda x: x["id"])
+        return items
+
+    def _refresh_voices_async(self):
+        """后台静默拉最新音色列表并更新磁盘缓存（下次启动生效）。"""
+        try:
+            voices = self._fetch_voices()
+            EdgeTtsEngine._voices_cache = voices
+            self._save_voices_to_disk(voices)
+        except Exception:
+            pass   # 刷新失败不影响当前使用（沿用旧缓存）
+
+    def _save_voices_to_disk(self, voices):
+        try:
+            import json
+            with open(self._voices_cache_path(), "w", encoding="utf-8") as f:
+                json.dump(voices, f, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def _load_voices_from_disk(self):
+        try:
+            import json, os
+            path = self._voices_cache_path()
+            if not os.path.exists(path):
+                return None
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # 校验结构：必须是含 id/label 的列表，防止损坏文件被误用
+            if isinstance(data, list) and data and all(
+                    isinstance(x, dict) and "id" in x and "label" in x for x in data):
+                return data
+        except Exception:
+            pass
+        return None
 
     # ---------------- 合成 ----------------
     # 合成超时：国内到微软语音服务的连接时好时坏（实测最长挂 20s+ 才报
