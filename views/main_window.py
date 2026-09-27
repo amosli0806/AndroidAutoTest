@@ -2206,6 +2206,9 @@ class MainWindow(QMainWindow):
             self.switch_view(0)
             self.mini_mode_action.setIcon(qta.icon('fa6s.expand', color='white'))
             self.mini_mode_action.setToolTip("退出迷你模式")
+            # 迷你窗口固定尺寸，去掉标题栏的最大化按钮（setWindowFlag 会隐藏
+            # 窗口，需在其后调用 show* 重新显示）
+            self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, False)
             # 先取消最大化再固定到紧凑尺寸（顺序不能反，否则会被最大化状态吃掉）。
             # 用 setFixedSize 而非 resize：主窗口最小宽度被内部页面的 minimumSizeHint
             # 顶到 680，resize 会被布局拉回，setFixedSize 能强制锁定迷你尺寸。
@@ -2214,10 +2217,11 @@ class MainWindow(QMainWindow):
         else:
             self.mini_mode_action.setIcon(qta.icon('fa6s.compress', color='#a3a6b0'))
             self.mini_mode_action.setToolTip("切换迷你模式：只显示 ADB 指令管理区")
-            # 解除固定尺寸，恢复可自由缩放（min/max 都回到默认）
+            # 解除固定尺寸，恢复可自由缩放（min/max 都回到默认），并还原最大化按钮
             from PyQt6.QtWidgets import QWIDGETSIZE_MAX
             self.setMinimumSize(0, 0)
             self.setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
+            self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, True)
             self.switch_view(self.WELCOME_PAGE_INDEX)
             self.showMaximized()
 
