@@ -686,7 +686,6 @@ class ActionCard(QGroupBox):
                 est_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
                 est_btn.setFixedSize(26, 26)
                 est_btn.setAutoRaise(True)
-                est_btn.setToolTip("按文案长度与语速估算播后等待")
                 est_btn.setIcon(qta.icon('fa6s.calculator', color='#1976d2'))
                 est_btn.clicked.connect(self._on_estimate_delay)
                 cl.addWidget(est_btn)

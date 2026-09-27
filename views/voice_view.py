@@ -321,7 +321,6 @@ class _PhraseRow(QFrame):
         self.estimate_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.estimate_btn.setFixedSize(26, 26)
         self.estimate_btn.setAutoRaise(True)
-        self.estimate_btn.setToolTip("按文案长度与语速估算播后等待")
         self.estimate_btn.clicked.connect(
             lambda: self.estimate_requested.emit(self.index))
         layout.addWidget(self.estimate_btn)
