@@ -791,7 +791,13 @@ class MainWindow(QMainWindow):
         device_widget.setFixedHeight(28)
         toolbar.addWidget(device_widget)
 
-        toolbar.addSeparator()
+        # 顶部工具栏里除「设备下拉框 + 刷新」之外的元素，进入迷你模式时隐藏。
+        # 注意：QToolBar.addWidget/addSeparator 都返回 QAction，控制可见性要
+        # 调 QAction.setVisible，直接调 widget.setVisible 不生效。
+        self._toolbar_hide_actions = []
+
+        _sep = toolbar.addSeparator()
+        self._toolbar_hide_actions.append(_sep)
 
         # ---------- 顶栏快捷功能按钮（纯图标，不显示文案）----------
         # 只有图标，用途靠 tooltip 说明，所以 tooltip 里带上对应快捷键
@@ -812,11 +818,12 @@ class MainWindow(QMainWindow):
             ('fa6s.wifi', "wireless", "adb_wireless", "无线联调"),
             ('fa6s.desktop', "scrcpy", "adb_scrcpy", "投屏"),
         ]:
-            toolbar.addWidget(_quick_icon_btn(icon_name, action_key, shortcut_key, tip))
+            _btn = _quick_icon_btn(icon_name, action_key, shortcut_key, tip)
+            self._toolbar_hide_actions.append(toolbar.addWidget(_btn))
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        toolbar.addWidget(spacer)
+        self._toolbar_hide_actions.append(toolbar.addWidget(spacer))
 
         # 顶栏右侧：安装 / 推送 / MD5，与菜单按钮一样右对齐
         for icon_name, action_key, shortcut_key, tip in [
@@ -824,7 +831,8 @@ class MainWindow(QMainWindow):
             ('fa6s.upload', "push", "adb_push", "推送文件"),
             ('fa6s.key', "md5", "adb_md5", "MD5 查询"),
         ]:
-            toolbar.addWidget(_quick_icon_btn(icon_name, action_key, shortcut_key, tip))
+            _btn = _quick_icon_btn(icon_name, action_key, shortcut_key, tip)
+            self._toolbar_hide_actions.append(toolbar.addWidget(_btn))
 
         self.menu_btn = QPushButton()
         self.menu_btn.setObjectName("menuBtn")
@@ -853,12 +861,12 @@ class MainWindow(QMainWindow):
             lambda: self._on_menu_action("about"))
 
         self.menu_btn.setMenu(self.main_menu)
-        toolbar.addWidget(self.menu_btn)
+        self._toolbar_hide_actions.append(toolbar.addWidget(self.menu_btn))
 
         # 菜单按钮右侧留白，让悬停效果不贴右边缘
         right_spacer = QWidget()
         right_spacer.setFixedWidth(8)
-        toolbar.addWidget(right_spacer)
+        self._toolbar_hide_actions.append(toolbar.addWidget(right_spacer))
 
         # ---------- 主区域垂直分割器 ----------
         self.main_splitter = QSplitter(Qt.Vertical)
@@ -2168,18 +2176,20 @@ class MainWindow(QMainWindow):
     def set_mini_mode(self, enabled: bool):
         """切换迷你窗口模式：全屏（最大化）↔ 只显示 ADB 指令管理区 + 左下按钮。
 
-        进入：隐藏顶部工具栏、左上功能导航、右侧工具栏、状态栏；主区域只留
-        ADB 工具箱的「指令管理」区（右侧搜索/弱网/Monkey 隐藏）；窗口缩成紧凑尺寸。
+        进入：顶部工具栏只留「设备下拉框 + 刷新」，隐藏左上功能导航、右侧工具栏，
+        底部状态栏保留；主区域只留 ADB 工具箱的「指令管理」区（右侧搜索/弱网/Monkey 隐藏）；
+        窗口缩成紧凑尺寸。
         退出：恢复全部，回到欢迎页并重新最大化。
         """
         if self._mini_mode == enabled:
             return
         self._mini_mode = enabled
 
-        # 顶部工具栏 / 右侧工具栏 / 状态栏
-        self.toolbar.setVisible(not enabled)
+        # 顶部工具栏保留，只隐藏「设备下拉框 + 刷新」以外的元素
+        for a in getattr(self, "_toolbar_hide_actions", []):
+            a.setVisible(not enabled)
+        # 右侧工具栏隐藏；底部状态栏保留（用户要求迷你模式下也展示）
         self.right_toolbar.setVisible(not enabled)
-        self.statusBar().setVisible(not enabled)
 
         # 左上 8 个功能导航 + 中间的弹性占位
         for action in self.nav_actions:
