@@ -622,6 +622,12 @@ def main():
 
     adb_toolbox_controller.log_emitted.connect(append_bottom_log)
 
+    # 语音播报日志（播报成功/失败 + 回执验证结果）→ 底部日志面板
+    # 与 ADB 工具箱日志共用同一条 append_bottom_log 落盘/渲染通道；
+    # 语音日志桥在后台线程 emit，Qt 用 queued connection 投递回主线程。
+    from utils import voice_log as _voice_log
+    _voice_log.bus().message.connect(append_bottom_log)
+
     # Crash / ANR / 硬件信息 内容 → 底部日志区（内联展示，不再弹对话框）
     adb_toolbox_controller.crash_log_ready.connect(
         lambda text: main_window.set_bottom_panel_content("crash", text))

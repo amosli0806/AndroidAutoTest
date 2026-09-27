@@ -82,14 +82,26 @@ class _PlaybackWorker(QThread):
                         break
                     self.progress.emit(case_id, phrase_index)
 
+                    short = text[:20] + ("…" if len(text) > 20 else "")
+                    # 三种状态：verify_on 表示「本应验证」；clear 失败或抓取失败时
+                    # 会置成 False，此时只给 warning，不再补「未开启验证」的成功日志
+                    verify_on = self.feedback is not None
+                    verify_skipped = False
+
                     # 播前清 logcat 基线（开启回执验证时）；清失败就把验证关掉，
                     # 避免拿旧日志误判，也不让验证本身拖垮播报
                     if self.feedback is not None:
                         try:
                             self.feedback.clear()
                         except Exception:
+                            from utils import voice_log
+                            voice_log.emit("warning", "语音验证：无法清空车机日志基线，本次跳过回执验证")
                             self.feedback = None
+                            verify_on = False
+                            verify_skipped = True
 
+                    from utils import voice_log
+                    voice_log.emit("info", f"🔊 开始播报「{short}」")
                     started = time.time()
                     self.service.speak_async(text)
 
@@ -104,6 +116,8 @@ class _PlaybackWorker(QThread):
                             break
                         if time.time() > deadline:
                             error = f"「{text[:12]}」播报超时"
+                            from utils import voice_log
+                            voice_log.emit("error", f"❌ 播报超时「{short}」")
                             self._interrupted = True
                             break
                     if self._interrupted:
@@ -127,22 +141,35 @@ class _PlaybackWorker(QThread):
                     if self.feedback is not None:
                         try:
                             from models.voice_model import get_verify_config
+                            from utils import voice_log
                             cfg = get_verify_config()
                             lines = self.feedback.capture(cfg["log_tag"])
                             ok, msg, _ = self.feedback.judge_result(
                                 lines, cfg["success_keywords"], cfg["fail_keywords"])
-                            if not ok:
+                            if ok:
+                                voice_log.emit("success", f"✅ 语音验证通过「{short}」：车机已正确识别")
+                            else:
+                                voice_log.emit("error", f"❌ 语音验证失败「{short}」：{msg}")
                                 error = msg
                                 self._interrupted = True
                                 break
                         except Exception:
-                            pass   # 抓取本身失败不算判定失败，放行
+                            from utils import voice_log
+                            voice_log.emit("warning", "语音验证：读取车机日志失败，本次按通过处理")
+                    elif not verify_on and not verify_skipped:
+                        # 未开启回执验证：至少让用户看到这句播完了
+                        from utils import voice_log
+                        voice_log.emit("success", f"✅ 播报完成「{short}」（未开启回执验证）")
                 if self._interrupted:
                     break
         except VoiceError as e:
             error = str(e)
+            from utils import voice_log
+            voice_log.emit("error", f"❌ 播报失败：{e}")
         except Exception as e:
             error = f"{type(e).__name__}: {str(e)[:60]}"
+            from utils import voice_log
+            voice_log.emit("error", f"❌ 播报失败：{error}")
         self.progress.emit("", -1)
         self.done.emit(not self._interrupted and not error, error)
 

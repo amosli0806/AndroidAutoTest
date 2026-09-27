@@ -430,19 +430,26 @@ class DeviceService:
         from models.voice_model import get_verify_config
         from services.voice_feedback_service import (
             VoiceFeedbackService, VoiceFeedbackError)
+        from utils import voice_log
 
+        short = text[:20] + ("…" if len(text) > 20 else "")
         verify_cfg = get_verify_config()
         svc = None
+        verify_skipped = False   # 已给过「跳过验证」类提示，结尾不再重复提示
         if verify_cfg["enabled"] and self.device:
             svc = VoiceFeedbackService(self.serial)
             try:
                 svc.clear()   # 播前清基线
             except VoiceFeedbackError:
                 svc = None    # 清基线失败（无设备/adb 异常）→ 跳过验证，不拖垮播报
+                verify_skipped = True
+                voice_log.emit("warning", "语音验证：无法清空车机日志基线，本次跳过回执验证")
 
         try:
+            voice_log.emit("info", f"🔊 开始播报「{short}」")
             elapsed = get_voice_service().speak(text)
         except VoiceError as e:
+            voice_log.emit("error", f"❌ 播报失败「{short}」：{e}")
             raise Exception(str(e))
 
         # 播后等待：总等待 − 实测播报耗时 = 剩余缓冲
@@ -457,10 +464,19 @@ class DeviceService:
                 lines = svc.capture(verify_cfg["log_tag"])
                 ok, msg, _ = svc.judge_result(
                     lines, verify_cfg["success_keywords"], verify_cfg["fail_keywords"])
-                if not ok:
+                if ok:
+                    voice_log.emit("success", f"✅ 语音验证通过「{short}」：车机已正确识别")
+                else:
+                    voice_log.emit("error", f"❌ 语音验证失败「{short}」：{msg}")
                     raise Exception(msg)
             except VoiceFeedbackError:
-                pass   # 抓取本身失败（设备中途掉线等）不算判定失败，放行
+                voice_log.emit("warning", "语音验证：读取车机日志失败，本次按通过处理")
+        elif not verify_skipped:
+            if verify_cfg["enabled"]:
+                # 开了验证但没连设备：明确告诉用户没验证到，别让用户以为验证过
+                voice_log.emit("warning", f"⚠ 未连接设备，无法验证「{short}」的识别结果")
+            else:
+                voice_log.emit("success", f"✅ 播报完成「{short}」（未开启回执验证）")
 
     def _perform_swipe(self, params):
         direction = params.get('direction', '自定义坐标')
