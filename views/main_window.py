@@ -2176,9 +2176,9 @@ class MainWindow(QMainWindow):
     def set_mini_mode(self, enabled: bool):
         """切换迷你窗口模式：全屏（最大化）↔ 只显示 ADB 指令管理区 + 左下按钮。
 
-        进入：顶部工具栏只留「设备下拉框 + 刷新」，隐藏左上功能导航、右侧工具栏，
-        底部状态栏保留；主区域只留 ADB 工具箱的「指令管理」区（右侧搜索/弱网/Monkey 隐藏）；
-        窗口缩成紧凑尺寸。
+        进入：顶部工具栏只留「设备下拉框 + 刷新」，隐藏左上功能导航，右侧工具栏
+        只留「消息」（隐藏帮助中心），底部状态栏保留；主区域只留 ADB 工具箱的
+        「指令管理」区（右侧搜索/弱网/Monkey 隐藏）；窗口缩成紧凑尺寸。
         退出：恢复全部，回到欢迎页并重新最大化。
         """
         if self._mini_mode == enabled:
@@ -2188,8 +2188,9 @@ class MainWindow(QMainWindow):
         # 顶部工具栏保留，只隐藏「设备下拉框 + 刷新」以外的元素
         for a in getattr(self, "_toolbar_hide_actions", []):
             a.setVisible(not enabled)
-        # 右侧工具栏隐藏；底部状态栏保留（用户要求迷你模式下也展示）
-        self.right_toolbar.setVisible(not enabled)
+        # 右侧工具栏保留，只隐藏「帮助中心」（迷你模式留消息按钮）；
+        # 底部状态栏保留（用户要求迷你模式下也展示）
+        self.help_action.setVisible(not enabled)
 
         # 左上 8 个功能导航 + 中间的弹性占位
         for action in self.nav_actions:
