@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QPushButton, QFileDialog, QSlider, QLabel,
     QComboBox, QWidget, QStackedWidget, QTreeWidget, QTreeWidgetItem,
-    QFrame, QScrollArea, QKeySequenceEdit, QCheckBox
+    QFrame, QScrollArea, QKeySequenceEdit, QCheckBox, QGroupBox
 )
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal
 from PyQt6.QtGui import QKeySequence
@@ -532,6 +532,46 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(form)
 
+        # 语音回执验证：播报后抓车机 logcat 反馈文案，判定这句是否被正确识别
+        verify_group = QGroupBox("语音回执验证")
+        verify_group.setObjectName("VoiceVerifyGroup")
+        verify_layout = QVBoxLayout(verify_group)
+        verify_layout.setContentsMargins(12, 12, 12, 12)
+        verify_layout.setSpacing(10)
+
+        verify_hint = QLabel(
+            "播报后从车机日志里抓反馈文案，判定这句语音是否被正确识别。"
+            "抓取规则因车型而异，建议先不开启；等适配好车机日志格式再打开。"
+        )
+        verify_hint.setObjectName("SettingsPageSubtitle")
+        verify_hint.setWordWrap(True)
+        verify_layout.addWidget(verify_hint)
+
+        vform = QFormLayout()
+        vform.setSpacing(10)
+        vform.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.verify_enabled_check = QCheckBox("启用回执验证")
+        vform.addRow("开关:", self.verify_enabled_check)
+
+        self.verify_tag_edit = QLineEdit()
+        self.verify_tag_edit.setMinimumWidth(340)
+        self.verify_tag_edit.setPlaceholderText("车机语音助手的日志标签，留空抓全量日志")
+        vform.addRow("日志标签:", self.verify_tag_edit)
+
+        self.verify_success_edit = QLineEdit()
+        self.verify_success_edit.setMinimumWidth(340)
+        self.verify_success_edit.setPlaceholderText("逗号分隔，如：识别成功,已为您,导航到")
+        vform.addRow("成功关键词:", self.verify_success_edit)
+
+        self.verify_fail_edit = QLineEdit()
+        self.verify_fail_edit.setMinimumWidth(340)
+        self.verify_fail_edit.setPlaceholderText("逗号分隔，如：没听清,无法识别,抱歉")
+        vform.addRow("失败关键词:", self.verify_fail_edit)
+
+        verify_layout.addLayout(vform)
+        layout.addWidget(verify_group)
+
         # 试听：用当前选中的音色与输出设备念一句，确认车机那边真能听见
         test_row = QHBoxLayout()
         test_row.setSpacing(10)
@@ -573,6 +613,13 @@ class SettingsDialog(QDialog):
 
         self.wake_word_edit.setText(
             (settings.get("wake_word") or "").strip() or DEFAULT_WAKE_WORD)
+
+        # 语音回执验证规则
+        verify = settings.get("verify") or {}
+        self.verify_enabled_check.setChecked(bool(verify.get("enabled", False)))
+        self.verify_tag_edit.setText(str(verify.get("log_tag") or ""))
+        self.verify_success_edit.setText("，".join(verify.get("success_keywords") or []))
+        self.verify_fail_edit.setText("，".join(verify.get("fail_keywords") or []))
 
         # 引擎下拉（blockSignals 避免 setCurrentIndex 触发 _on_voice_engine_changed 重复刷新）
         self.voice_engine_combo.blockSignals(True)
@@ -661,8 +708,20 @@ class SettingsDialog(QDialog):
             device_id=self.voice_device_combo.currentData() or "",
             # 留空也存空串：语音页取空值时回落到 DEFAULT_WAKE_WORD
             wake_word=(self.wake_word_edit.text() or "").strip(),
+            verify={
+                "enabled": self.verify_enabled_check.isChecked(),
+                "log_tag": (self.verify_tag_edit.text() or "").strip(),
+                "success_keywords": self._split_keywords(self.verify_success_edit.text()),
+                "fail_keywords": self._split_keywords(self.verify_fail_edit.text()),
+            },
         )
         self._apply_voice_selection()
+
+    @staticmethod
+    def _split_keywords(text):
+        """把逗号（中英文都认）分隔的关键词串拆成去空列表。"""
+        import re
+        return [w.strip() for w in re.split(r"[,，]", text or "") if w.strip()]
 
     def _on_test_voice(self):
         if self._voice_test_worker is not None and self._voice_test_worker.isRunning():

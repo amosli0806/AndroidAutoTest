@@ -326,7 +326,8 @@ class ActionCardView(QScrollArea):
                 # 用例里第一句通常就是唤醒词，省得每次手打一遍
                 {'key': 'voiceText', 'label': '播报文案：', 'type': 'line', 'required': True,
                  'default': wake_word},
-                {'key': 'afterDelay', 'label': '播后等待：', 'type': 'spin', 'default': 2}
+                {'key': 'afterDelay', 'label': '播后等待：', 'type': 'spin', 'default': 2,
+                 'estimate': True}
             ]}
         ]
 
@@ -673,6 +674,23 @@ class ActionCard(QGroupBox):
             widget.setRange(-999999, 999999)
             if 'default' in field:
                 widget.setValue(field['default'])
+            # 语音播报的「播后等待」旁加一个估算按钮：按文案+语速自动填建议值
+            if field.get('estimate'):
+                container = QWidget()
+                cl = QHBoxLayout(container)
+                cl.setContentsMargins(0, 0, 0, 0)
+                cl.setSpacing(4)
+                cl.addWidget(widget)
+                est_btn = QToolButton()
+                est_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                est_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                est_btn.setFixedSize(26, 26)
+                est_btn.setAutoRaise(True)
+                est_btn.setToolTip("按文案长度与语速估算播后等待")
+                est_btn.setIcon(qta.icon('fa6s.calculator', color='#1976d2'))
+                est_btn.clicked.connect(self._on_estimate_delay)
+                cl.addWidget(est_btn)
+                widget = container
         elif field['type'] == 'double':
             widget = QDoubleSpinBox()
             widget.setRange(0.0, 100.0)
@@ -759,6 +777,32 @@ class ActionCard(QGroupBox):
         current_text = combo.currentText()
         placeholder = self.PLACEHOLDER_MAP.get(current_text, '')
         line_edit.setPlaceholderText(placeholder)
+
+    def _on_estimate_delay(self):
+        """语音播报卡片：按文案长度与语速估算「播后等待」填进 spin。"""
+        text = ""
+        text_widget = self.fields.get('voiceText')
+        if isinstance(text_widget, QLineEdit):
+            text = text_widget.text().strip()
+        if not text:
+            show_toast(self, "先填播报文案")
+            return
+        from services.voice_service import estimate_duration
+        from models.voice_model import get_rate
+        rate = get_rate()
+        est = max(0, int(round(estimate_duration(text, rate) + 2.0)))
+        spin = self._spin_of(self.fields.get('afterDelay'))
+        if spin is not None:
+            spin.setValue(est)
+
+    @staticmethod
+    def _spin_of(widget):
+        if isinstance(widget, QSpinBox):
+            return widget
+        if isinstance(widget, QWidget):
+            for child in widget.findChildren(QSpinBox):
+                return child
+        return None
 
     def _emit_add(self):
         params = {}

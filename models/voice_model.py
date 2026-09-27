@@ -37,6 +37,14 @@ DEFAULT_SETTINGS = {
     "device_id": "",    # 空 = 系统默认输出设备
     "wake_word": DEFAULT_WAKE_WORD,
     # 没有 volume：响度直接用电脑的系统音量，界面上不提供音量调节
+    # 语音回执验证：播报后从车机 logcat 抓反馈文案判定。enabled 默认关，
+    # 因为抓取规则依赖具体车机的 log 格式，没适配好前开着会把正常播报误判成失败。
+    "verify": {
+        "enabled": False,
+        "log_tag": "",            # 车机语音助手的 log tag；留空抓全量日志
+        "success_keywords": ["识别成功", "已为您", "导航到"],
+        "fail_keywords": ["没听清", "无法识别", "未识别", "抱歉"],
+    },
 }
 
 # 首次使用（还没有数据文件时）给一个示例分组 + 用例，直接演示「唤醒 + 指令」
@@ -150,9 +158,14 @@ class VoiceModel:
                 with open(self.DATA_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 merged = dict(DEFAULT_SETTINGS)
-                # 只认已知键：早先版本写进去的 volume 之类会被丢掉
+                # 只认已知键：早先版本写进去的 volume 之类会被丢掉。
+                # dict 类型的值（verify）做浅合并，用户只覆盖改动的键，默认关键词保留。
                 for key, value in (data.get("settings") or {}).items():
-                    if key in DEFAULT_SETTINGS:
+                    if key not in DEFAULT_SETTINGS:
+                        continue
+                    if isinstance(DEFAULT_SETTINGS[key], dict) and isinstance(value, dict):
+                        merged[key] = {**DEFAULT_SETTINGS[key], **value}
+                    else:
                         merged[key] = value
                 self.settings = merged
                 self.groups = [VoiceGroup.from_dict(g)
@@ -478,4 +491,45 @@ def get_wake_word() -> str:
     except Exception:
         word = ""
     return word or DEFAULT_WAKE_WORD
+
+
+def get_rate() -> int:
+    """当前配置的语速（SAPI -10..10）。只读 settings 段，不构造 VoiceModel。
+
+    给「按语速估算播后等待」用：估算按钮在动作卡片等轻量场景里也要拿到语速，
+    没必要为读一个 int 把上千条语音用例读进内存。
+    """
+    try:
+        with open(VoiceModel.DATA_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return int((data.get("settings") or {}).get("rate", 0) or 0)
+    except Exception:
+        return 0
+
+
+def get_verify_config() -> dict:
+    """当前配置的语音回执验证规则。只读 settings 段，不构造 VoiceModel。
+
+    返回 {enabled, log_tag, success_keywords, fail_keywords}，都带安全的默认值。
+    供执行层（device_service / 语音页 worker）在执行线程里读取，避免构造 VoiceModel。
+    """
+    cfg = {
+        "enabled": False,
+        "log_tag": "",
+        "success_keywords": DEFAULT_SETTINGS["verify"]["success_keywords"],
+        "fail_keywords": DEFAULT_SETTINGS["verify"]["fail_keywords"],
+    }
+    try:
+        with open(VoiceModel.DATA_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        v = ((data.get("settings") or {}).get("verify") or {})
+        cfg["enabled"] = bool(v.get("enabled", False))
+        cfg["log_tag"] = str(v.get("log_tag") or "").strip()
+        if v.get("success_keywords"):
+            cfg["success_keywords"] = [str(x) for x in v["success_keywords"] if str(x).strip()]
+        if v.get("fail_keywords"):
+            cfg["fail_keywords"] = [str(x) for x in v["fail_keywords"] if str(x).strip()]
+    except Exception:
+        pass
+    return cfg
 

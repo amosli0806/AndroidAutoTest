@@ -55,11 +55,13 @@ class _PlaybackWorker(QThread):
     round_changed = pyqtSignal(int, int)  # (当前第几轮, 总轮数)
     done = pyqtSignal(bool, str)          # (是否正常播完, 错误信息)
 
-    def __init__(self, service, items, loop_count=1, parent=None):
+    def __init__(self, service, items, loop_count=1, feedback=None, parent=None):
         super().__init__(parent)
         self.service = service
         self.items = list(items)          # 先做快照
         self.loop_count = max(1, int(loop_count or 1))
+        # feedback：可选的语音回执抓取服务；非 None 时每条播报后抓 logcat 判定
+        self.feedback = feedback
         self._stop = False
         self._interrupted = False
 
@@ -79,6 +81,16 @@ class _PlaybackWorker(QThread):
                         self._interrupted = True
                         break
                     self.progress.emit(case_id, phrase_index)
+
+                    # 播前清 logcat 基线（开启回执验证时）；清失败就把验证关掉，
+                    # 避免拿旧日志误判，也不让验证本身拖垮播报
+                    if self.feedback is not None:
+                        try:
+                            self.feedback.clear()
+                        except Exception:
+                            self.feedback = None
+
+                    started = time.time()
                     self.service.speak_async(text)
 
                     # 等这句播完；分片轮询是为了能及时响应「停止」
@@ -97,9 +109,12 @@ class _PlaybackWorker(QThread):
                     if self._interrupted:
                         break
 
-                    # 播后等待：留给车机语音助手处理时间
+                    # 播后等待：delay 是「总等待」（播报 + 缓冲），
+                    # 扣掉实测播报耗时，剩余部分才是要等的缓冲
+                    elapsed = time.time() - started
                     waited = 0.0
-                    while waited < delay:
+                    remain = max(0.0, delay - elapsed)
+                    while waited < remain:
                         if self._stop:
                             self._interrupted = True
                             break
@@ -107,6 +122,21 @@ class _PlaybackWorker(QThread):
                         waited += 0.05
                     if self._interrupted:
                         break
+
+                    # 回执验证：抓 logcat 判定，失败把车机反馈文案带进 error
+                    if self.feedback is not None:
+                        try:
+                            from models.voice_model import get_verify_config
+                            cfg = get_verify_config()
+                            lines = self.feedback.capture(cfg["log_tag"])
+                            ok, msg, _ = self.feedback.judge_result(
+                                lines, cfg["success_keywords"], cfg["fail_keywords"])
+                            if not ok:
+                                error = msg
+                                self._interrupted = True
+                                break
+                        except Exception:
+                            pass   # 抓取本身失败不算判定失败，放行
                 if self._interrupted:
                     break
         except VoiceError as e:
@@ -245,6 +275,7 @@ class _PhraseRow(QFrame):
     play_requested = pyqtSignal(int)
     copy_requested = pyqtSignal(int)
     remove_requested = pyqtSignal(int)
+    estimate_requested = pyqtSignal(int)
     text_changed = pyqtSignal(int, str)
     delay_changed = pyqtSignal(int, float)
 
@@ -282,6 +313,18 @@ class _PhraseRow(QFrame):
         self.delay_spin.valueChanged.connect(
             lambda v: self.delay_changed.emit(self.index, float(v)))
         layout.addWidget(self.delay_spin)
+
+        # 估算：按文案长度与当前语速，把「播后等待」自动填成一个建议值
+        self.estimate_btn = QToolButton()
+        self.estimate_btn.setObjectName("PhraseEstimateBtn")
+        self.estimate_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.estimate_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.estimate_btn.setFixedSize(26, 26)
+        self.estimate_btn.setAutoRaise(True)
+        self.estimate_btn.setToolTip("按文案长度与语速估算播后等待")
+        self.estimate_btn.clicked.connect(
+            lambda: self.estimate_requested.emit(self.index))
+        layout.addWidget(self.estimate_btn)
 
         # 行内按钮改成无边框图标按钮：不占地方、不抢视觉，
         # 图标颜色由 apply_theme 按当前主题刷新（qta 图标是位图，QSS 管不到颜色）
@@ -331,6 +374,7 @@ class _PhraseRow(QFrame):
             del_color = "#e74c3c"  # 主题红
         self.play_btn.setIcon(qta.icon('fa6s.play', color=play_color))
         self.copy_btn.setIcon(qta.icon('fa6s.copy', color=play_color))
+        self.estimate_btn.setIcon(qta.icon('fa6s.calculator', color=play_color))
         self.del_btn.setIcon(qta.icon('fa6s.trash-can', color=del_color))
 
 class VoiceView(QWidget):
@@ -353,7 +397,7 @@ class VoiceView(QWidget):
             f"padding-top: {cls.GROUP_TITLE_PADDING_TOP}px;"
         )
 
-    def __init__(self, model=None, service=None, parent=None):
+    def __init__(self, model=None, service=None, device_service=None, parent=None):
         super().__init__(parent)
         self.setObjectName("VoiceView")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -363,6 +407,8 @@ class VoiceView(QWidget):
             from services.voice_service import get_voice_service
             service = get_voice_service()
         self.service = service
+        # 可选：设备服务，用于播报后抓车机 logcat 回执验证；None 时不做验证
+        self._device_service = device_service
 
         self._worker = None
         self._rows = []
@@ -807,6 +853,7 @@ class VoiceView(QWidget):
                 row.play_requested.connect(self._on_play_one)
                 row.copy_requested.connect(self._on_copy_phrase)
                 row.remove_requested.connect(self._on_remove_phrase)
+                row.estimate_requested.connect(self._on_estimate_delay)
                 row.text_changed.connect(self._on_text_changed)
                 row.delay_changed.connect(self._on_delay_changed)
                 # 新建的行不会自动拿到当前主题，这里手动上一次
@@ -1136,6 +1183,26 @@ class VoiceView(QWidget):
             return
         self.model.update_phrase(case.id, index, delay=delay)
 
+    def _on_estimate_delay(self, index):
+        """按文案长度与当前语速，把这一条的「播后等待」填成建议值（总等待）。"""
+        case = self._current_case()
+        if case is None or not (0 <= index < len(case.phrases)):
+            return
+        text = (case.phrases[index].text or "").strip()
+        if not text:
+            self.status_label.setText("先填文案才能估算")
+            return
+        from services.voice_service import estimate_duration
+        rate = int(self.model.settings.get("rate", 0) or 0)
+        est = round(estimate_duration(text, rate) + 2.0, 1)  # 播报时长 + 2 秒缓冲
+        self.model.update_phrase(case.id, index, delay=est)
+        if 0 <= index < len(self._rows):
+            spin = self._rows[index].delay_spin
+            spin.blockSignals(True)   # 避免 setValue 再触发一次 _on_delay_changed 重复落盘
+            spin.setValue(est)
+            spin.blockSignals(False)
+        self.status_label.setText(f"已按语速估算播后等待：{est} 秒")
+
     # ------------------------------------------------------------------
     # 配置
     # ------------------------------------------------------------------
@@ -1291,6 +1358,7 @@ class VoiceView(QWidget):
         for row in self._rows:
             row.play_btn.setEnabled(available and not running)
             row.copy_btn.setEnabled(not running)
+            row.estimate_btn.setEnabled(not running)
             row.del_btn.setEnabled(not running)
             row.text_edit.setEnabled(not running)
             row.delay_spin.setEnabled(not running)
@@ -1298,13 +1366,38 @@ class VoiceView(QWidget):
     def _playback_running(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
 
-    def _start_playback(self, items, loop_count, label):
+    def _build_feedback(self):
+        """按当前配置与设备状态构建回执抓取服务；不满足条件返回 None。
+
+        三个条件都满足才做验证：设置里开启了验证、注入了设备服务、当前有设备在线。
+        """
+        from models.voice_model import get_verify_config
+        cfg = get_verify_config()
+        if not cfg["enabled"]:
+            return None
+        ds = getattr(self, "_device_service", None)
+        if ds is None:
+            return None
+        try:
+            devices = ds.get_devices()
+        except Exception:
+            devices = []
+        if not devices:
+            return None
+        from services.voice_feedback_service import VoiceFeedbackService
+        serial = getattr(ds, "serial", None) or devices[0]
+        return VoiceFeedbackService(serial)
+
+    def _start_playback(self, items, loop_count, label, verify=True):
         if self._worker is not None and self._worker.isRunning():
             return
         if not self.service.is_available():
             self.status_label.setText("本机没有可用的语音引擎，无法播报")
             return
-        self._worker = _PlaybackWorker(self.service, items, loop_count, self)
+        # 单条试听不验证（人耳确认场景）；「执行选中」才抓回执
+        feedback = self._build_feedback() if verify else None
+        self._worker = _PlaybackWorker(self.service, items, loop_count,
+                                       feedback=feedback, parent=self)
         self._worker.progress.connect(self._on_progress)
         self._worker.round_changed.connect(self._on_round_changed)
         self._worker.done.connect(self._on_playback_done)
@@ -1326,8 +1419,8 @@ class VoiceView(QWidget):
         if not text:
             self.status_label.setText("这条是空的，先填文案")
             return
-        # 单条播报不等待后面的间隔
-        self._start_playback([(case.id, index, text, 0.0)], 1, "正在播报…")
+        # 单条播报不等待后面的间隔，也不做回执验证（试听是人耳确认场景）
+        self._start_playback([(case.id, index, text, 0.0)], 1, "正在播报…", verify=False)
 
     def _on_play_all(self):
         items = self._checked_items()

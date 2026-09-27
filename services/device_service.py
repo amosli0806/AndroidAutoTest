@@ -416,21 +416,51 @@ class DeviceService:
 
         这里**阻塞到这句播完**才返回 —— 后续步骤必须等这段语音放完，
         否则整段序列会抢跑（典型场景：先播唤醒词，再播指令）。
-        播完还要再等 afterDelay 秒，留给车机语音助手处理时间。
+
+        afterDelay 字段是「总等待」（播报 + 缓冲）：先实测播报耗时，
+        再把剩余部分作为缓冲睡掉，播报比估算长时缓冲自动归零、不重复等。
+        开启回执验证时，播前清 logcat 基线，播后抓车机反馈文案判定，
+        判定失败把反馈原文带进错误信息。
         """
         text = (params.get('voiceText') or '').strip()
         if not text:
             raise Exception("语音播报的文案为空")
 
         from services.voice_service import VoiceError, get_voice_service
+        from models.voice_model import get_verify_config
+        from services.voice_feedback_service import (
+            VoiceFeedbackService, VoiceFeedbackError)
+
+        verify_cfg = get_verify_config()
+        svc = None
+        if verify_cfg["enabled"] and self.device:
+            svc = VoiceFeedbackService(self.serial)
+            try:
+                svc.clear()   # 播前清基线
+            except VoiceFeedbackError:
+                svc = None    # 清基线失败（无设备/adb 异常）→ 跳过验证，不拖垮播报
+
         try:
-            get_voice_service().speak(text)
+            elapsed = get_voice_service().speak(text)
         except VoiceError as e:
             raise Exception(str(e))
 
-        delay = float(params.get('afterDelay', 0) or 0)
-        if delay > 0:
-            time.sleep(delay)
+        # 播后等待：总等待 − 实测播报耗时 = 剩余缓冲
+        delay = float(params.get('afterDelay', 2) or 0)
+        remain = max(0.0, delay - elapsed)
+        if remain > 0:
+            time.sleep(remain)
+
+        # 回执验证：抓 logcat 判定，失败把车机反馈文案带进错误信息
+        if svc is not None:
+            try:
+                lines = svc.capture(verify_cfg["log_tag"])
+                ok, msg, _ = svc.judge_result(
+                    lines, verify_cfg["success_keywords"], verify_cfg["fail_keywords"])
+                if not ok:
+                    raise Exception(msg)
+            except VoiceFeedbackError:
+                pass   # 抓取本身失败（设备中途掉线等）不算判定失败，放行
 
     def _perform_swipe(self, params):
         direction = params.get('direction', '自定义坐标')

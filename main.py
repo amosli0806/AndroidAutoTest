@@ -922,8 +922,10 @@ def main():
             print(f"[voice] 套用播报配置失败: {e}")
 
     # 语音页用的是独立的「语音用例」（voice_data.json），
-    # 与自动化编辑页的用例互不影响，所以这里只给它模型和语音服务
-    voice_view = VoiceView(model=voice_model, service=voice_service)
+    # 与自动化编辑页的用例互不影响，所以这里只给它模型和语音服务；
+    # device_service 用于播报后抓车机 logcat 回执验证（不连设备就跳过）
+    voice_view = VoiceView(model=voice_model, service=voice_service,
+                           device_service=device_svc)
     main_window.set_voice_view(voice_view)
 
     # ---------- 检查更新（启动后台探测 + 菜单手动触发） ----------

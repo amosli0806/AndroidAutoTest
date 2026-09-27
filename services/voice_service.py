@@ -40,6 +40,34 @@ RATE_MIN, RATE_MAX = -10, 10
 # 所以界面上不再提供音量调节（两处音量会打架，反而不好判断到底该调哪个）。
 SAPI_FULL_VOLUME = 100
 
+# 播报时长估算的基准语速（字/秒）：中文 TTS 正常语速约 240~300 字/分钟，取 4 字/秒。
+ESTIMATE_BASE_CHARS_PER_SEC = 4.0
+# 语速对播报速度的影响系数：每 +1 rate 提 10% 速度。
+# 与 EdgeTtsEngine._rate_str 的 `rate * 10` 百分比映射同源对齐，
+# SAPI 的 -10~10 也统一按这套换算，两条引擎共用一个估算口径。
+ESTIMATE_RATE_FACTOR = 0.1
+
+
+def estimate_duration(text, rate=0) -> float:
+    """估算一段文案的播报时长（秒）。
+
+    公式：字数 ÷ [ 4 × (1 + rate × 0.1) ]。
+    仅用于 UI 上给「播后等待」一个建议值（播报时长 + 缓冲），
+    实际执行仍以 speak() 返回的实测耗时为准，这里不参与执行。
+    空文案返回 0；语速系数过低时给个下限保护，避免除出无穷大。
+    """
+    text = (text or "").strip()
+    if not text:
+        return 0.0
+    try:
+        rate = float(rate)
+    except (TypeError, ValueError):
+        rate = 0.0
+    speed = ESTIMATE_BASE_CHARS_PER_SEC * (1.0 + rate * ESTIMATE_RATE_FACTOR)
+    if speed <= 0.1:
+        speed = 0.1
+    return len(text) / speed
+
 
 class VoiceError(Exception):
     """播报失败。str(e) 是给用户看的简短原因。"""
