@@ -9,7 +9,7 @@ import hashlib
 import tempfile
 from datetime import datetime
 
-from PyQt6.QtWidgets import QFileDialog, QMessageBox, QInputDialog, QApplication
+from PyQt6.QtWidgets import QFileDialog, QMessageBox, QDialog, QApplication
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from services.command_manager import CommandManager
@@ -28,6 +28,7 @@ from services.anr_parser import parse_anr
 from views.adb_dialogs.packet_capture_dialog import PacketCaptureDialog
 from views.adb_dialogs.memory_monitor_dialog import MemoryMonitorDialog
 from views.adb_dialogs.push_progress_dialog import PushProgressDialog
+from views.adb_dialogs.push_setup_dialog import PushSetupDialog
 from views.adb_dialogs.search_results_dialog import SearchResultsDialog
 
 
@@ -516,36 +517,12 @@ class AdbToolboxController(QObject):
         return ""
 
     def _action_push(self):
-        # 选文件 / 文件夹
-        msg = QMessageBox(self.view)
-        msg.setWindowTitle("推送")
-        msg.setText("请选择要 push 的内容类型")
-        file_btn = msg.addButton("文件", QMessageBox.ButtonRole.ActionRole)
-        folder_btn = msg.addButton("文件夹", QMessageBox.ButtonRole.ActionRole)
-        msg.addButton("取消", QMessageBox.ButtonRole.RejectRole)
-        msg.exec()
-
-        clicked = msg.clickedButton()
-        if clicked == file_btn:
-            path, _ = QFileDialog.getOpenFileName(self.view, "选择文件")
-        elif clicked == folder_btn:
-            path = QFileDialog.getExistingDirectory(self.view, "选择文件夹")
-        else:
+        # 本地文件/文件夹 + 远程路径在一个对话框里一次填完
+        dlg = PushSetupDialog(self.view)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        if not path:
-            return
-
-        # 输入远程路径
-        remote, ok = QInputDialog.getText(
-            self.view, "远程路径",
-            "请输入远程路径（默认 /sdcard/）：",
-            text="/sdcard/"
-        )
-        if not ok or not remote.strip():
-            return
-        remote = remote.strip()
-        if os.path.isdir(path) and not remote.endswith('/'):
-            remote += '/'
+        path = dlg.local_path
+        remote = dlg.remote_path
 
         dlg = PushProgressDialog(self.device_service, path, remote, self.view)
         dlg.log_message.connect(self.view.append_log)
