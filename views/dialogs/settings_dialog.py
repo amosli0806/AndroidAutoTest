@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QPushButton, QFileDialog, QSlider, QLabel,
     QComboBox, QWidget, QStackedWidget, QTreeWidget, QTreeWidgetItem,
-    QFrame, QScrollArea, QKeySequenceEdit, QCheckBox, QGroupBox
+    QFrame, QScrollArea, QKeySequenceEdit, QCheckBox
 )
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal
 from PyQt6.QtGui import QKeySequence
@@ -202,6 +202,12 @@ class SettingsDialog(QDialog):
         voice_item.setData(0, Qt.ItemDataRole.UserRole, idx)
         voice_root.addChild(voice_item)
         self.content_stack.addWidget(self._build_voice_page())
+        idx += 1
+
+        voice_verify_item = QTreeWidgetItem(["回执验证"])
+        voice_verify_item.setData(0, Qt.ItemDataRole.UserRole, idx)
+        voice_root.addChild(voice_verify_item)
+        self.content_stack.addWidget(self._build_voice_verify_page())
         idx += 1
 
         # ========== 分类 3：设备管理 ==========
@@ -532,46 +538,6 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(form)
 
-        # 语音回执验证：播报后抓车机 logcat 反馈文案，判定这句是否被正确识别
-        verify_group = QGroupBox("语音回执验证")
-        verify_group.setObjectName("VoiceVerifyGroup")
-        verify_layout = QVBoxLayout(verify_group)
-        verify_layout.setContentsMargins(12, 12, 12, 12)
-        verify_layout.setSpacing(10)
-
-        verify_hint = QLabel(
-            "播报后从车机日志里抓反馈文案，判定这句语音是否被正确识别。"
-            "抓取规则因车型而异，建议先不开启；等适配好车机日志格式再打开。"
-        )
-        verify_hint.setObjectName("SettingsPageSubtitle")
-        verify_hint.setWordWrap(True)
-        verify_layout.addWidget(verify_hint)
-
-        vform = QFormLayout()
-        vform.setSpacing(10)
-        vform.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        self.verify_enabled_check = QCheckBox("启用回执验证")
-        vform.addRow("开关:", self.verify_enabled_check)
-
-        self.verify_tag_edit = QLineEdit()
-        self.verify_tag_edit.setMinimumWidth(340)
-        self.verify_tag_edit.setPlaceholderText("车机语音助手的日志标签，留空抓全量日志")
-        vform.addRow("日志标签:", self.verify_tag_edit)
-
-        self.verify_success_edit = QLineEdit()
-        self.verify_success_edit.setMinimumWidth(340)
-        self.verify_success_edit.setPlaceholderText("逗号分隔，如：识别成功,已为您,导航到")
-        vform.addRow("成功关键词:", self.verify_success_edit)
-
-        self.verify_fail_edit = QLineEdit()
-        self.verify_fail_edit.setMinimumWidth(340)
-        self.verify_fail_edit.setPlaceholderText("逗号分隔，如：没听清,无法识别,抱歉")
-        vform.addRow("失败关键词:", self.verify_fail_edit)
-
-        verify_layout.addLayout(vform)
-        layout.addWidget(verify_group)
-
         # 试听：用当前选中的音色与输出设备念一句，确认车机那边真能听见
         test_row = QHBoxLayout()
         test_row.setSpacing(10)
@@ -595,6 +561,60 @@ class SettingsDialog(QDialog):
             "引擎可选「Windows 内置语音」（离线，音色来自系统）或「Edge 在线语音」"
             "（需联网，微软在线音色，普通话更自然）。系统音色偏少时，可到 "
             "Windows 设置 → 时间和语言 → 语音 → 添加语音，装更多语言包。"
+        )
+        hint.setObjectName("SettingsPageSubtitle")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        layout.addStretch()
+        return page
+
+    def _build_voice_verify_page(self):
+        """回执验证独立一页：播报后抓车机日志反馈文案，判定这句是否被正确识别。"""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(16)
+
+        title = QLabel("语音回执验证")
+        title.setObjectName("SettingsPageTitle")
+        layout.addWidget(title)
+
+        subtitle = QLabel(
+            "播报后从车机日志里抓反馈文案，判定这句语音是否被正确识别。"
+            "判定失败时该步骤会标红，并附上车机反馈的原文，方便回看是哪句没被听懂。"
+        )
+        subtitle.setObjectName("SettingsPageSubtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.verify_enabled_check = QCheckBox("启用回执验证")
+        form.addRow("开关:", self.verify_enabled_check)
+
+        self.verify_tag_edit = QLineEdit()
+        self.verify_tag_edit.setMinimumWidth(340)
+        self.verify_tag_edit.setPlaceholderText("车机语音助手的日志标签，留空抓全量日志")
+        form.addRow("日志标签:", self.verify_tag_edit)
+
+        self.verify_success_edit = QLineEdit()
+        self.verify_success_edit.setMinimumWidth(340)
+        self.verify_success_edit.setPlaceholderText("逗号分隔，如：识别成功,已为您,导航到")
+        form.addRow("成功关键词:", self.verify_success_edit)
+
+        self.verify_fail_edit = QLineEdit()
+        self.verify_fail_edit.setMinimumWidth(340)
+        self.verify_fail_edit.setPlaceholderText("逗号分隔，如：没听清,无法识别,抱歉")
+        form.addRow("失败关键词:", self.verify_fail_edit)
+
+        layout.addLayout(form)
+
+        hint = QLabel(
+            "抓取规则因车型而异，建议先不开启；等拿到车机、按它的日志格式填好标签和关键词后再打开。"
+            "都填好但一句反馈都没抓到时，也会当作判定失败，避免没验证到却按通过算。"
         )
         hint.setObjectName("SettingsPageSubtitle")
         hint.setWordWrap(True)
