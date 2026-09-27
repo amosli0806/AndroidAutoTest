@@ -8,7 +8,7 @@ QInputDialog）：本地文件/文件夹、远程路径在一个对话框里一�
 import os
 
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QDialog, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QFileDialog
 )
 from PyQt6.QtCore import Qt
@@ -39,7 +39,7 @@ class PushSetupDialog(QDialog):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(14)
+        layout.setSpacing(8)
 
         title = QLabel("📤 推送文件到设备")
         title.setObjectName("titleLabel")
@@ -50,36 +50,40 @@ class PushSetupDialog(QDialog):
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(12)
-
-        grid.addWidget(self._make_field_label("本地文件"), 0, 0)
+        # ---- 本地文件：标签 → 输入框 → 两个按钮横排，纵向铺开不挤 ----
+        layout.addWidget(self._make_field_label("本地文件"))
         self.path_edit = QLineEdit()
-        self.path_edit.setPlaceholderText("尚未选择，点右侧按钮选择文件或文件夹")
+        self.path_edit.setPlaceholderText("尚未选择，点下方按钮选择文件或文件夹")
         self.path_edit.textChanged.connect(self._on_path_changed)
-        grid.addWidget(self.path_edit, 0, 1)
+        layout.addWidget(self.path_edit)
 
-        btn_col = QVBoxLayout()
-        btn_col.setSpacing(6)
+        pick_row = QHBoxLayout()
+        pick_row.setSpacing(10)
         self.pick_file_btn = QPushButton("选择文件")
         self.pick_file_btn.setObjectName("secondaryBtn")
         self.pick_file_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pick_file_btn.clicked.connect(self._on_pick_file)
-        btn_col.addWidget(self.pick_file_btn)
+        pick_row.addWidget(self.pick_file_btn)
         self.pick_dir_btn = QPushButton("选择文件夹")
         self.pick_dir_btn.setObjectName("secondaryBtn")
         self.pick_dir_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pick_dir_btn.clicked.connect(self._on_pick_dir)
-        btn_col.addWidget(self.pick_dir_btn)
-        grid.addLayout(btn_col, 0, 2)
+        pick_row.addWidget(self.pick_dir_btn)
+        pick_row.addStretch()
+        layout.addLayout(pick_row)
 
-        grid.addWidget(self._make_field_label("远程路径"), 1, 0)
+        # ---- 远程路径：标签 → 输入框 → 引导文案 ----
+        layout.addWidget(self._make_field_label("远程路径（推到设备上的哪个目录）"))
         self.remote_edit = QLineEdit(DEFAULT_REMOTE)
-        grid.addWidget(self.remote_edit, 1, 1)
+        layout.addWidget(self.remote_edit)
 
-        grid.setColumnStretch(1, 1)
-        layout.addLayout(grid)
+        remote_hint = QLabel(
+            f"文件会推到设备的这个目录里。保持默认 {DEFAULT_REMOTE} 即推到手机/车机的"
+            "内部存储根目录，也可以自己改成如 /sdcard/APK/ 这类子目录（目录不存在会自动创建）"
+        )
+        remote_hint.setObjectName("hintLabel")
+        remote_hint.setWordWrap(True)
+        layout.addWidget(remote_hint)
 
         layout.addStretch()
 
