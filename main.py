@@ -1019,13 +1019,8 @@ def main():
         return True
 
     def _confirm_and_apply(staging: str, version: str) -> None:
-        ans = QMessageBox.question(
-            main_window, "更新已就绪",
-            f"V{version} 已准备完成。\n\n"
-            f"现在重启虫师完成更新？（重启过程几秒，你的项目与用例数据不受影响）",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes)
-        if ans != QMessageBox.StandardButton.Yes:
+        from views.dialogs.update_dialog import UpdateReadyDialog
+        if not UpdateReadyDialog.ask(version, main_window):
             show_toast(main_window,
                        "更新包已保留，下次点「检查更新」可直接重启生效",
                        duration=4000)
