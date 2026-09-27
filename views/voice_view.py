@@ -555,6 +555,13 @@ class VoiceView(QWidget):
         self.add_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.add_btn.clicked.connect(self._on_add_phrase)
         title_row.addWidget(self.add_btn)
+        # 批量重算：把当前用例所有步骤的「播后等待」按文案+语速重算一遍
+        self.recalc_btn = QPushButton("批量重算")
+        self.recalc_btn.setObjectName("VoiceAddBtn")   # 复用「+ 添加步骤」的样式
+        self.recalc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.recalc_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.recalc_btn.clicked.connect(self._on_recalc_delays)
+        title_row.addWidget(self.recalc_btn)
         v.addLayout(title_row)
 
         self.scroll = QScrollArea()
@@ -1229,6 +1236,39 @@ class VoiceView(QWidget):
             spin.blockSignals(False)
         self.status_label.setText(f"已按语速估算播后等待：{est} 秒")
 
+    def _on_recalc_delays(self):
+        """批量重算：把当前用例所有步骤的「播后等待」按文案+语速重算一遍。
+
+        与单条估算同公式（播报时长 + 2 秒缓冲）；文案为空的步骤跳过不动，
+        避免把没填文案的行改成无意义的默认值。
+        """
+        case = self._current_case()
+        if case is None:
+            return
+        from services.voice_service import estimate_duration
+        rate = int(self.model.settings.get("rate", 0) or 0)
+        changed = skipped = 0
+        for index, phrase in enumerate(case.phrases):
+            text = (phrase.text or "").strip()
+            if not text:
+                skipped += 1
+                continue
+            est = round(estimate_duration(text, rate) + 2.0, 1)
+            self.model.update_phrase(case.id, index, delay=est)
+            if 0 <= index < len(self._rows):
+                spin = self._rows[index].delay_spin
+                spin.blockSignals(True)   # 避免 setValue 再触发一次落盘
+                spin.setValue(est)
+                spin.blockSignals(False)
+            changed += 1
+        if changed == 0:
+            self.status_label.setText("没有可重算的步骤（文案都为空）")
+        elif skipped:
+            self.status_label.setText(
+                f"已重算 {changed} 条播后等待（{skipped} 条空文案未动）")
+        else:
+            self.status_label.setText(f"已重算 {changed} 条播后等待")
+
     # ------------------------------------------------------------------
     # 配置
     # ------------------------------------------------------------------
@@ -1355,7 +1395,7 @@ class VoiceView(QWidget):
         必须在 QSS 下发之后调用，sizeHint 才是按按钮那套 12px 字号算出来的。
         """
         for buttons in (
-            (self.wake_btn, self.add_btn),
+            (self.wake_btn, self.add_btn, self.recalc_btn),
             (self.play_all_btn, self.stop_btn, self.all_btn, self.none_btn),
         ):
             width = max(b.sizeHint().width() for b in buttons)
@@ -1373,6 +1413,7 @@ class VoiceView(QWidget):
         self.play_all_btn.setEnabled(available and not running and has_checked)
         self.stop_btn.setEnabled(running)
         self.add_btn.setEnabled(not running and self._current_case() is not None)
+        self.recalc_btn.setEnabled(not running and self._current_case() is not None)
         self.wake_btn.setEnabled(not running and self._current_case() is not None)
         self.all_btn.setEnabled(not running)
         self.none_btn.setEnabled(not running)
