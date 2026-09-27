@@ -170,6 +170,10 @@ class MainWindow(QMainWindow):
         self._perf_view = None
         self._voice_view = None
         self._adb_toolbox_controller = None
+        self._adb_toolbox_widget = None
+        self._mini_mode = False
+        self.mini_mode_action = None
+        self._nav_spacer_action = None
         self._element_container = None
         self._logs_view_ref = None
         self._execute_view_ref = None
@@ -1026,6 +1030,7 @@ class MainWindow(QMainWindow):
         spacer_action = QWidgetAction(self)
         spacer_action.setDefaultWidget(spacer_widget)
         self.left_toolbar.addAction(spacer_action)
+        self._nav_spacer_action = spacer_action
 
         # ---------- 左工具栏下方：硬件 / Crash / ANR（选中即在底部日志区展示内容）----------
         _left_shortcuts = Settings.get_shortcuts()
@@ -1052,6 +1057,14 @@ class MainWindow(QMainWindow):
         self.log_action.setToolTip("显示/隐藏虫师日志面板 (Ctrl+L)")
         self.log_action.triggered.connect(self.toggle_bottom_log)
         self.left_toolbar.addAction(self.log_action)
+
+        # ---------- 迷你模式开关（全屏 ↔ 只留 ADB 指令管理区） ----------
+        self.mini_mode_action = QAction(
+            qta.icon('fa6s.compress', color='#a3a6b0'), "迷你模式", self)
+        self.mini_mode_action.setCheckable(True)
+        self.mini_mode_action.setToolTip("切换迷你模式：只显示 ADB 指令管理区")
+        self.mini_mode_action.triggered.connect(self._on_mini_mode_toggled)
+        self.left_toolbar.addAction(self.mini_mode_action)
 
         # 底部面板几个开关共用一块区域，互斥显示
         self._bottom_panel_actions = {
@@ -2146,6 +2159,59 @@ class MainWindow(QMainWindow):
                     label.setStyleSheet("color: #888; font-size: 20px; background: transparent;")
                     layout.addWidget(label)
 
+    # ---------- 迷你窗口模式 ----------
+    MINI_WINDOW_SIZE = (500, 620)
+
+    def _on_mini_mode_toggled(self, checked):
+        self.set_mini_mode(checked)
+
+    def set_mini_mode(self, enabled: bool):
+        """切换迷你窗口模式：全屏（最大化）↔ 只显示 ADB 指令管理区 + 左下按钮。
+
+        进入：隐藏顶部工具栏、左上功能导航、右侧工具栏、状态栏；主区域只留
+        ADB 工具箱的「指令管理」区（右侧搜索/弱网/Monkey 隐藏）；窗口缩成紧凑尺寸。
+        退出：恢复全部，回到欢迎页并重新最大化。
+        """
+        if self._mini_mode == enabled:
+            return
+        self._mini_mode = enabled
+
+        # 顶部工具栏 / 右侧工具栏 / 状态栏
+        self.toolbar.setVisible(not enabled)
+        self.right_toolbar.setVisible(not enabled)
+        self.statusBar().setVisible(not enabled)
+
+        # 左上 8 个功能导航 + 中间的弹性占位
+        for action in self.nav_actions:
+            action.setVisible(not enabled)
+        if self._nav_spacer_action is not None:
+            self._nav_spacer_action.setVisible(not enabled)
+
+        # ADB 工具箱：只留「指令管理」区
+        if self._adb_toolbox_widget is not None:
+            self._adb_toolbox_widget.set_compact_mode(enabled)
+
+        if enabled:
+            self.switch_view(0)
+            self.mini_mode_action.setIcon(qta.icon('fa6s.expand', color='white'))
+            self.mini_mode_action.setToolTip("退出迷你模式")
+            # 先取消最大化再固定到紧凑尺寸（顺序不能反，否则会被最大化状态吃掉）。
+            # 用 setFixedSize 而非 resize：主窗口最小宽度被内部页面的 minimumSizeHint
+            # 顶到 680，resize 会被布局拉回，setFixedSize 能强制锁定迷你尺寸。
+            self.showNormal()
+            self.setFixedSize(*self.MINI_WINDOW_SIZE)
+        else:
+            self.mini_mode_action.setIcon(qta.icon('fa6s.compress', color='#a3a6b0'))
+            self.mini_mode_action.setToolTip("切换迷你模式：只显示 ADB 指令管理区")
+            # 解除固定尺寸，恢复可自由缩放（min/max 都回到默认）
+            from PyQt6.QtWidgets import QWIDGETSIZE_MAX
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX)
+            self.switch_view(self.WELCOME_PAGE_INDEX)
+            self.showMaximized()
+
+        self.mini_mode_action.setChecked(enabled)
+
     # ---------- 底部日志面板 ----------
     # 面板标题与图标：三种模式共用同一块区域
     BOTTOM_PANEL_TITLES = {
@@ -3164,6 +3230,7 @@ class MainWindow(QMainWindow):
         self.apply_theme()
 
     def set_adb_toolbox_view(self, toolbox_widget):
+        self._adb_toolbox_widget = toolbox_widget
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)

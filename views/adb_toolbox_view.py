@@ -433,6 +433,14 @@ class AdbToolboxView(QWidget):
     # ------------------------------------------------------------------
     # 对外接口
     # ------------------------------------------------------------------
+    def set_compact_mode(self, enabled: bool):
+        """迷你窗口模式：只显示左侧「指令管理」区，隐藏右侧快捷功能（搜索/弱网/Monkey）。
+
+        由主窗口在进入/退出迷你模式时调用；右侧分组隐藏后，QSplitter 里的
+        左侧分组会自动占满，无需额外处理。
+        """
+        self.right_group.setVisible(not enabled)
+
     def set_device_service(self, device_service):
         """面板由控制器注入设备服务后才具备执行能力"""
         self.weak_network_panel.set_device_service(device_service)
