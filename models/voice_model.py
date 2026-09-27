@@ -5,8 +5,16 @@
     {
       "settings": {...},
       "groups": [{"id", "name"}],                       # 分组（对应项目树里的"功能模块"）
-      "cases":  [{"id", "name", "group_id", "success_keywords": [...], "phrases": [{"text", "delay"}]}]
+      "cases":  [{"id", "name", "group_id", "steps": [...]}]
     }
+
+steps 是统一的步骤列表，每个元素带 kind 区分类型：
+    {"kind": "phrase", "text", "delay"}               # 播报步骤：念给车机听的文案
+    {"kind": "verify", "keywords": [...]}             # 检测步骤：预期结果（回执验证）
+
+播报后面紧跟的检测步骤，就是对那句播报的预期结果 ——
+执行时播完先等 delay，再抓车机日志按检测步骤的关键词判定。
+这个结构与「自动化编辑」里"步骤 + 断言"的心智一致，方便后续导出/导入按步骤编排。
 
 两个关键约定：
   1. **语音用例和「自动化编辑」里的用例是两套东西，不共用。**
@@ -57,6 +65,9 @@ SEED_PHRASES = [
     {"text": "打开地图", "delay": 2.0},
 ]
 
+KIND_PHRASE = "phrase"    # 播报步骤
+KIND_VERIFY = "verify"    # 检测步骤（预期结果：回执验证关键词）
+
 DEFAULT_DELAY = 2.0
 # 没有归到任何分组的用例，在树上挂在这个虚拟节点下
 UNGROUPED_ID = ""
@@ -89,54 +100,90 @@ def _unique_name(base: str, taken) -> str:
 
 
 @dataclass
-class VoicePhrase:
-    """一条待播报的文案。"""
+class VoiceStep:
+    """用例里的一步。kind 区分两种类型：
+
+    - KIND_PHRASE 播报步骤：text 是要念的文案，delay 是播后总等待（播报+缓冲）
+    - KIND_VERIFY 检测步骤：keywords 是预期结果关键词（模糊包含，命中任一即通过）。
+      紧跟在播报后面，执行时播完抓车机日志判定 —— 相当于"这句话的预期结果"。
+    """
+    kind: str = KIND_PHRASE
     text: str = ""
-    delay: float = DEFAULT_DELAY   # 播完这句后再等几秒
+    delay: float = DEFAULT_DELAY
+    keywords: List[str] = field(default_factory=list)
 
     def to_dict(self):
-        return {"text": self.text, "delay": self.delay}
+        if self.kind == KIND_VERIFY:
+            return {"kind": KIND_VERIFY, "keywords": list(self.keywords)}
+        return {"kind": KIND_PHRASE, "text": self.text, "delay": self.delay}
 
     @classmethod
     def from_dict(cls, data):
-        return cls(text=str(data.get("text", "")),
+        data = data or {}
+        kind = str(data.get("kind") or KIND_PHRASE)
+        if kind == KIND_VERIFY:
+            return cls(kind=KIND_VERIFY, keywords=_clean_keywords(
+                data.get("keywords") or []))
+        return cls(kind=KIND_PHRASE,
+                   text=str(data.get("text", "")),
                    delay=float(data.get("delay", DEFAULT_DELAY) or 0))
+
+
+def _clean_keywords(keywords) -> List[str]:
+    """关键词去空、去重、保序 —— 各处入口（编辑/导入/迁移）共用这一套清洗。"""
+    seen = set()
+    clean = []
+    for k in (keywords or []):
+        k = str(k).strip()
+        if k and k not in seen:
+            seen.add(k)
+            clean.append(k)
+    return clean
 
 
 @dataclass
 class VoiceCase:
-    """一个语音用例 = 一组按顺序播报的文案。
+    """一个语音用例 = 一串按顺序执行的步骤（播报 + 检测预期结果）。
 
-    success_keywords：这个用例专属的「回执验证」成功关键词。播报后车机日志命中
-    其中任意一个（模糊包含）即判识别成功。按用例配，是因为不同场景（导航/音乐/
-    空调…）的成功反馈措辞差异很大，都堆在设置页会越来越乱。
+    steps 统一存两种步骤（VoiceStep），顺序即执行顺序；
+    播报步骤后面紧跟的检测步骤，就是对那句播报的预期结果。
     """
     id: str = ""
     name: str = ""
     group_id: str = ""
-    success_keywords: List[str] = field(default_factory=list)
-    phrases: List[VoicePhrase] = field(default_factory=list)
+    steps: List[VoiceStep] = field(default_factory=list)
 
     def to_dict(self):
         return {"id": self.id, "name": self.name, "group_id": self.group_id,
-                "success_keywords": list(self.success_keywords),
-                "phrases": [p.to_dict() for p in self.phrases]}
+                "steps": [s.to_dict() for s in self.steps]}
 
     @classmethod
     def from_dict(cls, data):
+        data = data or {}
+        steps = [VoiceStep.from_dict(s) for s in (data.get("steps") or [])]
+        if not steps:
+            # 旧格式迁移：phrases 全部转成播报步骤；success_keywords（旧版
+            # 按用例配的成功词）转成末尾一条检测步骤，语义不变（命中任一即过）
+            for p in (data.get("phrases") or []):
+                p = p or {}
+                steps.append(VoiceStep(
+                    kind=KIND_PHRASE,
+                    text=str(p.get("text", "")),
+                    delay=float(p.get("delay", DEFAULT_DELAY) or 0)))
+            legacy_kw = _clean_keywords(data.get("success_keywords") or [])
+            if legacy_kw:
+                steps.append(VoiceStep(kind=KIND_VERIFY, keywords=legacy_kw))
         return cls(
             id=str(data.get("id", "")),
             name=str(data.get("name", "")),
             group_id=str(data.get("group_id", "") or ""),
-            success_keywords=[str(x) for x in (data.get("success_keywords") or [])
-                              if str(x).strip()],
-            phrases=[VoicePhrase.from_dict(p)
-                     for p in (data.get("phrases") or [])],
+            steps=steps,
         )
 
     @property
-    def usable_phrases(self) -> List[VoicePhrase]:
-        return [p for p in self.phrases if (p.text or "").strip()]
+    def phrases(self) -> List[VoiceStep]:
+        """播报步骤（kind=phrase），按原顺序。执行/勾选树只认播报步骤。"""
+        return [s for s in self.steps if s.kind == KIND_PHRASE]
 
 
 @dataclass
@@ -252,9 +299,9 @@ class VoiceModel:
                 id=_new_id("vcase"),
                 name=case.name,
                 group_id=new_group.id,
-                success_keywords=list(case.success_keywords),
-                phrases=[VoicePhrase(text=p.text, delay=p.delay)
-                         for p in case.phrases],
+                steps=[VoiceStep(kind=s.kind, text=s.text, delay=s.delay,
+                                 keywords=list(s.keywords))
+                       for s in case.steps],
             ))
         self.save()
         return new_group
@@ -329,9 +376,9 @@ class VoiceModel:
             id=_new_id("vcase"),
             name=_unique_name(f"{src.name} 副本", taken),
             group_id=src.group_id,
-            success_keywords=list(src.success_keywords),
-            phrases=[VoicePhrase(text=p.text, delay=p.delay)
-                     for p in src.phrases],
+            steps=[VoiceStep(kind=s.kind, text=s.text, delay=s.delay,
+                             keywords=list(s.keywords))
+                   for s in src.steps],
         )
         self.cases.append(new_case)
         self.save()
@@ -354,18 +401,23 @@ class VoiceModel:
         return True
 
     def set_case_success_keywords(self, case_id: str, keywords) -> bool:
-        """设置某个用例的回执验证成功关键词（去空、去重、保序）。"""
+        """（旧接口，兼容保留）把一组成功关键词写成用例末尾的一条检测步骤。
+
+        新代码请直接用 add_verify / update_step —— 关键词已经是步骤列表里的
+        独立步骤，不再挂在用例属性上。
+        """
         case = self.get_case(case_id)
         if case is None:
             return False
-        seen = set()
-        clean = []
-        for k in (keywords or []):
-            k = str(k).strip()
-            if k and k not in seen:
-                seen.add(k)
-                clean.append(k)
-        case.success_keywords = clean
+        clean = _clean_keywords(keywords)
+        # 末尾已经是检测步骤就就地覆盖；否则追加一条（清空=删掉末尾那条）
+        if case.steps and case.steps[-1].kind == KIND_VERIFY:
+            if clean:
+                case.steps[-1].keywords = clean
+            else:
+                case.steps.pop()
+        elif clean:
+            case.steps.append(VoiceStep(kind=KIND_VERIFY, keywords=clean))
         self.save()
         return True
 
@@ -377,45 +429,70 @@ class VoiceModel:
         self.save()
         return True
 
-    # ---------------- 文案 ----------------
+    # ---------------- 步骤（播报 / 检测） ----------------
     def add_phrase(self, case_id: str, text: str = "",
-                   delay: float = DEFAULT_DELAY) -> Optional[VoicePhrase]:
+                   delay: float = DEFAULT_DELAY) -> Optional[VoiceStep]:
+        """追加一条播报步骤。"""
         case = self.get_case(case_id)
         if case is None:
             return None
-        phrase = VoicePhrase(text=text, delay=delay)
-        case.phrases.append(phrase)
+        step = VoiceStep(kind=KIND_PHRASE, text=text, delay=delay)
+        case.steps.append(step)
         self.save()
-        return phrase
+        return step
 
-    def update_phrase(self, case_id: str, index: int, **kwargs) -> bool:
+    def add_verify(self, case_id: str, keywords) -> Optional[VoiceStep]:
+        """追加一条检测步骤（预期结果）。keywords 传入前先做去空去重。"""
         case = self.get_case(case_id)
-        if case is None or not (0 <= index < len(case.phrases)):
+        if case is None:
+            return None
+        step = VoiceStep(kind=KIND_VERIFY, keywords=_clean_keywords(keywords))
+        case.steps.append(step)
+        self.save()
+        return step
+
+    def update_step(self, case_id: str, index: int, **kwargs) -> bool:
+        """按下标改一步的属性（text / delay / keywords）。"""
+        case = self.get_case(case_id)
+        if case is None or not (0 <= index < len(case.steps)):
             return False
-        phrase = case.phrases[index]
+        step = case.steps[index]
         for key, value in kwargs.items():
-            if hasattr(phrase, key):
-                setattr(phrase, key, value)
+            if key == "keywords":
+                step.keywords = _clean_keywords(value)
+            elif hasattr(step, key):
+                setattr(step, key, value)
+        self.save()
+        return True
+
+    # 下面三个按下标操作的老接口保留原名（视图层沿用），但操作的是统一步骤列表
+    def update_phrase(self, case_id: str, index: int, **kwargs) -> bool:
+        return self.update_step(case_id, index, **kwargs)
+
+    def remove_step(self, case_id: str, index: int) -> bool:
+        case = self.get_case(case_id)
+        if case is None or not (0 <= index < len(case.steps)):
+            return False
+        del case.steps[index]
         self.save()
         return True
 
     def remove_phrase(self, case_id: str, index: int) -> bool:
+        return self.remove_step(case_id, index)
+
+    def copy_step(self, case_id: str, index: int) -> bool:
+        """复制第 index 步，副本追加到整个步骤列表的末尾。"""
         case = self.get_case(case_id)
-        if case is None or not (0 <= index < len(case.phrases)):
+        if case is None or not (0 <= index < len(case.steps)):
             return False
-        del case.phrases[index]
+        src = case.steps[index]
+        case.steps.append(VoiceStep(kind=src.kind, text=src.text,
+                                    delay=src.delay, keywords=list(src.keywords)))
         self.save()
         return True
 
     def copy_phrase(self, case_id: str, index: int) -> bool:
-        """复制第 index 条文案，副本追加到整个列表的末尾。"""
-        case = self.get_case(case_id)
-        if case is None or not (0 <= index < len(case.phrases)):
-            return False
-        src = case.phrases[index]
-        case.phrases.append(VoicePhrase(text=src.text, delay=src.delay))
-        self.save()
-        return True
+        return self.copy_step(case_id, index)
 
     # ---------------- 导入 / 导出 ----------------
     def export_case(self, case_id: str) -> Optional[dict]:
@@ -423,13 +500,12 @@ class VoiceModel:
         if case is None:
             return None
         return {"name": case.name,
-                "success_keywords": list(case.success_keywords),
-                "phrases": [p.to_dict() for p in case.phrases]}
+                "steps": [s.to_dict() for s in case.steps]}
 
     def export_all(self) -> dict:
-        """全量导出：分组 -> 用例 -> 文案，整棵树打包成一个 dict。
+        """全量导出：分组 -> 用例 -> 步骤（播报+检测），整棵树打包成一个 dict。
 
-        与 export_case（单用例文案包）不同，这个格式包含分组与用例结构，
+        与 export_case（单用例步骤包）不同，这个格式包含分组与用例结构，
         配合 import_all 可以在换机器/换项目时完整还原整棵语音用例树。
         """
         cases_by_group = {}
@@ -441,12 +517,11 @@ class VoiceModel:
                 "name": g.name,
                 "cases": [
                     {"name": c.name,
-                     "success_keywords": list(c.success_keywords),
-                     "phrases": [p.to_dict() for p in c.phrases]}
+                     "steps": [s.to_dict() for s in c.steps]}
                     for c in cases_by_group.get(g.id, [])
                 ],
             })
-        return {"format": "voice-cases-all", "version": 1, "groups": groups}
+        return {"format": "voice-cases-all", "version": 2, "groups": groups}
 
     def import_all(self, data) -> dict:
         """全量导入：按 export_all 的格式重建分组/用例/文案（追加式）。
@@ -477,17 +552,14 @@ class VoiceModel:
                     continue
                 case = self.add_case(cname, group.id)
                 stats["cases"] += 1
-                self.set_case_success_keywords(
-                    case.id, cdata.get("success_keywords") or [])
-                for pdata in (cdata.get("phrases") or []):
-                    try:
-                        self.add_phrase(
-                            case.id,
-                            text=str(pdata.get("text", "")),
-                            delay=float(pdata.get("delay", 0) or 0))
-                        stats["phrases"] += 1
-                    except Exception:
-                        pass
+                # 步骤按导出顺序原样带入；旧格式文件（phrases + success_keywords）
+                # 由 VoiceCase.from_dict 的迁移逻辑统一转换，这里直接借它解析
+                legacy_case = VoiceCase.from_dict(cdata)
+                for step in legacy_case.steps:
+                    case.steps.append(VoiceStep(
+                        kind=step.kind, text=step.text,
+                        delay=step.delay, keywords=list(step.keywords)))
+                    stats["phrases"] += 1
         self.save()
         return stats
 
@@ -503,7 +575,7 @@ class VoiceModel:
                 delay = float(entry.get("delay", DEFAULT_DELAY) or 0)
             else:
                 text, delay = str(entry), DEFAULT_DELAY
-            case.phrases.append(VoicePhrase(text=text, delay=delay))
+            case.steps.append(VoiceStep(kind=KIND_PHRASE, text=text, delay=delay))
             added += 1
         if added:
             self.save()

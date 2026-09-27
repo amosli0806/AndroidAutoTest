@@ -28,7 +28,7 @@ import time
 from PyQt6.QtCore import QRectF, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QApplication, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
+    QAbstractItemView, QApplication, QDoubleSpinBox, QFileDialog, QFrame,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMenu, QPushButton, QScrollArea, QSpinBox, QSplitter, QStyle,
     QStyledItemDelegate, QStyleOptionViewItem, QToolButton,
@@ -36,7 +36,8 @@ from PyQt6.QtWidgets import (
 )
 import qtawesome as qta
 
-from models.voice_model import DEFAULT_DELAY, DEFAULT_WAKE_WORD, VoiceModel
+from models.voice_model import (
+    DEFAULT_DELAY, DEFAULT_WAKE_WORD, KIND_PHRASE, KIND_VERIFY, VoiceModel)
 from services.voice_service import VoiceError
 from utils import tree_state
 # InputDialog 是项目自定义的圆角卡片式对话框，与编辑页"创建项目"用同一个
@@ -45,26 +46,26 @@ from utils.theme import ThemeMode
 
 
 class _PlaybackWorker(QThread):
-    """按顺序播报若干条文案，可循环、可被 stop() 打断。
+    """按顺序执行若干「播报组」，可循环、可被 stop() 打断。
 
-    items 里每条是 (case_id, phrase_index, text, delay)，
-    带上来源是为了让界面能高亮"正在播的是哪一条"。
+    items 里每条是一个播报组：
+        (case_id, 播报步骤下标, 文案, 播后等待, [紧随的检测步骤...])
+    检测步骤元素为 (步骤下标, [成功关键词]) —— 它是对前面那句播报的
+    预期结果，播完抓车机日志逐条判定。带上下标是为了让界面能高亮
+    "正在播的是哪一条"。
     """
 
     progress = pyqtSignal(str, int)       # (正在播的用例, 第几条)
     round_changed = pyqtSignal(int, int)  # (当前第几轮, 总轮数)
     done = pyqtSignal(bool, str)          # (是否正常播完, 错误信息)
 
-    def __init__(self, service, items, loop_count=1, feedback=None,
-                 success_by_case=None, parent=None):
+    def __init__(self, service, items, loop_count=1, feedback=None, parent=None):
         super().__init__(parent)
         self.service = service
         self.items = list(items)          # 先做快照
         self.loop_count = max(1, int(loop_count or 1))
-        # feedback：可选的语音回执抓取服务；非 None 时每条播报后抓 logcat 判定
+        # feedback：可选的语音回执抓取服务；非 None 时播完抓 logcat 判定
         self.feedback = feedback
-        # success_by_case：{case_id: [成功关键词]}，按用例维度配置的回执成功词
-        self.success_by_case = success_by_case or {}
         self._stop = False
         self._interrupted = False
 
@@ -79,7 +80,7 @@ class _PlaybackWorker(QThread):
                     self._interrupted = True
                     break
                 self.round_changed.emit(round_index + 1, self.loop_count)
-                for case_id, phrase_index, text, delay in self.items:
+                for case_id, phrase_index, text, delay, verifies in self.items:
                     if self._stop:
                         self._interrupted = True
                         break
@@ -140,34 +141,57 @@ class _PlaybackWorker(QThread):
                     if self._interrupted:
                         break
 
-                    # 回执验证：抓 logcat 判定，失败把车机反馈文案带进 error
+                    # 回执验证：这条播报后面跟着的检测步骤（预期结果）逐条判定；
+                    # 没配检测步骤但开启了验证时，退回设置页全局关键词兜底判定。
+                    # 失败把车机反馈文案带进 error
                     if self.feedback is not None:
                         try:
                             from models.voice_model import get_verify_config
-                            from utils import voice_log
                             cfg = get_verify_config()
                             lines = self.feedback.capture(cfg["log_tag"])
-                            # 成功关键词 = 用例专属 + 设置页全局兜底，合并去重；
-                            # 失败关键词只用设置页的全局值
-                            case_kw = self.success_by_case.get(case_id, [])
-                            success_kw = list(dict.fromkeys(
-                                list(case_kw) + list(cfg["success_keywords"])))
-                            ok, msg, _ = self.feedback.judge_result(
-                                lines, success_kw, cfg["fail_keywords"])
-                            if ok:
-                                voice_log.emit("success", f"✅ 语音验证通过「{short}」：车机已正确识别")
+                            if verifies:
+                                for _v_idx, kw_list in verifies:
+                                    label = "、".join(kw_list[:3]) + (
+                                        "…" if len(kw_list) > 3 else "")
+                                    ok, msg, _ = self.feedback.judge_result(
+                                        lines, kw_list, cfg["fail_keywords"])
+                                    if ok:
+                                        voice_log.emit(
+                                            "success",
+                                            f"✅ 预期结果「{label}」：车机反馈命中")
+                                    else:
+                                        voice_log.emit(
+                                            "error",
+                                            f"❌ 预期结果「{label}」未命中：{msg}")
+                                        error = msg
+                                        self._interrupted = True
+                                        break
                             else:
-                                voice_log.emit("error", f"❌ 语音验证失败「{short}」：{msg}")
-                                error = msg
-                                self._interrupted = True
-                                break
+                                ok, msg, _ = self.feedback.judge_result(
+                                    lines, cfg["success_keywords"],
+                                    cfg["fail_keywords"])
+                                if ok:
+                                    voice_log.emit("success", f"✅ 语音验证通过「{short}」：车机已正确识别")
+                                else:
+                                    voice_log.emit("error", f"❌ 语音验证失败「{short}」：{msg}")
+                                    error = msg
+                                    self._interrupted = True
                         except Exception:
-                            from utils import voice_log
                             voice_log.emit("warning", "语音验证：读取车机日志失败，本次按通过处理")
                     elif not verify_on and not verify_skipped:
-                        # 未开启回执验证：至少让用户看到这句播完了
-                        from utils import voice_log
-                        voice_log.emit("success", f"✅ 播报完成「{short}」（未开启回执验证）")
+                        # 未开启回执验证：至少让用户知道播完了；配了预期结果的
+                        # 要明确说它们没被验证，别让人以为验过
+                        if verifies:
+                            voice_log.emit(
+                                "warning",
+                                f"⚠ 未开启回执验证，{len(verifies)} 条预期结果未验证「{short}」")
+                        else:
+                            voice_log.emit("success", f"✅ 播报完成「{short}」（未开启回执验证）")
+
+                    # 预期结果判定失败时不再播后面的组：闭环语义下"没验证过"
+                    # 等价于失败，继续播只会产生一堆无意义的结果
+                    if self._interrupted:
+                        break
                 if self._interrupted:
                     break
         except VoiceError as e:
@@ -411,6 +435,91 @@ class _PhraseRow(QFrame):
         self.estimate_btn.setIcon(qta.icon('fa6s.calculator', color=play_color))
         self.del_btn.setIcon(qta.icon('fa6s.trash-can', color=del_color))
 
+
+class _VerifyRow(QFrame):
+    """一条检测步骤（预期结果）的编辑行。
+
+    与播报行并排在步骤列表里，只带复制/删除 —— 没有播放、估算和播后等待：
+    检测步骤不发声、不占时长，它只是"前面那句播报的预期结果"。
+    """
+
+    copy_requested = pyqtSignal(int)
+    remove_requested = pyqtSignal(int)
+    keywords_changed = pyqtSignal(int, str)   # (下标, 原始文本，逗号分隔)
+
+    def __init__(self, index, step, parent=None):
+        super().__init__(parent)
+        self.index = index
+        # objectName 复用 PhraseRow：底色 / 分隔线 / 悬停 / 播放高亮那套样式直接共用
+        self.setObjectName("PhraseRow")
+        self.setProperty("verify", "true")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 5, 8, 5)
+        layout.setSpacing(8)
+
+        self.no_label = QLabel(str(index + 1))
+        self.no_label.setObjectName("PhraseNo")
+        self.no_label.setFixedWidth(26)
+        self.no_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.no_label)
+
+        tag = QLabel("预期")
+        tag.setObjectName("VerifyTag")
+        layout.addWidget(tag)
+
+        self.text_edit = QLineEdit("，".join(step.keywords))
+        self.text_edit.setObjectName("PhraseText")
+        self.text_edit.setPlaceholderText(
+            "预期结果关键词，多个用逗号分隔（命中任一即通过），如：已为您导航,导航到")
+        self.text_edit.editingFinished.connect(self._on_edited)
+        layout.addWidget(self.text_edit, 1)
+
+        # 与播报行右侧的 播后等待+三个图标 列对齐：检测行没有这些控件，
+        # 靠一个固定占位把复制/删除推到同样的横向位置
+        self.delay_spin = None
+        self.estimate_btn = None
+        self.play_btn = None
+        spacer = QWidget()
+        spacer.setFixedWidth(90 + 8 + 26 + 8 + 26)
+        layout.addWidget(spacer)
+
+        self.copy_btn = QToolButton()
+        self.copy_btn.setObjectName("PhraseCopyBtn")
+        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.copy_btn.setFixedSize(26, 26)
+        self.copy_btn.setAutoRaise(True)
+        self.copy_btn.clicked.connect(lambda: self.copy_requested.emit(self.index))
+        layout.addWidget(self.copy_btn)
+
+        self.del_btn = QToolButton()
+        self.del_btn.setObjectName("PhraseDelBtn")
+        self.del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.del_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.del_btn.setFixedSize(26, 26)
+        self.del_btn.setAutoRaise(True)
+        self.del_btn.clicked.connect(lambda: self.remove_requested.emit(self.index))
+        layout.addWidget(self.del_btn)
+
+    def _on_edited(self):
+        self.keywords_changed.emit(self.index, self.text_edit.text())
+
+    def set_playing(self, playing: bool):
+        pass   # 检测步骤不发声，无播放高亮
+
+    def apply_theme(self, theme_mode):
+        if theme_mode == ThemeMode.DARK:
+            color = "#90caf9"
+            del_color = "#ff6b6b"
+        else:
+            color = "#1976d2"
+            del_color = "#e74c3c"
+        self.copy_btn.setIcon(qta.icon('fa6s.copy', color=color))
+        self.del_btn.setIcon(qta.icon('fa6s.trash-can', color=del_color))
+
+
 class VoiceView(QWidget):
     """语音播报页（左：语音用例 / 中：文案编辑 / 右：执行）。"""
 
@@ -570,13 +679,14 @@ class VoiceView(QWidget):
         self.recalc_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.recalc_btn.clicked.connect(self._on_recalc_delays)
         title_row.addWidget(self.recalc_btn)
-        # 反馈检测：给当前用例配置「回执验证」的成功关键词（按场景分组维护）
-        self.feedback_btn = QPushButton("反馈检测")
-        self.feedback_btn.setObjectName("VoiceAddBtn")
-        self.feedback_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.feedback_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.feedback_btn.clicked.connect(self._on_feedback_keywords)
-        title_row.addWidget(self.feedback_btn)
+        # + 添加检测：往用例末尾追加一条「预期结果」步骤（回执验证关键词），
+        # 它会作为独立的一行出现在步骤列表里，可复制/删除
+        self.add_verify_btn = QPushButton("+ 添加检测")
+        self.add_verify_btn.setObjectName("VoiceAddBtn")
+        self.add_verify_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_verify_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.add_verify_btn.clicked.connect(self._on_add_verify)
+        title_row.addWidget(self.add_verify_btn)
         v.addLayout(title_row)
 
         self.scroll = QScrollArea()
@@ -874,7 +984,7 @@ class VoiceView(QWidget):
     # ------------------------------------------------------------------
     def _reload_steps(self):
         case = self._current_case()
-        phrases = list(case.phrases) if case else []
+        steps = list(case.steps) if case else []
 
         # ---- 中栏：编辑行 ----
         while self._list_layout.count():
@@ -893,17 +1003,24 @@ class VoiceView(QWidget):
             else:
                 hint = "先在左侧选一个语音用例"
             self._add_empty_hint(hint)
-        elif not phrases:
-            self._add_empty_hint("这个用例还没有文案，点右上角「+ 添加步骤」添加")
+        elif not steps:
+            self._add_empty_hint(
+                "这个用例还没有步骤，点右上角「+ 添加步骤」「+ 添加检测」")
         else:
-            for i, phrase in enumerate(phrases):
-                row = _PhraseRow(i, phrase, self._container)
-                row.play_requested.connect(self._on_play_one)
-                row.copy_requested.connect(self._on_copy_phrase)
-                row.remove_requested.connect(self._on_remove_phrase)
-                row.estimate_requested.connect(self._on_estimate_delay)
-                row.text_changed.connect(self._on_text_changed)
-                row.delay_changed.connect(self._on_delay_changed)
+            for i, step in enumerate(steps):
+                if step.kind == KIND_VERIFY:
+                    row = _VerifyRow(i, step, self._container)
+                    row.copy_requested.connect(self._on_copy_step)
+                    row.remove_requested.connect(self._on_remove_step)
+                    row.keywords_changed.connect(self._on_keywords_changed)
+                else:
+                    row = _PhraseRow(i, step, self._container)
+                    row.play_requested.connect(self._on_play_one)
+                    row.copy_requested.connect(self._on_copy_step)
+                    row.remove_requested.connect(self._on_remove_step)
+                    row.estimate_requested.connect(self._on_estimate_delay)
+                    row.text_changed.connect(self._on_text_changed)
+                    row.delay_changed.connect(self._on_delay_changed)
                 # 新建的行不会自动拿到当前主题，这里手动上一次
                 row.apply_theme(self._current_theme)
                 self._list_layout.addWidget(row)
@@ -1203,47 +1320,58 @@ class VoiceView(QWidget):
         self._reload_steps()
         self.status_label.setText(f"已追加唤醒词「{wake_word}」")
 
-    def _on_remove_phrase(self, index):
+    def _on_remove_step(self, index):
         case = self._current_case()
         if case is None:
             return
-        self.model.remove_phrase(case.id, index)
+        self.model.remove_step(case.id, index)
         self._reload_steps()
 
-    def _on_copy_phrase(self, index):
+    def _on_copy_step(self, index):
         case = self._current_case()
         if case is None:
             return
-        if self.model.copy_phrase(case.id, index):
+        if self.model.copy_step(case.id, index):
             self._reload_steps()
-            self.status_label.setText(f"已复制第 {index + 1} 条，加到末尾")
+            self.status_label.setText(f"已复制第 {index + 1} 步，加到末尾")
 
     def _on_text_changed(self, index, text):
         case = self._current_case()
         if case is None:
             return
-        self.model.update_phrase(case.id, index, text=text)
+        self.model.update_step(case.id, index, text=text)
         # 右栏不再显示"N 条"，无需再刷新计数
 
     def _on_delay_changed(self, index, delay):
         case = self._current_case()
         if case is None:
             return
-        self.model.update_phrase(case.id, index, delay=delay)
+        self.model.update_step(case.id, index, delay=delay)
+
+    def _on_keywords_changed(self, index, raw):
+        """检测步骤的关键词编辑：按中英文逗号拆开、去空，存成关键词列表。"""
+        case = self._current_case()
+        if case is None:
+            return
+        keywords = [k.strip() for k in (raw or "").replace("，", ",").split(",")]
+        self.model.update_step(case.id, index, keywords=keywords)
 
     def _on_estimate_delay(self, index):
         """按文案长度与当前语速，把这一条的「播后等待」填成建议值（总等待）。"""
         case = self._current_case()
-        if case is None or not (0 <= index < len(case.phrases)):
+        if case is None or not (0 <= index < len(case.steps)):
             return
-        text = (case.phrases[index].text or "").strip()
+        step = case.steps[index]
+        if step.kind != KIND_PHRASE:
+            return   # 检测步骤没有播后等待
+        text = (step.text or "").strip()
         if not text:
             self.status_label.setText("先填文案才能估算")
             return
         from services.voice_service import estimate_duration
         rate = int(self.model.settings.get("rate", 0) or 0)
         est = round(estimate_duration(text, rate) + 2.0, 1)  # 播报时长 + 2 秒缓冲
-        self.model.update_phrase(case.id, index, delay=est)
+        self.model.update_step(case.id, index, delay=est)
         if 0 <= index < len(self._rows):
             spin = self._rows[index].delay_spin
             spin.blockSignals(True)   # 避免 setValue 再触发一次 _on_delay_changed 重复落盘
@@ -1252,10 +1380,10 @@ class VoiceView(QWidget):
         self.status_label.setText(f"已按语速估算播后等待：{est} 秒")
 
     def _on_recalc_delays(self):
-        """批量重算：把当前用例所有步骤的「播后等待」按文案+语速重算一遍。
+        """批量重算：把当前用例所有播报步骤的「播后等待」按文案+语速重算一遍。
 
         与单条估算同公式（播报时长 + 2 秒缓冲）；文案为空的步骤跳过不动，
-        避免把没填文案的行改成无意义的默认值。
+        避免把没填文案的行改成无意义的默认值。检测步骤没有等待时长，不参与。
         """
         case = self._current_case()
         if case is None:
@@ -1263,18 +1391,21 @@ class VoiceView(QWidget):
         from services.voice_service import estimate_duration
         rate = int(self.model.settings.get("rate", 0) or 0)
         changed = skipped = 0
-        for index, phrase in enumerate(case.phrases):
-            text = (phrase.text or "").strip()
+        for index, step in enumerate(case.steps):
+            if step.kind != KIND_PHRASE:
+                continue
+            text = (step.text or "").strip()
             if not text:
                 skipped += 1
                 continue
             est = round(estimate_duration(text, rate) + 2.0, 1)
-            self.model.update_phrase(case.id, index, delay=est)
+            self.model.update_step(case.id, index, delay=est)
             if 0 <= index < len(self._rows):
                 spin = self._rows[index].delay_spin
-                spin.blockSignals(True)   # 避免 setValue 再触发一次落盘
-                spin.setValue(est)
-                spin.blockSignals(False)
+                if spin is not None:
+                    spin.blockSignals(True)   # 避免 setValue 再触发一次落盘
+                    spin.setValue(est)
+                    spin.blockSignals(False)
             changed += 1
         if changed == 0:
             self.status_label.setText("没有可重算的步骤（文案都为空）")
@@ -1284,24 +1415,15 @@ class VoiceView(QWidget):
         else:
             self.status_label.setText(f"已重算 {changed} 条播后等待")
 
-    def _on_feedback_keywords(self):
-        """打开「反馈检测」：为当前用例配置回执验证的成功关键词（每行一个）。"""
+    def _on_add_verify(self):
+        """追加一条检测步骤（预期结果）到当前用例末尾。"""
         case = self._current_case()
         if case is None:
+            self.status_label.setText("先在左侧选一个语音用例")
             return
-        from views.dialogs.feedback_keywords_dialog import FeedbackKeywordsDialog
-        dlg = FeedbackKeywordsDialog(
-            self, case_name=case.name, keywords=case.success_keywords)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-        keywords = dlg.keywords()
-        self.model.set_case_success_keywords(case.id, keywords)
-        if keywords:
-            self.status_label.setText(
-                f"已保存 {len(keywords)} 个成功关键词：{'、'.join(keywords[:4])}"
-                + ("…" if len(keywords) > 4 else ""))
-        else:
-            self.status_label.setText("已清空该用例的成功关键词")
+        self.model.add_verify(case.id, [])
+        self._reload_steps()
+        self.status_label.setText("已新增一条检测步骤，填入预期结果关键词即可")
 
     # ------------------------------------------------------------------
     # 配置
@@ -1401,7 +1523,12 @@ class VoiceView(QWidget):
         self._sync_play_buttons()
 
     def _checked_items(self):
-        """勾选的语音用例 -> [(case_id, 第几条, 文案, 播后等待), ...]"""
+        """勾选的语音用例 -> 播报组列表。
+
+        每组 = (case_id, 播报步骤下标, 文案, 播后等待, [紧随的检测步骤...])，
+        检测步骤元素为 (步骤下标, [成功关键词])。检测步骤不单独成组 ——
+        它总是跟着前面那句播报，作为那句的预期结果被执行时判定。
+        """
         items = []
         for i in range(self.check_tree.topLevelItemCount()):
             group_item = self.check_tree.topLevelItem(i)
@@ -1413,11 +1540,23 @@ class VoiceView(QWidget):
                 voice_case = self.model.get_case(case_id)
                 if voice_case is None:
                     continue
-                for idx, phrase in enumerate(voice_case.phrases):
-                    text = (phrase.text or "").strip()
+                for idx, step in enumerate(voice_case.steps):
+                    if step.kind != KIND_PHRASE:
+                        continue
+                    text = (step.text or "").strip()
                     if not text:
                         continue
-                    items.append((case_id, idx, text, float(phrase.delay or 0)))
+                    # 收集紧跟其后的连续检测步骤（碰到下一个播报步骤即止）
+                    verifies = []
+                    k = idx + 1
+                    while k < len(voice_case.steps) and \
+                            voice_case.steps[k].kind == KIND_VERIFY:
+                        kw = [x for x in voice_case.steps[k].keywords if x]
+                        if kw:
+                            verifies.append((k, kw))
+                        k += 1
+                    items.append((case_id, idx, text,
+                                  float(step.delay or 0), verifies))
         return items
 
     def _sync_action_button_widths(self):
@@ -1429,7 +1568,7 @@ class VoiceView(QWidget):
         必须在 QSS 下发之后调用，sizeHint 才是按按钮那套 12px 字号算出来的。
         """
         for buttons in (
-            (self.wake_btn, self.add_btn, self.recalc_btn, self.feedback_btn),
+            (self.wake_btn, self.add_btn, self.recalc_btn, self.add_verify_btn),
             (self.play_all_btn, self.stop_btn, self.all_btn, self.none_btn),
         ):
             width = max(b.sizeHint().width() for b in buttons)
@@ -1448,7 +1587,7 @@ class VoiceView(QWidget):
         self.stop_btn.setEnabled(running)
         self.add_btn.setEnabled(not running and self._current_case() is not None)
         self.recalc_btn.setEnabled(not running and self._current_case() is not None)
-        self.feedback_btn.setEnabled(not running and self._current_case() is not None)
+        self.add_verify_btn.setEnabled(not running and self._current_case() is not None)
         self.wake_btn.setEnabled(not running and self._current_case() is not None)
         self.all_btn.setEnabled(not running)
         self.none_btn.setEnabled(not running)
@@ -1458,12 +1597,13 @@ class VoiceView(QWidget):
         # 压成灰样式（用户反馈"执行中树图标变了"）。树保持可用，交互
         # 风险在各自的处理入口里按 running 状态拦截（见下面两个方法）。
         for row in self._rows:
-            row.play_btn.setEnabled(available and not running)
             row.copy_btn.setEnabled(not running)
-            row.estimate_btn.setEnabled(not running)
             row.del_btn.setEnabled(not running)
             row.text_edit.setEnabled(not running)
-            row.delay_spin.setEnabled(not running)
+            if row.play_btn is not None:   # 播报行独有：播放 / 估算 / 播后等待
+                row.play_btn.setEnabled(available and not running)
+                row.estimate_btn.setEnabled(not running)
+                row.delay_spin.setEnabled(not running)
 
     def _playback_running(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
@@ -1498,20 +1638,8 @@ class VoiceView(QWidget):
             return
         # 单条试听不验证（人耳确认场景）；「执行选中」才抓回执
         feedback = self._build_feedback() if verify else None
-        # 按用例收集各自配置的「成功关键词」，交给 worker 合并判定
-        success_by_case = {}
-        if feedback is not None:
-            for case_id, *_ in items:
-                if case_id in success_by_case:
-                    continue
-                c = self.model.get_case(case_id)
-                if c is not None:
-                    success_by_case[case_id] = [
-                        k for k in (c.success_keywords or []) if k]
         self._worker = _PlaybackWorker(self.service, items, loop_count,
-                                       feedback=feedback,
-                                       success_by_case=success_by_case,
-                                       parent=self)
+                                       feedback=feedback, parent=self)
         self._worker.progress.connect(self._on_progress)
         self._worker.round_changed.connect(self._on_round_changed)
         self._worker.done.connect(self._on_playback_done)
@@ -1527,14 +1655,17 @@ class VoiceView(QWidget):
             show_toast(self, "执行中，请先停止再试听", duration=1500)
             return
         case = self._current_case()
-        if case is None or not (0 <= index < len(case.phrases)):
+        if case is None or not (0 <= index < len(case.steps)):
             return
-        text = (case.phrases[index].text or "").strip()
+        step = case.steps[index]
+        if step.kind != KIND_PHRASE:
+            return   # 检测步骤不发声，无从试听
+        text = (step.text or "").strip()
         if not text:
             self.status_label.setText("这条是空的，先填文案")
             return
         # 单条播报不等待后面的间隔，也不做回执验证（试听是人耳确认场景）
-        self._start_playback([(case.id, index, text, 0.0)], 1, "正在播报…", verify=False)
+        self._start_playback([(case.id, index, text, 0.0, [])], 1, "正在播报…", verify=False)
 
     def _on_play_all(self):
         items = self._checked_items()
@@ -1684,6 +1815,9 @@ class VoiceView(QWidget):
             text, muted = "#e8e8e8", "#9aa0a6"
             row_hover, row_border = "#33353a", "#3a3c42"
             row_playing = "#2f3a4a"
+            # 「预期」徽标：深色底上用亮绿字 + 微透明的绿底
+            verify_tag_fg, verify_tag_bg, verify_tag_border = (
+                "#81c784", "rgba(129, 199, 132, 0.15)", "rgba(129, 199, 132, 0.4)")
             btn_bg, btn_hover, btn_border = "#3a3c42", "#46484f", "#4a4c53"
             input_bg = "#25262a"
             scroll_handle = "#5a5c63"
@@ -1707,6 +1841,9 @@ class VoiceView(QWidget):
             text, muted = "#333333", "#8a9099"
             row_hover, row_border = "#f2f5fa", "#e6e8ec"
             row_playing = "#e3f0ff"
+            # 「预期」徽标：浅色底上用深绿字 + 浅绿底
+            verify_tag_fg, verify_tag_bg, verify_tag_border = (
+                "#2e7d32", "rgba(46, 125, 50, 0.10)", "rgba(46, 125, 50, 0.35)")
             btn_bg, btn_hover, btn_border = "#eef0f4", "#e2e6ec", "#d8dce3"
             input_bg = "#ffffff"
             scroll_handle = "#c4c8cf"
@@ -1840,6 +1977,15 @@ class VoiceView(QWidget):
             #VoiceView QFrame#PhraseRow:hover {{ background: {row_hover}; }}
             #VoiceView QFrame#PhraseRow[playing="true"] {{ background: {row_playing}; }}
             #VoiceView QLabel#PhraseNo {{ color: {muted}; }}
+            /* 检测步骤的「预期」徽标：绿色系，和播报行一眼区分开 */
+            #VoiceView QLabel#VerifyTag {{
+                color: {verify_tag_fg};
+                background: {verify_tag_bg};
+                border: 1px solid {verify_tag_border};
+                border-radius: 3px;
+                padding: 1px 6px;
+                font-size: 11px;
+            }}
             #VoiceView QLabel#VoiceEmpty {{ color: {muted}; padding: 16px 0; }}
             /* 本页所有按钮统一为「刷新」按钮样式：
                蓝底白字、圆角 4px、浅色/深色两套主题下观感一致。
