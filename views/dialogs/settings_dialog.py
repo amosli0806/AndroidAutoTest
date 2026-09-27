@@ -600,11 +600,6 @@ class SettingsDialog(QDialog):
         self.verify_tag_edit.setPlaceholderText("车机语音助手的日志标签，留空抓全量日志")
         form.addRow("日志标签:", self.verify_tag_edit)
 
-        self.verify_success_edit = QLineEdit()
-        self.verify_success_edit.setMinimumWidth(340)
-        self.verify_success_edit.setPlaceholderText("逗号分隔，如：识别成功,已为您,导航到")
-        form.addRow("成功关键词:", self.verify_success_edit)
-
         self.verify_fail_edit = QLineEdit()
         self.verify_fail_edit.setMinimumWidth(340)
         self.verify_fail_edit.setPlaceholderText("逗号分隔，如：没听清,无法识别,抱歉")
@@ -614,7 +609,10 @@ class SettingsDialog(QDialog):
 
         hint = QLabel(
             "抓取规则因车型而异，建议先不开启；等拿到车机、按它的日志格式填好标签和关键词后再打开。"
-            "都填好但一句反馈都没抓到时，也会当作判定失败，避免没验证到却按通过算。"
+            "都填好但一句反馈都没抓到时，也会当作判定失败，避免没验证到却按通过算。\n"
+            "「成功关键词」不在这里填 —— 不同场景（导航/音乐/空调…）成功时的反馈措辞"
+            "差异很大，已经改成在「语音播报页」选中用例后点右上角「反馈检测」按用例分别配置；"
+            "这里只保留很少变的失败关键词。"
         )
         hint.setObjectName("SettingsPageSubtitle")
         hint.setWordWrap(True)
@@ -638,7 +636,6 @@ class SettingsDialog(QDialog):
         verify = settings.get("verify") or {}
         self.verify_enabled_check.setChecked(bool(verify.get("enabled", False)))
         self.verify_tag_edit.setText(str(verify.get("log_tag") or ""))
-        self.verify_success_edit.setText("，".join(verify.get("success_keywords") or []))
         self.verify_fail_edit.setText("，".join(verify.get("fail_keywords") or []))
 
         # 引擎下拉（blockSignals 避免 setCurrentIndex 触发 _on_voice_engine_changed 重复刷新）
@@ -722,7 +719,9 @@ class SettingsDialog(QDialog):
 
         if not hasattr(self, "voice_tone_combo"):
             return
-        VoiceModel().set_settings(
+        vm = VoiceModel()
+        verify = vm.settings.get("verify") or {}
+        vm.set_settings(
             engine=self.voice_engine_combo.currentData() or "",
             voice_id=self.voice_tone_combo.currentData() or "",
             device_id=self.voice_device_combo.currentData() or "",
@@ -731,7 +730,9 @@ class SettingsDialog(QDialog):
             verify={
                 "enabled": self.verify_enabled_check.isChecked(),
                 "log_tag": (self.verify_tag_edit.text() or "").strip(),
-                "success_keywords": self._split_keywords(self.verify_success_edit.text()),
+                # 成功关键词已改到「语音播报页 → 反馈检测」按用例配置，
+                # 这里原样保留旧值（兜底），不再在设置页编辑
+                "success_keywords": verify.get("success_keywords") or [],
                 "fail_keywords": self._split_keywords(self.verify_fail_edit.text()),
             },
         )

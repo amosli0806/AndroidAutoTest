@@ -5,7 +5,7 @@
     {
       "settings": {...},
       "groups": [{"id", "name"}],                       # 分组（对应项目树里的"功能模块"）
-      "cases":  [{"id", "name", "group_id", "phrases": [{"text", "delay"}]}]
+      "cases":  [{"id", "name", "group_id", "success_keywords": [...], "phrases": [{"text", "delay"}]}]
     }
 
 两个关键约定：
@@ -39,6 +39,8 @@ DEFAULT_SETTINGS = {
     # 没有 volume：响度直接用电脑的系统音量，界面上不提供音量调节
     # 语音回执验证：播报后从车机 logcat 抓反馈文案判定。enabled 默认关，
     # 因为抓取规则依赖具体车机的 log 格式，没适配好前开着会把正常播报误判成失败。
+    # success_keywords 已改为「按用例」配置（语音播报页的「反馈检测」按钮），
+    # 这里保留一份默认值仅作兜底/自动化编辑 voice 步骤的回退，不在设置页里编辑了。
     "verify": {
         "enabled": False,
         "log_tag": "",            # 车机语音助手的 log tag；留空抓全量日志
@@ -103,14 +105,21 @@ class VoicePhrase:
 
 @dataclass
 class VoiceCase:
-    """一个语音用例 = 一组按顺序播报的文案。"""
+    """一个语音用例 = 一组按顺序播报的文案。
+
+    success_keywords：这个用例专属的「回执验证」成功关键词。播报后车机日志命中
+    其中任意一个（模糊包含）即判识别成功。按用例配，是因为不同场景（导航/音乐/
+    空调…）的成功反馈措辞差异很大，都堆在设置页会越来越乱。
+    """
     id: str = ""
     name: str = ""
     group_id: str = ""
+    success_keywords: List[str] = field(default_factory=list)
     phrases: List[VoicePhrase] = field(default_factory=list)
 
     def to_dict(self):
         return {"id": self.id, "name": self.name, "group_id": self.group_id,
+                "success_keywords": list(self.success_keywords),
                 "phrases": [p.to_dict() for p in self.phrases]}
 
     @classmethod
@@ -119,6 +128,8 @@ class VoiceCase:
             id=str(data.get("id", "")),
             name=str(data.get("name", "")),
             group_id=str(data.get("group_id", "") or ""),
+            success_keywords=[str(x) for x in (data.get("success_keywords") or [])
+                              if str(x).strip()],
             phrases=[VoicePhrase.from_dict(p)
                      for p in (data.get("phrases") or [])],
         )
@@ -241,6 +252,7 @@ class VoiceModel:
                 id=_new_id("vcase"),
                 name=case.name,
                 group_id=new_group.id,
+                success_keywords=list(case.success_keywords),
                 phrases=[VoicePhrase(text=p.text, delay=p.delay)
                          for p in case.phrases],
             ))
@@ -317,6 +329,7 @@ class VoiceModel:
             id=_new_id("vcase"),
             name=_unique_name(f"{src.name} 副本", taken),
             group_id=src.group_id,
+            success_keywords=list(src.success_keywords),
             phrases=[VoicePhrase(text=p.text, delay=p.delay)
                      for p in src.phrases],
         )
@@ -337,6 +350,22 @@ class VoiceModel:
         if case is None:
             return False
         self.cases.remove(case)
+        self.save()
+        return True
+
+    def set_case_success_keywords(self, case_id: str, keywords) -> bool:
+        """设置某个用例的回执验证成功关键词（去空、去重、保序）。"""
+        case = self.get_case(case_id)
+        if case is None:
+            return False
+        seen = set()
+        clean = []
+        for k in (keywords or []):
+            k = str(k).strip()
+            if k and k not in seen:
+                seen.add(k)
+                clean.append(k)
+        case.success_keywords = clean
         self.save()
         return True
 
@@ -394,6 +423,7 @@ class VoiceModel:
         if case is None:
             return None
         return {"name": case.name,
+                "success_keywords": list(case.success_keywords),
                 "phrases": [p.to_dict() for p in case.phrases]}
 
     def export_all(self) -> dict:
@@ -411,6 +441,7 @@ class VoiceModel:
                 "name": g.name,
                 "cases": [
                     {"name": c.name,
+                     "success_keywords": list(c.success_keywords),
                      "phrases": [p.to_dict() for p in c.phrases]}
                     for c in cases_by_group.get(g.id, [])
                 ],
@@ -446,6 +477,8 @@ class VoiceModel:
                     continue
                 case = self.add_case(cname, group.id)
                 stats["cases"] += 1
+                self.set_case_success_keywords(
+                    case.id, cdata.get("success_keywords") or [])
                 for pdata in (cdata.get("phrases") or []):
                     try:
                         self.add_phrase(

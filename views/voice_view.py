@@ -28,7 +28,7 @@ import time
 from PyQt6.QtCore import QRectF, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QApplication, QDoubleSpinBox, QFileDialog, QFrame,
+    QAbstractItemView, QApplication, QDialog, QDoubleSpinBox, QFileDialog, QFrame,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMenu, QPushButton, QScrollArea, QSpinBox, QSplitter, QStyle,
     QStyledItemDelegate, QStyleOptionViewItem, QToolButton,
@@ -55,13 +55,16 @@ class _PlaybackWorker(QThread):
     round_changed = pyqtSignal(int, int)  # (当前第几轮, 总轮数)
     done = pyqtSignal(bool, str)          # (是否正常播完, 错误信息)
 
-    def __init__(self, service, items, loop_count=1, feedback=None, parent=None):
+    def __init__(self, service, items, loop_count=1, feedback=None,
+                 success_by_case=None, parent=None):
         super().__init__(parent)
         self.service = service
         self.items = list(items)          # 先做快照
         self.loop_count = max(1, int(loop_count or 1))
         # feedback：可选的语音回执抓取服务；非 None 时每条播报后抓 logcat 判定
         self.feedback = feedback
+        # success_by_case：{case_id: [成功关键词]}，按用例维度配置的回执成功词
+        self.success_by_case = success_by_case or {}
         self._stop = False
         self._interrupted = False
 
@@ -144,8 +147,13 @@ class _PlaybackWorker(QThread):
                             from utils import voice_log
                             cfg = get_verify_config()
                             lines = self.feedback.capture(cfg["log_tag"])
+                            # 成功关键词 = 用例专属 + 设置页全局兜底，合并去重；
+                            # 失败关键词只用设置页的全局值
+                            case_kw = self.success_by_case.get(case_id, [])
+                            success_kw = list(dict.fromkeys(
+                                list(case_kw) + list(cfg["success_keywords"])))
                             ok, msg, _ = self.feedback.judge_result(
-                                lines, cfg["success_keywords"], cfg["fail_keywords"])
+                                lines, success_kw, cfg["fail_keywords"])
                             if ok:
                                 voice_log.emit("success", f"✅ 语音验证通过「{short}」：车机已正确识别")
                             else:
@@ -562,6 +570,13 @@ class VoiceView(QWidget):
         self.recalc_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.recalc_btn.clicked.connect(self._on_recalc_delays)
         title_row.addWidget(self.recalc_btn)
+        # 反馈检测：给当前用例配置「回执验证」的成功关键词（按场景分组维护）
+        self.feedback_btn = QPushButton("反馈检测")
+        self.feedback_btn.setObjectName("VoiceAddBtn")
+        self.feedback_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.feedback_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.feedback_btn.clicked.connect(self._on_feedback_keywords)
+        title_row.addWidget(self.feedback_btn)
         v.addLayout(title_row)
 
         self.scroll = QScrollArea()
@@ -1269,6 +1284,25 @@ class VoiceView(QWidget):
         else:
             self.status_label.setText(f"已重算 {changed} 条播后等待")
 
+    def _on_feedback_keywords(self):
+        """打开「反馈检测」：为当前用例配置回执验证的成功关键词（每行一个）。"""
+        case = self._current_case()
+        if case is None:
+            return
+        from views.dialogs.feedback_keywords_dialog import FeedbackKeywordsDialog
+        dlg = FeedbackKeywordsDialog(
+            self, case_name=case.name, keywords=case.success_keywords)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        keywords = dlg.keywords()
+        self.model.set_case_success_keywords(case.id, keywords)
+        if keywords:
+            self.status_label.setText(
+                f"已保存 {len(keywords)} 个成功关键词：{'、'.join(keywords[:4])}"
+                + ("…" if len(keywords) > 4 else ""))
+        else:
+            self.status_label.setText("已清空该用例的成功关键词")
+
     # ------------------------------------------------------------------
     # 配置
     # ------------------------------------------------------------------
@@ -1395,7 +1429,7 @@ class VoiceView(QWidget):
         必须在 QSS 下发之后调用，sizeHint 才是按按钮那套 12px 字号算出来的。
         """
         for buttons in (
-            (self.wake_btn, self.add_btn, self.recalc_btn),
+            (self.wake_btn, self.add_btn, self.recalc_btn, self.feedback_btn),
             (self.play_all_btn, self.stop_btn, self.all_btn, self.none_btn),
         ):
             width = max(b.sizeHint().width() for b in buttons)
@@ -1414,6 +1448,7 @@ class VoiceView(QWidget):
         self.stop_btn.setEnabled(running)
         self.add_btn.setEnabled(not running and self._current_case() is not None)
         self.recalc_btn.setEnabled(not running and self._current_case() is not None)
+        self.feedback_btn.setEnabled(not running and self._current_case() is not None)
         self.wake_btn.setEnabled(not running and self._current_case() is not None)
         self.all_btn.setEnabled(not running)
         self.none_btn.setEnabled(not running)
@@ -1463,8 +1498,20 @@ class VoiceView(QWidget):
             return
         # 单条试听不验证（人耳确认场景）；「执行选中」才抓回执
         feedback = self._build_feedback() if verify else None
+        # 按用例收集各自配置的「成功关键词」，交给 worker 合并判定
+        success_by_case = {}
+        if feedback is not None:
+            for case_id, *_ in items:
+                if case_id in success_by_case:
+                    continue
+                c = self.model.get_case(case_id)
+                if c is not None:
+                    success_by_case[case_id] = [
+                        k for k in (c.success_keywords or []) if k]
         self._worker = _PlaybackWorker(self.service, items, loop_count,
-                                       feedback=feedback, parent=self)
+                                       feedback=feedback,
+                                       success_by_case=success_by_case,
+                                       parent=self)
         self._worker.progress.connect(self._on_progress)
         self._worker.round_changed.connect(self._on_round_changed)
         self._worker.done.connect(self._on_playback_done)
