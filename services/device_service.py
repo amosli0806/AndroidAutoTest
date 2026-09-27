@@ -473,8 +473,11 @@ class DeviceService:
                 voice_log.emit("warning", "语音验证：读取车机日志失败，本次按通过处理")
         elif not verify_skipped:
             if verify_cfg["enabled"]:
-                # 开了验证但没连设备：明确告诉用户没验证到，别让用户以为验证过
-                voice_log.emit("warning", f"⚠ 未连接设备，无法验证「{short}」的识别结果")
+                # 开了验证但没连设备：明确说原因和后续处理，别让用户以为验证过
+                voice_log.emit(
+                    "warning",
+                    f"⚠ 已开启回执验证，但未连接设备，无法读取车机反馈，"
+                    f"「{short}」跳过验证（按通过继续执行）")
             else:
                 voice_log.emit("success", f"✅ 播报完成「{short}」（未开启回执验证）")
 

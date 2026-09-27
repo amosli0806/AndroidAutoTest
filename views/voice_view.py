@@ -59,13 +59,17 @@ class _PlaybackWorker(QThread):
     round_changed = pyqtSignal(int, int)  # (当前第几轮, 总轮数)
     done = pyqtSignal(bool, str)          # (是否正常播完, 错误信息)
 
-    def __init__(self, service, items, loop_count=1, feedback=None, parent=None):
+    def __init__(self, service, items, loop_count=1, feedback=None,
+                 verify_block="", parent=None):
         super().__init__(parent)
         self.service = service
         self.items = list(items)          # 先做快照
         self.loop_count = max(1, int(loop_count or 1))
         # feedback：可选的语音回执抓取服务；非 None 时播完抓 logcat 判定
         self.feedback = feedback
+        # verify_block：已开启回执验证但环境不满足（如未连接设备）的原因，
+        # 用于把「没验证到」的原因在日志里说准，与「没开启验证」区分开
+        self.verify_block = verify_block
         self._stop = False
         self._interrupted = False
 
@@ -179,9 +183,24 @@ class _PlaybackWorker(QThread):
                         except Exception:
                             voice_log.emit("warning", "语音验证：读取车机日志失败，本次按通过处理")
                     elif not verify_on and not verify_skipped:
-                        # 未开启回执验证：至少让用户知道播完了；配了预期结果的
-                        # 要明确说它们没被验证，别让人以为验过
-                        if verifies:
+                        if self.verify_block:
+                            # 已开启验证但环境不满足（未连设备等）：明确说
+                            # 原因 + 会继续执行，别让用户以为验证过或以为没开
+                            if verifies:
+                                voice_log.emit(
+                                    "warning",
+                                    f"⚠ 已开启回执验证，但{self.verify_block}，"
+                                    f"无法读取车机反馈，{len(verifies)} 条预期结果"
+                                    f"跳过验证「{short}」（按通过继续执行）")
+                            else:
+                                voice_log.emit(
+                                    "warning",
+                                    f"⚠ 已开启回执验证，但{self.verify_block}，"
+                                    f"无法读取车机反馈，「{short}」跳过验证"
+                                    f"（按通过继续执行）")
+                        elif verifies:
+                            # 未开启回执验证：至少让用户知道播完了；配了预期结果的
+                            # 要明确说它们没被验证，别让人以为验过
                             voice_log.emit(
                                 "warning",
                                 f"⚠ 未开启回执验证，{len(verifies)} 条预期结果未验证「{short}」")
@@ -1611,24 +1630,26 @@ class VoiceView(QWidget):
     def _build_feedback(self):
         """按当前配置与设备状态构建回执抓取服务；不满足条件返回 None。
 
+        返回 (服务, 不可用原因)：服务为 None 时，原因说明是「未开启」还是
+        「开启了但环境不满足」（如未连接设备），供日志把话说准。
         三个条件都满足才做验证：设置里开启了验证、注入了设备服务、当前有设备在线。
         """
         from models.voice_model import get_verify_config
         cfg = get_verify_config()
         if not cfg["enabled"]:
-            return None
+            return None, ""
         ds = getattr(self, "_device_service", None)
         if ds is None:
-            return None
+            return None, "设备服务未就绪"
         try:
             devices = ds.get_devices()
         except Exception:
             devices = []
         if not devices:
-            return None
+            return None, "未连接设备"
         from services.voice_feedback_service import VoiceFeedbackService
         serial = getattr(ds, "serial", None) or devices[0]
-        return VoiceFeedbackService(serial)
+        return VoiceFeedbackService(serial), ""
 
     def _start_playback(self, items, loop_count, label, verify=True):
         if self._worker is not None and self._worker.isRunning():
@@ -1637,9 +1658,13 @@ class VoiceView(QWidget):
             self.status_label.setText("本机没有可用的语音引擎，无法播报")
             return
         # 单条试听不验证（人耳确认场景）；「执行选中」才抓回执
-        feedback = self._build_feedback() if verify else None
+        if verify:
+            feedback, verify_block = self._build_feedback()
+        else:
+            feedback, verify_block = None, ""
         self._worker = _PlaybackWorker(self.service, items, loop_count,
-                                       feedback=feedback, parent=self)
+                                       feedback=feedback, verify_block=verify_block,
+                                       parent=self)
         self._worker.progress.connect(self._on_progress)
         self._worker.round_changed.connect(self._on_round_changed)
         self._worker.done.connect(self._on_playback_done)
