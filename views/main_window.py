@@ -925,7 +925,8 @@ class MainWindow(QMainWindow):
 
         self._welcome_tip_rows = []
         # 按「从零跑通一个用例」的上手顺序排列：
-        # 连接设备 → 建用例 → 录制 → 执行，最后两条点出工具页 / 性能页
+        # 连接设备 → 建用例 → 录制 → 执行，后面几条点出各专项能力的入口。
+        # 新增模块时记得往这里补一条，否则新功能在欢迎页上完全看不见。
         tips = [
             ("fa6s.mobile-screen", "连接设备", "顶部工具栏 → 选择设备 → 刷新"),
             ("fa6s.pen-to-square", "创建用例", "「自动化编辑」→ 右键项目树 → 创建用例"),
@@ -933,6 +934,8 @@ class MainWindow(QMainWindow):
             ("fa6s.play", "执行测试", "「自动化执行」→ 勾选用例 → 执行"),
             ("fa6s.screwdriver-wrench", "ADB 调试", "「ADB 工具箱」→ 指令 / 弱网 / Monkey"),
             ("fa6s.gauge-high", "性能检测", "「性能检测」→ 选应用 → 开始监控"),
+            ("fa6s.microphone", "语音播报", "「语音播报」→ 勾选语音用例 → 执行选中"),
+            ("fa6s.plug", "接口自动化", "「接口自动化」→ 新建接口 → 发送 / 执行选中"),
         ]
         for icon_name, label_text, desc_text in tips:
             row = QHBoxLayout()
@@ -2106,6 +2109,10 @@ class MainWindow(QMainWindow):
         """
         if index == 2:
             self.switch_view(index)
+            # 应用可视化是开关 Dock、不切页，所以不报"当前功能"；但要把上一条清掉，
+            # 否则刚点过语音播报再点它，状态栏会残留"当前功能: 语音播报"（最长 2 秒），
+            # 看着就像点错了页面。
+            self.statusBar().clearMessage()
             return
         if checked:
             self.switch_view(index)
@@ -2154,18 +2161,17 @@ class MainWindow(QMainWindow):
                 action.setChecked(self.nav_indices[i] == index)
             self.help_action.setChecked(False)
             self.help_action.setIcon(qta.icon('fa6s.circle-question', color='#a3a6b0'))
-            if index < len(self.nav_actions):
-                self.statusBar().showMessage(f"当前功能: {self.nav_actions[index].text()}", 2000)
-            # 占位页面（接口自动化 / 性能检测）
-            if index in (7, 8):
-                from PyQt6.QtWidgets import QWidget as _QW, QVBoxLayout as _QVL
-                page = self.stacked_widget.widget(index)
-                if page is not None and page.layout() is None:
-                    layout = _QVL(page)
-                    label = QLabel("功能开发中，敬请期待")
-                    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                    label.setStyleSheet("color: #888; font-size: 20px; background: transparent;")
-                    layout.addWidget(label)
+            # index 是 stacked_widget 的下标，nav_actions 是左侧工具栏的顺序，
+            # 两套编号并不一致：接口自动化/性能检测/语音播报在下标 7/8/9，
+            # 在工具栏里却是第 6/7/8 个（中间隔了帮助中心与欢迎页）。
+            # 所以必须用 nav_indices 反查，不能拿 index 直接去索引 nav_actions ——
+            # 否则点接口自动化会显示"当前功能: 语音播报"，
+            # 点性能检测/语音播报则因下标越界干脆不显示。
+            nav_pos = next((i for i, idx in enumerate(self.nav_indices) if idx == index),
+                           None)
+            if nav_pos is not None:
+                self.statusBar().showMessage(
+                    f"当前功能: {self.nav_actions[nav_pos].text()}", 2000)
 
     # ---------- 迷你窗口模式 ----------
     MINI_WINDOW_SIZE = (500, 620)
@@ -3686,6 +3692,25 @@ class MainWindow(QMainWindow):
         self.stacked_widget.insertWidget(8, container)
         self.register_sub_view(perf_view)
         self._perf_view = perf_view
+        self.apply_theme()
+
+    def set_api_view(self, api_view):
+        """挂载接口自动化视图到 index 7（替换原「功能开发中」占位页）"""
+        api_view.setObjectName("ApiView")
+        # 外层包裹，与性能检测 / 语音播报页保持同一套布局约定
+        container = QFrame()
+        container.setObjectName("ApiContainer")
+        container.setStyleSheet("QFrame#ApiContainer { border: none; }")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(api_view)
+
+        old = self.stacked_widget.widget(7)
+        self.stacked_widget.removeWidget(old)
+        old.deleteLater()
+        self.stacked_widget.insertWidget(7, container)
+        self.register_sub_view(api_view)
+        self._api_view = api_view
         self.apply_theme()
 
     def set_voice_view(self, voice_view):

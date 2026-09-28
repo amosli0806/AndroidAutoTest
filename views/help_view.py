@@ -324,6 +324,29 @@ class HelpView(QFrame):
                 </div>
                 """,
             },
+                        "🪟 窗口与界面": {
+                "迷你模式": """
+                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🪟 迷你模式</h2>
+                <p style="font-size: 15px;">
+                    屏幕不够用时，可以把虫师缩成一个<b>只显示 ADB 指令管理区</b>的小窗口：点左侧工具栏
+                    最底部的<b>迷你模式按钮</b>进入，再点一次恢复全屏。
+                </p>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>迷你窗口保留什么</b><br>
+                    • 顶部：设备下拉框 + 刷新按钮<br>
+                    • 主区域：ADB 工具箱的「指令管理」区（右侧的搜索 / 弱网模拟 / Monkey 隐藏）<br>
+                    • 右侧工具栏：消息按钮（帮助中心隐藏）<br>
+                    • 左下：硬件信息 / Crash / ANR / 日志四个按钮，仍可调出底部面板<br>
+                    • 底部状态栏保留
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 迷你窗口是<b>固定尺寸</b>的，所以标题栏的最大化按钮会一并隐藏 ——
+                    避免误点后窗口又铺满全屏。退出迷你模式会自动恢复最大化与全部功能入口。
+                </div>
+                """
+            },
                         "🔧 ADB工具箱": {
                 "使用说明": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🔧 ADB工具箱</h2>
@@ -584,26 +607,83 @@ class HelpView(QFrame):
             },
 
             "🔌 接口自动化": {
-                "功能规划": """
+                "使用说明": """
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🔌 接口自动化</h2>
                 <p style="font-size: 15px;">
-                    <b>接口自动化</b> 是虫师即将推出的能力模块，用于对 HTTP / WebSocket / gRPC 等接口进行自动化测试。
+                    <b>接口自动化</b> 用来对 HTTP 接口做自动化测试：配好接口与环境，一键发送、
+                    批量跑、看断言结果、出报告。它<b>不依赖设备</b>，连不连车机都能用，
+                    接口数据单独存在 <code>data/api_data.json</code>，与 UI 用例互不影响。
+                </p>
+                <p style="font-size: 15px;">
+                    页面分三栏：左侧<b>接口管理</b>（分组 → 接口的导航树）、中间<b>接口列表</b>
+                    （当前分组的接口 + 环境选择 + 发送 / 执行选中 / 生成报告）、
+                    右侧<b>详情</b>（上半填请求参数，下半看响应与断言结果）。
                 </p>
 
-                <h3 style="font-size: 16px; margin-top: 20px;">🎯 规划中的核心能力</h3>
-                <ul style="font-size: 14px; line-height: 1.9;">
-                    <li><b>接口管理</b>：按项目 / 模块组织 API，支持路径参数、请求头、Body 模板</li>
-                    <li><b>环境变量</b>：多套环境（开发 / 测试 / 生产）一键切换，变量跨接口复用</li>
-                    <li><b>前置 / 后置脚本</b>：Python 脚本钩子，处理签名、加解密、数据提取</li>
-                    <li><b>断言引擎</b>：状态码、响应体、JSON Path、JSON Schema、响应时间多维断言</li>
-                    <li><b>链路场景</b>：接口串联，上一步响应作为下一步入参</li>
-                    <li><b>数据驱动</b>：CSV / JSON / Excel 参数化，批量跑数据</li>
-                    <li><b>测试报告</b>：与现有 HTML 报告统一风格，含请求 / 响应详情</li>
-                </ul>
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>新建接口</b><br>
+                    • 在左侧分组上右键 →「在此分组新建接口」，或中间列表里右键 →「新建接口」<br>
+                    • 填<b>名称</b>、<b>方法</b>（GET / POST / PUT / DELETE / PATCH / HEAD）与 <b>URL</b><br>
+                    • <b>请求头</b>一行一个，格式 <code>名称: 值</code>（空行和 <code>#</code> 开头会被忽略）<br>
+                    • <b>请求体</b>先选类型：JSON / 表单 / 原始文本。选 JSON 时会校验合法性，写错会当场提示<br>
+                    • 右侧改完点 <b>「保存」</b>；点 <b>「发送」会先自动保存再发</b> ——
+                    所见即所跑，不会出现"改了没保存、跑的还是旧参数"
+                </div>
 
-                <div style="border-left: 4px solid; padding: 12px 16px; margin: 16px 0; border-radius: 4px; background: #fff3e0; border-color: #ff9800;">
-                    ⏳ <b>当前状态</b>：功能开发中，敬请期待。<br>
-                    如需优先支持，欢迎通过"关于"页面联系开发者反馈。
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>执行与结果</b><br>
+                    • <b>发送</b>：只跑当前选中的这一个接口<br>
+                    • <b>执行选中</b>：在中间列表里 Ctrl / Shift 多选后批量跑，跑的过程可以点「停止」<br>
+                    • 中间列表的<b>「结果」列</b>实时刷新（通过 / 失败 + 耗时），右下角看响应体与断言明细<br>
+                    • <b>生成报告</b>：把最近一次执行结果出成 HTML，存到「设置 → 输出目录」，
+                    含每条接口的请求 / 响应与断言明细（长文本折叠显示）
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 左下角可以<b>导入 / 导出</b>整份接口配置（分组 + 接口 + 环境）。
+                    导入是增量合并、同名跳过，不会覆盖你现有的接口。
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    ⚠️ 本轮实现的是<b>最小闭环</b>：接口管理 / 环境变量 / 断言 / 执行 / 报告。
+                    前后置脚本、链路场景编排（上一步响应喂给下一步）、数据驱动参数化<b>尚未支持</b>。
+                </div>
+                """,
+
+                "环境变量与断言": """
+                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🌐 环境变量与断言</h2>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>环境</b>（中间列表上方的下拉框 + 「设置」按钮）<br>
+                    • 一套环境 = 一个 <b>base_url</b> + 若干自定义变量<br>
+                    • 变量写法 <code>{{名称}}</code>，可以用在 <b>URL / 请求头 / 请求体</b> 里<br>
+                    • <code>{{base_url}}</code> 是内置的，取当前环境的 base_url，所以接口 URL 通常写成
+                    <code>{{base_url}}/api/user</code>，换环境不用改接口<br>
+                    • 变量<b>没定义</b>时请求会直接失败，并告诉你是哪个变量没定义 —— 不会拿半截 URL 硬发
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>断言</b>：右下请求区底部的表格，一行一条，可勾选启用 / 停用<br>
+                    • <b>状态码</b>：期望值填 <code>200</code>；操作符支持 等于 / 不等于 / 大于 / 小于<br>
+                    • <b>响应取值</b>：表达式填 JSON 路径，如 <code>data.name</code>、
+                    <code>data.list[0].id</code>、<code>$.a.b</code>；操作符支持
+                    等于 / 不等于 / 包含 / 不包含 / 正则匹配<br>
+                    • <b>包含文本</b>：期望值填要出现在响应体里的文本<br>
+                    • <b>正则匹配</b>：期望值填正则表达式<br>
+                    • <b>耗时(毫秒)</b>：操作符用 小于 / 大于，期望值填毫秒数（如 <code>800</code>）<br>
+                    • 操作符「正则匹配」和类型「正则匹配」不是一回事：前者是拿正则去比取值结果，
+                    后者是拿正则去扫整个响应体
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 一个接口<b>没配任何断言</b>时，只要请求成功发出就算通过（HTTP 层面无异常）。
+                    要让"返回内容不对"也能被抓住，就得配断言。
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    ⚠️ 为兼容内网常见的自签证书，HTTPS <b>默认不校验证书</b>。
+                    如果要拿它连生产环境，请把 <code>services/api_service.py</code> 里的
+                    <code>VERIFY_SSL</code> 改成 <code>True</code>。
                 </div>
                 """
             },
@@ -674,12 +754,13 @@ class HelpView(QFrame):
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🎤 语音播报</h2>
                 <p style="font-size: 15px;">
                     <b>语音播报</b> 做的是<b>声学耦合</b>：电脑扬声器把文案念出来，车机麦克风拾音后
-                    交给它自己的语音助手。所以这页要解决的是<b>「声音从哪个扬声器出去」</b>和
-                    <b>「每句之间等多久」</b>，不跟车机做任何协议对接。
+                    交给它自己的语音助手。所以这页要解决的是<b>「声音从哪个扬声器出去」</b>、
+                    <b>「每句之间等多久」</b>，以及<b>「车机到底听清没有」</b>，不跟车机做任何协议对接。
                 </p>
                 <p style="font-size: 15px;">
                     页面分三栏：左侧<b>语音管理</b>（独立的语音用例库）、中间<b>用例步骤</b>
-                    （该用例的文案列表）、右侧<b>执行</b>（勾选要播的用例 + 语速 / 循环 / 执行选中 / 停止）。
+                    （该用例的文案与检测步骤）、右侧<b>执行</b>
+                    （勾选要播的用例 + 语速 / 循环 / 执行选中 / 停止）。
                 </p>
 
                 {self._get_steps_html([
@@ -687,6 +768,15 @@ class HelpView(QFrame):
                     {'image': 'voice_2_phrases.png', 'desc': '中间用例步骤：增删改文案，每行可设「播后等待」，可单条播报'},
                     {'image': 'voice_3_execute.png', 'desc': '右侧执行：勾选要播的用例（分组勾选会级联），设置语速与循环'},
                 ])}
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>两类步骤</b><br>
+                    • <b>播报步骤</b>：要念的文案 + 「播后等待」（这句播完到下一句之间等多久）。
+                    等待时间可按语速一键估算，也能用「批量重算」重算整个用例；每条步骤还能一键复制<br>
+                    • <b>检测步骤</b>（预期结果）：点中栏右上角的 <b>「+ 添加检测」</b> 加一条，
+                    填期望在车机日志里出现的关键词。它<b>永远跟着紧挨在它前面的那句播报</b>，
+                    播完就按它判定这句有没有被正确识别。没配检测步骤的播报<b>不做任何验证</b>
+                </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     💡 <b>语音用例与「自动化编辑」里的用例是两套独立的东西</b>：那边是 App 操作序列
@@ -708,7 +798,7 @@ class HelpView(QFrame):
 
                 {self._get_steps_html([
                     {'image': 'voice_4_wake_word.png', 'desc': '点「唤醒词」追加一条唤醒词文案；未选用例时按钮置灰'},
-                    {'image': 'voice_5_wake_word_setting.png', 'desc': '文案在「设置 → 语音播报」里改，默认「你好虫师」'},
+                    {'image': 'voice_5_wake_word_setting.png', 'desc': '文案在「设置 → 语音设置」里改，默认「你好虫师」'},
                 ])}
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
@@ -717,7 +807,7 @@ class HelpView(QFrame):
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 唤醒词在<b>「设置 → 语音播报」</b>页面配置，<b>留空则用默认的「你好虫师」</b>；
+                    💡 唤醒词在<b>「设置 → 语音设置」</b>页面配置，<b>留空则用默认的「你好虫师」</b>；
                     在设置里改完立刻生效，不用重启。
                 </div>
                 """,
@@ -738,8 +828,8 @@ class HelpView(QFrame):
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    <b>设置 → 语音播报</b><br>
-                    • <b>音色</b>：引擎里可用的发音人<br>
+                    <b>设置 → 语音设置</b><br>
+                    • <b>音色</b>：引擎里可用的发音人（含在线音色库与方言）<br>
                     • <b>输出设备</b>：声音从哪个扬声器 / 声卡出去，<b>选错车机就完全听不见</b><br>
                     • <b>唤醒词</b>：上面那个按钮追加的文案<br>
                     • 改完可点「试听」确认车机那边真能听见
@@ -747,6 +837,44 @@ class HelpView(QFrame):
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     ⚠️ 响度直接用电脑的系统音量，程序内不单独调音量。
+                </div>
+                """,
+
+                "回执验证": f"""
+                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">✅ 回执验证</h2>
+                <p style="font-size: 15px;">
+                    车机到底听清没有，以前只能靠人耳一句句判断。开启<b>回执验证</b>后，虫师会在每句播报
+                    之后抓一次车机 logcat，按<b>检测步骤</b>里填的关键词判定这句有没有被正确识别；
+                    没命中就把车机反馈的<b>原文</b>贴进「虫师日志」，直接告诉你车机回了什么。
+                </p>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    <b>怎么开</b><br>
+                    • 在 <b>「设置 → 回执验证」</b> 打开「启用回执验证」<br>
+                    • <b>日志标签</b>：填车机语音助手打日志用的 tag，<b>可以填多个</b>
+                    （空格或逗号分隔，如 <code>TtsBusinessManager TestManager</code>）。
+                    留空则抓全量日志 —— 量大，而且别的应用打出的日志可能碰巧命中关键词，建议至少填一个<br>
+                    • <b>失败关键词</b>：车机说「没听清」这类失败话术里会出现的词，逗号分隔
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 <b>开关只是总闸</b>：真正决定「验不验」的是这条播报后面有没有检测步骤 ——
+                    没配检测步骤的播报一律不验证。
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 <b>日志标签怎么找</b>：先留空抓全量跑一遍，在「虫师日志」里看车机那句反馈文案
+                    出现在哪个 tag 下面，再把那个 tag 填进来，日志会干净很多、判定也更准。
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    ⚠️ <b>「播后等待」要留够时间</b>：车机从听到指令到回话通常要好几秒，
+                    等待太短就会在车机回话之前去抓日志，自然什么都抓不到。带检测步骤的那句建议调到 5~8 秒以上。
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    ⚠️ 回执验证只能判断<b>「这句话有没有被正确识别」</b>，判断不了<b>「是否真的执行了」</b>
+                    （比如地图有没有真的切成全屏）—— 后者请用「自动化编辑」里的断言步骤。
                 </div>
                 """
             },

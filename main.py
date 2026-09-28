@@ -46,6 +46,9 @@ import logging
 from models.perf_model import PerfModel
 from views.perf_view import PerfView
 from controllers.perf_controller import PerfController
+from models.api_model import ApiModel
+from views.api_view import ApiView
+from controllers.api_controller import ApiController
 
 
 logging.basicConfig(
@@ -906,6 +909,18 @@ def main():
     # 性能工具卡片：堆转储 / 抓包（入口在性能检测页，能力复用 ADB 工具箱控制器）
     perf_view.hprof_requested.connect(adb_toolbox_controller._action_hprof)
     perf_view.packet_requested.connect(adb_toolbox_controller._action_packet)
+
+    # ---------- 接口自动化 ----------
+    # 与设备无关的纯 HTTP 模块：不依赖 device_service，独立数据文件 api_data.json
+    api_model = ApiModel()
+    api_view = ApiView(api_model)
+    api_controller = ApiController(view=api_view, api_model=api_model,
+                                   parent=main_window)
+
+    # 挂到主窗口 index 7（替换原「功能开发中」占位页）
+    main_window.set_api_view(api_view)
+    main_window.register_sub_view(api_view)
+
 
     # 消息中心：性能采集完成 / 阈值异常（纯新增）
     perf_controller.perf_finished.connect(notification_controller.on_perf_finished)
