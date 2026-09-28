@@ -6,7 +6,9 @@
     工具侧不跟车机做协议对接。之前播完就结束，无法确认车机到底听没听清、
     有没有执行。本服务补上「回执」一环：车机语音助手处理完一句后，通常会在
     系统 logcat 里打印反馈文案（识别到了什么 / 执行了什么 / 还是没听清），
-    播报后抓这段日志，按成功/失败关键词判定，失败时把车机反馈原文带出来。
+    播报后抓这段日志，按成功/失败关键词判定。判定结论里**不带日志原文**
+    （只说是哪个关键词命中 / 抓了多少行），完整原文从 judge_result 的第 3 个
+    返回值带出去，供调用方按需展示。
 
 设计约定：
     1. 不依赖 uiautomator2，直接用内置 adb 子进程 —— 语音播报页与自动化执行
@@ -124,17 +126,24 @@ class VoiceFeedbackService:
     def judge_result(self, lines, success_keywords, fail_keywords):
         """判定并转成「(ok, message, feedback_texts)」—— 调用方只关心这个。
 
-        未知（没命中任何关键词）按「未验证到 = 失败」处理，message 里带上
-        抓到的日志片段，方便用户判断车机到底回了什么。
+        未知（没命中任何关键词）按「未验证到 = 失败」处理。
+
+        message 里**不放车机日志原文**：这段文字会直接写进左下角「虫师日志」，
+        而原始行带着时间戳/PID，且大多是 `onPlayBegin() called`、`isJokeState`
+        这类与判断无关的内容，糊进去只会刷屏。所以只给结论：
+        失败时说是哪个失败关键词命中了，未命中时报抓了多少行。
+        完整原文仍从第 3 个返回值带出去，将来要做「查看详情」直接用它。
         """
         result, feedback = self.judge(lines, success_keywords, fail_keywords)
         if result == RESULT_SUCCESS:
             return True, "", feedback
         if result == RESULT_FAIL:
-            snippet = " | ".join(feedback[:3])
-            return False, f"车机语音反馈疑似失败：{snippet}", feedback
+            # 关键词本身（如「没听清」）就是车机回话的要点，比整行日志更好读
+            hits = [k for k in (fail_keywords or [])
+                    if k and any(k in ln for ln in feedback)]
+            what = "、".join(f"「{k}」" for k in hits) if hits else "失败关键词"
+            return False, f"车机语音反馈疑似失败：车机回话命中{what}", feedback
         # unknown：抓到日志但没命中关键词
         if feedback:
-            detail = "\n".join(feedback[:6])
-            return False, f"未匹配到车机反馈关键词，无法确认识别结果：\n{detail}", feedback
+            return False, f"未匹配到车机反馈关键词（本次抓取 {len(feedback)} 行日志）", feedback
         return False, "未抓到车机语音回执，无法确认识别结果", feedback

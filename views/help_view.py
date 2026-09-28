@@ -845,7 +845,8 @@ class HelpView(QFrame):
                 <p style="font-size: 15px;">
                     车机到底听清没有，以前只能靠人耳一句句判断。开启<b>回执验证</b>后，虫师会在每句播报
                     之后抓一次车机 logcat，按<b>检测步骤</b>里填的关键词判定这句有没有被正确识别；
-                    没命中就把车机反馈的<b>原文</b>贴进「虫师日志」，直接告诉你车机回了什么。
+                    没命中会在「虫师日志」里写一行结论 —— 报「本次抓取了多少行日志」，
+                    <b>不会把车机日志原文贴进面板</b>（原文带着时间戳和 PID，大多是无关内容，只会刷屏）。
                 </p>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
