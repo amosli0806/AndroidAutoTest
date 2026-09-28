@@ -57,6 +57,10 @@ class _PlaybackWorker(QThread):
     **只有配了检测步骤的播报才会做回执验证**：没有检测步骤就没有预期结果
     可判，此时一律不验证（设置页的开关只是总闸，决定"配了检测步骤的用例
     要不要真验"）。
+
+    **预期结果没命中不会中断整轮**：只记一行 ❌ 日志并累计，后面的步骤与用例
+    照常跑完，收尾再汇总成一句"共 N 条预期结果未命中"。只有用户点「停止」或
+    播报本身出错（超时等）才真的中断。
     """
 
     progress = pyqtSignal(str, int)       # (正在播的用例, 第几条)
@@ -76,6 +80,10 @@ class _PlaybackWorker(QThread):
         self.verify_block = verify_block
         self._stop = False
         self._interrupted = False
+        # 未命中的预期结果（只用于收尾汇总）。一条预期结果没命中**不再中断**整轮：
+        # 多条用例连跑时中途掐掉，剩下的用例全不执行，体验很差。但仍然记下来，
+        # 好让最终结果如实反映"这轮有失败"。
+        self._failed_verifies = []
 
     def stop(self):
         self._stop = True
@@ -155,7 +163,8 @@ class _PlaybackWorker(QThread):
                         break
 
                     # 回执验证：这条播报后面跟着的检测步骤（预期结果）逐条判定。
-                    # 失败把车机反馈文案带进 error
+                    # 未命中只记一行日志 + 记进 _failed_verifies，**不中断执行** ——
+                    # 一条没命中不代表后面几句白播，多用例连跑时更要跑完整轮。
                     if want_verify:
                         try:
                             from models.voice_model import get_verify_config
@@ -174,9 +183,7 @@ class _PlaybackWorker(QThread):
                                     voice_log.emit(
                                         "error",
                                         f"❌ 预期结果「{label}」未命中：{msg}")
-                                    error = msg
-                                    self._interrupted = True
-                                    break
+                                    self._failed_verifies.append(label)
                         except Exception:
                             voice_log.emit("warning", "语音验证：读取车机日志失败，本次按通过处理")
                     elif verifies:
@@ -202,11 +209,6 @@ class _PlaybackWorker(QThread):
                         else:
                             reason = "未开启回执验证"
                         voice_log.emit("success", f"✅ 播报完成「{short}」（{reason}）")
-
-                    # 预期结果判定失败时不再播后面的组：闭环语义下"没验证过"
-                    # 等价于失败，继续播只会产生一堆无意义的结果
-                    if self._interrupted:
-                        break
                 if self._interrupted:
                     break
         except VoiceError as e:
@@ -218,7 +220,25 @@ class _PlaybackWorker(QThread):
             from utils import voice_log
             voice_log.emit("error", f"❌ 播报失败：{error}")
         self.progress.emit("", -1)
-        self.done.emit(not self._interrupted and not error, error)
+        # 三种收尾：被停止 / 播报本身出错（这两类都中断了整轮，error 里带原因）；
+        # 预期结果有未命中的（此时后面的步骤与用例都已跑完，只是整体算失败）；
+        # 都没有才算正常播完。
+        if self._interrupted or error:
+            self.done.emit(False, error)
+        elif self._failed_verifies:
+            self.done.emit(False, self._verify_summary())
+        else:
+            self.done.emit(True, "")
+
+    def _verify_summary(self) -> str:
+        """收尾汇总：几条未命中 + 前两条的名字。
+
+        逐条明细已经在「虫师日志」里各占一行了，这里只给一句话，避免状态栏太长。
+        """
+        total = len(self._failed_verifies)
+        head = "、".join(f"「{name}」" for name in self._failed_verifies[:2])
+        tail = "…" if total > 2 else ""
+        return f"{total} 条预期结果未命中：{head}{tail}"
 
 
 class _BorderedTreeItemDelegate(QStyledItemDelegate):
@@ -491,14 +511,13 @@ class _VerifyRow(QFrame):
         self.text_edit.editingFinished.connect(self._on_edited)
         layout.addWidget(self.text_edit, 1)
 
-        # 与播报行右侧的 播后等待+三个图标 列对齐：检测行没有这些控件，
-        # 靠一个固定占位把复制/删除推到同样的横向位置
+        # 检测行没有「播后等待 / 估算 / 播放」这些控件，但**不要**用固定占位去补这段空。
+        # 复制 / 删除按钮本来就靠输入框的 stretch 顶到行尾，与播报行天然对齐（实测两行
+        # 的复制按钮同在 x=632）；补一个 158px 占位反而把输入框挤窄 158px，
+        # 白白浪费一行宽度 —— 预期关键词往往挺长，这些宽度给输入框更划算。
         self.delay_spin = None
         self.estimate_btn = None
         self.play_btn = None
-        spacer = QWidget()
-        spacer.setFixedWidth(90 + 8 + 26 + 8 + 26)
-        layout.addWidget(spacer)
 
         self.copy_btn = QToolButton()
         self.copy_btn.setObjectName("PhraseCopyBtn")

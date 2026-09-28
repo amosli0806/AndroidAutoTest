@@ -606,20 +606,18 @@ def main():
 
     # ADB 工具箱日志 → 底部日志面板
     # 日志颜色是写死在 HTML 行内样式里的，切换主题后需要按新配色重新渲染，
-    # 所以这里额外保留一份原始条目（上限与面板的 setMaximumBlockCount 一致）
+    # 所以这里额外保留一份原始条目。面板已不限行数，这份缓存同步保留全量
+    # （清理只发生在用户点「清空」时，见 MainWindow.clear_bottom_log）。
     main_window._bottom_log_entries = []
-    _BOTTOM_LOG_LIMIT = MainWindow.BOTTOM_LOG_MAX_BLOCKS   # 仅虫师日志有行数上限
 
     def append_bottom_log(text: str):
         if hasattr(main_window, "_bottom_log_text") and main_window._bottom_log_text:
             main_window._bottom_log_entries.append(text)
-            if len(main_window._bottom_log_entries) > _BOTTOM_LOG_LIMIT:
-                del main_window._bottom_log_entries[:-_BOTTOM_LOG_LIMIT]
             # 当前若在底部面板看 Crash / ANR，只缓存日志，不打断当前内容
             if main_window._bottom_panel_kind != "log":
                 return
             main_window._bottom_log_text.append(log_colors.recolor(text))
-            # 滚到底（行数限制由 setMaximumBlockCount 自动处理）
+            # 滚到底，让最新一行可见
             sb = main_window._bottom_log_text.verticalScrollBar()
             sb.setValue(sb.maximum())
 
@@ -640,7 +638,9 @@ def main():
         lambda text: main_window.set_bottom_panel_content("device_info", text))
 
     # 7. 底部捕虫师日志面板
-    from PyQt6.QtWidgets import QWidget as _QW, QVBoxLayout as _QVL, QTextEdit as _QTE, QLabel as _QL
+    from PyQt6.QtWidgets import (QWidget as _QW, QVBoxLayout as _QVL,
+                                 QHBoxLayout as _QHL, QTextEdit as _QTE,
+                                 QLabel as _QL, QPushButton as _QPB)
     from PyQt6.QtGui import QFont as _QFont
 
     bottom_log_widget = _QW()
@@ -649,18 +649,35 @@ def main():
     bl_layout.setContentsMargins(10, 6, 10, 10)
     bl_layout.setSpacing(4)
 
+    # 标题行：标题 + 右侧「清空」按钮（只在虫师日志模式下显示，见 show_bottom_panel）
+    bl_title_row = _QHL()
+    bl_title_row.setContentsMargins(0, 0, 0, 0)
+    bl_title_row.setSpacing(6)
+
     bl_title = _QL("🐞 虫师日志")
     bl_title.setObjectName("BottomLogTitle")
-    bl_layout.addWidget(bl_title)
+    bl_title_row.addWidget(bl_title)
+    bl_title_row.addStretch()
+
+    bl_clear_btn = _QPB("清空")
+    bl_clear_btn.setObjectName("BottomLogClearBtn")
+    # 不要给按钮写死高度：它一旦高过标题文字，整行就被撑高，日志区跟着矮一截
+    # （迷你模式下底部面板本来就只有 ~180px，实测写死 22px 会吃掉 9px）。
+    # 高度交给样式表按 11px 字号自然算，正好与 13px 的标题同高。
+    bl_clear_btn.setToolTip("清空虫师日志")
+    bl_clear_btn.clicked.connect(main_window.clear_bottom_log)
+    bl_title_row.addWidget(bl_clear_btn)
+
+    bl_layout.addLayout(bl_title_row)
 
     bottom_log_text = _QTE()
     bottom_log_text.setObjectName("BottomLogText")
     bottom_log_text.setReadOnly(True)
     bottom_log_text.setFont(_QFont("Consolas", 10))
     bottom_log_text.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-    # 限制最大行数：超过后自动丢弃最旧的行（Qt 原生支持，高效）
-    # Crash / ANR 模式会在 show_bottom_panel 里把上限改为 0（不限），这里只作用于虫师日志
-    bottom_log_text.document().setMaximumBlockCount(MainWindow.BOTTOM_LOG_MAX_BLOCKS)
+    # 不限行数：多条用例连跑时要能回看整轮，中途的行不能被吞掉。
+    # 想清理用标题行右侧的「清空」按钮。
+    bottom_log_text.document().setMaximumBlockCount(0)
 
     # 内容容器：0 = 文本区（日志 / 硬件信息 / Crash / ANR），1 = 消息中心。
     # 之所以要换成堆叠容器而不是继续共用这个 QTextEdit：消息列表需要每行的
@@ -681,6 +698,7 @@ def main():
     # 保存引用供后续使用
     main_window._bottom_log_text = bottom_log_text
     main_window._bottom_log_title = bl_title
+    main_window._bottom_log_clear_btn = bl_clear_btn
     main_window.set_bottom_log_placeholder(bottom_log_widget)
     main_window.set_bottom_panel_stack(bottom_stack, notification_view)
     main_window.set_notification_service(notification_service)

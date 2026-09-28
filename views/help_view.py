@@ -864,6 +864,12 @@ class HelpView(QFrame):
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 <b>预期结果没命中不会中断执行</b>：只记一行 ❌ 日志，后面的步骤和用例照常跑完，
+                    收尾再汇总成一句「共 N 条预期结果未命中」—— 多条用例连跑时不会因为某一条没命中
+                    就把剩下的全掐掉。只有点「停止」或播报本身出错（如超时）才会中断。
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     💡 <b>日志标签怎么找</b>：先留空抓全量跑一遍，在「虫师日志」里看车机那句反馈文案
                     出现在哪个 tag 下面，再把那个 tag 填进来，日志会干净很多、判定也更准。
                 </div>

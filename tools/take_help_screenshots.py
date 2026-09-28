@@ -174,7 +174,9 @@ def _append_bottom_log(text: str):
 adb_toolbox_controller.log_emitted.connect(_append_bottom_log)
 
 # 底部"虫师日志"面板（照搬 main.py，adb_5_logs 需要它）
-from PyQt6.QtWidgets import QVBoxLayout as _QVL, QTextEdit as _QTE, QLabel as _QL
+from PyQt6.QtWidgets import (QVBoxLayout as _QVL, QHBoxLayout as _QHL,
+                             QTextEdit as _QTE, QLabel as _QL,
+                             QPushButton as _QPB)
 from PyQt6.QtGui import QFont as _QFont
 from PyQt6.QtWidgets import QStackedWidget as _QSW
 
@@ -183,15 +185,25 @@ bottom_log_widget.setObjectName("BottomLogPanel")
 bl_layout = _QVL(bottom_log_widget)
 bl_layout.setContentsMargins(10, 6, 10, 10)
 bl_layout.setSpacing(4)
+bl_title_row = _QHL()
+bl_title_row.setContentsMargins(0, 0, 0, 0)
+bl_title_row.setSpacing(6)
 bl_title = _QL("🐞 虫师日志")
 bl_title.setObjectName("BottomLogTitle")
-bl_layout.addWidget(bl_title)
+bl_title_row.addWidget(bl_title)
+bl_title_row.addStretch()
+bl_clear_btn = _QPB("清空")
+bl_clear_btn.setObjectName("BottomLogClearBtn")
+# 高度不写死，交给样式表按字号自然算（写死会撑高标题行、挤掉日志区高度）
+bl_clear_btn.clicked.connect(main_window.clear_bottom_log)
+bl_title_row.addWidget(bl_clear_btn)
+bl_layout.addLayout(bl_title_row)
 bottom_log_text = _QTE()
 bottom_log_text.setObjectName("BottomLogText")
 bottom_log_text.setReadOnly(True)
 bottom_log_text.setFont(_QFont("Consolas", 10))
 bottom_log_text.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-bottom_log_text.document().setMaximumBlockCount(MainWindow.BOTTOM_LOG_MAX_BLOCKS)
+bottom_log_text.document().setMaximumBlockCount(0)   # 不限行数，与主程序一致
 
 from services.notification_service import NotificationService
 from views.notification_center_view import NotificationCenterView
@@ -206,6 +218,7 @@ bl_layout.addWidget(bottom_stack, 1)
 
 main_window._bottom_log_text = bottom_log_text
 main_window._bottom_log_title = bl_title
+main_window._bottom_log_clear_btn = bl_clear_btn
 main_window.set_bottom_log_placeholder(bottom_log_widget)
 main_window.set_bottom_panel_stack(bottom_stack, notification_view)
 main_window.set_notification_service(notification_service)

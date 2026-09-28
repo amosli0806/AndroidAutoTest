@@ -1533,6 +1533,10 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        # 窗口尺寸变了就按比例重排主分割器。少了这一步，底部日志面板的尺寸会停在
+        # 上一次算出来的绝对像素上：迷你窗口只有 620 高，面板被挤到最小高度（实测
+        # 占比从 30% 掉到 21.6%）；回到全屏也不会自己长回来，得切一次面板类型才正常。
+        self._apply_bottom_panel_ratio()
         if getattr(self, '_wallpaper_loaded', False) and hasattr(self, 'wallpaper_label'):
             rect = self.rect()
             self.wallpaper_label.setGeometry(rect)
@@ -2175,6 +2179,10 @@ class MainWindow(QMainWindow):
 
     # ---------- 迷你窗口模式 ----------
     MINI_WINDOW_SIZE = (500, 620)
+    # 迷你模式下给顶部堆叠区的最小高度。堆叠区的默认最小高度是「所有页面里最大的
+    # 那个」（实测 428px），会把 550px 高的迷你窗口顶死、底部日志面板只能剩 ~120px。
+    # 160 足够放下 ADB 工具箱的指令管理区（列表本身可滚动）。
+    MINI_TOP_MIN_HEIGHT = 160
 
     def _on_mini_mode_toggled(self, checked):
         self.set_mini_mode(checked)
@@ -2212,6 +2220,11 @@ class MainWindow(QMainWindow):
             self.switch_view(0)
             self.mini_mode_action.setIcon(qta.icon('fa6s.expand', color='white'))
             self.mini_mode_action.setToolTip("退出迷你模式")
+            # 顶部堆叠区的最小高度取的是「所有页面里最大的那个」（实测 428px）。
+            # 迷你窗口的竖向空间只有 550px，被它一顶，底部日志面板最多只能拿到 ~120px，
+            # 怎么调比例都长不高。这里给堆叠区一个显式的小最小高度把余量让出来 ——
+            # 迷你模式下功能导航是隐藏的，只会停在 ADB 工具箱页，压矮它没有副作用。
+            self.stacked_widget.setMinimumHeight(self.MINI_TOP_MIN_HEIGHT)
             # 迷你窗口固定尺寸，去掉标题栏的最大化按钮（setWindowFlag 会隐藏
             # 窗口，需在其后调用 show* 重新显示）
             self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, False)
@@ -2223,6 +2236,8 @@ class MainWindow(QMainWindow):
         else:
             self.mini_mode_action.setIcon(qta.icon('fa6s.compress', color='#a3a6b0'))
             self.mini_mode_action.setToolTip("切换迷你模式：只显示 ADB 指令管理区")
+            # 还原堆叠区的最小高度，让它在全屏下照旧撑住各页面
+            self.stacked_widget.setMinimumHeight(0)
             # 解除固定尺寸，恢复可自由缩放（min/max 都回到默认），并还原最大化按钮
             from PyQt6.QtWidgets import QWIDGETSIZE_MAX
             self.setMinimumSize(0, 0)
@@ -2232,6 +2247,8 @@ class MainWindow(QMainWindow):
             self.showMaximized()
 
         self.mini_mode_action.setChecked(enabled)
+        # 进出迷你模式都会改窗口高度，比例要按新高度重算一次
+        self._apply_bottom_panel_ratio()
 
     # ---------- 底部日志面板 ----------
     # 面板标题与图标：三种模式共用同一块区域
@@ -2255,8 +2272,12 @@ class MainWindow(QMainWindow):
         "crash": "正在拉取 Crash 日志…",
         "anr": "正在拉取 ANR 日志…",
     }
-    # 虫师日志只保留最近若干行防无限增长；Crash / ANR 不限制行数（0 = 不限）
-    BOTTOM_LOG_MAX_BLOCKS = 50
+    # 虫师日志不限行数：多条用例连跑时要能回看整轮，中途的行不能被吞掉。
+    # 清理由面板上的「清空」按钮负责（见 clear_bottom_log）。
+
+    # 底部面板（日志 / Crash / ANR / 硬件信息）占主分割器的比例。
+    # 窗口尺寸变化时按它重排，见 _apply_bottom_panel_ratio。
+    BOTTOM_PANEL_RATIO = 0.3
 
     def set_bottom_log_placeholder(self, widget):
         old = self.main_splitter.widget(1)
@@ -2324,6 +2345,11 @@ class MainWindow(QMainWindow):
         title = getattr(self, "_bottom_log_title", None)
         if title is not None:
             title.setText(self.BOTTOM_PANEL_TITLES.get(kind, self.BOTTOM_PANEL_TITLES["log"]))
+        # 「清空」只对虫师日志有意义：Crash / ANR / 硬件信息是随时可重新拉取的快照，
+        # 清掉反而让人以为"没拉到"。
+        clear_btn = getattr(self, "_bottom_log_clear_btn", None)
+        if clear_btn is not None:
+            clear_btn.setVisible(kind == "log")
 
         # 内容容器切页：0 = 文本区（log / crash / anr / device_info），1 = 消息中心
         is_message = (kind == "message")
@@ -2333,9 +2359,10 @@ class MainWindow(QMainWindow):
         text = getattr(self, "_bottom_log_text", None)
         if text is not None and not is_message:
             doc = text.document()
+            # 一律不限行数（0 = 不限）。虫师日志要能回看整轮执行 —— 多条用例连跑时，
+            # 中途的行不能被吞掉；Crash / ANR 动辄上千行，截断更会看不到关键堆栈。
+            doc.setMaximumBlockCount(0)
             if kind == "log":
-                # 虫师日志只保留最近若干行，避免无限增长
-                doc.setMaximumBlockCount(self.BOTTOM_LOG_MAX_BLOCKS)
                 # 日志带 HTML 行内配色，需按当前主题重新上色
                 from utils import log_colors
                 text.clear()
@@ -2344,8 +2371,6 @@ class MainWindow(QMainWindow):
                 sb = text.verticalScrollBar()
                 sb.setValue(sb.maximum())
             else:
-                # 0 = 不限行数：Crash / ANR 动辄上千行，截断会看不到关键堆栈
-                doc.setMaximumBlockCount(0)
                 text.setPlainText(self._bottom_panel_contents.get(kind) or "（暂无内容）")
                 text.verticalScrollBar().setValue(0)
 
@@ -2355,8 +2380,36 @@ class MainWindow(QMainWindow):
 
         self.bottom_placeholder.setVisible(True)
         self._sync_bottom_panel_actions(kind)
+        self._apply_bottom_panel_ratio()
+
+    def _apply_bottom_panel_ratio(self):
+        """按固定比例把主分割器上下重新分一次（底部面板占 BOTTOM_PANEL_RATIO）。
+
+        为什么要单独抽出来、还挂在 resizeEvent 上：分割器尺寸只在打开面板时算过一次，
+        之后窗口尺寸一变（进出迷你模式、最大化/还原、拖边框）它就保持旧的绝对像素 ——
+        迷你窗口只有 620 高，底部面板会被挤到最小高度（实测占比 30% → 21.6%）；
+        回到全屏后也不会自己长回来，表现为"日志区一直很矮，切一次 Crash 再切回来才正常"。
+        """
+        if self.bottom_placeholder is None or not self.bottom_placeholder.isVisible():
+            return
+        if self.main_splitter is None:   # resizeEvent 可能早于 setup_ui
+            return
         total = self.main_splitter.height()
-        self.main_splitter.setSizes([int(total * 0.7), int(total * 0.3)])
+        if total <= 0:
+            return
+        bottom = int(total * self.BOTTOM_PANEL_RATIO)
+        self.main_splitter.setSizes([total - bottom, bottom])
+
+    def clear_bottom_log(self):
+        """清空虫师日志（面板上的「清空」按钮）。
+
+        必须连 _bottom_log_entries 一起清：那是切换主题时用来重渲染的缓存，
+        只清控件的话，切一次主题旧日志又全回来了。
+        """
+        self._bottom_log_entries = []
+        text = getattr(self, "_bottom_log_text", None)
+        if text is not None:
+            text.clear()
 
     def set_bottom_panel_content(self, kind, content):
         """Crash / ANR 拉取完成后回填；若用户已切到别的模式，只缓存不抢占视图"""
@@ -3151,6 +3204,17 @@ class MainWindow(QMainWindow):
                 font-size: 13px;
                 background: transparent;
             }}
+            #BottomLogPanel QPushButton#BottomLogClearBtn {{
+                color: {text};
+                background: transparent;
+                border: 1px solid {border};
+                border-radius: 4px;
+                padding: 0px 8px;
+                font-size: 11px;
+            }}
+            #BottomLogPanel QPushButton#BottomLogClearBtn:hover {{
+                background: {'rgba(255, 255, 255, 0.12)' if is_dark else 'rgba(0, 0, 0, 0.06)'};
+            }}
             #BottomLogPanel QTextEdit#BottomLogText {{
                 background: transparent;
                 color: {text};
@@ -3173,6 +3237,15 @@ class MainWindow(QMainWindow):
                 height: 0px;
             }}
         """)
+
+        # 「清空」按钮的高度不许超过标题文字：它一旦高过标题，整行被撑高，
+        # 日志区就跟着矮一截（迷你模式下底部面板只有 ~180px，很敏感）。
+        # 样式表里已经按 11px 字号把它压到自然高，这里再按标题的实际字体高度
+        # 封顶一次 —— 换字体 / 换 DPI 时不会因为度量差异又冒出来。
+        clear_btn = getattr(self, "_bottom_log_clear_btn", None)
+        title = getattr(self, "_bottom_log_title", None)
+        if clear_btn is not None and title is not None:
+            clear_btn.setMaximumHeight(title.fontMetrics().height())
 
     @staticmethod
     def _apply_tooltip_theme(is_dark: bool):
