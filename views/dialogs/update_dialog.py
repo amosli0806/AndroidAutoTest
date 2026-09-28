@@ -6,14 +6,9 @@
 离屏环境里单独跑、单独验，不必真的联网。
 """
 
-import os
-import sys
-
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QFrame,
-    QApplication
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QFrame
 )
 
 from utils.settings import Settings, THEME_MODE_DARK
@@ -22,20 +17,6 @@ from utils.version import APP_VERSION
 ACTION_DOWNLOAD = "download"      # 下载并更新
 ACTION_APPLY = "apply"            # 已下载好，立即重启并更新
 ACTION_LATER = "later"            # 稍后再说
-
-
-def _app_icon() -> QIcon:
-    """品牌图标：优先按打包/开发环境的资源路径找，找不到退回应用窗口图标。"""
-    if getattr(sys, "frozen", False):
-        base_dir = sys._MEIPASS
-    else:
-        # 本文件在 views/dialogs/ 下，往上三级是项目根（与 help_view 同一套判断）
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    path = os.path.join(base_dir, "resources", "icons", "app_icon.png")
-    if os.path.exists(path):
-        return QIcon(path)
-    app = QApplication.instance()
-    return app.windowIcon() if app is not None else QIcon()
 
 
 class UpdateAvailableDialog(QDialog):
@@ -204,8 +185,8 @@ class UpdateAvailableDialog(QDialog):
 class UpdateReadyDialog(QDialog):
     """「更新已就绪」确认框：更新包已下载校验完成，问是否立即重启生效。
 
-    与 QMessageBox.question 相比：品牌图标 + 主题配色 + 中文按钮，
-    与「发现新版本 / 正在更新」两个对话框同一套视觉。
+    视觉与「发现新版本 / 正在更新」两个对话框同一套主题配色；
+    标题直接用版本信息一句话，不再放大图标 + 大标题（窗口标题栏已有「更新已就绪」）。
     返回 True = 立即重启更新；False（稍后 / 关窗 / Esc）= 保留更新包下次生效。
     """
 
@@ -223,35 +204,13 @@ class UpdateReadyDialog(QDialog):
     def _build_ui(self, version: str):
         root = QVBoxLayout(self)
         root.setContentsMargins(22, 20, 22, 18)
-        root.setSpacing(10)
+        root.setSpacing(12)
 
-        # 顶行：品牌徽标 + 标题 + 副标题
-        top = QHBoxLayout()
-        top.setSpacing(14)
-        badge = QLabel()
-        badge.setObjectName("ReadyBadge")
-        badge.setPixmap(_app_icon().pixmap(52, 52))
-        badge.setFixedSize(56, 56)
-        badge.setScaledContents(False)
-        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        top.addWidget(badge, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        head = QVBoxLayout()
-        head.setSpacing(2)
-        title = QLabel("更新已就绪")
+        # 标题直接用版本信息一句话：窗口标题栏已写「更新已就绪」，
+        # 内容里再放大图标 + 大标题属于重复展示
+        title = QLabel(f"新版本 V{version} 已下载并校验完成")
         title.setObjectName("ReadyTitle")
-        head.addWidget(title)
-        subtitle = QLabel(f"新版本 V{version} 已下载并校验完成")
-        subtitle.setObjectName("ReadySubtitle")
-        head.addWidget(subtitle)
-        top.addLayout(head, 1)
-        root.addLayout(top)
-
-        divider = QFrame()
-        divider.setObjectName("ReadyDivider")
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setFixedHeight(1)
-        root.addWidget(divider)
+        root.addWidget(title)
 
         # 说明卡片：说清「要做什么 + 数据安全」两件事
         card = QFrame()
@@ -309,21 +268,10 @@ class UpdateReadyDialog(QDialog):
                 color: {body_color};
                 font-size: 13px;
             }}
-            #UpdateReadyDialog QLabel#ReadyBadge {{
-                border-radius: 12px;
-            }}
             #UpdateReadyDialog QLabel#ReadyTitle {{
                 color: {title_color};
-                font-size: 17px;
+                font-size: 16px;
                 font-weight: bold;
-            }}
-            #UpdateReadyDialog QLabel#ReadySubtitle {{
-                color: #999999;
-                font-size: 12px;
-            }}
-            #UpdateReadyDialog QFrame#ReadyDivider {{
-                background-color: {border};
-                max-height: 1px;
             }}
             #UpdateReadyDialog QFrame#ReadyCard {{
                 background-color: {card_bg};
