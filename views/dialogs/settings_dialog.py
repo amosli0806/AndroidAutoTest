@@ -597,7 +597,8 @@ class SettingsDialog(QDialog):
 
         self.verify_tag_edit = QLineEdit()
         self.verify_tag_edit.setMinimumWidth(340)
-        self.verify_tag_edit.setPlaceholderText("车机语音助手的日志标签，留空抓全量日志")
+        self.verify_tag_edit.setPlaceholderText(
+            "可填多个，空格或逗号分隔；留空抓全量日志")
         form.addRow("日志标签:", self.verify_tag_edit)
 
         self.verify_fail_edit = QLineEdit()
@@ -608,11 +609,14 @@ class SettingsDialog(QDialog):
         layout.addLayout(form)
 
         hint = QLabel(
+            "日志标签填车机语音助手打日志用的 tag，可填多个、用空格或逗号分隔"
+            "（如：TtsBusinessManager TestManager）。留空抓全量日志：量大，且别的应用"
+            "打出的日志可能碰巧命中关键词，建议至少填一个。\n"
             "抓取规则因车型而异，建议先不开启；等拿到车机、按它的日志格式填好标签和关键词后再打开。"
             "都填好但一句反馈都没抓到时，也会当作判定失败，避免没验证到却按通过算。\n"
-            "「成功关键词」不在这里填 —— 不同场景（导航/音乐/空调…）成功时的反馈措辞"
-            "差异很大，已经改成在「语音播报页」选中用例后点右上角「反馈检测」按用例分别配置；"
-            "这里只保留很少变的失败关键词。"
+            "这个开关只是总闸，只对「配了检测步骤的播报」生效 —— 判定依据是预期结果关键词，"
+            "在「语音播报页」选中用例后点「+ 添加检测」按用例配置；"
+            "没配检测步骤的播报一律不验证。这里只保留很少变的失败关键词。"
         )
         hint.setObjectName("SettingsPageSubtitle")
         hint.setWordWrap(True)

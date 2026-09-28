@@ -53,6 +53,10 @@ class _PlaybackWorker(QThread):
     检测步骤元素为 (步骤下标, [成功关键词]) —— 它是对前面那句播报的
     预期结果，播完抓车机日志逐条判定。带上下标是为了让界面能高亮
     "正在播的是哪一条"。
+
+    **只有配了检测步骤的播报才会做回执验证**：没有检测步骤就没有预期结果
+    可判，此时一律不验证（设置页的开关只是总闸，决定"配了检测步骤的用例
+    要不要真验"）。
     """
 
     progress = pyqtSignal(str, int)       # (正在播的用例, 第几条)
@@ -91,22 +95,27 @@ class _PlaybackWorker(QThread):
                     self.progress.emit(case_id, phrase_index)
 
                     short = text[:20] + ("…" if len(text) > 20 else "")
-                    # 三种状态：verify_on 表示「本应验证」；clear 失败或抓取失败时
-                    # 会置成 False，此时只给 warning，不再补「未开启验证」的成功日志
+                    # 是否验证只看「这条播报后面有没有配检测步骤」：没有检测步骤
+                    # 就没有预期结果可判，一律不验证 —— 设置页那份全局成功关键词
+                    # 早已改成按用例配置、界面上不再可编辑，拿它兜底必然误判。
+                    # verify_on 表示总闸允许验证（开关开着且设备在线）；
+                    # verify_blocked 表示「本想验证但清基线失败」，此时只给 warning，
+                    # 不再补「未验证」的日志。
                     verify_on = self.feedback is not None
-                    verify_skipped = False
+                    want_verify = verify_on and bool(verifies)
+                    verify_blocked = False
 
-                    # 播前清 logcat 基线（开启回执验证时）；清失败就把验证关掉，
-                    # 避免拿旧日志误判，也不让验证本身拖垮播报
-                    if self.feedback is not None:
+                    # 播前清 logcat 基线（只在这条真要验证时）；清失败就把验证
+                    # 关掉，避免拿旧日志误判，也不让验证本身拖垮播报
+                    if want_verify:
                         try:
                             self.feedback.clear()
                         except Exception:
                             from utils import voice_log
                             voice_log.emit("warning", "语音验证：无法清空车机日志基线，本次跳过回执验证")
                             self.feedback = None
-                            verify_on = False
-                            verify_skipped = True
+                            want_verify = False
+                            verify_blocked = True
 
                     from utils import voice_log
                     voice_log.emit("info", f"🔊 开始播报「{short}」")
@@ -145,67 +154,54 @@ class _PlaybackWorker(QThread):
                     if self._interrupted:
                         break
 
-                    # 回执验证：这条播报后面跟着的检测步骤（预期结果）逐条判定；
-                    # 没配检测步骤但开启了验证时，退回设置页全局关键词兜底判定。
+                    # 回执验证：这条播报后面跟着的检测步骤（预期结果）逐条判定。
                     # 失败把车机反馈文案带进 error
-                    if self.feedback is not None:
+                    if want_verify:
                         try:
                             from models.voice_model import get_verify_config
                             cfg = get_verify_config()
                             lines = self.feedback.capture(cfg["log_tag"])
-                            if verifies:
-                                for _v_idx, kw_list in verifies:
-                                    label = "、".join(kw_list[:3]) + (
-                                        "…" if len(kw_list) > 3 else "")
-                                    ok, msg, _ = self.feedback.judge_result(
-                                        lines, kw_list, cfg["fail_keywords"])
-                                    if ok:
-                                        voice_log.emit(
-                                            "success",
-                                            f"✅ 预期结果「{label}」：车机反馈命中")
-                                    else:
-                                        voice_log.emit(
-                                            "error",
-                                            f"❌ 预期结果「{label}」未命中：{msg}")
-                                        error = msg
-                                        self._interrupted = True
-                                        break
-                            else:
+                            for _v_idx, kw_list in verifies:
+                                label = "、".join(kw_list[:3]) + (
+                                    "…" if len(kw_list) > 3 else "")
                                 ok, msg, _ = self.feedback.judge_result(
-                                    lines, cfg["success_keywords"],
-                                    cfg["fail_keywords"])
+                                    lines, kw_list, cfg["fail_keywords"])
                                 if ok:
-                                    voice_log.emit("success", f"✅ 语音验证通过「{short}」：车机已正确识别")
+                                    voice_log.emit(
+                                        "success",
+                                        f"✅ 预期结果「{label}」：车机反馈命中")
                                 else:
-                                    voice_log.emit("error", f"❌ 语音验证失败「{short}」：{msg}")
+                                    voice_log.emit(
+                                        "error",
+                                        f"❌ 预期结果「{label}」未命中：{msg}")
                                     error = msg
                                     self._interrupted = True
+                                    break
                         except Exception:
                             voice_log.emit("warning", "语音验证：读取车机日志失败，本次按通过处理")
-                    elif not verify_on and not verify_skipped:
-                        if self.verify_block:
-                            # 已开启验证但环境不满足（未连设备等）：明确说
-                            # 原因 + 会继续执行，别让用户以为验证过或以为没开
-                            if verifies:
-                                voice_log.emit(
-                                    "warning",
-                                    f"⚠ 已开启回执验证，但{self.verify_block}，"
-                                    f"无法读取车机反馈，{len(verifies)} 条预期结果"
-                                    f"跳过验证「{short}」（按通过继续执行）")
-                            else:
-                                voice_log.emit(
-                                    "warning",
-                                    f"⚠ 已开启回执验证，但{self.verify_block}，"
-                                    f"无法读取车机反馈，「{short}」跳过验证"
-                                    f"（按通过继续执行）")
-                        elif verifies:
-                            # 未开启回执验证：至少让用户知道播完了；配了预期结果的
-                            # 要明确说它们没被验证，别让人以为验过
+                    elif verifies:
+                        # 配了检测步骤却没验成：把原因说准（未开启 / 环境不满足）
+                        if verify_blocked:
+                            pass   # 播前已给过「无法清空基线」的 warning
+                        elif self.verify_block:
+                            voice_log.emit(
+                                "warning",
+                                f"⚠ 已开启回执验证，但{self.verify_block}，"
+                                f"无法读取车机反馈，{len(verifies)} 条预期结果"
+                                f"跳过验证「{short}」（按通过继续执行）")
+                        else:
                             voice_log.emit(
                                 "warning",
                                 f"⚠ 未开启回执验证，{len(verifies)} 条预期结果未验证「{short}」")
+                    else:
+                        # 没配检测步骤：不验证是正常情况，给个完成回执即可
+                        if verify_on:
+                            reason = "未配检测步骤，不验证"
+                        elif self.verify_block:
+                            reason = f"{self.verify_block}，跳过验证"
                         else:
-                            voice_log.emit("success", f"✅ 播报完成「{short}」（未开启回执验证）")
+                            reason = "未开启回执验证"
+                        voice_log.emit("success", f"✅ 播报完成「{short}」（{reason}）")
 
                     # 预期结果判定失败时不再播后面的组：闭环语义下"没验证过"
                     # 等价于失败，继续播只会产生一堆无意义的结果

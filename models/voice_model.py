@@ -47,8 +47,9 @@ DEFAULT_SETTINGS = {
     # 没有 volume：响度直接用电脑的系统音量，界面上不提供音量调节
     # 语音回执验证：播报后从车机 logcat 抓反馈文案判定。enabled 默认关，
     # 因为抓取规则依赖具体车机的 log 格式，没适配好前开着会把正常播报误判成失败。
-    # success_keywords 已改为「按用例」配置（语音播报页的「反馈检测」按钮），
-    # 这里保留一份默认值仅作兜底/自动化编辑 voice 步骤的回退，不在设置页里编辑了。
+    # enabled 只是总闸：真正决定「验不验」的是该条播报后面有没有检测步骤。
+    # success_keywords 按用例配在检测步骤里（语音播报页的「+ 添加检测」），
+    # 这里的默认值已无消费方，仅为兼容旧数据文件保留，不在设置页里编辑。
     "verify": {
         "enabled": False,
         "log_tag": "",            # 车机语音助手的 log tag；留空抓全量日志
@@ -205,6 +206,9 @@ class VoiceModel:
 
     def __init__(self):
         self.settings = dict(DEFAULT_SETTINGS)
+        # 本实例显式改过的 settings 键。save() 做字段级合并时只让这些键以内存为准，
+        # 其余键重新从磁盘取 —— 语音页持有的是启动时的长生命周期实例，见 _merge_settings_for_save。
+        self._dirty_settings = set()
         self.groups: List[VoiceGroup] = []
         self.cases: List[VoiceCase] = []
         self.load()
@@ -226,6 +230,7 @@ class VoiceModel:
                     else:
                         merged[key] = value
                 self.settings = merged
+                self._dirty_settings = set()
                 self.groups = [VoiceGroup.from_dict(g)
                                for g in (data.get("groups") or [])]
                 self.cases = [VoiceCase.from_dict(c)
@@ -237,13 +242,36 @@ class VoiceModel:
         # 空状态下用户需要先右键建分组，再在分组里建用例 ——
         # 与「自动化编辑」页"先建项目/模块，再建用例"的路径一致。
         self.settings = dict(DEFAULT_SETTINGS)
+        self._dirty_settings = set()
         self.groups = []
         self.cases = []
         self.save()
 
+    def _merge_settings_for_save(self) -> dict:
+        """算出本次要落盘的 settings：本实例没显式改过的键，以磁盘上的为准。
+
+        为什么需要：语音管理页在 main.py 启动时 new 了一个 VoiceModel 并一直持有，
+        它的 self.settings 是启动那一刻的快照。设置页改了配置（比如清空日志标签）
+        之后，用户只要回语音页动一下语速、加一条步骤，这个旧实例的 save() 就会把
+        整份旧 settings 写回去，设置页的改动被无声覆盖 —— 现象就是"清掉的日志标签
+        又回来了"。改成字段级合并：只有本实例 set_settings 过的键以内存为准。
+        """
+        base = {}
+        try:
+            with open(self.DATA_FILE, encoding="utf-8") as f:
+                base = json.load(f).get("settings") or {}
+        except Exception:
+            base = {}
+        merged = {**DEFAULT_SETTINGS, **base}
+        for key in self._dirty_settings:
+            if key in self.settings:
+                merged[key] = self.settings[key]
+        return merged
+
     def save(self):
         try:
             os.makedirs(os.path.dirname(self.DATA_FILE), exist_ok=True)
+            self.settings = self._merge_settings_for_save()
             with open(self.DATA_FILE, "w", encoding="utf-8") as f:
                 json.dump({
                     "settings": self.settings,
@@ -258,6 +286,7 @@ class VoiceModel:
         for key, value in kwargs.items():
             if key in DEFAULT_SETTINGS:
                 self.settings[key] = value
+                self._dirty_settings.add(key)
         self.save()
 
     # ---------------- 分组 ----------------
@@ -616,7 +645,9 @@ def get_verify_config() -> dict:
     """当前配置的语音回执验证规则。只读 settings 段，不构造 VoiceModel。
 
     返回 {enabled, log_tag, success_keywords, fail_keywords}，都带安全的默认值。
-    供执行层（device_service / 语音页 worker）在执行线程里读取，避免构造 VoiceModel。
+    供语音页 worker 在执行线程里读取，避免构造 VoiceModel。
+    其中 success_keywords 已无消费方（成功关键词按用例配在检测步骤里），
+    保留只是为了不破坏旧数据文件。
     """
     cfg = {
         "enabled": False,

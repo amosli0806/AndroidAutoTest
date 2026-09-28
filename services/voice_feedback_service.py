@@ -13,13 +13,27 @@
        共用，且不要求持有 uiautomator2 的设备对象。
     2. 规则（log tag / 成功词 / 失败词 / 是否开启）由设置页配置，存在
        voice_data.json 的 settings.verify 段，这里只做执行，不背规则。
+       log tag 支持一次填多个（空格 / 逗号分隔），见 split_tags。
     3. 抓取失败（没连设备 / adb 报错）与「抓到但没命中关键词」要区分开：
        前者是环境问题，调用方应跳过验证；后者按「未知 = 判定失败」处理。
 """
+import re
 import subprocess
 import sys
 
 from utils.adb_path import get_adb_path
+
+
+def split_tags(tag) -> list:
+    """把设置页填的「日志标签」拆成多个 tag：空格、英文逗号、中文逗号都认。
+
+    为什么要支持多个：一台车机上，语音的反馈文案常常分散在几个 tag 上 ——
+    助手自身的话术、TTS 业务层、状态机各打各的，只填一个很容易漏判（例如某车型
+    助手的 tip 通道只打「听到了什么」，回复正文却在 TTS 业务层）。
+    """
+    if not tag:
+        return []
+    return [t for t in re.split(r"[,，\s]+", str(tag).strip()) if t]
 
 
 class VoiceFeedbackError(Exception):
@@ -72,13 +86,14 @@ class VoiceFeedbackService:
     def capture(self, tag=None) -> list:
         """抓取清基线以来的日志，返回文本行列表（已去空行）。失败抛 VoiceFeedbackError。
 
-        tag 为空时抓全量日志（按关键词判定）；填了 tag 则用 `-s tag` 只抓该 tag，
-        日志更干净、判定更准，代价是必须先知道车机语音助手的 tag。
+        tag 支持填多个（空格 / 逗号分隔），会转成多个 logcat filterspec，一行
+        `logcat -d -v time -s A B` 就能同时抓几个 tag；留空则抓全量日志。
+        建议至少填一个：全量里混着别的应用，既慢、又容易被无关日志里的词误判。
         """
-        cmd = ["logcat", "-d"]
-        if tag:
-            cmd += ["-s", tag]
-        cmd += ["-v", "time"]
+        cmd = ["logcat", "-d", "-v", "time"]
+        tags = split_tags(tag)
+        if tags:
+            cmd += ["-s", *tags]
         out = self._adb(cmd, timeout=10)
         return [ln for ln in out.splitlines() if ln.strip()]
 

@@ -419,31 +419,19 @@ class DeviceService:
 
         afterDelay 字段是「总等待」（播报 + 缓冲）：先实测播报耗时，
         再把剩余部分作为缓冲睡掉，播报比估算长时缓冲自动归零、不重复等。
-        开启回执验证时，播前清 logcat 基线，播后抓车机反馈文案判定，
-        判定失败把反馈原文带进错误信息。
+
+        **不做回执验证**：验证的判定依据是「预期结果」关键词，而 voice 步骤
+        本身没有这个概念（关键词是按用例配在语音播报页的检测步骤上的）。
+        设置页的回执验证开关只对语音播报页里配了检测步骤的用例生效。
         """
         text = (params.get('voiceText') or '').strip()
         if not text:
             raise Exception("语音播报的文案为空")
 
         from services.voice_service import VoiceError, get_voice_service
-        from models.voice_model import get_verify_config
-        from services.voice_feedback_service import (
-            VoiceFeedbackService, VoiceFeedbackError)
         from utils import voice_log
 
         short = text[:20] + ("…" if len(text) > 20 else "")
-        verify_cfg = get_verify_config()
-        svc = None
-        verify_skipped = False   # 已给过「跳过验证」类提示，结尾不再重复提示
-        if verify_cfg["enabled"] and self.device:
-            svc = VoiceFeedbackService(self.serial)
-            try:
-                svc.clear()   # 播前清基线
-            except VoiceFeedbackError:
-                svc = None    # 清基线失败（无设备/adb 异常）→ 跳过验证，不拖垮播报
-                verify_skipped = True
-                voice_log.emit("warning", "语音验证：无法清空车机日志基线，本次跳过回执验证")
 
         try:
             voice_log.emit("info", f"🔊 开始播报「{short}」")
@@ -458,28 +446,7 @@ class DeviceService:
         if remain > 0:
             time.sleep(remain)
 
-        # 回执验证：抓 logcat 判定，失败把车机反馈文案带进错误信息
-        if svc is not None:
-            try:
-                lines = svc.capture(verify_cfg["log_tag"])
-                ok, msg, _ = svc.judge_result(
-                    lines, verify_cfg["success_keywords"], verify_cfg["fail_keywords"])
-                if ok:
-                    voice_log.emit("success", f"✅ 语音验证通过「{short}」：车机已正确识别")
-                else:
-                    voice_log.emit("error", f"❌ 语音验证失败「{short}」：{msg}")
-                    raise Exception(msg)
-            except VoiceFeedbackError:
-                voice_log.emit("warning", "语音验证：读取车机日志失败，本次按通过处理")
-        elif not verify_skipped:
-            if verify_cfg["enabled"]:
-                # 开了验证但没连设备：明确说原因和后续处理，别让用户以为验证过
-                voice_log.emit(
-                    "warning",
-                    f"⚠ 已开启回执验证，但未连接设备，无法读取车机反馈，"
-                    f"「{short}」跳过验证（按通过继续执行）")
-            else:
-                voice_log.emit("success", f"✅ 播报完成「{short}」（未开启回执验证）")
+        voice_log.emit("success", f"✅ 播报完成「{short}」（语音步骤不做回执验证）")
 
     def _perform_swipe(self, params):
         direction = params.get('direction', '自定义坐标')
