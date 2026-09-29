@@ -1,12 +1,15 @@
 # views/dialogs/settings_dialog.py
+import os
+import sys
+
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLineEdit, QPushButton, QFileDialog, QSlider, QLabel,
     QComboBox, QWidget, QStackedWidget, QTreeWidget, QTreeWidgetItem,
-    QFrame, QScrollArea, QKeySequenceEdit, QCheckBox
+    QFrame, QScrollArea, QKeySequenceEdit, QCheckBox, QToolButton
 )
-from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal
-from PyQt6.QtGui import QKeySequence
+from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal, QSize
+from PyQt6.QtGui import QKeySequence, QIcon, QPixmap
 
 from utils import tree_state
 
@@ -348,7 +351,7 @@ class SettingsDialog(QDialog):
         wallpaper_layout.addWidget(browse_wallpaper_btn)
         form.addRow("壁纸图片:", wallpaper_layout)
 
-        # 透明度
+        # 透明度 + 移除按钮（移除放在滑动条右侧）
         self.wallpaper_opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self.wallpaper_opacity_slider.setRange(0, 100)
         self.wallpaper_opacity_slider.setValue(100)
@@ -358,29 +361,101 @@ class SettingsDialog(QDialog):
         self.opacity_label = QLabel("100%")
         self.opacity_label.setFixedWidth(50)
 
+        remove_btn = QPushButton("移除")
+        remove_btn.setObjectName("dangerBtn")
+        remove_btn.setFixedSize(72, 30)
+        remove_btn.setToolTip("移除壁纸，取消当前选择")
+        remove_btn.clicked.connect(self.remove_wallpaper)
+
         opacity_layout = QHBoxLayout()
         opacity_layout.setSpacing(8)
         opacity_layout.addWidget(self.wallpaper_opacity_slider, 1)
         opacity_layout.addWidget(self.opacity_label)
+        opacity_layout.addWidget(remove_btn)
         form.addRow("透明度:", opacity_layout)
 
-        # 移除壁纸
-        remove_btn = QPushButton("移除壁纸")
-        remove_btn.setObjectName("dangerBtn")
-        remove_btn.setFixedSize(110, 30)
-        remove_btn.clicked.connect(self.remove_wallpaper)
-        remove_layout = QHBoxLayout()
-        remove_layout.addWidget(remove_btn)
-        remove_layout.addStretch()
-        form.addRow("", remove_layout)
-
         layout.addLayout(form)
-        layout.addStretch()
+
+        # 预设壁纸缩略图（三列网格，单选）
+        preset_label = QLabel("预设壁纸")
+        preset_label.setObjectName("SettingsPageSubtitle")
+        layout.addWidget(preset_label)
+
+        layout.addWidget(self._build_preset_wallpaper_grid(), 1)
 
         self.wallpaper_opacity_slider.valueChanged.connect(
             lambda v: self.opacity_label.setText(f"{v}%")
         )
         return page
+
+    # 预设壁纸目录：图片放这里就会被自动扫出来（按文件名排序）
+    # 开发环境在项目根 resources/ 下；打包后在 _internal/resources/ 下（整包随 spec datas 带上）
+    PRESET_WALLPAPER_DIR_NAME = os.path.join("resources", "images", "wallpapers")
+    PRESET_THUMB_SIZE = 132
+
+    def _preset_wallpaper_dir(self):
+        if getattr(sys, "frozen", False):
+            # 打包后资源在 _internal/resources/ 下
+            base = sys._MEIPASS
+        else:
+            # 开发环境：本文件在 views/dialogs/ 下，回溯两级到项目根
+            base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return os.path.join(base, self.PRESET_WALLPAPER_DIR_NAME)
+
+    def _list_preset_wallpapers(self):
+        """扫描预设壁纸目录，返回按文件名排序的绝对路径列表"""
+        d = self._preset_wallpaper_dir()
+        if not os.path.isdir(d):
+            return []
+        exts = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
+        files = [f for f in os.listdir(d) if f.lower().endswith(exts)]
+        return [os.path.join(d, f) for f in sorted(files, key=str.lower)]
+
+    def _build_preset_wallpaper_grid(self):
+        """三列缩略图网格：单选一个后点「应用/确定」生效；再点一次取消选择"""
+        container = QWidget()
+        grid = QGridLayout(container)
+        grid.setSpacing(14)
+
+        self._preset_buttons = {}  # path -> QToolButton
+        col_count = 3
+        thumb = self.PRESET_THUMB_SIZE
+
+        for i, path in enumerate(self._list_preset_wallpapers()):
+            btn = QToolButton()
+            btn.setObjectName("wallpaperThumbBtn")
+            btn.setCheckable(True)
+            btn.setAutoExclusive(True)
+            btn.setFixedSize(thumb + 16, thumb + 44)
+            btn.setIconSize(QSize(thumb, thumb))
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            name = os.path.splitext(os.path.basename(path))[0]
+            btn.setText(name)
+            pixmap = QPixmap(path)
+            if not pixmap.isNull():
+                btn.setIcon(QIcon(pixmap))
+            btn.setToolTip("选择后点击「应用」或「确定」生效")
+            btn.clicked.connect(lambda checked, p=path: self._on_preset_clicked(checked, p))
+            self._preset_buttons[path] = btn
+            grid.addWidget(btn, i // col_count, i % col_count)
+
+        grid.setRowStretch(grid.rowCount(), 1)
+        grid.setColumnStretch(col_count, 1)
+
+        scroll = QScrollArea()
+        scroll.setWidget(container)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        return scroll
+
+    def _on_preset_clicked(self, checked, path):
+        if checked:
+            # 选中缩略图 = 预填路径，走既有的「应用/确定」保存链路
+            self.wallpaper_edit.setText(path)
+        else:
+            # 再点一次取消单选（autoExclusive 只在换选时取消，这里处理点自己）
+            if self.wallpaper_edit.text().strip() == path:
+                self.wallpaper_edit.clear()
 
     # ------------------------------------------------------------------
     # 输出目录页
@@ -962,7 +1037,11 @@ class SettingsDialog(QDialog):
     # ------------------------------------------------------------------
     def load_settings(self):
         self.dir_edit.setText(Settings.get_output_dir())
-        self.wallpaper_edit.setText(Settings.get_wallpaper_path())
+        wallpaper_path = Settings.get_wallpaper_path()
+        self.wallpaper_edit.setText(wallpaper_path)
+        # 已保存的是预设壁纸时，点亮对应缩略图
+        if hasattr(self, "_preset_buttons") and wallpaper_path:
+            self._select_preset_by_path(wallpaper_path)
         opacity = Settings.get_wallpaper_opacity()
         self.wallpaper_opacity_slider.setValue(opacity)
         self.opacity_label.setText(f"{opacity}%")
@@ -1066,10 +1145,24 @@ class SettingsDialog(QDialog):
         )
         if file_path:
             self.wallpaper_edit.setText(file_path)
+            # 走自定义路径时取消预设缩略图的单选
+            self._clear_preset_selection()
 
     def remove_wallpaper(self):
         self.wallpaper_edit.clear()
         self.wallpaper_opacity_slider.setValue(100)
+        # 移除同时取消预设缩略图的单选
+        self._clear_preset_selection()
+
+    def _clear_preset_selection(self):
+        # autoExclusive 下 setChecked(False) 即可取消单选
+        for b in getattr(self, "_preset_buttons", {}).values():
+            b.setChecked(False)
+
+    def _select_preset_by_path(self, path):
+        """按路径点亮对应缩略图；找不到就不点亮（如自定义路径）"""
+        for p, b in self._preset_buttons.items():
+            b.setChecked(os.path.normpath(p) == os.path.normpath(path))
 
     # ------------------------------------------------------------------
     # 主题适配
@@ -1396,6 +1489,23 @@ class SettingsDialog(QDialog):
             #SettingsDialog QPushButton#dangerBtn:hover {{
                 background-color: {danger_hover};
                 border-color: {danger_hover};
+            }}
+
+            /* ---------- 壁纸预设缩略图 ---------- */
+            #SettingsDialog QToolButton#wallpaperThumbBtn {{
+                background-color: {input_bg};
+                color: {input_text};
+                border: 2px solid {input_border};
+                border-radius: 8px;
+                padding: 6px 4px;
+                font-size: 12px;
+            }}
+            #SettingsDialog QToolButton#wallpaperThumbBtn:hover {{
+                border-color: {btn_primary_hover};
+            }}
+            #SettingsDialog QToolButton#wallpaperThumbBtn:checked {{
+                border-color: {btn_primary_bg};
+                background-color: {nav_sel_bg};
             }}
 
             /* ---------- 主按钮（确定、应用） ---------- */
