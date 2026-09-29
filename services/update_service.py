@@ -586,7 +586,9 @@ def apply_patch(patch_path: str, old_root: str, dest: str,
 
     补丁的 manifest 列出**新版本的完整文件清单**：清单里进了 payload 的文件用补丁内容，
     其余从 old_root（本机旧安装）复制 —— 复制时顺带算 sha256 与清单比对，对不上就整体
-    失败（调用方据此回退全量下载）。于是「没变的 600MB 大文件」一个字节都不用下。
+    失败（调用方据此回退全量下载）；唯一例外是清单里标了 reuse=True 的文件（服务端
+    排除出 payload 的、打包必抖的 onefile exe）：哈希对不上视为构建抖动，复用旧文件
+    继续组装，本机缺失时才回退。于是「没变的 600MB 大文件」一个字节都不用下。
 
     任何一步不满足都抛异常 —— 宁可回退全量，也不要组装出一棵坏目录树。
     """
@@ -635,7 +637,13 @@ def apply_patch(patch_path: str, old_root: str, dest: str,
                     actual = _sha256_stream_to(f, target)
 
             if expect and actual != expect:
-                raise RuntimeError(f"增量校验失败（内容与清单不符）：{rel}")
+                # reuse=True：服务端标记的「允许复用本机旧文件」组件（onefile exe
+                # 打包必抖，清单哈希是新版产物的哈希，本机旧文件必然对不上——
+                # 这是构建抖动而非组件真更新）。复用旧文件继续组装，不回退全量。
+                if (meta or {}).get("reuse") and rel not in payload:
+                    logger.info("增量更新：复用本机现有 %s（与新清单哈希不一致，属打包抖动）", rel)
+                else:
+                    raise RuntimeError(f"增量校验失败（内容与清单不符）：{rel}")
             if progress:
                 progress(i, total)
     return dest

@@ -94,8 +94,10 @@ def build_patch(old_tree: str, new_tree: str, from_ver: str, to_ver: str, out_pa
     """对比新旧两棵树，写出 .dpatch，返回统计信息 dict。
 
     exclude：不进 payload 的文件相对路径集合（正斜杠）。这些文件仍会写进 manifest
-    的完整文件清单（含 sha256/size），客户端组装时从本机旧安装复制并按清单校验；
-    一旦旧安装的内容对不上新清单（说明它真更新了），客户端会整体回退全量下载。
+    的完整文件清单（含 sha256/size，并带 reuse=True 标记），客户端组装时从本机
+    旧安装复制；对 reuse 文件，sha256 对不上**不回退**（onefile exe 打包必抖，
+    清单哈希是新版产物的哈希，本机旧文件必然对不上——属构建抖动而非真更新），
+    直接复用旧文件；本机缺失时才回退全量。
     用途：PyInstaller 的 onefile / 主 exe 每次打包字节都会抖（代码没改也变），
     排除它们省掉这笔无效下载；真更新时靠 sha256 校验兜底回全量，不漏更新。
     """
@@ -127,7 +129,12 @@ def build_patch(old_tree: str, new_tree: str, from_ver: str, to_ver: str, out_pa
         manifest_files[rel] = {"sha256": digest, "size": size}
         new_bytes += size
         if rel in _exclude:
-            continue          # 排除的文件不进 payload，但保留在 manifest 供客户端复用校验
+            # 排除的文件不进 payload，但保留在 manifest 供客户端复用。
+            # reuse=True：告知客户端这个文件的 sha256 对不上时**不要回退全量**——
+            # 因为清单里的哈希是新版打包产物的哈希，而 onefile exe 每次打包必抖，
+            # 本机旧文件「必然」对不上（这不是组件真更新，是构建非确定性）。
+            manifest_files[rel]["reuse"] = True
+            continue
         if old_sha.get(rel) != digest:          # 新增，或内容变了
             payload.append(rel)
             payload_bytes += size
