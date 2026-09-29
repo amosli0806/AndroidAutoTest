@@ -524,6 +524,15 @@ class VoiceModel:
         return self.copy_step(case_id, index)
 
     # ---------------- 导入 / 导出 ----------------
+    def set_case_steps(self, case_id: str, steps) -> bool:
+        """整段替换某个用例的步骤（表格导入时按同名用例覆盖用）。"""
+        case = self.get_case(case_id)
+        if case is None:
+            return False
+        case.steps = list(steps)
+        self.save()
+        return True
+
     def export_case(self, case_id: str) -> Optional[dict]:
         case = self.get_case(case_id)
         if case is None:

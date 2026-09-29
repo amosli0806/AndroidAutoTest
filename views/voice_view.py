@@ -21,7 +21,6 @@
      stop()，主线程调是打不断的。
   2. SAPI 是 COM 组件，播放线程首次调用时会自行 CoInitialize。
 """
-import json
 import os
 import time
 
@@ -39,9 +38,10 @@ import qtawesome as qta
 from models.voice_model import (
     DEFAULT_DELAY, DEFAULT_WAKE_WORD, KIND_PHRASE, KIND_VERIFY, VoiceModel)
 from services.voice_service import VoiceError
-from utils import tree_state
+from utils import tree_state, voice_table
 # InputDialog 是项目自定义的圆角卡片式对话框，与编辑页"创建项目"用同一个
-from utils.dialogs import ConfirmDeleteDialog, ErrorDialog, InputDialog
+from utils.dialogs import (
+    ConfirmDeleteDialog, ErrorDialog, InputDialog, WarningDialog)
 from utils.theme import ThemeMode
 
 
@@ -644,10 +644,10 @@ class VoiceView(QWidget):
         self.voice_menu = QMenu(self.voice_menu_btn)
         self.voice_menu.setObjectName("VoiceMenu")  # 供主题 QSS 精确定位
         self.voice_menu.addAction(
-            qta.icon('fa6s.file-import', color='#555555'), "导入用例",
+            qta.icon('fa6s.file-import', color='#555555'), "导入用例表格",
             self._on_import_all)
         self.voice_menu.addAction(
-            qta.icon('fa6s.file-export', color='#555555'), "导出用例",
+            qta.icon('fa6s.file-export', color='#555555'), "导出用例表格",
             self._on_export_all)
         self.voice_menu_btn.setMenu(self.voice_menu)
         title_row.addWidget(self.voice_menu_btn)
@@ -706,9 +706,11 @@ class VoiceView(QWidget):
         self.add_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.add_btn.clicked.connect(self._on_add_phrase)
         title_row.addWidget(self.add_btn)
-        # 批量重算：把当前用例所有步骤的「播后等待」按文案+语速重算一遍
+        # 批量重算：把**全部用例**的「播后等待」按文案+语速重算一遍
+        # （表格导入后一次性补齐用；实现上必须全部算完只落盘一次，见 _on_recalc_delays）
         self.recalc_btn = QPushButton("批量重算")
         self.recalc_btn.setObjectName("VoiceAddBtn")   # 复用「+ 添加步骤」的样式
+        self.recalc_btn.setToolTip("按语速重算全部用例的「播后等待」")
         self.recalc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.recalc_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.recalc_btn.clicked.connect(self._on_recalc_delays)
@@ -1268,57 +1270,92 @@ class VoiceView(QWidget):
         self._reload_steps()
 
     def _on_export_all(self):
-        """全量导出：分组 -> 用例 -> 文案 整棵树，换机器/换项目时用。
+        """导出全部语音用例为表格：**一个分组一张工作表**，表名即分组名。
 
-        与「导出当前用例文案」（单用例的文案包）不同，这个文件包含分组与
-        用例结构，配合「导入全部语音用例」可以完整还原。
+        每张表三列 —— 用例名称 / 操作步骤 / 预期结果；一个用例占一行，
+        步骤与预期都写在同一个单元格里（换行 + 序号，序号即步骤号）。
         """
         total_cases = len(self.model.cases)
         if not total_cases:
             self.status_label.setText("还没有语音用例可导出")
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "导出全部语音用例", "voice_cases_all.json",
-            "JSON Files (*.json)")
+            self, "导出语音用例表格", "语音用例.xlsx", "Excel 表格 (*.xlsx)")
         if not path:
             return
+        if not path.lower().endswith(".xlsx"):
+            path += ".xlsx"
+        # 空分组不出表：导出的目的是用例，空表只会让文件多出一堆空 sheet
+        sheets = []
+        for group in self.model.groups:
+            cases = self.model.cases_of_group(group.id)
+            if cases:
+                sheets.append((group.name, voice_table.group_to_sheet_rows(cases)))
         try:
-            data = self.model.export_all()
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            n_groups = len(data.get("groups", []))
-            self.status_label.setText(
-                f"已导出 {n_groups} 个分组 / {total_cases} 个用例到 "
-                f"{os.path.basename(path)}")
+            count = voice_table.write_xlsx(path, sheets)
         except Exception as e:
             ErrorDialog.show_error(self, "导出失败",
-                                   f"导出全部语音用例时出错：\n{e}")
+                                   f"导出语音用例表格时出错：\n{e}")
+            return
+        self.status_label.setText(
+            f"已导出 {total_cases} 个用例 / {count} 张分组表到 "
+            f"{os.path.basename(path)}（播后等待不在表格里，导入后可点「批量重算」一次性补齐）")
 
     def _on_import_all(self):
-        """全量导入：按「导出全部语音用例」的格式还原分组/用例/文案（追加式）。
+        """导入语音用例表格：**工作表 = 分组**，表名即分组名。
 
-        合并规则：同名分组复用现有分组；分组内同名用例跳过；其余新建。
+        组内按用例名称匹配：同名的覆盖其步骤，没有的按新用例建到该分组。
         """
         path, _ = QFileDialog.getOpenFileName(
-            self, "导入全部语音用例", "", "JSON Files (*.json)")
+            self, "导入语音用例表格", "", "Excel 表格 (*.xlsx)")
         if not path:
             return
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            stats = self.model.import_all(data)
-        except ValueError as e:
-            ErrorDialog.show_error(self, "导入失败", str(e))
-            return
+            sheets = voice_table.read_xlsx(path)
         except Exception as e:
-            ErrorDialog.show_error(self, "导入失败",
-                                   f"导入全部语音用例时出错：\n{e}")
+            ErrorDialog.show_error(self, "导入失败", f"读取表格失败：\n{e}")
             return
+
+        new_groups = created = overwritten = 0
+        warnings = []
+        for sheet_name, rows in sheets:
+            group_name = (sheet_name or "").strip() or "导入分组"
+            group = next((g for g in self.model.groups if g.name == group_name),
+                         None)
+            if group is None:
+                group = self.model.add_group(group_name)
+                new_groups += 1
+            parsed, sheet_warnings = voice_table.parse_sheet(rows)
+            warnings += [f"[{sheet_name}] {w}" for w in sheet_warnings]
+            for case_name, steps in parsed:
+                existing = next(
+                    (c for c in self.model.cases_of_group(group.id)
+                     if c.name == case_name), None)
+                if existing is not None:
+                    self.model.set_case_steps(existing.id, steps)
+                    overwritten += 1
+                else:
+                    case = self.model.add_case(case_name, group.id)
+                    self.model.set_case_steps(case.id, steps)
+                    created += 1
+
         self._reload_tree()
+        self._reload_steps()
+        parts = []
+        if new_groups:
+            parts.append(f"新建 {new_groups} 个分组")
+        if overwritten:
+            parts.append(f"覆盖 {overwritten} 个同名用例")
+        if created:
+            parts.append(f"新建 {created} 个用例")
         self.status_label.setText(
-            f"已导入：新建 {stats['groups']} 个分组 / {stats['cases']} 个用例 / "
-            f"{stats['phrases']} 条文案"
-            + (f"，跳过同名用例 {stats['skipped']} 个" if stats["skipped"] else ""))
+            "导入完成：" + ("、".join(parts) if parts else "没有可导入的内容"))
+        if warnings:
+            shown = warnings[:8]
+            if len(warnings) > len(shown):
+                shown.append(f"……另有 {len(warnings) - len(shown)} 处")
+            WarningDialog.show_warning(
+                self, "导入完成，有几处需要留意", "\n".join(shown))
 
     # ------------------------------------------------------------------
     # 中栏编辑
@@ -1414,40 +1451,45 @@ class VoiceView(QWidget):
         self.status_label.setText(f"已按语速估算播后等待：{est} 秒")
 
     def _on_recalc_delays(self):
-        """批量重算：把当前用例所有播报步骤的「播后等待」按文案+语速重算一遍。
+        """批量重算：把**全部用例**的播报步骤「播后等待」按文案+语速重算一遍。
 
         与单条估算同公式（播报时长 + 2 秒缓冲）；文案为空的步骤跳过不动，
         避免把没填文案的行改成无意义的默认值。检测步骤没有等待时长，不参与。
+
+        为什么是全部用例：表格导入时「播后等待」不在表里、统一给的是默认值，
+        导完想一次性补齐 —— 一个个用例点太慢。
+
+        性能要点：必须**全部算完只落盘一次**。若沿用 model.update_step()，
+        它每改一步就 save() 一次（整份 JSON 重写，实测 20ms/次）；当前数据规模
+        2000 多条播报，全量要跑 40 秒。这里直接改 step.delay、最后 save() 一次，
+        实测 24ms（估算本身只占 0.7ms，可以忽略）。
         """
-        case = self._current_case()
-        if case is None:
+        if not self.model.cases:
+            self.status_label.setText("还没有语音用例")
             return
         from services.voice_service import estimate_duration
         rate = int(self.model.settings.get("rate", 0) or 0)
         changed = skipped = 0
-        for index, step in enumerate(case.steps):
-            if step.kind != KIND_PHRASE:
-                continue
-            text = (step.text or "").strip()
-            if not text:
-                skipped += 1
-                continue
-            est = round(estimate_duration(text, rate) + 2.0, 1)
-            self.model.update_step(case.id, index, delay=est)
-            if 0 <= index < len(self._rows):
-                spin = self._rows[index].delay_spin
-                if spin is not None:
-                    spin.blockSignals(True)   # 避免 setValue 再触发一次落盘
-                    spin.setValue(est)
-                    spin.blockSignals(False)
-            changed += 1
+        for case in self.model.cases:
+            for step in case.steps:
+                if step.kind != KIND_PHRASE:
+                    continue
+                text = (step.text or "").strip()
+                if not text:
+                    skipped += 1
+                    continue
+                step.delay = round(estimate_duration(text, rate) + 2.0, 1)
+                changed += 1
+        if changed:
+            self.model.save()
+            self._reload_steps()      # 让中栏显示新的等待时间
         if changed == 0:
             self.status_label.setText("没有可重算的步骤（文案都为空）")
         elif skipped:
             self.status_label.setText(
-                f"已重算 {changed} 条播后等待（{skipped} 条空文案未动）")
+                f"已重算全部用例的 {changed} 条播后等待（{skipped} 条空文案未动）")
         else:
-            self.status_label.setText(f"已重算 {changed} 条播后等待")
+            self.status_label.setText(f"已重算全部用例的 {changed} 条播后等待")
 
     def _on_add_verify(self):
         """追加一条检测步骤（预期结果）到当前用例末尾。"""
@@ -1620,7 +1662,8 @@ class VoiceView(QWidget):
         self.play_all_btn.setEnabled(available and not running and has_checked)
         self.stop_btn.setEnabled(running)
         self.add_btn.setEnabled(not running and self._current_case() is not None)
-        self.recalc_btn.setEnabled(not running and self._current_case() is not None)
+        # 批量重算是全量操作，不依赖当前选中哪个用例，只要有用例就能点
+        self.recalc_btn.setEnabled(not running and bool(self.model.cases))
         self.add_verify_btn.setEnabled(not running and self._current_case() is not None)
         self.wake_btn.setEnabled(not running and self._current_case() is not None)
         self.all_btn.setEnabled(not running)
