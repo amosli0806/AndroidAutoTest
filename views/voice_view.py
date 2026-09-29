@@ -706,6 +706,14 @@ class VoiceView(QWidget):
         self.add_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.add_btn.clicked.connect(self._on_add_phrase)
         title_row.addWidget(self.add_btn)
+        # + 添加检测：往用例末尾追加一条「预期结果」步骤（回执验证关键词），
+        # 它会作为独立的一行出现在步骤列表里，可复制/删除
+        self.add_verify_btn = QPushButton("+ 添加检测")
+        self.add_verify_btn.setObjectName("VoiceAddBtn")
+        self.add_verify_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_verify_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.add_verify_btn.clicked.connect(self._on_add_verify)
+        title_row.addWidget(self.add_verify_btn)
         # 批量重算：把**全部用例**的「播后等待」按文案+语速重算一遍
         # （表格导入后一次性补齐用；实现上必须全部算完只落盘一次，见 _on_recalc_delays）
         self.recalc_btn = QPushButton("批量重算")
@@ -715,14 +723,6 @@ class VoiceView(QWidget):
         self.recalc_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.recalc_btn.clicked.connect(self._on_recalc_delays)
         title_row.addWidget(self.recalc_btn)
-        # + 添加检测：往用例末尾追加一条「预期结果」步骤（回执验证关键词），
-        # 它会作为独立的一行出现在步骤列表里，可复制/删除
-        self.add_verify_btn = QPushButton("+ 添加检测")
-        self.add_verify_btn.setObjectName("VoiceAddBtn")
-        self.add_verify_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.add_verify_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.add_verify_btn.clicked.connect(self._on_add_verify)
-        title_row.addWidget(self.add_verify_btn)
         v.addLayout(title_row)
 
         self.scroll = QScrollArea()
