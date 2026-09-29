@@ -20,6 +20,7 @@
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime
 
 ROOT = r"D:\AndroidAutoTest"
@@ -27,6 +28,21 @@ VERSION_FILE = ROOT + r"\utils\version.py"
 CHANGELOG_FILE = ROOT + r"\CHANGELOG.md"
 
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+# git push 偶发的网络类错误特征（GitHub 443 端口会 Connection reset）。
+# 命中这些才重试；非网络错误（如 push 被拒）重试无意义，直接报错。
+_NETWORK_HINTS = (
+    "connection reset",
+    "could not read from remote",
+    "connection timed out",
+    "failed to connect",
+    "early eof",
+    "remote end hung up",
+    "network is unreachable",
+    "connection refused",
+)
+PUSH_RETRIES = 3
+PUSH_RETRY_DELAY = 3  # 秒
 
 
 def run(cmd, check=True):
@@ -39,6 +55,30 @@ def run(cmd, check=True):
         print("    [stderr] " + r.stderr.strip().replace("\n", "\n    "))
     if check and r.returncode != 0:
         print(f"\n  !! 命令失败（退出码 {r.returncode}），已中止。")
+        sys.exit(1)
+    return r
+
+
+def run_push(args, retries=PUSH_RETRIES, delay=PUSH_RETRY_DELAY):
+    """git push，遇到网络抖动自动重试；非网络错误直接报错退出。"""
+    for attempt in range(1, retries + 1):
+        tag = f"（第 {attempt}/{retries} 次尝试）" if attempt > 1 else ""
+        print(f"\n  > {' '.join(args)}{tag}")
+        r = subprocess.run(args, cwd=ROOT, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        if r.stdout.strip():
+            print("    " + r.stdout.strip().replace("\n", "\n    "))
+        if r.stderr.strip():
+            print("    [stderr] " + r.stderr.strip().replace("\n", "\n    "))
+        if r.returncode == 0:
+            return r
+        err_low = (r.stderr or "").lower()
+        is_network = any(h in err_low for h in _NETWORK_HINTS)
+        if is_network and attempt < retries:
+            print(f"    网络抖动，{delay} 秒后重试…")
+            time.sleep(delay)
+            continue
+        print(f"\n  !! 推送失败（退出码 {r.returncode}，已尝试 {attempt} 次），已中止。")
         sys.exit(1)
     return r
 
@@ -87,7 +127,7 @@ def commit_and_push(commit_msg):
     run(["git", "add", "-A"])
     run(["git", "commit", "-m", commit_msg])
     print("  提交完成，正在推送 main…")
-    run(["git", "push", "origin", "main"])
+    run_push(["git", "push", "origin", "main"])
     print("  main 已推送")
 
 
@@ -99,7 +139,7 @@ def push_tag(tag):
         run(["git", "tag", "-d", tag], check=False)
         print(f"  [tag] 已删除本地旧的 {tag}")
     run(["git", "tag", tag])
-    run(["git", "push", "origin", tag])
+    run_push(["git", "push", "origin", tag])
     print(f"  {tag} 已推送，CI 开始发版")
 
 
