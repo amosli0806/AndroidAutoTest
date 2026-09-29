@@ -169,6 +169,7 @@ jobs:
           if ! python make_update_patch.py \
                  --old-tree prev_tree --new-tree "dist/虫师" \
                  --extra "updater.exe=dist_updater/updater.exe" \
+                 --exclude "_internal/tools/weditor.exe" \
                  --from "$PREV" --to "$VER" --out "$PATCH_OUT"; then
             echo "补丁没生成（拿不到上一个包 / 补丁不够小），跳过 —— 不影响全量发版"
             echo "made=false" >> "$GITHUB_OUTPUT"; exit 0

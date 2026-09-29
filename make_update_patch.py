@@ -90,8 +90,15 @@ def parse_extra(items) -> dict:
 
 
 def build_patch(old_tree: str, new_tree: str, from_ver: str, to_ver: str, out_path: str,
-                extras=None, max_ratio: float = 0.6) -> dict:
-    """对比新旧两棵树，写出 .dpatch，返回统计信息 dict。"""
+                extras=None, max_ratio: float = 0.6, exclude=None) -> dict:
+    """对比新旧两棵树，写出 .dpatch，返回统计信息 dict。
+
+    exclude：不进 payload 的文件相对路径集合（正斜杠）。这些文件仍会写进 manifest
+    的完整文件清单（含 sha256/size），客户端组装时从本机旧安装复制并按清单校验；
+    一旦旧安装的内容对不上新清单（说明它真更新了），客户端会整体回退全量下载。
+    用途：PyInstaller 的 onefile / 主 exe 每次打包字节都会抖（代码没改也变），
+    排除它们省掉这笔无效下载；真更新时靠 sha256 校验兜底回全量，不漏更新。
+    """
     new_files = walk_tree(new_tree)
     if not new_files:
         raise ValueError(f"新版本目录是空的（或不存在）：{new_tree}")
@@ -112,12 +119,15 @@ def build_patch(old_tree: str, new_tree: str, from_ver: str, to_ver: str, out_pa
     payload = []
     payload_bytes = 0
     new_bytes = 0
+    _exclude = {_norm_rel(x) for x in (exclude or [])}
     for rel in sorted(new_files):
         full = new_files[rel]
         size = os.path.getsize(full)
         digest = sha256_of(full)
         manifest_files[rel] = {"sha256": digest, "size": size}
         new_bytes += size
+        if rel in _exclude:
+            continue          # 排除的文件不进 payload，但保留在 manifest 供客户端复用校验
         if old_sha.get(rel) != digest:          # 新增，或内容变了
             payload.append(rel)
             payload_bytes += size
@@ -172,13 +182,18 @@ def main(argv=None) -> int:
     ap.add_argument("--extra", action="append", default=[],
                     metavar="相对路径=本地路径",
                     help="补进更新包但不在 new-tree 里的文件（可多次），如 updater.exe=dist_updater/updater.exe")
+    ap.add_argument("--exclude", action="append", default=[],
+                    metavar="相对路径",
+                    help="不进 payload 的文件（仍在清单里、客户端复用旧安装并按清单校验），"
+                         "可多次，如 _internal/tools/weditor.exe")
     ap.add_argument("--max-ratio", type=float, default=0.6,
                     help="payload 占全量的比例上限，超过则判定不值得发（默认 0.6）")
     args = ap.parse_args(argv)
 
     try:
         stat = build_patch(args.old_tree, args.new_tree, args.from_ver, args.to_ver,
-                           args.out, extras=args.extra, max_ratio=args.max_ratio)
+                           args.out, extras=args.extra, max_ratio=args.max_ratio,
+                           exclude=args.exclude)
     except PatchTooBig as e:
         print(f"[skip] {e}")
         return TOO_BIG_EXIT
