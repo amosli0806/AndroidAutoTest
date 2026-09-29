@@ -12,6 +12,7 @@ GitHub 是很正常的事，不该让用户的启动流程因此弹错误框。
 """
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -70,6 +71,33 @@ _READ_TIMEOUT = 15
 _DOWNLOAD_READ_TIMEOUT = 60
 _DOWNLOAD_ATTEMPTS = 3
 
+# ---------- 增量更新（差分补丁） ----------
+# 补丁资产命名：patch-<起点版本>-to-<目标版本>.dpatch，例如 patch-1.2.3-to-1.2.4.dpatch。
+#
+# 命名为什么必须避开 ".zip" / "-win64.zip" / "chongshi-" 前缀：
+# 老版本客户端的 _pick_asset 只挑 .zip 资产、且优先认「chongshi- 开头 + -win64.zip 结尾」，
+# 一旦补丁带上这些特征，**旧客户端会把补丁当成全量包下载**，解压后缺 虫师.exe/_internal
+# 直接更新失败。现在这个命名对老客户端完全不可见（它的 .zip 过滤直接把它排除），零影响。
+PATCH_ASSET_SUFFIX = ".dpatch"
+PATCH_ASSET_TEMPLATE = "patch-{from_ver}-to-{to_ver}.dpatch"
+
+# 补丁包内部结构：
+#   manifest.json          —— 新版本的**完整**文件清单 {相对路径: {sha256, size}}
+#   payload/<相对路径>      —— 其中「新增或变化」的文件内容（其余文件从本机旧安装复制）
+PATCH_MANIFEST_NAME = "manifest.json"
+PATCH_PAYLOAD_DIR = "payload"
+PATCH_FORMAT = 1
+
+
+class UpdateCancelled(RuntimeError):
+    """用户主动取消（下载或组装过程中）。调用方据此区分「取消」与「真失败」。"""
+
+
+def _digest_to_sha256(digest: str) -> str:
+    """GitHub 的资产摘要 "sha256:xxxx" -> "xxxx"；不带摘要时返回空串（= 跳过哈希校验）。"""
+    d = (digest or "").strip().lower()
+    return d.split("sha256:", 1)[1] if d.startswith("sha256:") else ""
+
 
 @dataclass
 class UpdateInfo:
@@ -83,17 +111,31 @@ class UpdateInfo:
     asset_url: str = ""
     asset_size: int = 0
     digest: str = ""            # GitHub 给的资产摘要，形如 "sha256:xxxx"
+    # 增量补丁（这次 Release 里有、且起点版本正好是本机当前版本时才有值）
+    patch_name: str = ""
+    patch_url: str = ""
+    patch_size: int = 0
+    patch_digest: str = ""
+    patch_from: str = ""        # 补丁的起点版本；必须等于本机当前版本才可用
 
     @property
     def sha256(self) -> str:
         """期望的 sha256（GitHub 不带 digest 时为空 = 跳过哈希校验）。"""
-        d = (self.digest or "").strip().lower()
-        return d.split("sha256:", 1)[1] if d.startswith("sha256:") else ""
+        return _digest_to_sha256(self.digest)
+
+    @property
+    def patch_sha256(self) -> str:
+        return _digest_to_sha256(self.patch_digest)
 
     @property
     def asset_size_text(self) -> str:
         mb = self.asset_size / 1024 / 1024
         return f"{mb:.1f} MB" if mb >= 1 else f"{self.asset_size / 1024:.0f} KB"
+
+    @property
+    def patch_size_text(self) -> str:
+        mb = self.patch_size / 1024 / 1024
+        return f"{mb:.1f} MB" if mb >= 1 else f"{self.patch_size / 1024:.0f} KB"
 
 
 @dataclass
@@ -158,6 +200,26 @@ def _pick_asset(assets) -> dict:
     return zips[0] if zips else {}
 
 
+def _patch_from_of_name(name: str) -> str:
+    """从补丁资产名里取出起点版本：patch-<from>-to-<to>.dpatch -> <from>。"""
+    m = re.match(r"^patch-(.+?)-to-(.+)\.dpatch$", (name or "").strip())
+    return m.group(1) if m else ""
+
+
+def _pick_patch_asset(assets, from_version: str, to_version: str) -> dict:
+    """挑「起点=本机当前版本」的增量补丁资产；没有则返回 {}。
+
+    只做**精确名字匹配**（patch-<from>-to-<to>.dpatch），不做模糊匹配 ——
+    补丁必须严格对应「本机这一版 → 目标版」这一对，配错了会组装出一棵坏目录树。
+    也正因为只认这个精确名，老客户端（只挑 .zip）根本看不到补丁，不受任何影响。
+    """
+    want = PATCH_ASSET_TEMPLATE.format(from_ver=from_version, to_ver=to_version)
+    for a in assets or []:
+        if str(a.get("name", "")) == want:
+            return a
+    return {}
+
+
 def check_for_update() -> CheckResult:
     """查最新 Release 并与本地版本比较。**同步阻塞**，别在 GUI 线程里直接调。"""
     if not is_enabled():
@@ -209,6 +271,20 @@ def check_for_update() -> CheckResult:
         asset_size=int(asset.get("size", 0) or 0),
         digest=str(asset.get("digest", "") or ""),
     )
+    # 增量补丁（best-effort）：Release 里若带了「本机当前版本 → 目标版本」的补丁就记下；
+    # 找不到不影响更新，这次走全量下载。任何解析异常都按「没有补丁」处理。
+    try:
+        patch = _pick_patch_asset(data.get("assets") or [], APP_VERSION, info.version)
+        if patch:
+            info.patch_name = str(patch.get("name", "") or "")
+            info.patch_url = str(patch.get("browser_download_url", "") or "")
+            info.patch_size = int(patch.get("size", 0) or 0)
+            info.patch_digest = str(patch.get("digest", "") or "")
+            info.patch_from = _patch_from_of_name(info.patch_name)
+            logger.info("发现增量补丁 %s（%s），本次可只下载它",
+                        info.patch_name, info.patch_size_text)
+    except Exception as e:
+        logger.warning("增量补丁信息解析失败（按全量处理）: %s: %s", type(e).__name__, e)
     logger.info("发现新版本 %s（当前 %s）", info.version, APP_VERSION)
     return CheckResult(status="update_available", info=info)
 
@@ -258,71 +334,81 @@ def _download_url(asset_url: str) -> str:
     return prefix + asset_url
 
 
-def download_asset(info: UpdateInfo, dest_dir: str,
+def _download_file(url: str, name: str, size_hint: int, expect_sha256: str,
+                   dest_dir: str,
                    progress: Optional[Callable[[int, int], None]] = None,
                    cancel: Optional[Callable[[], bool]] = None) -> str:
-    """把更新包下载到 dest_dir，返回本地路径。
+    """把 url 下载到 dest_dir/name，返回本地路径。全量包与增量补丁共用这一套。
 
     progress(已下载, 总字节) 用于驱动进度条；cancel() 返回 True 时中断并删除半成品。
     下载中先写 .part 再改名，避免半截文件被当成下载完成。
 
-    大文件健壮性（296MB+ 的包经国内镜像下载，镜像抽风很常见）：
+    大文件健壮性（290MB+ 的包经国内镜像下载，镜像抽风很常见）：
       * 读超时 60s（API 的 15s 对流式下载太苛刻，某段卡 15s 就整个失败）
       * 断点续传：失败后从 .part 已有字节数带 Range 头继续（镜像不支持则从头）
       * 最多尝试 3 次，全部失败才把错误抛给用户
     """
-    if not info.asset_url:
+    if not url:
         raise RuntimeError("该 Release 里没有可用的更新包")
     os.makedirs(dest_dir, exist_ok=True)
-    target = os.path.join(dest_dir, info.asset_name or "update.zip")
+    target = os.path.join(dest_dir, name or "update.bin")
     part = target + ".part"
 
-    url = _download_url(info.asset_url)
-    logger.info("下载更新包（镜像=%s）：%s", _mirror_prefix() or "直连", url)
+    dl_url = _download_url(url)
+    logger.info("下载更新文件（镜像=%s）：%s", _mirror_prefix() or "直连", dl_url)
 
     last_error = None
     for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
         try:
-            _download_once(url, part, info, progress, cancel)
+            _download_once(dl_url, part, size_hint, progress, cancel)
             os.replace(part, target)
-            logger.info("更新包已下载: %s", target)
+            logger.info("更新文件已下载: %s", target)
             break
-        except RuntimeError as e:
-            if "已取消" in str(e):
-                raise                     # 用户主动取消，不重试
-            last_error = e
-            logger.warning("下载中断（第 %d/%d 次）：%s",
-                           attempt, DOWNLOAD_ATTEMPTS, str(e)[:120])
-            if attempt < DOWNLOAD_ATTEMPTS:
-                time.sleep(2)             # 稍等再续传
+        except UpdateCancelled:
+            raise                         # 用户主动取消，不重试
         except Exception as e:
             last_error = e
             logger.warning("下载中断（第 %d/%d 次）：%s",
-                           attempt, DOWNLOAD_ATTEMPTS, str(e)[:120])
-            if attempt < DOWNLOAD_ATTEMPTS:
-                time.sleep(2)
+                           attempt, _DOWNLOAD_ATTEMPTS, str(e)[:120])
+            if attempt < _DOWNLOAD_ATTEMPTS:
+                time.sleep(2)             # 稍等再续传
     else:
         raise RuntimeError(
-            f"下载更新包失败（已自动重试 {DOWNLOAD_ATTEMPTS - 1} 次）："
+            f"下载更新文件失败（已自动重试 {_DOWNLOAD_ATTEMPTS - 1} 次）："
             f"{str(last_error)[:150]}")
 
-    # 校验：GitHub 的资产带 digest（sha256:...）时逐个字节核对；没有就只保证 zip 自身完整
-    expect = info.sha256
-    if expect:
+    # 校验：GitHub 的资产带 digest（sha256:...）时逐个字节核对；没有就只保证文件自身完整
+    if expect_sha256:
         actual = sha256_of(target)
-        if actual != expect:
+        if actual != expect_sha256:
             os.remove(target)
             raise RuntimeError(
-                f"更新包校验失败（sha256 不符，可能下载被篡改或中断）："
-                f"期望 {expect[:12]}… 实际 {actual[:12]}…")
-        logger.info("更新包 sha256 校验通过")
+                f"更新文件校验失败（sha256 不符，可能下载被篡改或中断）："
+                f"期望 {expect_sha256[:12]}… 实际 {actual[:12]}…")
+        logger.info("更新文件 sha256 校验通过")
     else:
-        logger.warning("该 Release 资产没有 digest 字段，跳过 sha256 校验（仅校验 zip 完整性）")
+        logger.warning("该资产没有 digest 字段，跳过 sha256 校验")
 
     return target
 
 
-def _download_once(url, part, info, progress, cancel):
+def download_asset(info: UpdateInfo, dest_dir: str,
+                   progress: Optional[Callable[[int, int], None]] = None,
+                   cancel: Optional[Callable[[], bool]] = None) -> str:
+    """下载**全量**更新包。内部复用 _download_file，对外行为与历史一致。"""
+    return _download_file(info.asset_url, info.asset_name or "update.zip",
+                          info.asset_size, info.sha256, dest_dir, progress, cancel)
+
+
+def download_patch(info: UpdateInfo, dest_dir: str,
+                   progress: Optional[Callable[[int, int], None]] = None,
+                   cancel: Optional[Callable[[], bool]] = None) -> str:
+    """下载**增量补丁**（patch-<from>-to-<to>.dpatch）。"""
+    return _download_file(info.patch_url, info.patch_name or "update.dpatch",
+                          info.patch_size, info.patch_sha256, dest_dir, progress, cancel)
+
+
+def _download_once(url, part, size_hint, progress, cancel):
     """单次下载尝试：支持从 .part 已有字节断点续传（镜像支持 Range 时）。
 
     - 206 Partial Content：续传成功，从断点追加
@@ -340,12 +426,12 @@ def _download_once(url, part, info, progress, cancel):
             file_mode = "wb"
         resp.raise_for_status()
         total = (int(resp.headers.get("Content-Length") or 0) + done) \
-            or info.asset_size or 0
+            or size_hint or 0
         with open(part, file_mode) as f:
             for chunk in resp.iter_content(chunk_size=256 * 1024):
                 if cancel and cancel():
                     f.close()
-                    raise RuntimeError("已取消")
+                    raise UpdateCancelled("已取消")
                 if not chunk:
                     continue
                 f.write(chunk)
@@ -412,12 +498,31 @@ def prepare_staging_dir(version: str, asset_size: int = 0) -> str:
     return dest
 
 
+def _safe_join(root_abs: str, name: str, what: str = "更新包") -> Optional[str]:
+    """把压缩包条目名安全地拼到 root_abs 下；可疑条目记日志并返回 None。
+
+    **zip-slip 安全**：绝对路径、以 / 开头（Windows 上 os.path.isabs 不认这种）、
+    带盘符、含 .. 的条目一律拒绝 —— 更新包来自网络，不能让一个畸形 zip 往安装目录外
+    写文件。extract_zip 与增量补丁组装共用这一套判断，避免两处规则走偏。
+    """
+    norm = (name or "").replace("\\", "/")
+    parts = [p for p in norm.split("/") if p not in ("", ".")]
+    if (os.path.isabs(norm) or norm.startswith("/") or re.match(r"^[A-Za-z]:", norm)
+            or not parts or any(p == ".." for p in parts)):
+        logger.warning("%s里有可疑路径，已跳过：%r", what, name)
+        return None
+    target = os.path.join(root_abs, *parts)
+    if not os.path.abspath(target).startswith(root_abs + os.sep):
+        logger.warning("%s条目越界，已跳过：%r", what, name)
+        return None
+    return target
+
+
 def extract_zip(zip_path: str, dest: str,
                 progress: Optional[Callable[[int, int], None]] = None) -> str:
     """把更新包解压到 dest，返回 dest。
 
-    **zip-slip 安全**：条目名一律按 / 切开后拼到 dest 下，凡是绝对路径、带盘符、
-    或含 .. 的条目都跳过 —— 更新包来自网络，不能让一个畸形 zip 往安装目录外写文件。
+    **zip-slip 安全**：条目一律经 _safe_join 过滤，可疑条目跳过。
     """
     dest_abs = os.path.abspath(dest)
     with zipfile.ZipFile(zip_path) as z:
@@ -426,17 +531,8 @@ def extract_zip(zip_path: str, dest: str,
             raise RuntimeError(f"更新包损坏（第一个坏文件：{bad}）")
         files = [n for n in z.namelist() if not n.replace("\\", "/").endswith("/")]
         for i, name in enumerate(files, 1):
-            norm = name.replace("\\", "/")
-            parts = [p for p in norm.split("/") if p not in ("", ".")]
-            # 可疑条目一律不要：绝对路径、以 / 开头（Windows 上 os.path.isabs 不认这种）、
-            # 带盘符、含 ..
-            if (os.path.isabs(norm) or norm.startswith("/") or re.match(r"^[A-Za-z]:", norm)
-                    or not parts or any(p == ".." for p in parts)):
-                logger.warning("更新包里有可疑路径，已跳过：%r", name)
-                continue
-            target = os.path.join(dest_abs, *parts)
-            if not os.path.abspath(target).startswith(dest_abs + os.sep):
-                logger.warning("更新包条目越界，已跳过：%r", name)
+            target = _safe_join(dest_abs, name)
+            if target is None:
                 continue
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with z.open(name) as src, open(target, "wb") as out:
@@ -454,15 +550,149 @@ def validate_package(root: str):
     return True, ""
 
 
+def patch_available(info: UpdateInfo) -> bool:
+    """这次更新能否走增量：Release 里带了补丁，且补丁的起点正好是本机当前版本。"""
+    if not info or not info.patch_url or not info.patch_name:
+        return False
+    return info.patch_from == APP_VERSION
+
+
+def _install_root() -> str:
+    """本机当前安装目录 —— 增量组装时从这里复用「没变」的文件。
+
+    抽成函数是为了自测能替换它：自测跑在源码目录里，那里并不是一份安装树。
+    """
+    return get_app_dir()
+
+
+def _sha256_stream_to(src_fileobj, dst_path: str) -> str:
+    """把 src_fileobj 写到 dst_path，边写边算 sha256，返回十六进制摘要（只读一遍）。"""
+    h = hashlib.sha256()
+    with open(dst_path, "wb") as out:
+        while True:
+            block = src_fileobj.read(1024 * 1024)
+            if not block:
+                break
+            h.update(block)
+            out.write(block)
+    return h.hexdigest()
+
+
+def apply_patch(patch_path: str, old_root: str, dest: str,
+                progress: Optional[Callable[[int, int], None]] = None,
+                cancel: Optional[Callable[[], bool]] = None) -> str:
+    """按补丁在 dest 组装出新版本目录，返回 dest。
+
+    补丁的 manifest 列出**新版本的完整文件清单**：清单里进了 payload 的文件用补丁内容，
+    其余从 old_root（本机旧安装）复制 —— 复制时顺带算 sha256 与清单比对，对不上就整体
+    失败（调用方据此回退全量下载）。于是「没变的 600MB 大文件」一个字节都不用下。
+
+    任何一步不满足都抛异常 —— 宁可回退全量，也不要组装出一棵坏目录树。
+    """
+    old_abs = os.path.abspath(old_root)
+    dest_abs = os.path.abspath(dest)
+    with zipfile.ZipFile(patch_path) as z:
+        bad = z.testzip()
+        if bad:
+            raise RuntimeError(f"增量补丁损坏（第一个坏文件：{bad}）")
+        try:
+            manifest = json.loads(z.read(PATCH_MANIFEST_NAME).decode("utf-8"))
+        except KeyError:
+            raise RuntimeError("增量补丁缺少 manifest.json")
+        except Exception as e:
+            raise RuntimeError(f"增量补丁清单无法解析：{e}")
+
+        if int(manifest.get("format", 0) or 0) != PATCH_FORMAT:
+            raise RuntimeError(f"增量补丁格式不支持：{manifest.get('format')!r}")
+        files = manifest.get("files") or {}
+        if not files:
+            raise RuntimeError("增量补丁清单是空的")
+        payload = set(manifest.get("payload") or [])
+
+        total = len(files)
+        for i, (rel, meta) in enumerate(files.items(), 1):
+            if cancel and cancel():
+                raise UpdateCancelled("已取消")
+            expect = str((meta or {}).get("sha256", "") or "").lower()
+            target = _safe_join(dest_abs, rel, what="增量补丁")
+            if target is None:
+                raise RuntimeError(f"增量补丁清单里有可疑路径：{rel!r}")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+
+            if rel in payload:
+                entry = f"{PATCH_PAYLOAD_DIR}/" + rel.replace("\\", "/")
+                try:
+                    with z.open(entry) as src:
+                        actual = _sha256_stream_to(src, target)
+                except KeyError:
+                    raise RuntimeError(f"增量补丁缺少文件内容：{rel}")
+            else:
+                src = _safe_join(old_abs, rel, what="本机安装目录")
+                if src is None or not os.path.isfile(src):
+                    raise RuntimeError(f"本机安装目录缺少文件，无法增量更新：{rel}")
+                with open(src, "rb") as f:
+                    actual = _sha256_stream_to(f, target)
+
+            if expect and actual != expect:
+                raise RuntimeError(f"增量校验失败（内容与清单不符）：{rel}")
+            if progress:
+                progress(i, total)
+    return dest
+
+
 def install_prepare(info: UpdateInfo,
                    progress: Optional[Callable[[int, int], None]] = None,
                    cancel: Optional[Callable[[], bool]] = None,
                    on_stage: Optional[Callable[[str], None]] = None) -> str:
-    """把更新准备好（下载 -> 校验 -> 解压 -> 检查），返回交给 updater 的 --src 目录。
+    """把更新准备好（下载 -> 校验 -> 解压/组装 -> 检查），返回交给 updater 的 --src 目录。
 
     **同步阻塞**，调用方负责放到后台线程并驱动进度条。
-    on_stage('download' | 'extract') 用来让界面知道现在处于哪个阶段。
+    on_stage('download' | 'extract' | 'apply') 用来让界面知道现在处于哪个阶段。
+
+    有可用增量补丁时优先走增量（下载量从 290MB 降到几 MB）；**任何一步失败都自动回退
+    全量下载** —— 增量只是"更快的一条路"，绝不能因为它让更新本身失败。
     """
+    if patch_available(info):
+        try:
+            return _install_prepare_patch(info, progress, cancel, on_stage)
+        except UpdateCancelled:
+            raise                                  # 用户主动取消，不当作失败回退
+        except Exception as e:
+            logger.warning("增量更新不可用，回退全量下载：%s: %s", type(e).__name__, e)
+            shutil.rmtree(staging_dir(info.version), ignore_errors=True)
+    return _install_prepare_full(info, progress, cancel, on_stage)
+
+
+def _install_prepare_patch(info: UpdateInfo, progress, cancel, on_stage) -> str:
+    """增量路径：下补丁 -> 按清单组装 -> 检查。"""
+    import tempfile
+    if on_stage:
+        on_stage("download")
+    cache_dir = os.path.join(tempfile.gettempdir(), "chongshi_update")
+    patch_path = download_patch(info, cache_dir, progress=progress, cancel=cancel)
+    try:
+        if on_stage:
+            on_stage("apply")
+        # 磁盘空间按**全量包**估算：组装出来的目录树与走全量时一模一样大，
+        # 补丁只是少下载，落盘体积并没有变少。
+        dest = prepare_staging_dir(info.version, info.asset_size)
+        apply_patch(patch_path, _install_root(), dest, progress=progress, cancel=cancel)
+    finally:
+        try:
+            os.remove(patch_path)      # 组装完就没用了，别占着 TEMP
+        except Exception:
+            pass
+
+    ok, why = validate_package(dest)
+    if not ok:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise RuntimeError(why)
+    logger.info("增量更新已就绪：%s", dest)
+    return dest
+
+
+def _install_prepare_full(info: UpdateInfo, progress, cancel, on_stage) -> str:
+    """全量路径（与历史行为一致）：下整包 -> 校验 -> 解压 -> 检查。"""
     import tempfile
     if on_stage:
         on_stage("download")

@@ -4,11 +4,19 @@
 #   校验 tag 与 utils/version.py 的 APP_VERSION 一致
 #   -> 打包主程序（main.spec）与独立更新器（updater.spec）
 #   -> 跑更新器自测 + 更新链路自测（任一失败即中止，不会产出坏 Release）
-#   -> 校验产物完整性 -> 压 zip（不含 data/ 等运行期数据）-> 创建 Release 并上传
+#   -> 校验产物完整性 -> 压 zip（不含 data/ 等运行期数据）
+#   -> 生成增量补丁（对比上一个 Release 的全量包，失败只跳过、不阻塞发版）
+#   -> 创建 Release 并上传
 #
 # Release 资产名固定带 -win64.zip 后缀（services/update_service.py 的
 # UPDATE_ASSET_SUFFIX 按它挑包）。Release 说明先给占位，发完后在网页上编辑，
 # 应用内「检查更新」显示的就是这段文字。
+#
+# ⚠️ 增量补丁资产的命名红线：必须形如 patch-<from>-to-<to>.dpatch，**绝不能**带
+#    .zip / -win64.zip / chongshi- 前缀。老版本客户端的 _pick_asset 只挑 .zip 且优先
+#    认「chongshi- + -win64.zip」，一旦补丁长得像全量包，**旧客户端会把补丁当全量包
+#    下载**，解压后缺 虫师.exe/_internal，更新直接失败。现在这个名字对老客户端完全不可见。
+#    同理：**每次发版都必须照常产出全量 zip**，绝不做「只发补丁」的 Release。
 
 name: Release
 
@@ -26,6 +34,9 @@ permissions:
 env:
   PYTHONUTF8: '1'
   PYTHONIOENCODING: 'utf-8'
+  # 固定时间戳 -> PyInstaller 产出的 .pyc/zip 内嵌时间稳定，跨版本对比时
+  # 「没变的文件」才能稳定命中，增量补丁更小。只影响内嵌时间，不影响功能。
+  SOURCE_DATE_EPOCH: '1704067200'
 
 jobs:
   release:
@@ -34,6 +45,9 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          # 需要历史 tag 才能用 git describe 找到「上一个版本」，默认 depth=1 不够
+          fetch-depth: 0
 
       - name: 安装 Python 3.13
         uses: actions/setup-python@v5
@@ -124,6 +138,53 @@ jobs:
           size_mb = os.path.getsize(out) / 1024 / 1024
           print(f"packed {out} ({size_mb:.1f} MB, {len(names)} files, no data/ leak)")
 
+      - name: 生成增量补丁（对比上一个 Release；失败只跳过，不阻塞发版）
+        id: mkpatch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          VER="${GITHUB_REF_NAME#v}"; VER="${VER#V}"
+          # 上一个 tag（本 tag 的父提交上最近的 tag）。拿不到就直接跳过。
+          PREV_TAG="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -z "$PREV_TAG" ]; then
+            echo "没有上一个 tag，跳过增量补丁"
+            echo "made=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          PREV="${PREV_TAG#v}"; PREV="${PREV#V}"
+          rm -rf prev_dl prev_tree; mkdir -p prev_dl prev_tree
+          # 下载到独立目录，避免和本次刚压出来的 chongshi-*-win64.zip 混在一起
+          if ! gh release download "$PREV_TAG" --pattern 'chongshi-*-win64.zip' --dir prev_dl --clobber; then
+            echo "拿不到上一个 Release 的全量包，跳过增量补丁"
+            echo "made=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          PREV_ZIP="$(ls prev_dl/chongshi-*-win64.zip 2>/dev/null | head -1 || true)"
+          if [ -z "$PREV_ZIP" ]; then
+            echo "上一个 Release 里没有全量包，跳过增量补丁"
+            echo "made=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          python -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$PREV_ZIP" prev_tree
+          PATCH_OUT="patch-${PREV}-to-${VER}.dpatch"
+          if ! python make_update_patch.py \
+                 --old-tree prev_tree --new-tree "dist/虫师" \
+                 --extra "updater.exe=dist_updater/updater.exe" \
+                 --from "$PREV" --to "$VER" --out "$PATCH_OUT"; then
+            echo "补丁没生成（拿不到上一个包 / 补丁不够小），跳过 —— 不影响全量发版"
+            echo "made=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "made=true" >> "$GITHUB_OUTPUT"
+          echo "patch=$PATCH_OUT" >> "$GITHUB_OUTPUT"
+
+      - name: 校验全量包已产出（每次发版都必须有全量包）
+        shell: python
+        run: |
+          import glob, sys
+          zips = glob.glob("chongshi-*-win64.zip")
+          if not zips:
+              sys.exit("没有找到全量更新包 chongshi-*-win64.zip —— 绝不允许只发补丁")
+          print("全量包：", zips)
+
       - name: 提取当前版本的更新说明
         shell: python
         run: |
@@ -145,10 +206,14 @@ jobs:
                   f"自动构建的发布版本 ${{ github.ref_name }}。")
               print(f"CHANGELOG.md 里没找到 v{ver} 段落，使用占位说明")
 
-      - name: 创建 Release 并上传更新包
+      - name: 创建 Release 并上传更新包（含增量补丁）
         uses: softprops/action-gh-release@v2
         with:
           name: 虫师 ${{ github.ref_name }}
           body_path: release_notes.md
-          files: chongshi-*-win64.zip
-          fail_on_unmatched_files: true
+          files: |
+            chongshi-*-win64.zip
+            patch-*-to-*.dpatch
+          # 补丁是可选的（首个版本 / 拿不到上一个包时没有），所以不因它未命中而失败；
+          # 「全量包必须存在」由上面那步显式断言，保证不会出现只发补丁的 Release。
+          fail_on_unmatched_files: false

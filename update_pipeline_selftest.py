@@ -1,4 +1,4 @@
-﻿"""临时：验证「下载 -> 校验 -> 解压 -> 交更新器」整条链路（跑完即删）
+"""临时：验证「下载 -> 校验 -> 解压 -> 交更新器」整条链路（跑完即删）
 
 覆盖：
   * 正常流程（真 zip + 本地桩服务）-> 暂存目录里是一份完整新版本
@@ -60,33 +60,60 @@ def build_package(path, version=None, with_evil=True, with_internal=True):
     return path
 
 
-STATE = {"pkg": b"", "digest": ""}
+STATE = {"pkg": b"", "digest": "", "patch": b"", "patch_digest": ""}
+_SERVER = {"started": False}
 
 
 def serve_zip(zip_path, digest):
-    """一个常驻的本地桩服务，内容通过 STATE 切换。
-
-    （踩过：每轮新起一个 TCPServer 而旧的不关，Windows 允许同端口重复绑定，
-    请求会继续打到旧服务上 —— 负例因此全部失效，看起来像"代码没报错"。）
-    """
+    """切换全量包内容（内容走全局 STATE，服务只起一次）。"""
     STATE["pkg"] = open(zip_path, "rb").read()
     STATE["digest"] = digest
+    _ensure_server()
+
+
+def serve_patch(patch_path, digest):
+    """切换增量补丁资产（传空 = 撤下补丁，回到"没有增量"的场景）。"""
+    STATE["patch"] = open(patch_path, "rb").read() if patch_path else b""
+    STATE["patch_digest"] = digest or ""
+    _ensure_server()
+
+
+def _ensure_server():
+    """只起一次桩服务：内容通过 STATE 切换。
+
+    （踩过：每轮新起一个 TCPServer 而旧的不关，Windows 允许同端口重复绑定，
+    请求会继续打到旧服务上 —— 负例因此全部失效，看起来像"代码没报错"。
+    现在服务只起一次、只换 STATE，从根上避免这个问题。）
+    """
+    if _SERVER["started"]:
+        return
+    _SERVER["started"] = True
 
     class H(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/pkg":
                 raw = STATE["pkg"]
+            elif self.path == "/patch":
+                raw = STATE["patch"]
             else:
                 # 桩版本必须**永远比本地新**：早期写死 v1.1.4，等项目发到 1.1.4 时
                 # check_for_update 会判成"已是最新"，第一项就挂（v1.1.4 CI 实测踩坑）。
+                assets = [{"name": f"chongshi-{NEXT_VER}-win64.zip",
+                           "size": len(STATE["pkg"]),
+                           "browser_download_url": f"http://127.0.0.1:{PORT}/pkg",
+                           "digest": f"sha256:{STATE['digest']}"}]
+                if STATE["patch"]:
+                    # 补丁资产名必须精确等于 patch-<本机版本>-to-<目标版本>.dpatch，
+                    # 且**不能**带 .zip —— 否则老客户端会把它当全量包挑走。
+                    assets.append({"name": f"patch-{_CUR}-to-{NEXT_VER}.dpatch",
+                                   "size": len(STATE["patch"]),
+                                   "browser_download_url": f"http://127.0.0.1:{PORT}/patch",
+                                   "digest": f"sha256:{STATE['patch_digest']}"})
                 raw = json.dumps({
                     "tag_name": f"v{NEXT_VER}", "body": "test",
                     "published_at": "2026-09-23T00:00:00Z",
                     "html_url": f"https://example.invalid/r/v{NEXT_VER}",
-                    "assets": [{"name": f"chongshi-{NEXT_VER}-win64.zip",
-                                "size": len(STATE["pkg"]),
-                                "browser_download_url": f"http://127.0.0.1:{PORT}/pkg",
-                                "digest": f"sha256:{STATE['digest']}"}],
+                    "assets": assets,
                 }).encode()
             self.send_response(200)
             self.send_header("Content-Length", str(len(raw)))
@@ -99,7 +126,15 @@ def serve_zip(zip_path, digest):
     socketserver.TCPServer.allow_reuse_address = True
     srv = socketserver.TCPServer(("127.0.0.1", PORT), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    return srv
+
+
+def write_tree(root, files):
+    """按 {相对路径: 文本} 造一棵目录树（补丁测试用）。"""
+    for rel, text in files.items():
+        p = os.path.join(root, *rel.split("/"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
 
 
 def main():
@@ -225,6 +260,86 @@ def main():
         shutil.rmtree(fake, ignore_errors=True)
     else:
         check("（跳过端到端）找到 updater.exe", False, UPDATER_EXE)
+
+    # ---- 增量更新：生成 -> 组装 -> 与全量一致；出错必须自动回退全量 ----
+    from make_update_patch import build_patch
+
+    print("  —— 增量更新 ——")
+    old_tree = os.path.join(tmp, "old_install")
+    new_tree = os.path.join(tmp, "new_install")
+    write_tree(old_tree, {
+        "虫师.exe": "OLD-EXE",
+        "_internal/qt.dll": "SAME-QT",
+        "_internal/base_library.zip": "OLD-PYZ",
+        "_internal/gone.txt": "GONE",
+        "updater.exe": "OLD-UPDATER",
+    })
+    write_tree(new_tree, {
+        "虫师.exe": f"NEW-EXE-{NEXT_VER}",
+        "_internal/qt.dll": "SAME-QT",
+        "_internal/base_library.zip": "NEW-PYZ",
+        "_internal/added.txt": "ADDED",
+    })
+    new_updater = os.path.join(tmp, "new_updater.exe")
+    with open(new_updater, "w", encoding="utf-8") as f:
+        f.write("NEW-UPDATER")
+
+    patch_path = os.path.join(tmp, f"patch-{_CUR}-to-{NEXT_VER}.dpatch")
+    stat_p = build_patch(old_tree, new_tree, _CUR, NEXT_VER, patch_path,
+                         extras=[f"updater.exe={new_updater}"], max_ratio=1.1)
+    patch_digest = hashlib.sha256(open(patch_path, "rb").read()).hexdigest()
+    check("没变化的文件不进 payload（qt.dll 被复用）",
+          stat_p["files_payload"] == 4 and stat_p["files_total"] == 5, str(stat_p))
+    with zipfile.ZipFile(patch_path) as _z:
+        _names = _z.namelist()
+    check("补丁里确实没有未变化文件的内容",
+          "manifest.json" in _names and not any(n.endswith("qt.dll") for n in _names),
+          str(_names))
+
+    # 组装阶段的「旧安装」换成合成安装树（自测跑在源码目录里，那里并不是安装树）
+    real_install_root = us._install_root
+    us._install_root = lambda: old_tree
+
+    build_package(zip_path)                     # 同时备一份可用的全量包，供回退用
+    serve_zip(zip_path, hashlib.sha256(open(zip_path, "rb").read()).hexdigest())
+    serve_patch(patch_path, patch_digest)
+
+    res_p = us.check_for_update()
+    check("查到了增量补丁", us.patch_available(res_p.info), res_p.info.patch_name)
+    check("补丁摘要与期望一致", res_p.info.patch_sha256 == patch_digest)
+    check("补丁起点 = 本机当前版本", res_p.info.patch_from == _CUR, res_p.info.patch_from)
+
+    stages_p = []
+    staging_p = us.install_prepare(res_p.info, on_stage=lambda s: stages_p.append(s))
+    check("走的是增量路径（download -> apply）", stages_p == ["download", "apply"], str(stages_p))
+    check("增量组装出的新版本文件齐全",
+          all(os.path.exists(os.path.join(staging_p, n))
+              for n in ("虫师.exe", "_internal", "updater.exe")))
+    check("增量组装的内容是这一版的",
+          open(os.path.join(staging_p, "虫师.exe"), encoding="utf-8").read() == f"NEW-EXE-{NEXT_VER}"
+          and open(os.path.join(staging_p, "_internal", "added.txt"), encoding="utf-8").read() == "ADDED")
+    check("没变的文件是从旧安装复用来的",
+          open(os.path.join(staging_p, "_internal", "qt.dll"), encoding="utf-8").read() == "SAME-QT")
+    check("旧版本里已删除的文件没被带过来",
+          not os.path.exists(os.path.join(staging_p, "_internal", "gone.txt")))
+
+    # 负例：旧安装里的文件对不上清单 -> 必须**自动回退全量**，最终仍然成功
+    write_tree(old_tree, {"_internal/qt.dll": "TAMPERED"})
+    stages_f = []
+    staging_f = us.install_prepare(res_p.info, on_stage=lambda s: stages_f.append(s))
+    check("增量失败后自动回退全量（download -> apply -> download -> extract）",
+          stages_f == ["download", "apply", "download", "extract"], str(stages_f))
+    check("回退全量后仍然拿到可用的新版本",
+          open(os.path.join(staging_f, "虫师.exe"), encoding="utf-8").read() == f"NEW-EXE-{NEXT_VER}")
+    check("回退后暂存目录里是完整的一份",
+          all(os.path.exists(os.path.join(staging_f, n))
+              for n in ("虫师.exe", "_internal", "updater.exe")))
+
+    # 负例：Release 里没有补丁 -> 老老实实走全量，不能报"有增量"
+    us._install_root = real_install_root
+    serve_patch("", "")
+    res_np = us.check_for_update()
+    check("没有补丁时 patch_available 为假", not us.patch_available(res_np.info))
 
     shutil.rmtree(staged_root, ignore_errors=True)
     shutil.rmtree(tmp, ignore_errors=True)

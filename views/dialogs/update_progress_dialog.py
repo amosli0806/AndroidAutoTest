@@ -16,6 +16,7 @@ from utils.settings import Settings, THEME_MODE_DARK
 _STAGE_TEXT = {
     "download": "正在下载更新包…",
     "extract": "正在解压更新包…",
+    "apply": "正在组装更新文件…",
 }
 
 
@@ -190,6 +191,11 @@ class UpdateProgressDialog(QDialog):
             self.bar.setRange(0, 100)
             self.bar.setValue(int(cur * 100 / total))
             self.hint.setText(f"{done_mb:.1f} / {total_mb:.1f} MB")
+        elif self._stage == "apply":
+            # 增量组装：按文件个数推进（从旧安装复用没变的文件 + 写出补丁里的新文件）
+            self.bar.setRange(0, total)
+            self.bar.setValue(cur)
+            self.hint.setText(f"正在组装 {cur} / {total} 个文件")
         else:
             self.bar.setRange(0, total)
             self.bar.setValue(cur)
