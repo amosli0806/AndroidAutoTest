@@ -416,6 +416,7 @@ class SettingsDialog(QDialog):
     def _build_preset_wallpaper_grid(self):
         """三列缩略图网格：单选一个后点「应用/确定」生效；再点一次取消选择"""
         container = QWidget()
+        container.setObjectName("WallpaperGridContainer")
         grid = QGridLayout(container)
         grid.setContentsMargins(0, 4, 4, 4)
         grid.setHorizontalSpacing(10)
@@ -459,6 +460,7 @@ class SettingsDialog(QDialog):
         grid.setRowStretch(grid.rowCount(), 1)
 
         scroll = QScrollArea()
+        scroll.setObjectName("WallpaperScroll")
         scroll.setWidget(container)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -1529,30 +1531,38 @@ class SettingsDialog(QDialog):
                 background-color: {nav_sel_bg};
             }}
 
-            /* ---------- 细滚动条（日夜配色跟随主题变量） ---------- */
-            #SettingsDialog QScrollBar:vertical {{
+            /* ---------- 壁纸预设区：背景与页面一致 ---------- */
+            #SettingsDialog QScrollArea#WallpaperScroll,
+            #SettingsDialog QScrollArea#WallpaperScroll > QWidget#qt_scrollarea_viewport,
+            #SettingsDialog QWidget#WallpaperGridContainer {{
+                background-color: {content_bg};
+                border: none;
+            }}
+
+            /* ---------- 壁纸预设滚动条（对齐项目树 ProjectTreeView / 快捷键页样式） ---------- */
+            #SettingsDialog QScrollArea#WallpaperScroll QScrollBar:vertical {{
+                width: 6px;
+                background: {scroll_track};
+                border-radius: 3px;
+                margin: 0px;
+            }}
+            #SettingsDialog QScrollArea#WallpaperScroll QScrollBar::handle:vertical {{
+                background: {scroll_handle};
+                border-radius: 3px;
+                min-height: 20px;
+            }}
+            #SettingsDialog QScrollArea#WallpaperScroll QScrollBar::handle:vertical:hover {{
+                background: {scroll_handle_hover};
+            }}
+            #SettingsDialog QScrollArea#WallpaperScroll QScrollBar::add-line:vertical,
+            #SettingsDialog QScrollArea#WallpaperScroll QScrollBar::sub-line:vertical {{
+                height: 0px;
+                width: 0px;
                 background: transparent;
-                width: 8px;
-                margin: 2px 2px 2px 0;
+                border: none;
             }}
-            #SettingsDialog QScrollBar::handle:vertical {{
-                background: {input_border};
-                border-radius: 4px;
-                min-height: 30px;
-            }}
-            #SettingsDialog QScrollBar::handle:vertical:hover {{
-                background: {btn_primary_hover};
-            }}
-            #SettingsDialog QScrollBar::handle:vertical:pressed {{
-                background: {btn_primary_bg};
-            }}
-            #SettingsDialog QScrollBar::add-line:vertical,
-            #SettingsDialog QScrollBar::sub-line:vertical {{
-                height: 0;
-                width: 0;
-            }}
-            #SettingsDialog QScrollBar::add-page:vertical,
-            #SettingsDialog QScrollBar::sub-page:vertical {{
+            #SettingsDialog QScrollArea#WallpaperScroll QScrollBar::add-page:vertical,
+            #SettingsDialog QScrollArea#WallpaperScroll QScrollBar::sub-page:vertical {{
                 background: transparent;
             }}
 
