@@ -452,6 +452,12 @@ class AdbToolboxController(QObject):
         threading.Thread(target=run, daemon=True).start()
 
     def _action_install(self):
+        # 先查设备再弹文件框：没设备时让用户挑完 APK 才说连不上，白折腾一趟
+        serial = self._get_serial()
+        if not serial:
+            show_toast(self.view, "⚠️ 设备未连接，请先连接设备")
+            return
+
         path, _ = QFileDialog.getOpenFileName(
             self.view, "选择 APK 文件", "", "APK 文件 (*.apk);;所有文件 (*.*)"
         )
@@ -459,7 +465,6 @@ class AdbToolboxController(QObject):
             return
 
         filename = os.path.basename(path)
-        serial = self._get_serial()
         adb = get_adb_path()
         self.log_emitted.emit(
             f"<span style='color:{log_colors.log_color(log_colors.RESULT)};'>📦 开始安装: {filename}</span>"
@@ -517,6 +522,9 @@ class AdbToolboxController(QObject):
         return ""
 
     def _action_push(self):
+        if not self._get_serial():
+            show_toast(self.view, "⚠️ 设备未连接，请先连接设备")
+            return
         # 本地文件/文件夹 + 远程路径在一个对话框里一次填完
         dlg = PushSetupDialog(self.view)
         if dlg.exec() != QDialog.DialogCode.Accepted:

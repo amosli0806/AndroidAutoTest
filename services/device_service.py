@@ -54,6 +54,19 @@ class DeviceService:
             self.device = None
             raise Exception(f"连接设备失败: {e}")
 
+    def disconnect(self):
+        """设备掉线：把设备对象与序列号一并清掉。
+
+        为什么必须清：这两个字段只在 connect() 里赋值，掉线后若留着旧值，
+        各处「`if not serial:` 提示未连接 / `if not device:` 跳过采集」的守卫
+        就永远不会触发 —— 表现就是设备拔了以后点按钮**既不提示也不执行**，
+        命令拿着一个已经不存在的序列号去发。设备列表为空时由 main.py 调用。
+        """
+        self.device = None
+        self.serial = None
+        # 分辨率缓存跟着设备走，换设备/掉线都要失效
+        self._cached_screen_size = None
+
     def get_devices(self) -> List[str]:
         """当前可用的 adb 设备序列号列表。
 

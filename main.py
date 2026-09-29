@@ -764,7 +764,14 @@ def main():
                 pass
         else:
             task_controller.mark_tasks_offline()
-            # 设备断开：通知工具箱清理残留任务
+            # 设备断开：清掉设备服务里的设备对象与序列号。少了这一步，各处
+            # 「if not serial: 提示未连接」的守卫会以为设备还在（serial 是旧值），
+            # 点了「执行 / 投屏 / 安装 / 推送」既不提示也不执行，看着像没反应。
+            try:
+                device_svc.disconnect()
+            except Exception:
+                pass
+            # 通知工具箱清理残留任务
             try:
                 adb_toolbox_controller.set_main_running(False)
             except Exception:
