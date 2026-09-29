@@ -562,8 +562,20 @@ class HelpView(QFrame):
                     {'image': 'element_4_edit.png', 'desc': '选中元素点击"编辑"修改'},
                     {'image': 'element_5_delete.png', 'desc': '选中一个或多个元素点击"删除"，确认后移除'},
                     {'image': 'element_6_verify.png', 'desc': '右键单个元素选择"验证元素"，快速检查当前设备是否存在该控件'},
-                    {'image': 'element_7_import_export.png', 'desc': '支持导入/导出 JSON 文件，便于备份与共享'},
+                    {'image': 'element_7_import_export.png', 'desc': '支持导入/导出 Excel 表格，便于备份、共享与批量维护'},
                 ])}
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    📄 <b>导入 / 导出元素表格</b>：<b>一个所属应用一张工作表</b>，表名即应用名
+                    （所以表里不再重复放应用列，要换应用就把整行挪到另一张表）。每张表五列 ——
+                    <b>所属模块 / 名称 / 定位方式 / 定位值 / 备注</b>，「定位方式」是下拉，只能选
+                    资源ID、坐标、文本、描述、XPath 之一<br>
+                    • 导入时按「<b>所属模块 + 名称</b>」匹配本应用下的元素：命中就<b>覆盖</b>它的
+                    定位方式 / 定位值 / 备注（<b>保留内部 id</b>，步骤里的引用不会失效），
+                    没命中才新增<br>
+                    • 导入<b>只新增 + 覆盖，不删除</b>：表格里少一行不代表要删元素。要删请在界面里
+                    选中后删（那边会检查引用）<br>
+                    • 不合格的行（没名称 / 没模块 / 没定位值 / 定位方式写错）会被跳过并逐行提示
+                </div>
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     💡 验证元素需要设备连接，且仅支持资源ID、文本、描述、XPath。
                 </div>
@@ -592,16 +604,19 @@ class HelpView(QFrame):
                 "导入导出用例与元素": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">📦 数据导入 / 导出</h2>
                 <p style="font-size: 15px;">
-                    将项目结构、步骤、元素库导出为 JSON 文件，便于备份、迁移或团队共享。
+                    把项目结构、步骤导出为 JSON 文件；<b>元素库</b>与<b>语音用例</b>则是
+                    <b>Excel 表格</b>（元素库一个应用一张表、语音用例一个分组一张表），
+                    便于备份、迁移、团队共享，以及用 Excel 批量维护。
                 </p>
                 {self._get_steps_html([
                     {'image': 'import_1_export_cases.png', 'desc': '右上角菜单 → "导出用例"，选择保存位置'},
                     {'image': 'import_2_import_cases.png', 'desc': '右上角菜单 → "导入用例"，选择 JSON 文件（增量导入，不覆盖）'},
-                    {'image': 'import_3_export_elements.png', 'desc': '在元素库 Tab 点击"导出"，保存元素数据'},
-                    {'image': 'import_4_import_elements.png', 'desc': '在元素库 Tab 点击"导入"，选择有效的元素库 JSON 文件'},
+                    {'image': 'import_3_export_elements.png', 'desc': '在元素库 Tab 点击"导出"，保存为 Excel 表格'},
+                    {'image': 'import_4_import_elements.png', 'desc': '在元素库 Tab 点击"导入"，选择元素库表格（只新增+覆盖，不删除）'},
                 ])}
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     💡 导入用例是增量模式，已存在的项目/模块/用例会跳过，不会覆盖。
+                    元素表格与语音用例表格的合并规则见各自章节。
                 </div>
                 """
             },

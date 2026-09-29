@@ -5,6 +5,9 @@ from typing import List, Optional
 from dataclasses import dataclass, field
 from utils.app_paths import data_path
 
+# 定位方式。界面下拉、表格导入校验都认这一份 —— 多处硬编码迟早走样。
+LOC_TYPES = ["资源ID", "坐标", "文本", "描述", "XPath"]
+
 
 @dataclass
 class Element:
@@ -155,6 +158,37 @@ class ElementModel:
             count += 1
         self.save()
         return count
+
+    def upsert_elements(self, rows) -> dict:
+        """按「应用 + 模块 + 名称」合并一批元素：命中就覆盖定位方式/定位值/备注
+        （**保留原 id**），没命中才新增。返回 {"created": n, "overwritten": n}。
+
+        为什么保留 id：步骤是通过 element_id 引用元素的，重建 id 会让所有引用失效
+        （执行时报「元素ID 已失效」）。所以匹配键必须用用户看得见的业务字段，
+        而不是那个不可见的内部 id。
+
+        为什么整批只落盘一次：逐条调 update_element 会整份 JSON 写 N 次 ——
+        表格导入动辄几百条，那样会明显卡顿。
+        """
+        index = {(e.app, e.module, e.name): e for e in self.elements}
+        stats = {"created": 0, "overwritten": 0}
+        for app, module, name, loc_type, loc_value, remark in rows:
+            found = index.get((app, module, name))
+            if found is not None:
+                found.loc_type = loc_type
+                found.loc_value = loc_value
+                found.remark = remark
+                stats["overwritten"] += 1
+                continue
+            elem = Element(id=self._generate_id(), name=name, app=app,
+                           module=module, loc_type=loc_type,
+                           loc_value=loc_value, remark=remark)
+            self.elements.append(elem)
+            index[(app, module, name)] = elem
+            stats["created"] += 1
+        if stats["created"] or stats["overwritten"]:
+            self.save()
+        return stats
 
     def export_to_file(self, file_path: str) -> bool:
         """导出所有元素到JSON文件"""

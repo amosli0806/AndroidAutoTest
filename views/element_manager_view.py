@@ -7,9 +7,10 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QGridLayout, QLabel, QMenu, QFrame, QGraphicsDropShadowEffect)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QFont, QAction, QColor
-from models.element_model import ElementModel, Element
+from models.element_model import ElementModel, Element, LOC_TYPES
+from utils import element_table
 from utils.toast import show_toast
-from utils.dialogs import ConfirmDeleteDialog, ErrorDialog
+from utils.dialogs import ConfirmDeleteDialog, ErrorDialog, WarningDialog
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 
@@ -441,30 +442,73 @@ class ElementManagerView(QWidget):
         self.element_changed.emit()
 
     def _on_import(self):
+        """导入元素表格：**一个工作表 = 一个所属应用**（表名即应用名）。
+
+        组内按「所属模块 + 名称」匹配：同名的覆盖定位方式/定位值/备注并保留原 id
+        （步骤靠 element_id 引用元素，重建 id 会让引用失效），没有的才新增。
+        **不删除**：表格里少一行不代表要删元素，误删会静默打断引用。
+        """
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "导入元素", "", "JSON Files (*.json)"
+            self, "导入元素表格", "", "Excel 表格 (*.xlsx)"
         )
-        if file_path:
-            try:
-                count = self.element_model.import_from_file(file_path)
-                show_toast(message=f"导入成功")
-                self.refresh()
-                self.element_changed.emit()
-            except ValueError as e:
-                ErrorDialog.show_error(self, "导入失败", str(e))
-            except Exception as e:
-                ErrorDialog.show_error(self, "导入失败", f"导入时发生错误：\n{str(e)}")
+        if not file_path:
+            return
+        try:
+            sheets = element_table.read_xlsx(file_path)
+        except Exception as e:
+            ErrorDialog.show_error(self, "导入失败", f"读取表格失败：\n{e}")
+            return
+
+        rows = []
+        warnings = []
+        for sheet_name, sheet_rows in sheets:
+            app = (sheet_name or "").strip() or "未指定应用"
+            parsed, sheet_warnings = element_table.parse_sheet(sheet_rows)
+            warnings += [f"[{sheet_name}] {w}" for w in sheet_warnings]
+            rows += [(app, module, name, loc_type, loc_value, remark)
+                     for module, name, loc_type, loc_value, remark in parsed]
+        try:
+            stats = self.element_model.upsert_elements(rows)
+        except Exception as e:
+            ErrorDialog.show_error(self, "导入失败", f"导入时发生错误：\n{str(e)}")
+            return
+
+        self.refresh()
+        self.element_changed.emit()
+        parts = []
+        if stats["created"]:
+            parts.append(f"新增 {stats['created']} 个")
+        if stats["overwritten"]:
+            parts.append(f"覆盖 {stats['overwritten']} 个")
+        show_toast(parent=self, message="导入完成：" + ("、".join(parts) or "没有可导入的内容"))
+        if warnings:
+            shown = warnings[:8]
+            if len(warnings) > len(shown):
+                shown.append(f"……另有 {len(warnings) - len(shown)} 处")
+            WarningDialog.show_warning(
+                self, "导入完成，有几处需要留意", "\n".join(shown))
 
     def _on_export(self):
+        """导出元素表格：一个所属应用一张工作表，表名即应用名。"""
+        elements = self.element_model.get_elements()
+        if not elements:
+            show_toast(parent=self, message="还没有元素可导出")
+            return
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "导出元素", "elements_export.json", "JSON Files (*.json)"
+            self, "导出元素表格", "元素库.xlsx", "Excel 表格 (*.xlsx)"
         )
-        if file_path:
-            try:
-                self.element_model.export_to_file(file_path)
-                show_toast(message="导出成功")
-            except Exception as e:
-                ErrorDialog.show_error(self, "导出失败", f"导出时发生错误：\n{str(e)}")
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".xlsx"):
+            file_path += ".xlsx"
+        sheets = [(app, element_table.app_to_sheet_rows(group))
+                  for app, group in element_table.group_by_app(elements)]
+        try:
+            count = element_table.write_xlsx(file_path, sheets)
+        except Exception as e:
+            ErrorDialog.show_error(self, "导出失败", f"导出元素表格时出错：\n{str(e)}")
+            return
+        show_toast(parent=self, message=f"已导出 {len(elements)} 个元素 / {count} 张应用表")
 
     def refresh(self):
         self._update_app_combo()
@@ -544,7 +588,7 @@ class ElementEditDialog(QDialog):
         self.loc_type_combo = QComboBox()
         from utils.widget_helpers import prepare_combo_view
         prepare_combo_view(self.loc_type_combo)
-        self.loc_type_combo.addItems(['资源ID', '坐标', '文本', '描述', 'XPath'])
+        self.loc_type_combo.addItems(LOC_TYPES)
         self.loc_type_combo.setObjectName("locTypeCombo")
 
         self.loc_value_edit = QLineEdit()
