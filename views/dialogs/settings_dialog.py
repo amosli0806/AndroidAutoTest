@@ -364,7 +364,6 @@ class SettingsDialog(QDialog):
         remove_btn = QPushButton("移除")
         remove_btn.setObjectName("dangerBtn")
         remove_btn.setFixedSize(80, 30)  # 与「浏览」按钮同宽同高
-        remove_btn.setToolTip("移除壁纸，取消当前选择")
         remove_btn.clicked.connect(self.remove_wallpaper)
 
         opacity_layout = QHBoxLayout()
@@ -391,9 +390,10 @@ class SettingsDialog(QDialog):
     # 预设壁纸目录：图片放这里就会被自动扫出来（按文件名排序）
     # 开发环境在项目根 resources/ 下；打包后在 _internal/resources/ 下（整包随 spec datas 带上）
     PRESET_WALLPAPER_DIR_NAME = os.path.join("resources", "images", "wallpapers")
-    # 缩略图统一裁成 16:9（160×90），保证每张宽高一致
-    PRESET_THUMB_W = 160
-    PRESET_THUMB_H = 90
+    # 缩略图统一裁成 16:9（144×81），保证每张宽高一致
+    # 尺寸取小一点：3 列 + 间距要装进面板宽度（还要给纵向滚动条留位置），避免底部出现横向滚动条
+    PRESET_THUMB_W = 144
+    PRESET_THUMB_H = 81
 
     def _preset_wallpaper_dir(self):
         if getattr(sys, "frozen", False):
@@ -418,7 +418,7 @@ class SettingsDialog(QDialog):
         container = QWidget()
         grid = QGridLayout(container)
         grid.setContentsMargins(0, 4, 4, 4)
-        grid.setHorizontalSpacing(14)
+        grid.setHorizontalSpacing(10)
         grid.setVerticalSpacing(14)
 
         self._preset_buttons = {}  # path -> QToolButton
@@ -462,6 +462,8 @@ class SettingsDialog(QDialog):
         scroll.setWidget(container)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # 只保留上下滚动；列宽已按面板宽度算好，横向滚动条一律不出现
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         return scroll
 
     def _on_preset_clicked(self, checked, path):
@@ -1171,9 +1173,12 @@ class SettingsDialog(QDialog):
         self._clear_preset_selection()
 
     def _clear_preset_selection(self):
-        # autoExclusive 下 setChecked(False) 即可取消单选
+        # autoExclusive 的按钮直接 setChecked(False) 可能不生效（Qt 互斥组会保留一个选中），
+        # 必须先临时关掉互斥、取消勾选、再恢复
         for b in getattr(self, "_preset_buttons", {}).values():
+            b.setAutoExclusive(False)
             b.setChecked(False)
+            b.setAutoExclusive(True)
 
     def _select_preset_by_path(self, path):
         """按路径点亮对应缩略图；找不到就不点亮（如自定义路径）"""
@@ -1522,6 +1527,33 @@ class SettingsDialog(QDialog):
             #SettingsDialog QToolButton#wallpaperThumbBtn:checked {{
                 border-color: {btn_primary_bg};
                 background-color: {nav_sel_bg};
+            }}
+
+            /* ---------- 细滚动条（日夜配色跟随主题变量） ---------- */
+            #SettingsDialog QScrollBar:vertical {{
+                background: transparent;
+                width: 8px;
+                margin: 2px 2px 2px 0;
+            }}
+            #SettingsDialog QScrollBar::handle:vertical {{
+                background: {input_border};
+                border-radius: 4px;
+                min-height: 30px;
+            }}
+            #SettingsDialog QScrollBar::handle:vertical:hover {{
+                background: {btn_primary_hover};
+            }}
+            #SettingsDialog QScrollBar::handle:vertical:pressed {{
+                background: {btn_primary_bg};
+            }}
+            #SettingsDialog QScrollBar::add-line:vertical,
+            #SettingsDialog QScrollBar::sub-line:vertical {{
+                height: 0;
+                width: 0;
+            }}
+            #SettingsDialog QScrollBar::add-page:vertical,
+            #SettingsDialog QScrollBar::sub-page:vertical {{
+                background: transparent;
             }}
 
             /* ---------- 主按钮（确定、应用） ---------- */
