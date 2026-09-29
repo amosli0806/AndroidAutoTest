@@ -363,7 +363,7 @@ class SettingsDialog(QDialog):
 
         remove_btn = QPushButton("移除")
         remove_btn.setObjectName("dangerBtn")
-        remove_btn.setFixedSize(72, 30)
+        remove_btn.setFixedSize(80, 30)  # 与「浏览」按钮同宽同高
         remove_btn.setToolTip("移除壁纸，取消当前选择")
         remove_btn.clicked.connect(self.remove_wallpaper)
 
@@ -391,7 +391,9 @@ class SettingsDialog(QDialog):
     # 预设壁纸目录：图片放这里就会被自动扫出来（按文件名排序）
     # 开发环境在项目根 resources/ 下；打包后在 _internal/resources/ 下（整包随 spec datas 带上）
     PRESET_WALLPAPER_DIR_NAME = os.path.join("resources", "images", "wallpapers")
-    PRESET_THUMB_SIZE = 132
+    # 缩略图统一裁成 16:9（160×90），保证每张宽高一致
+    PRESET_THUMB_W = 160
+    PRESET_THUMB_H = 90
 
     def _preset_wallpaper_dir(self):
         if getattr(sys, "frozen", False):
@@ -415,32 +417,46 @@ class SettingsDialog(QDialog):
         """三列缩略图网格：单选一个后点「应用/确定」生效；再点一次取消选择"""
         container = QWidget()
         grid = QGridLayout(container)
-        grid.setSpacing(14)
+        grid.setContentsMargins(0, 4, 4, 4)
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(14)
 
         self._preset_buttons = {}  # path -> QToolButton
         col_count = 3
-        thumb = self.PRESET_THUMB_SIZE
+        tw, th = self.PRESET_THUMB_W, self.PRESET_THUMB_H
 
         for i, path in enumerate(self._list_preset_wallpapers()):
             btn = QToolButton()
             btn.setObjectName("wallpaperThumbBtn")
             btn.setCheckable(True)
             btn.setAutoExclusive(True)
-            btn.setFixedSize(thumb + 16, thumb + 44)
-            btn.setIconSize(QSize(thumb, thumb))
+            btn.setFixedSize(tw + 16, th + 44)
+            btn.setIconSize(QSize(tw, th))
             btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
             name = os.path.splitext(os.path.basename(path))[0]
             btn.setText(name)
             pixmap = QPixmap(path)
             if not pixmap.isNull():
-                btn.setIcon(QIcon(pixmap))
+                # 居中裁剪成统一比例：按覆盖方式缩放后取中间部分，宽高完全一致
+                filled = pixmap.scaled(
+                    tw, th,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                x = (filled.width() - tw) // 2
+                y = (filled.height() - th) // 2
+                btn.setIcon(QIcon(filled.copy(x, y, tw, th)))
             btn.setToolTip("选择后点击「应用」或「确定」生效")
             btn.clicked.connect(lambda checked, p=path: self._on_preset_clicked(checked, p))
             self._preset_buttons[path] = btn
-            grid.addWidget(btn, i // col_count, i % col_count)
+            row, col = i // col_count, i % col_count
+            # 三列均分剩余宽度，按钮在各自单元格里居中 → 最右列贴住滚动条，不留大空隙
+            grid.addWidget(btn, row, col,
+                           Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
 
+        for c in range(col_count):
+            grid.setColumnStretch(c, 1)
         grid.setRowStretch(grid.rowCount(), 1)
-        grid.setColumnStretch(col_count, 1)
 
         scroll = QScrollArea()
         scroll.setWidget(container)
