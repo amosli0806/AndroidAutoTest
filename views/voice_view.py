@@ -96,7 +96,8 @@ class _PlaybackWorker(QThread):
                     self._interrupted = True
                     break
                 self.round_changed.emit(round_index + 1, self.loop_count)
-                for case_id, phrase_index, text, delay, verifies, case_name in self.items:
+                for _i, (case_id, phrase_index, text, delay, verifies, case_name) \
+                        in enumerate(self.items):
                     if self._stop:
                         self._interrupted = True
                         break
@@ -129,6 +130,15 @@ class _PlaybackWorker(QThread):
                     # 带上用例名：一轮跑多个用例时，日志里一眼能看出这句属于哪个用例
                     voice_log.emit("info", f"🔊 [{case_name}] 开始播报「{short}」")
                     self.service.speak_async(text)
+                    # 预取：这一条刚开播，就后台把下一条的音频合成好。
+                    # 在线语音合成要 2~3 秒，不提前做，这段延迟就变成「上一条播完 →
+                    # 下一条出声」之间的静默期，车机会干等指令直到超时回「没听清」。
+                    _pf = getattr(self.service, "prefetch", None)
+                    if _pf and _i + 1 < len(self.items):
+                        try:
+                            _pf(self.items[_i + 1][2])
+                        except Exception:
+                            pass
 
                     # 等这句播完；分片轮询是为了能及时响应「停止」
                     deadline = time.time() + 30 + len(text) * 0.6

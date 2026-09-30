@@ -222,15 +222,26 @@ class WindowsSapiEngine:
         except Exception:
             return ""
 
+    # ---------------- 预合成（只对在线引擎有意义，见 EdgeTtsEngine） ----------------
+    def prefetch(self, text):
+        """提前合成下一条音频。内置语音是本地合成，不需要，这里空操作。"""
+        return
+
+    def clear_prefetch(self):
+        """清掉预合成缓存。内置语音没有缓存，空操作。"""
+        return
+
     # ---------------- 配置 ----------------
     def set_voice(self, voice_id):
         self._cfg["voice_id"] = voice_id or None
+        self.clear_prefetch()          # 换了音色，预合成的音频就不能再用了
         voice = self._voice()
         if voice_id and not self._select_voice(voice, voice_id):
             raise VoiceError("选中的音色在本机不存在")
 
     def set_rate(self, rate):
         self._cfg["rate"] = max(RATE_MIN, min(RATE_MAX, int(rate)))
+        self.clear_prefetch()          # 换了语速同理
         self._voice().Rate = self._cfg["rate"]
 
     def set_output_device(self, device_id):
@@ -328,6 +339,73 @@ class EdgeTtsEngine(WindowsSapiEngine):
         super().__init__()
         self._async_state = "idle"     # idle / synthing / playing / done
         self._cancel = False
+        # 预合成缓存：key=(文案, 音色, 语速) -> wav 路径。
+        # 为什么需要：在线合成要走网络，实测 2.7~3.2 秒；不提前做，这段延迟就变成
+        # 「上一条播完 → 下一条出声」之间的**静默期**，车机在这段时间里干等指令，
+        # 容易等超时回「没听清」（2026-09-30 实测：静默 2.7s 时车机在我们还没念完
+        # 就判了没听清；播报结束即回话的那条则正常命中）。播上一条时把下一条先合成好
+        # 即可消除这段静默，车机侧的时间线与内置语音一致。
+        self._pf = {}                  # key -> wav 路径（已合成好、待播放）
+        self._pf_busy = set()          # 正在合成的 key，避免重复排队
+        self._pf_lock = threading.Lock()
+        self._PF_MAX = 4               # 只需要预取「下一条」，4 个够用且不堆临时文件
+
+    # ---------------- 预合成 ----------------
+    def _pf_key(self, text):
+        return (text, self._cfg.get("voice_id") or "", int(self._cfg.get("rate") or 0))
+
+    def _pf_new_path(self):
+        import uuid
+        return os.path.join(tempfile.gettempdir(),
+                            f"chongshi_edge_pf_{uuid.uuid4().hex[:8]}.wav")
+
+    def prefetch(self, text):
+        """后台把这条文案的音频先合成好，轮到它播时就能立刻出声。"""
+        text = (text or "").strip()
+        if not text:
+            return
+        key = self._pf_key(text)
+        with self._pf_lock:
+            if key in self._pf or key in self._pf_busy or len(self._pf) >= self._PF_MAX:
+                return
+            self._pf_busy.add(key)
+        threading.Thread(target=self._pf_worker, args=(text, key), daemon=True).start()
+
+    def _pf_worker(self, text, key):
+        path = self._pf_new_path()
+        try:
+            self._synth_wav(text, path)
+        except Exception as e:
+            # 预合成失败不影响播报：轮到它时会现场合成（只是又会有一段静默期）
+            print(f"[voice/edge] 预合成失败（轮到时会现场合成）: "
+                  f"{type(e).__name__}: {str(e)[:100]}")
+            self._remove(path)
+            with self._pf_lock:
+                self._pf_busy.discard(key)
+            return
+        with self._pf_lock:
+            self._pf_busy.discard(key)
+            if key in self._pf:        # 已经有别人做好的一份了，丢掉这份
+                self._remove(path)
+            else:
+                self._pf[key] = path
+
+    def clear_prefetch(self):
+        """清空预合成缓存并删掉临时文件（换音色 / 换语速时由基类调用）。"""
+        with self._pf_lock:
+            paths = list(self._pf.values())
+            self._pf.clear()
+        for p in paths:
+            self._remove(p)
+
+    @staticmethod
+    def _remove(path):
+        if not path:
+            return
+        try:
+            os.remove(path)
+        except Exception:
+            pass
 
     # ---------------- 预热 ----------------
     _warmup_done = False
@@ -390,9 +468,11 @@ class EdgeTtsEngine(WindowsSapiEngine):
     def set_rate(self, rate):
         # edge 语速是合成参数，不落 SpVoice.Rate
         self._cfg["rate"] = max(RATE_MIN, min(RATE_MAX, int(rate)))
+        self.clear_prefetch()          # 换了语速，预合成的音频就不能再用了
 
     def set_voice(self, voice_id):
         self._cfg["voice_id"] = voice_id or None
+        self.clear_prefetch()          # 换了音色同理
 
     def _rate_str(self) -> str:
         pct = max(self._RATE_PCT_MIN, min(self._RATE_PCT_MAX, int(self._cfg["rate"]) * 10))
@@ -534,15 +614,24 @@ class EdgeTtsEngine(WindowsSapiEngine):
             return
         self._cancel = False
         self._async_state = "synthing"
-        # 唯一临时文件：固定名会被「上一条还在播、下一条开始合成」的覆盖冲突打坏
-        import uuid
-        self._async_wav_path = os.path.join(
-            tempfile.gettempdir(), f"chongshi_edge_{uuid.uuid4().hex[:8]}.wav")
-        threading.Thread(target=self._async_worker, args=(text,), daemon=True).start()
+        # 命中预合成缓存 -> 直接用那份音频，省掉整段静默期（见 prefetch）
+        with self._pf_lock:
+            cached = self._pf.pop(self._pf_key(text), None)
+        if cached:
+            self._async_wav_path = cached
+        else:
+            # 唯一临时文件：固定名会被「上一条还在播、下一条开始合成」的覆盖冲突打坏
+            import uuid
+            self._async_wav_path = os.path.join(
+                tempfile.gettempdir(), f"chongshi_edge_{uuid.uuid4().hex[:8]}.wav")
+        threading.Thread(target=self._async_worker,
+                         args=(text, bool(cached)), daemon=True).start()
 
-    def _async_worker(self, text):
+    def _async_worker(self, text, pre_synthesized=False):
         """合成 + **同步播放**都跑在本线程：SVSF_DEFAULT 播完才返回，
         流的生命周期天然安全（不会异步起播后被提前 Close/删除）。
+
+        pre_synthesized=True 表示音频是预合成好的（见 prefetch），跳过合成直接播。
 
         为什么不用 SVSF_ASYNC + WaitUntilDone 轮询：异步起播存在「间隙」——
         SpeakStream 立即返回时播放器可能还没真正开始消费流，此时
@@ -550,7 +639,8 @@ class EdgeTtsEngine(WindowsSapiEngine):
         实测报 com_error 0x80030002（文件未找到）/无声（1.1.8 后反馈）。
         """
         try:
-            self._synth_wav(text, self._async_wav_path)
+            if not pre_synthesized:
+                self._synth_wav(text, self._async_wav_path)
             if self._cancel:
                 self._cleanup_async_wav()
                 self._async_state = "done"
@@ -729,6 +819,19 @@ class VoiceService:
 
     def speak_async(self, text):
         self._require().speak_async(text)
+
+    def prefetch(self, text):
+        """提前合成下一条音频（只对在线引擎有意义；内置语音是空操作）。"""
+        try:
+            engine = self._require()
+        except Exception:
+            return
+        fn = getattr(engine, "prefetch", None)
+        if fn:
+            try:
+                fn(text)
+            except Exception:
+                pass
 
     def wait_done(self, timeout_ms: int = 100) -> bool:
         return self._require().wait_done(timeout_ms)
