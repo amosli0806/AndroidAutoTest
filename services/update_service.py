@@ -138,6 +138,22 @@ class UpdateInfo:
         mb = self.patch_size / 1024 / 1024
         return f"{mb:.1f} MB" if mb >= 1 else f"{self.patch_size / 1024:.0f} KB"
 
+    @property
+    def download_size_label(self) -> str:
+        """「发现新版本」里该显示的更新包大小 —— 有增量补丁时报**实际下载量**。
+
+        为什么要把完整包大小也带上：有补丁时只下几 MB，而全量包 300+MB，
+        只显示一个数字会让用户以为"显示的和实际下载的对不上"
+        （2026-09-30 实测：显示 330.0 MB、实际只下了约 12MB）。
+        """
+        if self.patch_size > 0 and self.asset_size > 0:
+            return f"{self.patch_size_text}（增量下载，完整包 {self.asset_size_text}）"
+        if self.patch_size > 0:
+            return f"{self.patch_size_text}（增量下载）"
+        if self.asset_size > 0:
+            return self.asset_size_text
+        return ""          # 两个都没有 -> 空串，调用方据此不显示这一段
+
 
 @dataclass
 class CheckResult:

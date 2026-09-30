@@ -51,8 +51,11 @@ class UpdateAvailableDialog(QDialog):
         meta = [f"当前版本 V{APP_VERSION}"]
         if self.info.published_at:
             meta.append(f"发布于 {self.info.published_at[:10]}")
-        if self.info.asset_size:
-            meta.append(f"更新包 {self.info.asset_size_text}")
+        # 有增量补丁时报「实际下载量」（如 12.1 MB（增量下载，完整包 330.0 MB）），
+        # 否则报全量包大小 —— 见 UpdateInfo.download_size_label
+        size_label = self.info.download_size_label
+        if size_label:
+            meta.append(f"更新包 {size_label}")
         subtitle = QLabel(" · ".join(meta))
         subtitle.setObjectName("UpdateSubtitle")
         root.addWidget(subtitle)
