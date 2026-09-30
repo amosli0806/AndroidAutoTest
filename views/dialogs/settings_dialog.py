@@ -42,6 +42,11 @@ _SHORTCUT_LABELS = {
     "adb_scrcpy": "投屏",
     "adb_install": "安装 APK",
     "adb_push": "推送文件",
+    "adb_device_info": "硬件信息",
+    "adb_hprof": "堆转储",
+    "adb_monkey": "Monkey 测试",
+    "adb_crash": "Crash 日志",
+    "adb_anr": "ANR 日志",
     "adb_md5": "MD5 查询",
     "adb_weak_network": "弱网模拟",
     "adb_packet": "网络抓包",
@@ -936,7 +941,8 @@ class SettingsDialog(QDialog):
         layout.addLayout(row)
 
         hint = QLabel(
-            "将设备输入法切换回系统默认 AOSP 键盘，"
+            "检查设备当前输入法：正常时不做任何改动；"
+            "异常（未设置或已被卸载）时自动切回可用的输入法（优先系统 AOSP 键盘），"
             "解决输入法被篡改导致 uiautomator2 无法输入文字的问题。"
         )
         hint.setObjectName("SettingsPageSubtitle")
@@ -953,8 +959,9 @@ class SettingsDialog(QDialog):
             show_toast(self, "设备服务未初始化", duration=2000)
             return
         try:
-            ds.restore_ime()
-            show_toast(self, "恢复输入法成功", duration=2000)
+            # 直接展示服务返回的结论：正常时是「当前输入法正常（xxx），无需恢复」，
+            # 真恢复过则是「已恢复输入法：xxx」，比笼统的"成功"更有信息量
+            show_toast(self, ds.restore_ime(), duration=2500)
         except Exception as e:
             msg = str(e)
             if "设备未连接" in msg:
@@ -1665,6 +1672,10 @@ class SettingsDialog(QDialog):
                 edit = QKeySequenceEdit()
                 edit.setMaximumWidth(240)
                 self._shortcut_edits[key] = edit
+                if key not in labels:
+                    # groups 与 _SHORTCUT_LABELS 是两份清单，加新快捷键时容易只改一处；
+                    # 漏了界面上就会直接显示英文 key（如 adb_device_info），留个提示便于发现
+                    print(f"[settings] 快捷键 {key} 缺少中文名，请补进 _SHORTCUT_LABELS")
                 form.addRow(f"{labels.get(key, key)}:", edit)
 
         scroll.setWidget(container)

@@ -946,6 +946,13 @@ def main():
     main_window.set_api_view(api_view)
     main_window.register_sub_view(api_view)
 
+    # ---------- 快捷键：等所有视图装配完，再注册一次 ----------
+    # MainWindow.__init__ 里已经注册过一次，但那时 ADB 工具箱控制器 / 元素库回调 /
+    # 性能检测视图都还没装配（分别在本文件 599 / 576 / 931 行才 set），apply_shortcuts
+    # 里对应的 `if self._xxx:` 分支会整块跳过 —— 结果这三组共 15 条快捷键要等用户
+    # 进一次设置并点「确定」才生效。这里补一次，让它们开箱即用。
+    main_window.apply_shortcuts()
+
 
     # 消息中心：性能采集完成 / 阈值异常（纯新增）
     perf_controller.perf_finished.connect(notification_controller.on_perf_finished)

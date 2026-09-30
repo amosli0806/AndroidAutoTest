@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 from typing import Optional, List
 from models.step_model import Step
+from services.perf_compat import shell_text
 from utils.adb_path import get_adb_path
 from utils.settings import Settings
 from utils.theme import ThemeMode
@@ -100,49 +101,73 @@ class DeviceService:
         except Exception:
             return []
 
+    # 恢复输入法时优先尝试的「通用键盘」——设备上装了才用（见 restore_ime）
+    PREFERRED_IMES = (
+        "com.android.inputmethod.latin/.LatinIME",
+        "com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME",
+    )
+
+    def current_ime(self) -> str:
+        """当前默认输入法 id；未设置或读不到时返回空串。"""
+        raw = shell_text(self.device, "settings get secure default_input_method").strip()
+        if not raw or raw.lower() == "null":
+            return ""
+        return raw.splitlines()[0].strip()
+
+    def available_imes(self) -> List[str]:
+        """设备上**已安装**的输入法 id 列表（`ime list -s`）。
+
+        个别 ROM 没有 `ime` 命令，读不到时返回空列表 —— 调用方据此退回「盲试通用键盘」。
+        """
+        raw = shell_text(self.device, "ime list -s")
+        return [ln.strip() for ln in raw.splitlines() if ln.strip()]
+
     def restore_ime(self) -> str:
+        """确保设备输入法处于「可用」状态，返回一句可直接展示的结论。
+
+        与旧实现的关键差别：**先看设备当前状态，再决定要不要动手**。
+        旧实现不看现状，直接盲试两条写死的 AOSP / Google 键盘命令；车机装的是讯飞这类
+        第三方输入法，两条命令都会报 Unknown input method，于是明明输入法好好的，
+        却提示「恢复输入法失败」。
+
+        现在的判定顺序：
+          1. 当前默认输入法已安装（或设备不支持 `ime list`）-> 判定正常，**不做任何改动**；
+          2. 否则按「通用键盘优先 -> 设备里任意可用输入法」逐个 enable + set；
+          3. 成功与否以**重新读取默认输入法**为准，不再猜 `ime set` 的输出文字。
+        """
         if not self.device:
             raise Exception("设备未连接，请先连接设备。")
 
-        ime_cmds = [
-            "ime set com.android.inputmethod.latin/.LatinIME",
-            "ime set com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME"
-        ]
-        last_error = None
-        for cmd in ime_cmds:
-            try:
-                result = self.device.shell(cmd)
-                if hasattr(result, 'output'):
-                    output = result.output
-                else:
-                    output = str(result)
-                if output is None:
-                    output = ""
+        cur = self.current_ime()
+        avail = self.available_imes()
 
-                lower_output = output.lower()
-                if ("unknown" in lower_output or
-                        "cannot be selected" in lower_output or
-                        "error" in lower_output or
-                        "exception" in lower_output):
-                    last_error = output
-                    continue
+        if cur and (not avail or cur in avail):
+            return f"当前输入法正常（{cur}），无需恢复"
 
-                if "selected" in lower_output or "now" in lower_output:
-                    return f"✅ 成功执行命令: {cmd}\n输出: {output}"
+        # 需要恢复：通用键盘优先，其次设备里任意一个可用输入法
+        if avail:
+            candidates = [i for i in self.PREFERRED_IMES if i in avail]
+            candidates += [i for i in avail if i not in candidates]
+        else:
+            # 读不到已安装列表（个别 ROM 没有 ime 命令）-> 退回旧行为：盲试通用键盘
+            candidates = list(self.PREFERRED_IMES)
 
-                if not output.strip():
-                    return f"✅ 成功执行命令: {cmd}\n输出: (无输出，已设置)"
+        if not candidates:
+            raise Exception(
+                "恢复输入法失败：设备上读不到任何可用输入法。\n"
+                "💡 请手动在设备设置里启用一款输入法后再试。")
 
-                return f"✅ 成功执行命令: {cmd}\n输出: {output}"
+        for ime_id in candidates:
+            # 未启用的输入法 ime set 会失败，先 enable 一次；失败也无妨，下面以实际状态为准
+            shell_text(self.device, f"ime enable {ime_id}")
+            shell_text(self.device, f"ime set {ime_id}")
+            if self.current_ime() == ime_id:
+                return f"已恢复输入法：{ime_id}"
 
-            except Exception as e:
-                last_error = str(e)
-
+        shown = "、".join(candidates[:3]) + (" 等" if len(candidates) > 3 else "")
         raise Exception(
-            f"恢复输入法失败，尝试了多种键盘方案均未成功。\n"
-            f"最后错误信息: {last_error}\n"
-            f"💡 请确保设备已连接且具有调试权限，或手动在设备上设置输入法为 AOSP 键盘。"
-        )
+            f"恢复输入法失败：尝试过 {shown}，都没能切换成功。\n"
+            f"💡 请手动在设备设置里选择输入法。")
 
     # ---------- 核心方法：perform ----------
     def perform(self, step: Step):

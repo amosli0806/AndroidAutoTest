@@ -1173,8 +1173,14 @@ class MainWindow(QMainWindow):
                     sc.activated.disconnect()
                 except Exception:
                     pass
+                # 先禁用再 deleteLater：deleteLater 要等事件循环才真正销毁，
+                # 这期间旧的 QShortcut 还活在快捷键表里，与新注册的同键位构成
+                # 「歧义快捷键」。setEnabled(False) 立刻把它移出快捷键表。
+                sc.setEnabled(False)
                 sc.deleteLater()
         self._shortcuts = []
+        # [(QShortcut, 规范化键位, page_index)] —— 供 _update_shortcut_enabled 按页启用
+        self._shortcut_meta = []
 
         shortcuts = Settings.get_shortcuts()
 
@@ -1197,6 +1203,10 @@ class MainWindow(QMainWindow):
                             pass
                     sc.activated.connect(wrapper)
                 self._shortcuts.append(sc)
+                # 记下「规范化键位」用于按页启用：同一键位可能有多个 QShortcut
+                # （如 Ctrl+F 同时属于 ADB 工具箱与自动化编辑），必须靠 enable/disable
+                # 让任一时刻只有一个生效，否则 Qt 会判成歧义快捷键、谁都不触发。
+                self._shortcut_meta.append((sc, QKeySequence(ks_str).toString(), page_index))
             except Exception as e:
                 print(f"[apply_shortcuts] 注册 {key}({ks_str}) 失败: {e}")
 
@@ -1336,6 +1346,46 @@ class MainWindow(QMainWindow):
             register("elem_edit", handlers.get("elem_edit"), page_index=4)
             register("elem_delete", handlers.get("elem_delete"), page_index=4)
             register("elem_verify", handlers.get("elem_verify"), page_index=4)
+
+        # 注册完立刻按当前页收敛一次：同一键位只留该页生效的那一个
+        self._update_shortcut_enabled()
+
+    def _update_shortcut_enabled(self):
+        """按当前页启用/禁用快捷键 —— 每个键位在任一时刻只启用一个。
+
+        为什么必须这么做：**同一窗口里存在多个同键位的 QShortcut 时，Qt 会判定为
+        「歧义快捷键」，activated 一律不触发**（只发 activatedAmbiguously，而没人连它）。
+        所以「只在某页生效」不能靠回调里 if 一下当前页 —— 那太晚了，键早就被判成歧义、
+        根本轮不到回调。必须真的 enable/disable。
+
+        规则（按规范化键位分组）：
+          * 组内只有一条 -> 全局的（page_index 为 None）永远启用；页内的只在对应页启用；
+          * 组内多条 -> 优先启用「正好属于当前页」的那条；没有就退回启用全局那条；
+            两者都没有则整组禁用。
+        顺带覆盖了「全局快捷键与某页快捷键撞键」的情况。
+        """
+        meta = getattr(self, '_shortcut_meta', None)
+        if not meta:
+            return
+        try:
+            cur = self.stacked_widget.currentIndex()
+        except Exception:
+            return
+
+        groups = {}
+        for sc, key, page in meta:
+            groups.setdefault(key, []).append((sc, page))
+
+        for items in groups.values():
+            if len(items) == 1:
+                sc, page = items[0]
+                sc.setEnabled(page is None or page == cur)
+                continue
+            winners = {id(sc) for sc, page in items if page == cur}
+            if not winners:
+                winners = {id(sc) for sc, page in items if page is None}
+            for sc, _page in items:
+                sc.setEnabled(id(sc) in winners)
 
     # ---------- 应用可视化 Dock ----------
     def setup_visualize_dock(self):
@@ -2131,6 +2181,9 @@ class MainWindow(QMainWindow):
             return
 
         self.stacked_widget.setCurrentIndex(index)
+        # 换页后重算快捷键的启用状态：同一键位在不同页归属不同动作（如 Ctrl+F 在
+        # ADB 工具箱是"指令搜索"、在自动化编辑是"步骤搜索"），必须跟着页走
+        self._update_shortcut_enabled()
         for i, action in enumerate(self.nav_actions):
             if i == 2:
                 # 可视化按钮的状态由 dock 的可见性控制，跳过
@@ -3577,6 +3630,18 @@ class MainWindow(QMainWindow):
             self._show_about_dialog()
         elif action == "settings":
             self.on_settings()
+        elif action == "restore_ime":
+            # 设置页「设备维护 → 恢复输入法」的快捷键入口（此前注册了快捷键却没有这个分支，
+            # 按了没反应）。与服务走同一套判定：输入法正常时不改动、直接给出结论。
+            ds = self.device_service
+            if ds is None:
+                show_toast(message="设备服务未初始化")
+                return
+            try:
+                show_toast(message=ds.restore_ime())
+            except Exception as e:
+                show_toast(message="设备未连接" if "设备未连接" in str(e)
+                           else "恢复输入法失败")
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.ToolTip:

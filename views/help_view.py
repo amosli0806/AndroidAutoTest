@@ -586,13 +586,13 @@ class HelpView(QFrame):
                 "设备连接与输入法恢复": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">📱 设备管理</h2>
                 <p style="font-size: 15px;">
-                    检测连接的 Android 设备，并提供恢复输入法功能，解决输入法被篡改的问题。
+                    检测连接的 Android 设备，并提供恢复输入法功能：输入法正常时不做改动，异常时自动切回可用的输入法，解决输入法被篡改导致无法输入文字的问题。
                 </p>
                 {self._get_steps_html([
                     {'image': 'device_1_view_devices.png', 'desc': '顶部工具栏显示已连接设备序列号，若无设备显示"未检测到设备"'},
                     {'image': 'device_2_refresh.png', 'desc': '点击"刷新"重新扫描 ADB 设备'},
                     {'image': 'device_3_select_device.png', 'desc': '从下拉框选择要使用的设备，自动连接'},
-                    {'image': 'device_4_restore_ime.png', 'desc': '点击右上角菜单 → "恢复输入法"，切换为 AOSP 键盘'},
+                    {'image': 'device_4_restore_ime.png', 'desc': '设置 → 设备维护 → "恢复输入法"（或快捷键），输入法正常时会提示"无需恢复"'},
                 ])}
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     💡 若恢复失败，可手动在设备设置中切换键盘。
