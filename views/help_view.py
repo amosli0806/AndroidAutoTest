@@ -2,8 +2,8 @@
 import os
 import sys
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QSplitter, QTreeView, QApplication, QStyle, QTextEdit, QVBoxLayout
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QImage
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QImage, QTextDocument
 from utils.theme import Theme, ThemeMode
 from utils import tree_state
 from utils.settings import Settings, THEME_MODE_DARK
@@ -200,6 +200,11 @@ class HelpView(QFrame):
         self.content = QTextEdit()
         self.content.setReadOnly(True)
         self.content.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        # 本页帮助图片的预缩放缓存：key(QUrl) -> QImage。
+        # QTextEdit 对 <img> 的现场缩放不走平滑滤波，大图缩小时锯齿严重（发花），
+        # 所以在 _get_image_html 里先按最终显示尺寸 + 屏幕倍率高质量缩好，
+        # setHtml 前注册进文档资源表，绘制时 1:1 贴图（见 setHtml 调用处）。
+        self._help_images = {}
         # 让 QTextEdit 及 viewport 透明，配合 HTML body 的 transparent 让壁纸透出
         self.content.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.content.viewport().setAutoFillBackground(False)
@@ -258,8 +263,6 @@ class HelpView(QFrame):
         img_path = os.path.join(base_dir, "resources", "images", "help", filename)
 
         if os.path.exists(img_path):
-            file_url = f"file:///{img_path.replace(os.sep, '/')}"
-            # 读真实尺寸 → 统一宽度、等比高度；max_height 兜底（超高图按高度反算宽度）
             reader = QImage(img_path)
             disp_w, disp_h = None, None
             if not reader.isNull() and reader.width() > 0:
@@ -271,23 +274,33 @@ class HelpView(QFrame):
                     disp_h = max_h
                     disp_w = round(w * disp_h / h)
             if disp_w and disp_h:
-                size_attr = f'width="{disp_w}" height="{disp_h}"'
-            else:
-                # 读不出尺寸的极端情况：退回 CSS 兜底
-                size_attr = f'style="max-width: 80%; max-height: {max_height};"'
-            return f'''
-            <div style="margin: 12px 0; text-align: left; background: transparent; border-radius: 0; padding: 0;">
-                <img src="{file_url}" alt="{desc}" {size_attr}
-                     style="border-radius: 6px; display: inline-block;">
-            </div>
-            '''
+                # 按屏幕倍率生成高清版：150% 缩放屏上生成 1.5x 物理分辨率的图，
+                # 标记 devicePixelRatio 后绘制仍然是逻辑尺寸，但物理像素更多更清晰
+                dpr = self.devicePixelRatioF() or 1.0
+                phys_w = round(disp_w * dpr)
+                phys_h = round(disp_h * dpr)
+                scaled = reader.scaled(phys_w, phys_h,
+                                       Qt.AspectRatioMode.IgnoreAspectRatio,
+                                       Qt.TransformationMode.SmoothTransformation)
+                scaled.setDevicePixelRatio(dpr)
+                key = f"helpimg://{filename}_{phys_w}x{phys_h}"
+                self._help_images[key] = scaled
+                return f'''
+                <div style="margin: 12px 0; text-align: left; background: transparent; border-radius: 0; padding: 0;">
+                    <img src="{key}" alt="{desc}" width="{disp_w}" height="{disp_h}"
+                         style="border-radius: 6px; display: inline-block;">
+                </div>
+                '''
+            # 读不出尺寸的极端情况：占位提示
+            filename_disp = filename
         else:
-            return f'''
-            <div style="border: 2px dashed #d0d0d0; border-radius: 8px; padding: 30px 20px; margin: 12px 0; text-align: left; background: #fafafa; color: #999; font-size: 14px;">
-                🖼️ {desc}<br>
-                <span style="font-size: 12px; color: #bbb;">请将截图放置于 resources/images/help/{filename}</span>
-            </div>
-            '''
+            filename_disp = filename
+        return f'''
+        <div style="border: 2px dashed #d0d0d0; border-radius: 8px; padding: 30px 20px; margin: 12px 0; text-align: left; background: #fafafa; color: #999; font-size: 14px;">
+            🖼️ {desc}<br>
+            <span style="font-size: 12px; color: #bbb;">请将截图放置于 resources/images/help/{filename_disp}</span>
+        </div>
+        '''
 
     # ---------- 辅助方法：多步骤截图序列（描述在标题行） ----------
     def _get_steps_html(self, steps, title="操作步骤"):
@@ -1071,6 +1084,13 @@ class HelpView(QFrame):
         </body>
         </html>
         """
+        # setHtml 前：把本页预缩放好的图片注册进文档资源表，img 的 src 指向这些资源。
+        # 这样 QTextEdit 绘制的是已按显示尺寸 + 屏幕倍率高质量缩好的 1:1 位图，
+        # 不再对原图现场缩放（现场缩放无平滑滤波，大图缩小会锯齿发花）。
+        doc = self.content.document()
+        for key, img in self._help_images.items():
+            doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl(key), img)
+        self._help_images.clear()
         self.content.setHtml(full_html)
         self.content.update()
         self.content.repaint()
