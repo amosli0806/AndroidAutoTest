@@ -96,7 +96,7 @@ class _PlaybackWorker(QThread):
                     self._interrupted = True
                     break
                 self.round_changed.emit(round_index + 1, self.loop_count)
-                for case_id, phrase_index, text, delay, verifies in self.items:
+                for case_id, phrase_index, text, delay, verifies, case_name in self.items:
                     if self._stop:
                         self._interrupted = True
                         break
@@ -126,8 +126,8 @@ class _PlaybackWorker(QThread):
                             verify_blocked = True
 
                     from utils import voice_log
-                    voice_log.emit("info", f"🔊 开始播报「{short}」")
-                    started = time.time()
+                    # 带上用例名：一轮跑多个用例时，日志里一眼能看出这句属于哪个用例
+                    voice_log.emit("info", f"🔊 [{case_name}] 开始播报「{short}」")
                     self.service.speak_async(text)
 
                     # 等这句播完；分片轮询是为了能及时响应「停止」
@@ -148,11 +148,12 @@ class _PlaybackWorker(QThread):
                     if self._interrupted:
                         break
 
-                    # 播后等待：delay 是「总等待」（播报 + 缓冲），
-                    # 扣掉实测播报耗时，剩余部分才是要等的缓冲
-                    elapsed = time.time() - started
+                    # 播后等待：delay 是**播完之后的纯缓冲**（与语速、播报时长无关）——
+                    # 播报本身已经在上面 wait_done 等掉了，不再从等待里扣一遍。
+                    # （2026-09-29 改：此前按「总等待 − 实测播报」算，而实测播报总比估算长，
+                    #  缓冲被压到 0.8~1.4 秒，车机还没回话就去抓日志了。）
                     waited = 0.0
-                    remain = max(0.0, delay - elapsed)
+                    remain = max(0.0, delay)
                     while waited < remain:
                         if self._stop:
                             self._interrupted = True
@@ -1439,22 +1440,22 @@ class VoiceView(QWidget):
         if not text:
             self.status_label.setText("先填文案才能估算")
             return
-        from services.voice_service import estimate_duration
-        rate = int(self.model.settings.get("rate", 0) or 0)
-        est = round(estimate_duration(text, rate) + 2.0, 1)  # 播报时长 + 2 秒缓冲
+        from services.voice_service import estimate_post_delay
+        est = estimate_post_delay(text)
         self.model.update_step(case.id, index, delay=est)
         if 0 <= index < len(self._rows):
             spin = self._rows[index].delay_spin
             spin.blockSignals(True)   # 避免 setValue 再触发一次 _on_delay_changed 重复落盘
             spin.setValue(est)
             spin.blockSignals(False)
-        self.status_label.setText(f"已按语速估算播后等待：{est} 秒")
+        self.status_label.setText(f"已估算播后等待：{est} 秒（播完之后的缓冲）")
 
     def _on_recalc_delays(self):
-        """批量重算：把**全部用例**的播报步骤「播后等待」按文案+语速重算一遍。
+        """批量重算：把**全部用例**的播报步骤「播后等待」按文案长度重算一遍。
 
-        与单条估算同公式（播报时长 + 2 秒缓冲）；文案为空的步骤跳过不动，
-        避免把没填文案的行改成无意义的默认值。检测步骤没有等待时长，不参与。
+        与单条估算同公式（estimate_post_delay：基准 + 每字递增，**与语速无关**）；
+        文案为空的步骤跳过不动，避免把没填文案的行改成无意义的默认值。
+        检测步骤没有等待时长，不参与。
 
         为什么是全部用例：表格导入时「播后等待」不在表里、统一给的是默认值，
         导完想一次性补齐 —— 一个个用例点太慢。
@@ -1467,8 +1468,7 @@ class VoiceView(QWidget):
         if not self.model.cases:
             self.status_label.setText("还没有语音用例")
             return
-        from services.voice_service import estimate_duration
-        rate = int(self.model.settings.get("rate", 0) or 0)
+        from services.voice_service import estimate_post_delay
         changed = skipped = 0
         for case in self.model.cases:
             for step in case.steps:
@@ -1478,7 +1478,7 @@ class VoiceView(QWidget):
                 if not text:
                     skipped += 1
                     continue
-                step.delay = round(estimate_duration(text, rate) + 2.0, 1)
+                step.delay = estimate_post_delay(text)
                 changed += 1
         if changed:
             self.model.save()
@@ -1601,9 +1601,10 @@ class VoiceView(QWidget):
     def _checked_items(self):
         """勾选的语音用例 -> 播报组列表。
 
-        每组 = (case_id, 播报步骤下标, 文案, 播后等待, [紧随的检测步骤...])，
+        每组 = (case_id, 播报步骤下标, 文案, 播后等待, [紧随的检测步骤...], 用例名)，
         检测步骤元素为 (步骤下标, [成功关键词])。检测步骤不单独成组 ——
         它总是跟着前面那句播报，作为那句的预期结果被执行时判定。
+        用例名只用于日志里标注「这条播报属于哪个用例」。
         """
         items = []
         for i in range(self.check_tree.topLevelItemCount()):
@@ -1632,7 +1633,7 @@ class VoiceView(QWidget):
                             verifies.append((k, kw))
                         k += 1
                     items.append((case_id, idx, text,
-                                  float(step.delay or 0), verifies))
+                                  float(step.delay or 0), verifies, voice_case.name))
         return items
 
     def _sync_action_button_widths(self):
@@ -1748,7 +1749,8 @@ class VoiceView(QWidget):
             self.status_label.setText("这条是空的，先填文案")
             return
         # 单条播报不等待后面的间隔，也不做回执验证（试听是人耳确认场景）
-        self._start_playback([(case.id, index, text, 0.0, [])], 1, "正在播报…", verify=False)
+        self._start_playback([(case.id, index, text, 0.0, [], case.name)], 1,
+                             "正在播报…", verify=False)
 
     def _on_play_all(self):
         items = self._checked_items()

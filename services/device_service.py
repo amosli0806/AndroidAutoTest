@@ -455,8 +455,9 @@ class DeviceService:
         这里**阻塞到这句播完**才返回 —— 后续步骤必须等这段语音放完，
         否则整段序列会抢跑（典型场景：先播唤醒词，再播指令）。
 
-        afterDelay 字段是「总等待」（播报 + 缓冲）：先实测播报耗时，
-        再把剩余部分作为缓冲睡掉，播报比估算长时缓冲自动归零、不重复等。
+        afterDelay 字段是「播后等待」= **播完之后的纯缓冲**（与语速、播报时长无关）：
+        播报本身已经阻塞等完了，这里再额外睡 afterDelay 秒，给车机
+        「听懂 → 处理 → 回话说完」以及页面加载留时间。
 
         **不做回执验证**：验证的判定依据是「预期结果」关键词，而 voice 步骤
         本身没有这个概念（关键词是按用例配在语音播报页的检测步骤上的）。
@@ -473,14 +474,14 @@ class DeviceService:
 
         try:
             voice_log.emit("info", f"🔊 开始播报「{short}」")
-            elapsed = get_voice_service().speak(text)
+            get_voice_service().speak(text)
         except VoiceError as e:
             voice_log.emit("error", f"❌ 播报失败「{short}」：{e}")
             raise Exception(str(e))
 
-        # 播后等待：总等待 − 实测播报耗时 = 剩余缓冲
+        # 播后等待：afterDelay 就是纯缓冲，播报耗时不再从里面扣
         delay = float(params.get('afterDelay', 2) or 0)
-        remain = max(0.0, delay - elapsed)
+        remain = max(0.0, delay)
         if remain > 0:
             time.sleep(remain)
 

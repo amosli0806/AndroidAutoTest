@@ -101,15 +101,34 @@ class VoiceFeedbackService:
 
     # ---------------- 判定 ----------------
     @staticmethod
-    def judge(lines, success_keywords, fail_keywords):
+    def effective_fail_keywords(success_keywords, fail_keywords) -> list:
+        """剔除「已经被预期结果写明」的失败词，返回真正参与失败判定的那部分。
+
+        为什么需要这一步：用例是可以**故意验证失败场景**的 —— 比如预期结果就写着
+        「抱歉、暂不支持查询沿途的火车站」，车机回话里当然会出现「抱歉」。
+        如果失败词一律优先，这条用例就永远判不过，等于把"预期失败"的用例全判死。
+        所以规则是：**预期里已经写到的失败词不再参与失败判定**；只有预期里没写、
+        而车机回话里冒出来的失败词（如「没听清」）才算真失败。
+
+        判定用子串包含：预期关键词「抱歉，暂不支持…」被拆成多个词时，
+        失败词「抱歉」能在其中找到，就认为已被预期覆盖。
+        """
+        success = [k for k in (success_keywords or []) if k]
+        return [k for k in (fail_keywords or []) if k
+                and not any(k in s for s in success)]
+
+    @classmethod
+    def judge(cls, lines, success_keywords, fail_keywords):
         """按关键词判定。返回 (result, feedback_texts)。
 
         result 是 RESULT_SUCCESS / RESULT_FAIL / RESULT_UNKNOWN 之一；
         feedback_texts 是命中的那部分日志（unknown 时是全部日志，供人工判断）。
-        失败优先：一行日志同时含成功词和失败词时判失败（保守，避免假通过）。
+
+        失败优先：一行日志同时含成功词和失败词时判失败（保守，避免假通过）——
+        但**已被预期关键词覆盖的失败词不参与**，见 effective_fail_keywords。
         """
         success_keywords = [k for k in (success_keywords or []) if k]
-        fail_keywords = [k for k in (fail_keywords or []) if k]
+        fail_keywords = cls.effective_fail_keywords(success_keywords, fail_keywords)
 
         if fail_keywords:
             fail_hits = [ln for ln in lines if any(k in ln for k in fail_keywords)]
@@ -139,7 +158,7 @@ class VoiceFeedbackService:
             return True, "", feedback
         if result == RESULT_FAIL:
             # 关键词本身（如「没听清」）就是车机回话的要点，比整行日志更好读
-            hits = [k for k in (fail_keywords or [])
+            hits = [k for k in self.effective_fail_keywords(success_keywords, fail_keywords)
                     if k and any(k in ln for ln in feedback)]
             what = "、".join(f"「{k}」" for k in hits) if hits else "失败关键词"
             return False, f"车机语音反馈疑似失败：车机回话命中{what}", feedback

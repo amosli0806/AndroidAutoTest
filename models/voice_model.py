@@ -69,7 +69,9 @@ SEED_PHRASES = [
 KIND_PHRASE = "phrase"    # 播报步骤
 KIND_VERIFY = "verify"    # 检测步骤（预期结果：回执验证关键词）
 
-DEFAULT_DELAY = 2.0
+# 「播后等待」的默认值（秒）—— 语义是**播完之后的纯缓冲**，不是「播报 + 缓冲」。
+# 取 services.voice_service.ESTIMATE_POST_DELAY_BASE（估算公式的基准，空文案的返回值）。
+DEFAULT_DELAY = 3.0
 # 没有归到任何分组的用例，在树上挂在这个虚拟节点下
 UNGROUPED_ID = ""
 UNGROUPED_NAME = "未分组"

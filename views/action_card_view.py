@@ -778,7 +778,11 @@ class ActionCard(QGroupBox):
         line_edit.setPlaceholderText(placeholder)
 
     def _on_estimate_delay(self):
-        """语音播报卡片：按文案长度与语速估算「播后等待」填进 spin。"""
+        """语音播报卡片：按文案长度估算「播后等待」填进 spin。
+
+        与语音播报页同一套口径：算的是**播完之后的纯缓冲**（给车机回话与页面加载留时间），
+        与语速无关 —— 播报时长本身由执行时阻塞等掉，不该再从等待里扣。
+        """
         text = ""
         text_widget = self.fields.get('voiceText')
         if isinstance(text_widget, QLineEdit):
@@ -786,10 +790,8 @@ class ActionCard(QGroupBox):
         if not text:
             show_toast(self, "先填播报文案")
             return
-        from services.voice_service import estimate_duration
-        from models.voice_model import get_rate
-        rate = get_rate()
-        est = max(0, int(round(estimate_duration(text, rate) + 2.0)))
+        from services.voice_service import estimate_post_delay
+        est = max(0, int(round(estimate_post_delay(text))))
         spin = self._spin_of(self.fields.get('afterDelay'))
         if spin is not None:
             spin.setValue(est)
