@@ -3,7 +3,7 @@ import os
 import sys
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QSplitter, QTreeView, QApplication, QStyle, QTextEdit, QVBoxLayout
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QStandardItemModel, QStandardItem
+from PyQt6.QtGui import QStandardItemModel, QStandardItem, QImage
 from utils.theme import Theme, ThemeMode
 from utils import tree_state
 from utils.settings import Settings, THEME_MODE_DARK
@@ -244,6 +244,11 @@ class HelpView(QFrame):
                 self.on_tree_clicked(first_index)
 
     # ---------- 辅助方法：显示单张图片（左对齐） ----------
+    # 统一显示宽度：Qt 富文本不支持 max-width/max-height（直接被忽略，图片按原始
+    # 像素尺寸显示 → 宽高参差、观感失真），必须算好等比宽高写进 width/height 属性。
+    # 只缩小不放大：小分辨率截图放大必然模糊，原图比统一宽度小时保持原尺寸。
+    HELP_IMG_DISPLAY_WIDTH = 480
+
     def _get_image_html(self, filename, desc="示例图片", max_height="400px"):
         """生成图片 HTML（左对齐，有截图时无背景，占位图时有背景）"""
         if getattr(sys, 'frozen', False):
@@ -254,12 +259,26 @@ class HelpView(QFrame):
 
         if os.path.exists(img_path):
             file_url = f"file:///{img_path.replace(os.sep, '/')}"
+            # 读真实尺寸 → 统一宽度、等比高度；max_height 兜底（超高图按高度反算宽度）
+            reader = QImage(img_path)
+            disp_w, disp_h = None, None
+            if not reader.isNull() and reader.width() > 0:
+                w, h = reader.width(), reader.height()
+                disp_w = min(w, self.HELP_IMG_DISPLAY_WIDTH)
+                disp_h = round(h * disp_w / w)
+                max_h = int(max_height.rstrip("px"))
+                if disp_h > max_h:
+                    disp_h = max_h
+                    disp_w = round(w * disp_h / h)
+            if disp_w and disp_h:
+                size_attr = f'width="{disp_w}" height="{disp_h}"'
+            else:
+                # 读不出尺寸的极端情况：退回 CSS 兜底
+                size_attr = f'style="max-width: 80%; max-height: {max_height};"'
             return f'''
             <div style="margin: 12px 0; text-align: left; background: transparent; border-radius: 0; padding: 0;">
-                <img src="{file_url}" alt="{desc}" 
-                     style="max-width: 80%; max-height: {max_height}; width: auto; height: auto; 
-                            border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                            display: inline-block;">
+                <img src="{file_url}" alt="{desc}" {size_attr}
+                     style="border-radius: 6px; display: inline-block;">
             </div>
             '''
         else:
