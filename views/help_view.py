@@ -256,8 +256,8 @@ class HelpView(QFrame):
 
     def _get_image_html(self, filename, desc="示例图片", max_height="400px"):
         """生成图片 HTML（左对齐，有截图时无背景，占位图时有背景）"""
-        # 未配图名的步骤：不渲染残缺占位框，直接跳过
-        if not filename:
+        # 未配图名的步骤（空串/纯空白）：不渲染残缺占位框，直接跳过
+        if not (filename or '').strip():
             return ""
         if getattr(sys, 'frozen', False):
             base_dir = sys._MEIPASS
@@ -339,9 +339,9 @@ class HelpView(QFrame):
                 </p>
 
                 {self._get_steps_html([
-                    {'image': 'adb_setup_1_download.png', 'desc': '① 下载 Google 官方 platform-tools：https://developer.android.com/tools/releases/platform-tools（国内可搜「platform-tools 下载」选可靠镜像）'},
+                    {'image': 'adb_setup_1_download.png', 'desc': '① 下载 adb 链接：https://adbdownload.com/'},
                     {'image': 'adb_setup_2_extract.png', 'desc': '② 解压到任意目录，例如 D:\\platform-tools（内含 adb.exe）'},
-                    {'image': 'adb_setup_3_path.png', 'desc': '③ 把该目录加入系统 PATH：此电脑右键 → 属性 → 高级系统设置 → 环境变量 → 选中 Path → 编辑 → 新建 → 填入目录路径'},
+                    {'image': '', 'desc': '③ 把该目录加入系统 PATH：此电脑右键 → 属性 → 高级系统设置 → 环境变量 → 选中 Path → 编辑 → 新建 → 填入目录路径'},
                     {'image': 'adb_setup_4_verify.png', 'desc': '④ 验证：打开新的命令行窗口，输入 adb version，能显示版本号即成功'},
                     {'image': 'adb_setup_5_restart.png', 'desc': '⑤ 重启虫师，顶部设备下拉框应能发现已连接的设备'},
                 ])}
@@ -480,7 +480,7 @@ class HelpView(QFrame):
                 </p>
                 {self._get_steps_html([
                     {'image': 'step_1_list_view.png', 'desc': '选择用例后，步骤自动显示在列表中'},
-                    {'image': 'step_2_drag_sort.png', 'desc': '拖拽卡片左侧的六个点图标可调整顺序'},
+                    {'image': 'step_2_drag_sort.png', 'desc': '长按卡片可调整顺序'},
                     {'image': 'step_3_edit_step.png', 'desc': '点击铅笔图标编辑步骤名称或参数'},
                     {'image': 'step_4_search_filter.png', 'desc': '在搜索框输入关键词过滤步骤'},
                     {'image': 'step_5_natural_language.png', 'desc': '输入操作描述（如"点击首页，等待3秒"），点击"生成"自动创建步骤'},
@@ -515,9 +515,9 @@ class HelpView(QFrame):
                 {self._get_steps_html([
                     {'image': 'record_1_connect_device.png', 'desc': '确保设备已连接（顶部工具栏显示序列号）'},
                     {'image': 'record_2_select_case.png', 'desc': '在项目树中选择一个用例用于存放生成的步骤'},
-                    {'image': 'record_3_start_recording.png', 'desc': '点击步骤列表上方的红色圆点开始录制（按钮变红闪烁）'},
+                    {'image': 'record_3_start_recording.png', 'desc': '点击步骤列表上方的绿色圆点开始录制（按钮变红录制用户操作中）'},
                     {'image': 'record_4_perform_actions.png', 'desc': '在设备上执行点击、双击、长按、滑动等操作'},
-                    {'image': 'record_5_stop_generate.png', 'desc': '再次点击红色圆点停止录制，系统自动生成步骤并添加到用例中'},
+                    {'image': 'record_5_stop_generate.png', 'desc': '再次点击红色圆点停止录制，系统自动匹配步骤'},
                 ])}
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     💡 生成的步骤默认使用坐标定位，适合跨设备回放。
