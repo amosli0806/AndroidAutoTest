@@ -1,6 +1,7 @@
 # views/logs_view.py
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QPushButton
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, QPushButton,
+    QComboBox, QLineEdit
 )
 from PyQt6.QtCore import Qt, QRectF, QThread, pyqtSignal
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont
@@ -135,9 +136,23 @@ class LogsView(QWidget):
         stats_layout.addStretch()
         layout.addLayout(stats_layout)
 
-        # AI 分析按钮：常驻显示，AI 已启用时高亮、未启用时置灰（点击有提示）
+        # AI 分析按钮 + 日志过滤/搜索：同一行，AI 按钮常驻
         ai_row = QHBoxLayout()
-        ai_row.addStretch()
+        self.level_combo = QComboBox()
+        self.level_combo.addItems(["全部类型", "错误", "成功", "警告", "信息"])
+        self.level_combo.setFixedHeight(28)
+        self.level_combo.setToolTip("按日志类型快速筛选")
+        self.level_combo.currentIndexChanged.connect(self._on_filter_changed)
+        ai_row.addWidget(self.level_combo)
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("🔍 搜索日志内容…")
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setFixedHeight(28)
+        self.search_edit.setToolTip("按关键字过滤日志，命中内容高亮")
+        self.search_edit.textChanged.connect(self._on_filter_changed)
+        ai_row.addWidget(self.search_edit, 1)
+
         self.ai_btn = QPushButton("✨ AI 分析失败")
         self.ai_btn.setObjectName("aiAnalyzeBtn")
         self.ai_btn.setFixedHeight(28)
@@ -145,7 +160,6 @@ class LogsView(QWidget):
         self.ai_btn.clicked.connect(self._on_ai_analyze)
         ai_row.addWidget(self.ai_btn)
         layout.addLayout(ai_row)
-
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setFont(QFont("Consolas", 10))
@@ -157,17 +171,66 @@ class LogsView(QWidget):
         self.update_stats()
 
     def _on_logs_changed(self):
+        self._render_logs()
+        self.update_stats()
+
+    # ---------- 日志过滤与搜索 ----------
+    # 类型下拉与枚举值的对应关系（index -> 日志 typ）
+    _LEVEL_KEYS = ['all', 'error', 'success', 'warning', 'info']
+
+    def _on_filter_changed(self, *_):
+        self._render_logs()
+
+    def _render_logs(self):
+        """按「类型筛选 + 关键字搜索」重渲染日志区（数据始终来自 model.logs）。"""
+        if self.model is None:
+            return
+        # 新一轮执行（日志被清空）后，旧的 AI 结论缓存一并作废
+        if not self.model.logs:
+            self._ai_blocks = []
         self.log_text.clear()
-        # 颜色跟随主题：原先写死的 black/green 在深色日志区里几乎看不见
         level_of = {
             'error': log_colors.ERROR,
             'success': log_colors.SUCCESS,
             'warning': log_colors.WARNING,
         }
+        sel = self._LEVEL_KEYS[self.level_combo.currentIndex()] \
+            if hasattr(self, 'level_combo') else 'all'
+        kw = self.search_edit.text().strip().lower() \
+            if hasattr(self, 'search_edit') else ''
+
         for msg, typ in self.model.logs:
+            if sel != 'all' and typ != sel:
+                continue
+            if kw and kw not in msg.lower():
+                continue
             color = log_colors.log_color(level_of.get(typ, log_colors.INFO))
-            self.log_text.append(f'<font color="{color}">{msg}</font>')
-        self.update_stats()
+            if kw:
+                # 命中关键字高亮：保留原大小写、转义 HTML，避免日志里的 <>& 破坏标记
+                highlighted = self._highlight(msg, kw)
+                self.log_text.append(
+                    f'<font color="{color}">{highlighted}</font>')
+            else:
+                self.log_text.append(f'<font color="{color}">{msg}</font>')
+
+        # 重渲染后补回已缓存的 AI 分析结论（原 __init__ 里没有初始化列表，此处惰性建）
+        for i, s in getattr(self, '_ai_blocks', []):
+            self._append_suggestion_block(i, s)
+
+    @staticmethod
+    def _highlight(msg: str, kw: str) -> str:
+        """大小写不敏感地把 kw 包上高亮标记，保留原文本大小写，转义 HTML。"""
+        import html
+        out, low, klen, i = [], msg.lower(), len(kw), 0
+        while i < len(msg):
+            if low.startswith(kw, i):
+                out.append(f'<span style="background-color:rgba(255,193,7,0.45);">'
+                           f'{html.escape(msg[i:i + klen])}</span>')
+                i += klen
+            else:
+                out.append(html.escape(msg[i]))
+                i += 1
+        return ''.join(out)
 
     def update_stats(self):
         if self.model:
@@ -222,6 +285,11 @@ class LogsView(QWidget):
         self._ai_worker.start()
 
     def _on_one_suggestion(self, index, suggestion):
+        # 缓存起来，切换筛选/搜索导致重渲染后仍能补回
+        if not hasattr(self, '_ai_blocks'):
+            self._ai_blocks = []
+        if all(i != index for i, _ in self._ai_blocks):
+            self._ai_blocks.append((index, suggestion))
         # 单条到达就可以先追加展示，让用户尽早看到
         self.log_text.append("")
         self._append_suggestion_block(index, suggestion)
@@ -241,8 +309,10 @@ class LogsView(QWidget):
 
     def _render_ai_suggestions(self):
         """对已缓存的 suggestion 统一渲染（用于重复点击、切主题等场景）"""
+        self._ai_blocks = []
         for i, ctx in enumerate(self.model.failure_contexts):
             if ctx.ai_suggestion:
+                self._ai_blocks.append((i, ctx.ai_suggestion))
                 self._append_suggestion_block(i, ctx.ai_suggestion)
 
     def _append_suggestion_block(self, index, suggestion):

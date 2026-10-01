@@ -652,6 +652,23 @@ class Theme:
             color: #333;
             background: transparent;
         }
+        #LogsView QComboBox, #LogsView QLineEdit {
+            background-color: #ffffff;
+            border: 1px solid #d0d0d0;
+            border-radius: 4px;
+            padding: 2px 8px;
+            color: #333;
+            font-size: 12px;
+        }
+        #LogsView QComboBox:focus, #LogsView QLineEdit:focus {
+            border-color: #1976d2;
+        }
+        #LogsView QComboBox QAbstractItemView {
+            background-color: #ffffff;
+            color: #333;
+            selection-background-color: #e3f2fd;
+            selection-color: #333;
+        }
     """
     LOGS_VIEW_DARK = """
         #LogsView {
@@ -670,6 +687,23 @@ class Theme:
         #LogsView QLabel {
             color: #eee;
             background: transparent;
+        }
+        #LogsView QComboBox, #LogsView QLineEdit {
+            background-color: #242528;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 2px 8px;
+            color: #eee;
+            font-size: 12px;
+        }
+        #LogsView QComboBox:focus, #LogsView QLineEdit:focus {
+            border-color: #64b5f6;
+        }
+        #LogsView QComboBox QAbstractItemView {
+            background-color: #242528;
+            color: #eee;
+            selection-background-color: #37474f;
+            selection-color: #eee;
         }
     """
 
