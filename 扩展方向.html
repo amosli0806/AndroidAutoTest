@@ -212,6 +212,7 @@
         <ul>
           <li>循环 1~999 次、失败停止、可中途打断</li>
           <li>测试套件 + HTML 报告（含失败截图）</li>
+          <li>日志类型筛选 + 关键字搜索高亮、AI 失败分析</li>
           <li>定时执行（每天 / 每周 / 每月）</li>
           <li>设备离线自动重连、任务串行队列</li>
         </ul>
@@ -237,10 +238,10 @@
       <div class="card">
         <h3>⚙️ 性能检测 <span class="tag done">✅</span></h3>
         <ul>
-          <li>实时采集 CPU / 内存 / FPS / 流量</li>
+          <li>实时采集 CPU / 内存 / FPS / 流量（组合选择）</li>
           <li>独立监控 + 场景化测试两种模式</li>
-          <li>阈值告警、基线对比、CSV/JSON 导出</li>
-          <li>堆转储 + 抓包工具入口</li>
+          <li>报告流量曲线、基线自动回归对比、启动耗时趋势</li>
+          <li>阈值告警、CSV/JSON 导出、堆转储 + 抓包入口</li>
         </ul>
       </div>
       <div class="card">
@@ -311,13 +312,13 @@
         <div class="gap-item"><span class="tag plan">📋</span><div><b>套件能力不完整</b> — 无套件级报告、排序、链式执行。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>日志缺过滤搜索</b> — 有颜色和统计，但无法筛选、搜索。</div></div>
+        <div class="gap-item"><span class="tag done">✅</span><div><b>日志过滤搜索已上线</b> — 类型筛选 + 关键字搜索高亮已落地；剩余：日志导出/着色规则自定义（未排期）。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>执行能力受限</b> — 仅单设备串行，无命令行 / 无 CI/CD 接入。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>性能检测空白</b> — 缺流量曲线、自动基线回归、GPU 等维度。</div></div>
+        <div class="gap-item"><span class="tag part">⚙️</span><div><b>性能检测维度不全</b> — 流量曲线、基线回归、启动耗时趋势已上线；缺 GPU / 系统内存 / 整机 CPU 等采集维度。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报空白</b> — 唤醒词只有一条、无车型模板、无法验证「真执行了」。</div></div>
@@ -331,7 +332,7 @@
   <!-- ============ 三、扩展方向 ============ -->
   <section class="chapter" id="s3">
     <h2><span class="num">3</span>扩展方向（按优先级）</h2>
-    <p class="small" style="margin-top:0">17 项规划按「高 / 中 / 常规 / 进阶」四档组织，每项都配了一个生活化类比帮助理解。</p>
+    <p class="small" style="margin-top:0">16 项规划按「高 / 中 / 常规 / 进阶」四档组织，每项都配了一个生活化类比帮助理解。</p>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 高优先级 · 显著提升用户体验</h3>
 
@@ -346,18 +347,7 @@
     </div>
 
     <div class="card">
-      <h3>2. 日志过滤与搜索增强 <span class="tag done">✅ 已完成</span></h3>
-      <ul>
-        <li class="done-li">✅ 已按日志类型区分颜色（错误 / 成功 / 警告 / 信息）</li>
-        <li class="done-li">✅ 已做执行统计圆盘（通过 / 失败 / 通过率）</li>
-        <li class="done-li">✅ 已做按日志类型快速筛选（下拉一键筛出错误 / 成功 / 警告 / 信息）</li>
-        <li class="done-li">✅ 已做关键字搜索日志内容（不区分大小写，命中内容高亮，可与其他筛选叠加）</li>
-      </ul>
-      <div class="example">💡 <b>打个比方：</b>像在微信里搜聊天记录——几千条执行日志里，一键筛出所有「失败」的几条，或搜关键词「超时」直接定位问题，不用逐行翻。</div>
-    </div>
-
-    <div class="card">
-      <h3>3. 批量操作增强 <span class="tag part">⚙️ 部分完成</span></h3>
+      <h3>2. 批量操作增强 <span class="tag part">⚙️ 部分完成</span></h3>
       <ul>
         <li class="done-li">✅ 已支持批量删除用例、批量删除元素</li>
         <li class="plan-li">📋 批量修改定位方式（如全部「资源ID」→「XPath」）</li>
@@ -367,7 +357,7 @@
     </div>
 
     <div class="card">
-      <h3>4. 补齐桩实现与文档一致性 <span class="tag part">⚙️ 部分完成</span></h3>
+      <h3>3. 补齐桩实现与文档一致性 <span class="tag part">⚙️ 部分完成</span></h3>
       <ul>
         <li class="done-li">✅ 帮助中心各章节已按实际能力重写、补全、文案精简</li>
         <li class="done-li">✅ 接口自动化已从占位走向可用</li>
@@ -378,7 +368,7 @@
     </div>
 
     <div class="card">
-      <h3>5. 变量 / 参数化落地到语音播报 <span class="tag part">⚙️ 部分完成</span></h3>
+      <h3>4. 变量 / 参数化落地到语音播报 <span class="tag part">⚙️ 部分完成</span></h3>
       <ul>
         <li class="done-li">✅ 唤醒词已经是「全局配置被步骤引用」的雏形</li>
         <li class="plan-li">📋 把唤醒词、语速等提升为可参数化变量，用例内可覆盖</li>
@@ -389,19 +379,19 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 中优先级 · 增强灵活性与可维护性</h3>
 
     <div class="card">
-      <h3>6. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
+      <h3>5. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
       <div class="example">💡 <b>打个比方：</b>像手机「快捷指令 / 宏」——把「打开 App → 输账号 → 输密码 → 点登录」这 5 步打包成一个「登录」关键字，以后任何用例点一下就好，不用重复拖 5 个步骤。</div>
     </div>
 
     <div class="card">
-      <h3>7. 步骤模板 <span class="tag plan">📋 规划中</span></h3>
+      <h3>6. 步骤模板 <span class="tag plan">📋 规划中</span></h3>
       <p>保存常用步骤组合为模板（如「启动应用 → 等待 → 点击首页」），任意用例里插入复用。</p>
       <div class="example">💡 <b>打个比方：</b>像 Word / PPT 模板——「启动 → 等待 → 点首页」这套成熟流程存成模板，新用例直接套用，不用每次从零搭。</div>
     </div>
 
     <div class="card">
-      <h3>8. 测试套件增强 <span class="tag part">⚙️ 部分完成</span></h3>
+      <h3>7. 测试套件增强 <span class="tag part">⚙️ 部分完成</span></h3>
       <ul>
         <li class="done-li">✅ 套件创建、保存、加载、删除、自动匹配、失效清理</li>
         <li class="plan-li">📋 套件级执行报告与通过率　📋 套件内用例拖拽排序　📋 套件链式执行（A→B）</li>
@@ -410,7 +400,7 @@
     </div>
 
     <div class="card">
-      <h3>9. 执行健壮性增强 <span class="tag plan">📋 规划中</span></h3>
+      <h3>8. 执行健壮性增强 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>步骤级失败重试（次数 + 间隔 + 触发条件可配）</li>
         <li>显式等待（等元素出现 / 消失 / 可点击，替代固定 sleep）</li>
@@ -419,7 +409,7 @@
     </div>
 
     <div class="card">
-      <h3>10. 图像识别定位 <span class="tag plan">📋 规划中</span></h3>
+      <h3>9. 图像识别定位 <span class="tag plan">📋 规划中</span></h3>
       <p>新增「图像」定位方式（模板匹配 + 相似度阈值），元素库可上传参考图，执行时截图比对。</p>
       <div class="example">💡 <b>打个比方：</b>像「人脸识别解锁」或玩「找不同」——游戏里的按钮是「画」出来的（不是代码控件，看不到元素树），靠截图比对把它认出来，从而覆盖游戏、视频、自绘界面。</div>
     </div>
@@ -427,7 +417,7 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 常规优先级 · 提升效率与易用性</h3>
 
     <div class="card">
-      <h3>11. 语音播报增强 <span class="tag part">⚙️ 部分完成</span></h3>
+      <h3>10. 语音播报增强 <span class="tag part">⚙️ 部分完成</span></h3>
       <ul>
         <li class="done-li">✅ 回执验证（自动判断「是否被识别」）+ 一键批量重算等待时间</li>
         <li class="plan-li">📋 唤醒词多套管理（按用例 / 车型切换、多条候选轮播）</li>
@@ -439,24 +429,24 @@
     </div>
 
     <div class="card">
-      <h3>12. 性能检测增强 <span class="tag part">⚙️ 部分完成</span> <span class="tag plan">🥇 优先</span></h3>
+      <h3>11. 性能检测增强 <span class="tag part">⚙️ 部分完成</span></h3>
       <ul>
-        <li class="plan-li">🥇 <b>HTML 报告补充流量曲线</b>（优先做）</li>
-        <li class="plan-li">🥇 <b>基线自动回归对比</b>（跑完自动比对基线、判定劣化，优先做）</li>
-        <li class="plan-li">🥇 <b>启动耗时历史趋势与基线对比</b>（优先做）</li>
+        <li class="done-li">✅ HTML 报告补充流量曲线（勾选流量指标后，报告多一张「流量速率」曲线与收发汇总）</li>
+        <li class="done-li">✅ 基线自动回归对比（跑完自动比对基线、明显劣化弹窗提醒，报告附对比表：劣化标红、优化标绿）</li>
+        <li class="done-li">✅ 启动耗时历史趋势与基线对比（冷 / 热启动每次耗时连成曲线，基线参考虚线，可一键设为基线）</li>
         <li class="plan-li">📋 并入 mapauto-perf-test 的采集能力（GPU / 系统内存 / 整机 CPU 等，范围待定，后置）</li>
       </ul>
-      <div class="example">💡 <b>打个比方：</b>像「体检报告自动对比」——每次测完自动和上次体检结果比，哪项指标变差了直接标红提醒，不用自己逐项对照。优先做的三项就是把「体检报告」补全（流量曲线）+ 让它「自动对比」（基线回归、启动耗时趋势）。</div>
+      <div class="example">💡 <b>打个比方：</b>像「体检报告自动对比」——每次测完自动和上次体检结果比，哪项指标变差了直接标红提醒，不用自己逐项对照。报告补全（流量曲线）和自动对比（基线回归、启动耗时趋势）都已上线，下一步是把更多「体检项目」（GPU / 整机 CPU 等）并入进来。</div>
     </div>
 
     <div class="card">
-      <h3>13. 版本控制集成（Git）<span class="tag plan">📋 规划中</span></h3>
+      <h3>12. 版本控制集成（Git）<span class="tag plan">📋 规划中</span></h3>
       <p>把项目数据、步骤、元素库等接入 Git，支持版本回滚、差异对比、分支管理。</p>
       <div class="example">💡 <b>打个比方：</b>像文档的「修订记录 / 历史版本」——用例改乱了，一键回到昨天的版本，还能看看到底改了哪几行。</div>
     </div>
 
     <div class="card">
-      <h3>14. 测试数据管理 <span class="tag plan">📋 规划中</span></h3>
+      <h3>13. 测试数据管理 <span class="tag plan">📋 规划中</span></h3>
       <p>从 Excel / CSV 读取测试数据，参数化执行同一用例多组数据（与「变量 / 参数化」合并实现更合理）。</p>
       <div class="example">💡 <b>打个比方：</b>像「同一张答题卡批不同试卷」——用例就是那张答题卡，数据就是试卷，套上账号 A、账号 B、账号 C 各跑一遍，批量出结果。</div>
     </div>
@@ -464,19 +454,19 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 进阶扩展 · 面向高级用户与团队协作</h3>
 
     <div class="card">
-      <h3>15. 插件机制 <span class="tag plan">📋 规划中</span></h3>
+      <h3>14. 插件机制 <span class="tag plan">📋 规划中</span></h3>
       <p>允许编写自定义 Python 脚本作为新动作类型，支持热加载。</p>
       <div class="example">💡 <b>打个比方：</b>像浏览器插件、微信小程序——开发者自己写个小功能挂进去，不用等官方排期，个性化需求自己动手。</div>
     </div>
 
     <div class="card">
-      <h3>16. CI/CD 集成（命令行模式）<span class="tag plan">📋 规划中</span></h3>
+      <h3>15. CI/CD 集成（命令行模式）<span class="tag plan">📋 规划中</span></h3>
       <p>提供无界面运行模式，命令行执行用例 / 套件，生成 JUnit XML 报告，接入 Jenkins / GitHub Actions。</p>
       <div class="example">💡 <b>打个比方：</b>像「自动浇花装置」——代码一提交，后台自动把全部测试跑一遍并出结果，人不用盯着屏幕。</div>
     </div>
 
     <div class="card">
-      <h3>17. 多设备并行执行 <span class="tag plan">📋 规划中</span></h3>
+      <h3>16. 多设备并行执行 <span class="tag plan">📋 规划中</span></h3>
       <p>单机多设备同时执行不同用例（需先解决底层设备对象的线程安全问题）。</p>
       <div class="example">💡 <b>打个比方：</b>像「同时炒几锅菜」——多台车机 / 多块屏同时跑不同测试，回归时间从 1 小时缩到 10 分钟。</div>
     </div>
@@ -491,7 +481,7 @@
         <thead><tr><th>优先级</th><th>功能模块</th><th>理由</th></tr></thead>
         <tbody>
           <tr><td class="stars">⭐⭐⭐</td><td>变量 / 参数化</td><td>数据驱动是自动化测试的核心，是关键字驱动与数据驱动的共同地基</td></tr>
-          <tr><td class="stars">⭐⭐⭐</td><td>日志过滤与搜索</td><td>改动集中、开发成本低、调试收益立竿见影</td></tr>
+          <tr><td class="stars">✅</td><td>日志过滤与搜索</td><td>类型筛选 + 关键字搜索高亮已上线（2026-10-01），改动集中、收益立竿见影</td></tr>
           <tr><td class="stars">⭐⭐⭐</td><td>批量操作增强</td><td>高频诉求，效率提升显著</td></tr>
           <tr><td class="stars">✅</td><td>补齐桩实现与文档</td><td>复杂手势序列已下架，帮助中心与文档已对齐实际能力</td></tr>
           <tr><td class="stars">⭐⭐</td><td>执行健壮性（重试 + 显式等待）</td><td>直接影响用例稳定性与回归可信度</td></tr>
@@ -499,7 +489,7 @@
           <tr><td class="stars">✅</td><td>接口自动化最小闭环</td><td>已于 2026-09-28 完成</td></tr>
           <tr><td class="stars">⭐⭐</td><td>关键字驱动</td><td>封装复用，降低用例编写成本</td></tr>
           <tr><td class="stars">⭐</td><td>语音播报增强</td><td>回执验证已落地，剩余是唤醒词多套 / 车型模板 / 执行结果校验</td></tr>
-          <tr><td class="stars">⭐⭐⭐</td><td>性能检测增强（三项优先）</td><td>HTML 报告流量曲线、基线自动回归对比、启动耗时趋势，先做这三项</td></tr>
+          <tr><td class="stars">✅</td><td>性能检测增强（三项优先）</td><td>流量曲线、基线自动回归对比、启动耗时趋势已上线；剩余并入采集能力后置</td></tr>
           <tr><td class="stars">⭐</td><td>命令行模式</td><td>价值高、开发量适中，是打开 CI/CD 的钥匙</td></tr>
           <tr><td class="stars">⭐</td><td>图像识别定位</td><td>覆盖面广，但引入 OpenCV、工作量较大</td></tr>
         </tbody>
@@ -551,12 +541,12 @@
     </div>
 
     <div class="card">
-      <h3>阶段四 · 测试套件增强 + 日志检索 <span class="tag plan">📋 可穿插，见效快</span></h3>
+      <h3>阶段四 · 测试套件增强 <span class="tag plan">📋 可穿插，见效快</span></h3>
       <ul>
+        <li class="done-li">✅ 日志检索：按类型筛选 + 关键字搜索（已上线，与 AI 分析按钮同行）</li>
         <li>套件：级报告与通过率、套件内拖拽排序、链式执行（A→B）</li>
-        <li>日志：按类型筛选 + 关键字搜索</li>
       </ul>
-      <div class="example">💡 <b>打个比方：</b>「歌单出成绩单」+「微信搜聊天记录」——开发量小、见效快，随时可以插队做。</div>
+      <div class="example">💡 <b>打个比方：</b>「歌单出成绩单」——开发量小、见效快，随时可以插队做。</div>
     </div>
 
     <div class="card">
@@ -583,7 +573,7 @@
       <ul>
         <li class="done-li">✅ 复杂手势序列：已下架卡片（执行后端保留兼容旧项目数据）</li>
         <li>语音播报增强：唤醒词多套 + 车型模板 + 执行结果校验</li>
-        <li>性能检测增强（优先）：流量曲线、基线回归、启动耗时趋势；并入采集能力后置</li>
+        <li class="done-li">✅ 性能检测增强（优先三项）：流量曲线、基线回归、启动耗时趋势已上线；并入采集能力后置</li>
         <li>版本控制（Git 集成）：数据文件接入版本管理</li>
         <li class="done-li">✅ 增量更新已落地并实测兑现（1.2.8→1.2.9 补丁仅 12MB）</li>
       </ul>
@@ -600,7 +590,7 @@
           <tr><td>阶段一</td><td>接口自动化最小闭环</td><td class="stars">✅ 已完成</td><td>2026-09-28 交付：接口管理 + 环境变量 + 断言 + 执行 + 报告</td></tr>
           <tr><td>阶段二</td><td>变量 / 参数化</td><td class="stars">⭐⭐⭐</td><td>关键字 / 数据驱动 / CI 的共同地基</td></tr>
           <tr><td>阶段三</td><td>执行健壮性</td><td class="stars">⭐⭐</td><td>提升用例稳定性，车机慢响应刚需</td></tr>
-          <tr><td>阶段四</td><td>套件增强 + 日志检索</td><td class="stars">⭐⭐</td><td>开发量小、见效快，可穿插</td></tr>
+          <tr><td>阶段四</td><td>套件增强 + 日志检索</td><td class="stars">⭐⭐</td><td>日志检索已上线；剩余套件级报告与排序，可穿插</td></tr>
           <tr><td>阶段五</td><td>关键字 / 步骤模板</td><td class="stars">⭐⭐</td><td>复用提升，依赖阶段二</td></tr>
           <tr><td>阶段六</td><td>图像识别 + CI/CD</td><td class="stars">⭐</td><td>进阶能力，工作量大，逐步推进</td></tr>
           <tr><td>穿插</td><td>增量更新（差分下载）</td><td class="stars">✅ 已完成</td><td>1.2.8→1.2.9 补丁实测 12MB，下载量 290MB → 几~十几 MB</td></tr>
