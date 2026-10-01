@@ -434,17 +434,21 @@ class PerfView(QWidget):
         row2.setSpacing(12)
 
         row2.addWidget(QLabel("监控指标:"))
-        # 监控指标做单选：同时采集多项会互相干扰（例如采集流量要反复读 /proc，
-        # 会把 CPU 采样值拉高），影响数据准确性
+        # CPU 与内存互斥单选（二者都走 top 采样，同采会互相干扰、数据失真）；
+        # FPS、流量是独立采样通道，可在 CPU/内存基础上自由多选
         self.metric_group = QButtonGroup(self)
         self.metric_group.setExclusive(True)
         self.metric_radios = {}
-        for key, label in [('cpu', 'CPU'), ('mem', '内存'), ('fps', 'FPS'),
-                           ('traffic', '流量')]:
+        for key, label in [('cpu', 'CPU'), ('mem', '内存')]:
             rb = BorderedRadioButton(label)
             self.metric_group.addButton(rb)
             self.metric_radios[key] = rb
             row2.addWidget(rb)
+        self.metric_radios['cpu'].setChecked(True)
+        for key, label in [('fps', 'FPS'), ('traffic', '流量')]:
+            cb = BorderedCheckBox(label)
+            self.metric_radios[key] = cb
+            row2.addWidget(cb)
 
         row2.addSpacing(24)
 
