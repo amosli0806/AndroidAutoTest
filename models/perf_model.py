@@ -3,6 +3,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field, asdict, fields
+from datetime import datetime
 from typing import List, Optional
 
 from utils.app_paths import data_path
@@ -130,6 +131,67 @@ class PerfSession:
         return result
 
 
+def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.10):
+    """对比当前统计与基线，返回逐项对比结果列表。
+
+    base_metrics / cur_stats 均为 PerfSession.get_stats() 产出的 dict。
+    判定规则（相对变化超过 threshold_pct 才算明显）：
+      - CPU 峰值、内存峰值、流量总量：越高越差
+      - FPS 均值：越低越差
+    返回：[
+        {'key': 'cpu', 'label': 'CPU 峰值 (%)', 'base': 120.0, 'cur': 132.0,
+         'change_pct': 10.0, 'status': 'worse'|'better'|'stable'},
+        ...
+    ]
+    """
+    result = []
+
+    def _row(key, label, base, cur, lower_is_worse=False):
+        if base is None or cur is None:
+            return
+        if base == 0:
+            status = 'stable'
+            change_pct = 0.0
+        else:
+            change_pct = (cur - base) / base * 100.0
+            if lower_is_worse:
+                if cur < base * (1 - threshold_pct):
+                    status = 'worse'
+                elif cur > base * (1 + threshold_pct):
+                    status = 'better'
+                else:
+                    status = 'stable'
+            else:
+                if cur > base * (1 + threshold_pct):
+                    status = 'worse'
+                elif cur < base * (1 - threshold_pct):
+                    status = 'better'
+                else:
+                    status = 'stable'
+        result.append({
+            'key': key, 'label': label,
+            'base': base, 'cur': cur,
+            'change_pct': change_pct, 'status': status,
+        })
+
+    b, c = base_metrics.get('cpu'), cur_stats.get('cpu')
+    if b and c:
+        _row('cpu', 'CPU 峰值 (%)', b.get('max'), c.get('max'))
+    b, c = base_metrics.get('mem'), cur_stats.get('mem')
+    if b and c:
+        _row('mem', '内存峰值 (MB)', b.get('max'), c.get('max'))
+    b, c = base_metrics.get('fps'), cur_stats.get('fps')
+    if b and c:
+        _row('fps', 'FPS 均值', b.get('avg'), c.get('avg'), lower_is_worse=True)
+    b, c = base_metrics.get('traffic'), cur_stats.get('traffic')
+    if b and c:
+        base_total = b.get('rx_mb', 0) + b.get('tx_mb', 0)
+        cur_total = c.get('rx_mb', 0) + c.get('tx_mb', 0)
+        _row('traffic', '流量总量 (MB)', base_total, cur_total)
+
+    return result
+
+
 @dataclass
 class PerfThreshold:
     """阈值配置（默认值针对 8 核设备上的地图类应用调优）"""
@@ -176,11 +238,15 @@ class PerfModel:
     """性能数据的持久化管理"""
     DATA_FILE = data_path("perf_data.json")
     BASELINE_FILE = data_path("perf_baselines.json")
+    LAUNCH_FILE = data_path("launch_data.json")
 
     def __init__(self):
         self.sessions: List[PerfSession] = []
         self.baselines: List[PerfBaseline] = []
         self.threshold: PerfThreshold = PerfThreshold()
+        # 启动耗时：records 按时间累积，baselines 以包名为键存冷/热启动基线
+        self.launch_records: List[LaunchResult] = []
+        self.launch_baselines: dict = {}
         self.load()
 
     # ---------- 加载保存 ----------
@@ -204,6 +270,19 @@ class PerfModel:
                 print(f"[PerfModel] 基线加载失败: {e}")
                 self.baselines = []
 
+        if os.path.exists(self.LAUNCH_FILE):
+            try:
+                with open(self.LAUNCH_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.launch_records = [
+                        LaunchResult(**r) for r in data.get('records', [])
+                    ]
+                    self.launch_baselines = data.get('baselines', {}) or {}
+            except Exception as e:
+                print(f"[PerfModel] 启动耗时数据加载失败: {e}")
+                self.launch_records = []
+                self.launch_baselines = {}
+
     def save(self):
         try:
             data = {
@@ -221,6 +300,45 @@ class PerfModel:
                 json.dump([b.to_dict() for b in self.baselines], f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"[PerfModel] 基线保存失败: {e}")
+
+    # ---------- 启动耗时 ----------
+    def save_launch(self):
+        try:
+            with open(self.LAUNCH_FILE, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'records': [r.to_dict() for r in self.launch_records],
+                    'baselines': self.launch_baselines,
+                }, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[PerfModel] 启动耗时数据保存失败: {e}")
+
+    def add_launch_record(self, package: str, cold_ms: int, warm_ms: int) -> LaunchResult:
+        rec = LaunchResult(
+            package=package,
+            cold_start_ms=cold_ms,
+            warm_start_ms=warm_ms,
+            timestamp=datetime.now().isoformat(),
+        )
+        self.launch_records.append(rec)
+        # 只保留最近 200 条，避免文件无限增长
+        if len(self.launch_records) > 200:
+            self.launch_records = self.launch_records[-200:]
+        self.save_launch()
+        return rec
+
+    def get_launch_history(self, package: str) -> List[LaunchResult]:
+        return [r for r in self.launch_records if r.package == package]
+
+    def set_launch_baseline(self, package: str, cold_ms: int, warm_ms: int):
+        self.launch_baselines[package] = {
+            'cold_ms': cold_ms,
+            'warm_ms': warm_ms,
+            'set_at': datetime.now().isoformat(),
+        }
+        self.save_launch()
+
+    def get_launch_baseline(self, package: str) -> Optional[dict]:
+        return self.launch_baselines.get(package)
 
     # ---------- 会话 ----------
     def add_session(self, session: PerfSession):
@@ -255,6 +373,13 @@ class PerfModel:
             if b.name == name:
                 return b
         return None
+
+    def find_baseline_for_package(self, app_package: str) -> Optional[PerfBaseline]:
+        """返回指定应用最近一次保存的基线（按 created_at 最新优先）。"""
+        candidates = [b for b in self.baselines if b.app_package == app_package]
+        if not candidates:
+            return None
+        return sorted(candidates, key=lambda b: b.created_at)[-1]
 
     def remove_baseline(self, name: str):
         self.baselines = [b for b in self.baselines if b.name != name]

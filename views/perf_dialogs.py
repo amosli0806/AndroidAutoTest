@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
 import qtawesome as qta
+import pyqtgraph as pg
 
 from utils.toast import show_toast
 from utils.theme import Theme, ThemeMode
@@ -677,21 +678,72 @@ class PerfCompareDialog(QDialog):
 # 启动测试对话框
 # ============================================================
 class LaunchTestDialog(QDialog):
-    """启动耗时测试对话框"""
+    """启动耗时测试对话框：本次结果 + 历史趋势 + 基线对比"""
 
-    def __init__(self, package, cold_ms, warm_ms, history=None, parent=None):
+    def __init__(self, package, cold_ms, warm_ms, history=None, baseline=None,
+                 baseline_setter=None, parent=None):
         super().__init__(parent)
         self.setObjectName("LaunchTestDialog")
         self.setWindowTitle("启动耗时测试")
         self.setModal(True)
-        self.resize(520, 420)
+        self.resize(620, 560)
         self.package = package
         self.cold_ms = cold_ms
         self.warm_ms = warm_ms
-        self.history = history or []
+        self.history = history or []      # List[LaunchResult]
+        self.baseline = baseline or None  # {'cold_ms','warm_ms','set_at'}
+        self._baseline_setter = baseline_setter
+        self.retest_requested = False
 
         self.setup_ui()
         self.apply_theme()
+
+    # ------------------------------------------------------------------
+    def _history_points(self):
+        """返回 (cold_list, warm_list)，每个元素是 (序号, ms)，跳过失败项(-1/0)"""
+        cold, warm = [], []
+        for i, rec in enumerate(self.history):
+            c = rec.cold_start_ms
+            w = rec.warm_start_ms
+            if c and c > 0:
+                cold.append((i + 1, c))
+            if w and w > 0:
+                warm.append((i + 1, w))
+        return cold, warm
+
+    def _draw_trend(self):
+        """绘制冷/热启动历史趋势 + 基线参考线"""
+        plot = self.trend_plot
+        plot.clear()
+        pg.setConfigOptions(antialias=True)
+        cold_pts, warm_pts = self._history_points()
+
+        # 冷启动曲线（蓝）
+        if cold_pts:
+            xs = [p[0] for p in cold_pts]
+            ys = [p[1] for p in cold_pts]
+            plot.plot(xs, ys, pen=pg.mkPen('#3498db', width=2),
+                      name='冷启动', symbol='o', symbolSize=5,
+                      symbolBrush='#3498db')
+        # 热启动曲线（绿）
+        if warm_pts:
+            xs = [p[0] for p in warm_pts]
+            ys = [p[1] for p in warm_pts]
+            plot.plot(xs, ys, pen=pg.mkPen('#27ae60', width=2),
+                      name='热启动', symbol='o', symbolSize=5,
+                      symbolBrush='#27ae60')
+
+        # 基线参考线（虚线）
+        if self.baseline:
+            n = max([p[0] for p in (cold_pts + warm_pts)] or [1])
+            if self.baseline.get('cold_ms', 0) > 0:
+                c = self.baseline['cold_ms']
+                plot.plot([0, n + 0.5], [c, c],
+                          pen=pg.mkPen('#3498db', width=1, style=Qt.PenStyle.DashLine))
+            if self.baseline.get('warm_ms', 0) > 0:
+                w = self.baseline['warm_ms']
+                plot.plot([0, n + 0.5], [w, w],
+                          pen=pg.mkPen('#27ae60', width=1, style=Qt.PenStyle.DashLine))
 
     def setup_ui(self):
         root = QVBoxLayout(self)
@@ -723,6 +775,10 @@ class LaunchTestDialog(QDialog):
         cold_lbl.setObjectName("LaunchLabel")
         cold_col.addWidget(cold_val)
         cold_col.addWidget(cold_lbl)
+        self.cold_vs = QLabel("")
+        self.cold_vs.setObjectName("LaunchVs")
+        self.cold_vs.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cold_col.addWidget(self.cold_vs)
         result_layout.addLayout(cold_col)
 
         warm_col = QVBoxLayout()
@@ -735,44 +791,106 @@ class LaunchTestDialog(QDialog):
         warm_lbl.setObjectName("LaunchLabel")
         warm_col.addWidget(warm_val)
         warm_col.addWidget(warm_lbl)
+        self.warm_vs = QLabel("")
+        self.warm_vs.setObjectName("LaunchVs")
+        self.warm_vs.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        warm_col.addWidget(self.warm_vs)
         result_layout.addLayout(warm_col)
 
         root.addWidget(result_card)
+        self._update_vs_labels()
 
-        # 历史记录
-        hist_title = QLabel("历史记录")
+        # 历史趋势图
+        hist_title = QLabel("历史趋势（冷启动/热启动，虚线为基线）")
         hist_title.setStyleSheet("font-weight: 600; font-size: 13px;")
         root.addWidget(hist_title)
 
+        self.trend_plot = pg.PlotWidget()
+        self.trend_plot.setMinimumHeight(180)
+        self.trend_plot.setMenuEnabled(False)
+        self.trend_plot.setMouseEnabled(x=False, y=False)
+        self.trend_plot.hideButtons()
+        self.trend_plot.showGrid(x=True, y=True, alpha=0.25)
+        self.trend_plot.setLabel('bottom', '测试序号')
+        self.trend_plot.setLabel('left', '耗时 (ms)')
+        self.trend_plot.addLegend(offset=(10, 10))
+        self._draw_trend()
+        root.addWidget(self.trend_plot, 1)
+
+        # 历史记录文字
+        hist_text = QLabel("历史记录（最近 10 次）")
+        hist_text.setStyleSheet("font-weight: 600; font-size: 13px;")
+        root.addWidget(hist_text)
+
         self.history_list = QTextEdit()
         self.history_list.setReadOnly(True)
+        self.history_list.setMaximumHeight(110)
         if self.history:
-            for rec in self.history[-20:]:
+            for rec in self.history[-10:]:
+                ts = (rec.timestamp or "")[:19].replace("T", " ")
                 self.history_list.append(
-                    f"{rec.get('timestamp', '')}  冷启动: {rec.get('cold', '-')} ms  "
-                    f"热启动: {rec.get('warm', '-')} ms"
+                    f"{ts}  冷启动: {rec.cold_start_ms if rec.cold_start_ms > 0 else '-'} ms  "
+                    f"热启动: {rec.warm_start_ms if rec.warm_start_ms > 0 else '-'} ms"
                 )
         else:
             self.history_list.setPlainText("暂无历史记录")
-        root.addWidget(self.history_list, 1)
+        root.addWidget(self.history_list)
 
         # 按钮
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
+        self.set_baseline_btn = QPushButton("设为基线")
+        self.set_baseline_btn.setObjectName("baselineBtn")
+        self.set_baseline_btn.setFixedSize(110, 34)
+        self.set_baseline_btn.clicked.connect(self._on_set_baseline)
+        btn_row.addWidget(self.set_baseline_btn)
+
         retest_btn = QPushButton("重新测试")
         retest_btn.setObjectName("retestBtn")
         retest_btn.setFixedSize(110, 34)
-        retest_btn.clicked.connect(self.done)
+        retest_btn.clicked.connect(self._on_retest)
+        btn_row.addWidget(retest_btn)
 
         close_btn = QPushButton("关闭")
         close_btn.setObjectName("closeBtn")
         close_btn.setFixedSize(100, 34)
         close_btn.clicked.connect(self.accept)
-
-        btn_row.addWidget(retest_btn)
         btn_row.addWidget(close_btn)
+
         root.addLayout(btn_row)
+
+    # ------------------------------------------------------------------
+    def _update_vs_labels(self):
+        """结果卡片里的基线对比小字"""
+        def _fmt(name, cur, base):
+            if cur <= 0 or base is None or base <= 0:
+                return ""
+            pct = (cur - base) / base * 100.0
+            arrow = "↑" if pct > 0 else ("↓" if pct < 0 else "—")
+            color = "#e74c3c" if pct > 10 else ("#27ae60" if pct < -10 else "#999999")
+            return f"vs 基线 {pct:+.1f}% {arrow}"
+        if self.baseline:
+            self.cold_vs.setText(_fmt("冷", self.cold_ms, self.baseline.get('cold_ms')))
+            self.warm_vs.setText(_fmt("热", self.warm_ms, self.baseline.get('warm_ms')))
+        else:
+            self.cold_vs.setText("未设基线")
+            self.warm_vs.setText("未设基线")
+
+    def _on_set_baseline(self):
+        if self._baseline_setter is not None:
+            self._baseline_setter(self.cold_ms, self.warm_ms)
+        self.baseline = {
+            'cold_ms': self.cold_ms if self.cold_ms > 0 else 0,
+            'warm_ms': self.warm_ms if self.warm_ms > 0 else 0,
+        }
+        self._update_vs_labels()
+        self._draw_trend()
+        show_toast(self, "已设为该应用的启动耗时基线")
+
+    def _on_retest(self):
+        self.retest_requested = True
+        self.accept()
 
     def apply_theme(self, theme_mode=None):
         if theme_mode is None:
@@ -784,12 +902,26 @@ class LaunchTestDialog(QDialog):
             card_border = "#555"
             edit_bg = "#2d2d2d"
             edit_border = "#555"
+            plot_bg = "#1c1d20"
+            grid_color = "#3a3a3a"
+            axis_color = "#aaaaaa"
+            baseline_btn_bg = "#1976d2"
         else:
             bg, text = "#ffffff", "#333333"
             card_bg = "#f8f9fa"
             card_border = "#e0e0e0"
             edit_bg = "#ffffff"
             edit_border = "#d0d0d0"
+            plot_bg = "#fafbfc"
+            grid_color = "#e8e8e8"
+            axis_color = "#888888"
+            baseline_btn_bg = "#1976d2"
+
+        self.trend_plot.setBackground(plot_bg)
+        for ax in ('left', 'bottom'):
+            axis = self.trend_plot.getAxis(ax)
+            axis.setPen(pg.mkPen(color=grid_color))
+            axis.setTextPen(pg.mkPen(color=axis_color))
 
         self.setStyleSheet(f"""
             #LaunchTestDialog {{
@@ -813,6 +945,10 @@ class LaunchTestDialog(QDialog):
                 font-size: 12px;
                 color: #999999;
             }}
+            #LaunchResultCard QLabel#LaunchVs {{
+                font-size: 11px;
+                color: #999999;
+            }}
             #LaunchTestDialog QTextEdit {{
                 background-color: {edit_bg};
                 color: {text};
@@ -834,5 +970,10 @@ class LaunchTestDialog(QDialog):
                 background-color: {card_bg};
                 color: {text};
                 border: 1px solid {card_border};
+            }}
+            #LaunchTestDialog QPushButton#baselineBtn {{
+                background-color: {baseline_btn_bg};
+                color: white;
+                border: none;
             }}
         """)

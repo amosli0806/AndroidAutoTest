@@ -3,14 +3,14 @@
 import os
 import base64
 from datetime import datetime
-from models.perf_model import PerfSession
+from models.perf_model import PerfSession, compare_stats
 
 
 class PerfReportGenerator:
     """生成性能检测的 HTML 报告"""
 
     @staticmethod
-    def generate(session: PerfSession, file_path: str) -> str:
+    def generate(session: PerfSession, file_path: str, baseline=None) -> str:
         stats = session.get_stats()
         samples = session.samples
 
@@ -19,18 +19,28 @@ class PerfReportGenerator:
         cpu_series = []
         mem_series = []
         fps_series = []
-        rx_series = []
-        tx_series = []
+        rx_rate_series = []   # 流量速率（KB/s），按相邻采样差分
+        tx_rate_series = []
 
         if samples:
             t0 = samples[0].timestamp
+            prev_rx = prev_tx = None
+            prev_ts = None
             for s in samples:
-                timestamps.append(f"{s.timestamp - t0:.1f}")
+                t = s.timestamp
+                timestamps.append(f"{t - t0:.1f}")
                 cpu_series.append(f"{s.cpu_percent:.2f}")
                 mem_series.append(f"{s.mem_pss_mb:.2f}")
                 fps_series.append(str(s.fps))
-                rx_series.append(f"{s.rx_bytes / 1024 / 1024:.2f}")
-                tx_series.append(f"{s.tx_bytes / 1024 / 1024:.2f}")
+                # 流量速率：相邻采样点差分换算 KB/s（首次只记基准不画点）
+                if prev_rx is not None and prev_ts is not None and (t - prev_ts) > 0:
+                    dt = t - prev_ts
+                    rx_rate_series.append(f"{max(0, s.rx_bytes - prev_rx) / dt / 1024:.2f}")
+                    tx_rate_series.append(f"{max(0, s.tx_bytes - prev_tx) / dt / 1024:.2f}")
+                else:
+                    rx_rate_series.append("0")
+                    tx_rate_series.append("0")
+                prev_rx, prev_tx, prev_ts = s.rx_bytes, s.tx_bytes, t
 
         # 汇总信息
         app_pkg = session.app_package
@@ -70,6 +80,62 @@ class PerfReportGenerator:
                     <ul>{alert_items}</ul>
                 </div>
             """
+
+        # 是否采集了流量指标
+        has_traffic = 'traffic' in metrics
+
+        # 流量汇总卡片（勾选流量指标时才显示）
+        traffic_summary_html = ""
+        if has_traffic and 'traffic' in stats:
+            t = stats['traffic']
+            traffic_summary_html = f"""
+            <div class="card">
+                <div class="value">{t['rx_mb']:.2f}MB</div>
+                <div class="label">流量接收</div>
+            </div>
+            <div class="card">
+                <div class="value">{t['tx_mb']:.2f}MB</div>
+                <div class="label">流量发送</div>
+            </div>
+            """
+
+        # 基线对比（自动匹配同应用基线）
+        baseline_html = ""
+        if baseline is not None:
+            rows = compare_stats(baseline.metrics, stats)
+            if rows:
+                def _badge(status):
+                    if status == 'worse':
+                        return ('<span class="badge worse">⬆ 劣化</span>', '#e74c3c')
+                    if status == 'better':
+                        return ('<span class="badge better">⬇ 优化</span>', '#27ae60')
+                    return ('<span class="badge stable">— 持平</span>', '#888')
+                tr_rows = ""
+                worse_count = 0
+                for r in rows:
+                    badge, color = _badge(r['status'])
+                    if r['status'] == 'worse':
+                        worse_count += 1
+                    tr_rows += f"""
+                    <tr>
+                        <td>{r['label']}</td>
+                        <td>{r['base']:.2f}</td>
+                        <td>{r['cur']:.2f}</td>
+                        <td style="color:{color};font-weight:600;">{r['change_pct']:+.1f}%</td>
+                        <td>{badge}</td>
+                    </tr>"""
+                baseline_verdict = (
+                    f"共 {worse_count} 项指标明显劣化" if worse_count
+                    else "各项指标与基线相比无劣化"
+                )
+                baseline_html = f"""
+        <h2>📉 基线对比（{baseline.name}）</h2>
+        <p style="color:#888;font-size:13px;margin-top:-12px;">判定：{baseline_verdict}（相对变化超过 10% 计为明显）</p>
+        <table class="compare">
+            <thead><tr><th>指标</th><th>基线</th><th>当前</th><th>变化</th><th>结论</th></tr></thead>
+            <tbody>{tr_rows}</tbody>
+        </table>
+        """
 
         html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -164,6 +230,32 @@ class PerfReportGenerator:
         .alert-item {{
             color: #e74c3c;
         }}
+        table.compare {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 8px 0 20px;
+        }}
+        table.compare th, table.compare td {{
+            padding: 8px 12px;
+            border-bottom: 1px solid #eee;
+            text-align: center;
+            font-size: 13px;
+        }}
+        table.compare th {{
+            background: #f8f9fa;
+            color: #666;
+            font-weight: 600;
+        }}
+        .badge {{
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 600;
+        }}
+        .badge.worse {{ background: #fdecea; color: #e74c3c; }}
+        .badge.better {{ background: #eafaf1; color: #27ae60; }}
+        .badge.stable {{ background: #f0f0f0; color: #888; }}
     </style>
 </head>
 <body>
@@ -226,7 +318,10 @@ class PerfReportGenerator:
                 <div class="value">{stats.get('fps', {}).get('avg', 0):.0f}</div>
                 <div class="label">FPS 均值</div>
             </div>
+            {traffic_summary_html}
         </div>
+
+        {baseline_html}
 
         <h2>📈 实时曲线</h2>
         <div class="chart-wrap">
@@ -237,6 +332,9 @@ class PerfReportGenerator:
         </div>
         <div class="chart-wrap">
             <canvas id="fpsChart"></canvas>
+        </div>
+        <div class="chart-wrap" id="trafficChartWrap" {'style="display:none;"' if not has_traffic else ''}>
+            <canvas id="trafficChart"></canvas>
         </div>
 
         {alerts_html}
@@ -251,6 +349,8 @@ class PerfReportGenerator:
         const cpuData = [{','.join(cpu_series)}];
         const memData = [{','.join(mem_series)}];
         const fpsData = [{','.join(fps_series)}];
+        const rxRateData = [{','.join(rx_rate_series)}];
+        const txRateData = [{','.join(tx_rate_series)}];
 
         const commonOptions = {{
             responsive: true,
@@ -312,6 +412,43 @@ class PerfReportGenerator:
                 }}]
             }},
             options: commonOptions
+        }});
+
+        new Chart(document.getElementById('trafficChart'), {{
+            type: 'line',
+            data: {{
+                labels: timestamps,
+                datasets: [
+                    {{
+                        label: '接收 (KB/s)',
+                        data: rxRateData,
+                        borderColor: '#9b59b6',
+                        backgroundColor: 'rgba(155,89,182,0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3
+                    }},
+                    {{
+                        label: '发送 (KB/s)',
+                        data: txRateData,
+                        borderColor: '#e67e22',
+                        backgroundColor: 'rgba(230,126,34,0.1)',
+                        borderWidth: 2,
+                        fill: false,
+                        tension: 0.3
+                    }}
+                ]
+            }},
+            options: {{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {{ legend: {{ display: true }}, title: {{ display: true, text: '流量速率 (KB/s)' }} }},
+                scales: {{
+                    x: {{ display: true, title: {{ display: true, text: '时间 (秒)' }} }},
+                    y: {{ beginAtZero: true }}
+                }},
+                elements: {{ point: {{ radius: 0 }} }}
+            }}
         }});
     </script>
 </body>

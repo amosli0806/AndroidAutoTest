@@ -9,7 +9,7 @@ from datetime import datetime
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer, Qt
 
 from models.perf_model import (
-    PerfModel, PerfSession, PerfThreshold, PerfBaseline
+    PerfModel, PerfSession, PerfThreshold, PerfBaseline, compare_stats
 )
 from services.perf_compat import AndroidCompat
 from services.perf_service import PerfService
@@ -359,6 +359,8 @@ class PerfController(QObject):
                 )
                 # 消息中心：采集完成留痕（纯新增信号）
                 self.perf_finished.emit(len(self.current_session.samples))
+                # 基线自动回归对比：跑完自动比对同应用基线、判定劣化
+                self._auto_compare_baseline(self.current_session)
             self.current_session = None
 
         self.view.set_state(self.view.STATE_IDLE)
@@ -435,33 +437,40 @@ class PerfController(QObject):
             show_toast(self.view, "请先连接设备")
             return
 
+        from views.perf_dialogs import LaunchTestDialog
+
         try:
             compat = AndroidCompat(self.device_service.device)
             service = PerfService(self.device_service.device, compat)
 
-            # 先停掉，避免影响冷启动测量
-            cold_ms = service.measure_cold_launch(package)
-            warm_ms = service.measure_warm_launch(package)
+            # 支持「重新测试」：在对话框内点重新测试就再跑一轮
+            while True:
+                # 先停掉，避免影响冷启动测量
+                cold_ms = service.measure_cold_launch(package)
+                warm_ms = service.measure_warm_launch(package)
 
-            # 保存到历史
-            if not hasattr(self, '_launch_history'):
-                self._launch_history = []
-            self._launch_history.append({
-                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'cold': cold_ms if cold_ms > 0 else '-',
-                'warm': warm_ms if warm_ms > 0 else '-',
-            })
+                # 持久化到模型（历史趋势 + 基线对比都基于它）
+                self.model.add_launch_record(package, cold_ms, warm_ms)
+                history = self.model.get_launch_history(package)
+                baseline = self.model.get_launch_baseline(package)
 
-            from views.perf_dialogs import LaunchTestDialog
-            dlg = LaunchTestDialog(package, cold_ms, warm_ms,
-                                   self._launch_history, self.view)
-            dlg.exec()
-
-            if self.logs_view:
-                self.logs_view.add_log(
-                    f"[性能] 启动测试: 冷启动 {cold_ms} ms, 热启动 {warm_ms} ms",
-                    "info"
+                dlg = LaunchTestDialog(
+                    package, cold_ms, warm_ms,
+                    history=history, baseline=baseline,
+                    baseline_setter=lambda c, w: self.model.set_launch_baseline(package, c, w),
+                    parent=self.view
                 )
+                dlg.exec()
+
+                if self.logs_view:
+                    self.logs_view.add_log(
+                        f"[性能] 启动测试: 冷启动 {cold_ms} ms, 热启动 {warm_ms} ms",
+                        "info"
+                    )
+
+                # 点「重新测试」则继续循环，否则结束
+                if not dlg.retest_requested:
+                    break
         except Exception as e:
             ErrorDialog.show_error(self.view, "启动测试失败", str(e))
 
@@ -560,7 +569,8 @@ class PerfController(QObject):
             return
 
         try:
-            PerfReportGenerator.generate(session, path)
+            baseline = self.model.find_baseline_for_package(session.app_package)
+            PerfReportGenerator.generate(session, path, baseline=baseline)
             show_toast(self.view, "报告已生成")
             # 可选：打开所在文件夹
             import subprocess, sys
@@ -573,6 +583,48 @@ class PerfController(QObject):
                 subprocess.Popen(["xdg-open", folder])
         except Exception as e:
             ErrorDialog.show_error(self.view, "报告生成失败", str(e))
+
+    def _auto_compare_baseline(self, session):
+        """采集结束自动比对同应用基线，判定性能劣化。
+
+        无基线或无法对比时静默跳过；有劣化时弹结果提示 + 记日志，否则只记一条
+        「无劣化」信息，不打扰用户。
+        """
+        baseline = self.model.find_baseline_for_package(session.app_package)
+        if baseline is None:
+            return
+        stats = session.get_stats()
+        if not stats:
+            return
+        rows = compare_stats(baseline.metrics, stats)
+        if not rows:
+            return
+
+        worse = [r for r in rows if r['status'] == 'worse']
+        line = "；".join(
+            f"{r['label']} {r['base']:.1f}→{r['cur']:.1f}（{r['change_pct']:+.1f}%）"
+            for r in rows
+        )
+        if worse:
+            detail = "\n".join(
+                f"• {r['label']}：基线 {r['base']:.2f} → 本次 {r['cur']:.2f}（{r['change_pct']:+.1f}%）"
+                for r in worse
+            )
+            WarningDialog.show_warning(
+                self.view,
+                f"性能劣化告警（vs 基线「{baseline.name}」）",
+                f"检测到 {len(worse)} 项指标明显劣化：\n\n{detail}\n\n"
+                f"完整对比：{line}"
+            )
+            if self.logs_view:
+                self.logs_view.add_log(
+                    f"[性能] 基线对比发现 {len(worse)} 项劣化：{line}", "warning"
+                )
+        else:
+            if self.logs_view:
+                self.logs_view.add_log(
+                    f"[性能] 与基线「{baseline.name}」对比无劣化：{line}", "info"
+                )
 
     def _on_save_baseline(self):
         if not self.current_session and not self.model.sessions:
