@@ -521,11 +521,8 @@ class PerfView(QWidget):
         # 组 1：单次测量
         self.launch_test_btn = QPushButton("启动测试")
         self.launch_test_btn.setIcon(qta.icon('fa6s.rocket', color='white'))
-        self.launch_test_btn.setFixedWidth(100)
         self.launch_test_btn.clicked.connect(self._on_launch_test_clicked)
         b_layout.addWidget(self.launch_test_btn)
-
-        b_layout.addSpacing(12)  # 分组间隔
 
         # 组 2：配置 / 数据
         self.threshold_btn = QPushButton("阈值设置")
@@ -552,8 +549,6 @@ class PerfView(QWidget):
         self.export_csv_btn.setIcon(qta.icon('fa6s.file-csv', color='white'))
         self.export_csv_btn.clicked.connect(self.export_csv_requested.emit)
         b_layout.addWidget(self.export_csv_btn)
-
-        b_layout.addSpacing(12)  # 分组间隔
 
         # 组 3：危险操作
         self.clear_btn = QPushButton("清空")
@@ -940,6 +935,15 @@ class PerfView(QWidget):
                 """)
             else:
                 btn.setStyleSheet(btn_qss)
+
+        # 底部操作按钮统一宽度：取自然宽度最大者（QSS 生效后测量），
+        # 避免「清空」这类短文案按钮与四字按钮宽窄不一
+        bottom_btns = [self.launch_test_btn, self.threshold_btn, self.baseline_btn,
+                       self.baseline_mgr_btn, self.report_btn,
+                       self.export_csv_btn, self.clear_btn]
+        uniform_w = max(b.sizeHint().width() for b in bottom_btns)
+        for b in bottom_btns:
+            b.setFixedWidth(uniform_w)
 
         self.scroll.setStyleSheet(
             f"QScrollArea {{"
