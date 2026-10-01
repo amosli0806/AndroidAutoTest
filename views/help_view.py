@@ -256,6 +256,9 @@ class HelpView(QFrame):
 
     def _get_image_html(self, filename, desc="示例图片", max_height="400px"):
         """生成图片 HTML（左对齐，有截图时无背景，占位图时有背景）"""
+        # 未配图名的步骤：不渲染残缺占位框，直接跳过
+        if not filename:
+            return ""
         if getattr(sys, 'frozen', False):
             base_dir = sys._MEIPASS
         else:
@@ -291,14 +294,12 @@ class HelpView(QFrame):
                          style="border-radius: 6px; display: inline-block;">
                 </div>
                 '''
-            # 读不出尺寸的极端情况：占位提示
-            filename_disp = filename
-        else:
-            filename_disp = filename
+        # 图片缺失：占位框里突出显示应放置的文件名，方便补图时对照
         return f'''
         <div style="border: 2px dashed #d0d0d0; border-radius: 8px; padding: 30px 20px; margin: 12px 0; text-align: left; background: #fafafa; color: #999; font-size: 14px;">
             🖼️ {desc}<br>
-            <span style="font-size: 12px; color: #bbb;">请将截图放置于 resources/images/help/{filename_disp}</span>
+            <span style="font-size: 12px; color: #bbb;">请将截图放置于 resources/images/help/ 目录，文件名：</span>
+            <span style="font-size: 13px; color: #1976d2; font-weight: bold;">{filename}</span>
         </div>
         '''
 
@@ -338,11 +339,11 @@ class HelpView(QFrame):
                 </p>
 
                 {self._get_steps_html([
-                    {'image': '', 'desc': '① 下载 Google 官方 platform-tools：https://developer.android.com/tools/releases/platform-tools（国内可搜「platform-tools 下载」选可靠镜像）'},
-                    {'image': '', 'desc': '② 解压到任意目录，例如 D:\\platform-tools（内含 adb.exe）'},
-                    {'image': '', 'desc': '③ 把该目录加入系统 PATH：此电脑右键 → 属性 → 高级系统设置 → 环境变量 → 选中 Path → 编辑 → 新建 → 填入目录路径'},
-                    {'image': '', 'desc': '④ 验证：打开新的命令行窗口，输入 adb version，能显示版本号即成功'},
-                    {'image': '', 'desc': '⑤ 重启虫师，顶部设备下拉框应能发现已连接的设备'},
+                    {'image': 'adb_setup_1_download.png', 'desc': '① 下载 Google 官方 platform-tools：https://developer.android.com/tools/releases/platform-tools（国内可搜「platform-tools 下载」选可靠镜像）'},
+                    {'image': 'adb_setup_2_extract.png', 'desc': '② 解压到任意目录，例如 D:\\platform-tools（内含 adb.exe）'},
+                    {'image': 'adb_setup_3_path.png', 'desc': '③ 把该目录加入系统 PATH：此电脑右键 → 属性 → 高级系统设置 → 环境变量 → 选中 Path → 编辑 → 新建 → 填入目录路径'},
+                    {'image': 'adb_setup_4_verify.png', 'desc': '④ 验证：打开新的命令行窗口，输入 adb version，能显示版本号即成功'},
+                    {'image': 'adb_setup_5_restart.png', 'desc': '⑤ 重启虫师，顶部设备下拉框应能发现已连接的设备'},
                 ])}
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
