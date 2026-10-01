@@ -174,33 +174,31 @@ class PerfReportGenerator:
         # 是否采集了流量指标
         has_traffic = 'traffic' in metrics
 
-        # 关键指标汇总卡片：只展示本次勾选采集的指标
+        # 关键指标汇总卡片：只展示本次勾选采集的指标，每项含峰值/均值/最低
         summary_cards_html = ""
         if 'cpu' in metrics:
+            s = stats.get('cpu', {})
             summary_cards_html += f"""
             <div class="card">
-                <div class="value">{stats.get('cpu', {}).get('max', 0):.1f}%</div>
+                <div class="value">{s.get('max', 0):.1f}%</div>
                 <div class="label">CPU 峰值</div>
-            </div>
-            <div class="card">
-                <div class="value">{stats.get('cpu', {}).get('avg', 0):.1f}%</div>
-                <div class="label">CPU 均值</div>
+                <div class="sub">均值 {s.get('avg', 0):.1f}% · 最低 {s.get('min', 0):.1f}%</div>
             </div>"""
         if 'mem' in metrics:
+            s = stats.get('mem', {})
             summary_cards_html += f"""
             <div class="card">
-                <div class="value">{stats.get('mem', {}).get('max', 0):.0f}MB</div>
+                <div class="value">{s.get('max', 0):.0f}MB</div>
                 <div class="label">内存峰值</div>
-            </div>
-            <div class="card">
-                <div class="value">{stats.get('mem', {}).get('avg', 0):.0f}MB</div>
-                <div class="label">内存均值</div>
+                <div class="sub">均值 {s.get('avg', 0):.0f}MB · 最低 {s.get('min', 0):.0f}MB</div>
             </div>"""
         if 'fps' in metrics:
+            s = stats.get('fps', {})
             summary_cards_html += f"""
             <div class="card">
-                <div class="value">{stats.get('fps', {}).get('avg', 0):.0f}</div>
+                <div class="value">{s.get('avg', 0):.1f}</div>
                 <div class="label">FPS 均值</div>
+                <div class="sub">最高 {s.get('max', 0):.0f} · 最低 {s.get('min', 0):.0f}</div>
             </div>"""
         if has_traffic and 'traffic' in stats:
             t = stats['traffic']
@@ -356,6 +354,13 @@ class PerfReportGenerator:
             font-size: 12px;
             color: #888;
             margin-top: 4px;
+        }}
+        .card .sub {{
+            font-size: 12px;
+            color: #666;
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px dashed #e0e0e0;
         }}
         .chart-wrap {{
             background: #fafbfc;
