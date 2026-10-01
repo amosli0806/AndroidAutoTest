@@ -286,18 +286,14 @@ class PerfBaselineDialog(QDialog):
         self.baseline_list.currentItemChanged.connect(self._on_select)
         left.addWidget(self.baseline_list, 1)
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(6)
-
+        # 删除按钮：与上方基线列表同宽（撑满左列）
         del_btn = QPushButton("删除")
         del_btn.setObjectName("dangerBtn")
         del_btn.setIcon(qta.icon('fa6s.trash-can', color='white'))
-        del_btn.setFixedWidth(100)
+        del_btn.setFixedHeight(34)
         del_btn.clicked.connect(self._on_delete)
-        btn_row.addWidget(del_btn)
-        btn_row.addStretch()
+        left.addWidget(del_btn)
 
-        left.addLayout(btn_row)
         body.addLayout(left, 0)
 
         # 右侧详情
@@ -487,9 +483,16 @@ class PerfBaselineDialog(QDialog):
             #PerfBaselineDialog QTableWidget {{
                 background-color: {panel_bg};
                 border: 1px solid {panel_border};
-                border-radius: 6px;
                 color: {text};
                 gridline-color: {border};
+            }}
+            #PerfBaselineDialog QTableWidget::item {{
+                border: none;
+            }}
+            #PerfBaselineDialog QTableCornerButton::section {{
+                background-color: {panel_bg};
+                border: none;
+                border-bottom: 1px solid {border};
             }}
             #PerfBaselineDialog QHeaderView::section {{
                 background-color: {panel_bg};
@@ -654,7 +657,6 @@ class PerfCompareDialog(QDialog):
             #PerfCompareDialog QTableWidget {{
                 background-color: {table_bg};
                 border: 1px solid {border};
-                border-radius: 6px;
                 color: {text};
                 gridline-color: {border};
             }}
