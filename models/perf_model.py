@@ -180,6 +180,7 @@ def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.
     b, c = base_metrics.get('mem'), cur_stats.get('mem')
     if b and c:
         _row('mem', '内存峰值 (MB)', b.get('max'), c.get('max'))
+        _row('mem_avg', '内存均值 (MB)', b.get('avg'), c.get('avg'))
     b, c = base_metrics.get('fps'), cur_stats.get('fps')
     if b and c:
         _row('fps', 'FPS 均值', b.get('avg'), c.get('avg'), lower_is_worse=True)
@@ -374,11 +375,21 @@ class PerfModel:
                 return b
         return None
 
-    def find_baseline_for_package(self, app_package: str) -> Optional[PerfBaseline]:
-        """返回指定应用最近一次保存的基线（按 created_at 最新优先）。"""
+    def find_baseline_for_package(self, app_package: str,
+                                  metrics: Optional[List[str]] = None) -> Optional[PerfBaseline]:
+        """返回指定应用最匹配的基线（按 created_at 最新优先）。
+
+        传入 metrics（本次采集的指标列表）时，优先返回与本次指标有交集的最新基线，
+        避免被同应用其他指标的新基线「挡住」（例如只采内存时，应匹配内存基线，
+        而不是更新保存的 CPU 基线）；无交集时回退到该应用最新的基线。
+        """
         candidates = [b for b in self.baselines if b.app_package == app_package]
         if not candidates:
             return None
+        if metrics:
+            common = [b for b in candidates if set(b.metrics) & set(metrics)]
+            if common:
+                return sorted(common, key=lambda b: b.created_at)[-1]
         return sorted(candidates, key=lambda b: b.created_at)[-1]
 
     def remove_baseline(self, name: str):

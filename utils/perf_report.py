@@ -191,6 +191,10 @@ class PerfReportGenerator:
             <div class="card">
                 <div class="value">{stats.get('mem', {}).get('max', 0):.0f}MB</div>
                 <div class="label">内存峰值</div>
+            </div>
+            <div class="card">
+                <div class="value">{stats.get('mem', {}).get('avg', 0):.0f}MB</div>
+                <div class="label">内存均值</div>
             </div>"""
         if 'fps' in metrics:
             summary_cards_html += f"""

@@ -569,7 +569,8 @@ class PerfController(QObject):
             return
 
         try:
-            baseline = self.model.find_baseline_for_package(session.app_package)
+            baseline = self.model.find_baseline_for_package(
+                session.app_package, session.metrics)
             PerfReportGenerator.generate(session, path, baseline=baseline)
             show_toast(self.view, "报告已生成")
             # 可选：打开所在文件夹
@@ -590,7 +591,8 @@ class PerfController(QObject):
         无基线或无法对比时静默跳过；有劣化时弹结果提示 + 记日志，否则只记一条
         「无劣化」信息，不打扰用户。
         """
-        baseline = self.model.find_baseline_for_package(session.app_package)
+        baseline = self.model.find_baseline_for_package(
+            session.app_package, session.metrics)
         if baseline is None:
             return
         stats = session.get_stats()

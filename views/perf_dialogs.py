@@ -611,6 +611,8 @@ class PerfCompareDialog(QDialog):
         if b and c:
             change, worse = calc_change(b.get('max', 0), c.get('max', 0))
             rows.append(('内存峰值(MB)', fmt(b.get('max', 0)), fmt(c.get('max', 0)), change, worse))
+            change, worse = calc_change(b.get('avg', 0), c.get('avg', 0))
+            rows.append(('内存均值(MB)', fmt(b.get('avg', 0)), fmt(c.get('avg', 0)), change, worse))
 
         # FPS
         b = self.baseline.metrics.get('fps', {})
