@@ -6,6 +6,96 @@ from datetime import datetime
 from models.perf_model import PerfSession, compare_stats
 
 
+# 各指标的 Chart.js 绘图脚本（普通字符串，非 f-string，花括号无需转义）
+CHART_JS_CPU = """new Chart(document.getElementById('cpuChart'), {
+    type: 'line',
+    data: {
+        labels: timestamps,
+        datasets: [{
+            label: 'CPU (%)',
+            data: cpuData,
+            borderColor: '#3498db',
+            backgroundColor: 'rgba(52,152,219,0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.3
+        }]
+    },
+    options: commonOptions
+});"""
+
+CHART_JS_MEM = """new Chart(document.getElementById('memChart'), {
+    type: 'line',
+    data: {
+        labels: timestamps,
+        datasets: [{
+            label: '内存 (MB)',
+            data: memData,
+            borderColor: '#27ae60',
+            backgroundColor: 'rgba(39,174,96,0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.3
+        }]
+    },
+    options: commonOptions
+});"""
+
+CHART_JS_FPS = """new Chart(document.getElementById('fpsChart'), {
+    type: 'line',
+    data: {
+        labels: timestamps,
+        datasets: [{
+            label: 'FPS',
+            data: fpsData,
+            borderColor: '#f39c12',
+            backgroundColor: 'rgba(243,156,18,0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.3
+        }]
+    },
+    options: commonOptions
+});"""
+
+CHART_JS_TRAFFIC = """new Chart(document.getElementById('trafficChart'), {
+    type: 'line',
+    data: {
+        labels: timestamps,
+        datasets: [
+            {
+                label: '接收 (KB/s)',
+                data: rxRateData,
+                borderColor: '#9b59b6',
+                backgroundColor: 'rgba(155,89,182,0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.3
+            },
+            {
+                label: '发送 (KB/s)',
+                data: txRateData,
+                borderColor: '#e67e22',
+                backgroundColor: 'rgba(230,126,34,0.1)',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.3
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: true }, title: { display: true, text: '流量速率 (KB/s)' } },
+        scales: {
+            x: { display: true, title: { display: true, text: '时间 (秒)' } },
+            y: { beginAtZero: true }
+        },
+        elements: { point: { radius: 0 } }
+    }
+});"""
+
+
 class PerfReportGenerator:
     """生成性能检测的 HTML 报告"""
 
@@ -84,11 +174,33 @@ class PerfReportGenerator:
         # 是否采集了流量指标
         has_traffic = 'traffic' in metrics
 
-        # 流量汇总卡片（勾选流量指标时才显示）
-        traffic_summary_html = ""
+        # 关键指标汇总卡片：只展示本次勾选采集的指标
+        summary_cards_html = ""
+        if 'cpu' in metrics:
+            summary_cards_html += f"""
+            <div class="card">
+                <div class="value">{stats.get('cpu', {}).get('max', 0):.1f}%</div>
+                <div class="label">CPU 峰值</div>
+            </div>
+            <div class="card">
+                <div class="value">{stats.get('cpu', {}).get('avg', 0):.1f}%</div>
+                <div class="label">CPU 均值</div>
+            </div>"""
+        if 'mem' in metrics:
+            summary_cards_html += f"""
+            <div class="card">
+                <div class="value">{stats.get('mem', {}).get('max', 0):.0f}MB</div>
+                <div class="label">内存峰值</div>
+            </div>"""
+        if 'fps' in metrics:
+            summary_cards_html += f"""
+            <div class="card">
+                <div class="value">{stats.get('fps', {}).get('avg', 0):.0f}</div>
+                <div class="label">FPS 均值</div>
+            </div>"""
         if has_traffic and 'traffic' in stats:
             t = stats['traffic']
-            traffic_summary_html = f"""
+            summary_cards_html += f"""
             <div class="card">
                 <div class="value">{t['rx_mb']:.2f}MB</div>
                 <div class="label">流量接收</div>
@@ -96,8 +208,7 @@ class PerfReportGenerator:
             <div class="card">
                 <div class="value">{t['tx_mb']:.2f}MB</div>
                 <div class="label">流量发送</div>
-            </div>
-            """
+            </div>"""
 
         # 基线对比（自动匹配同应用基线）
         baseline_html = ""
@@ -136,6 +247,37 @@ class PerfReportGenerator:
             <tbody>{tr_rows}</tbody>
         </table>
         """
+
+        # 曲线区域与图表脚本：只渲染本次勾选采集的指标
+        charts_section = ""
+        chart_scripts = []
+        if 'cpu' in metrics:
+            charts_section += """
+        <div class="chart-wrap">
+            <canvas id="cpuChart"></canvas>
+        </div>"""
+            chart_scripts.append(CHART_JS_CPU)
+        if 'mem' in metrics:
+            charts_section += """
+        <div class="chart-wrap">
+            <canvas id="memChart"></canvas>
+        </div>"""
+            chart_scripts.append(CHART_JS_MEM)
+        if 'fps' in metrics:
+            charts_section += """
+        <div class="chart-wrap">
+            <canvas id="fpsChart"></canvas>
+        </div>"""
+            chart_scripts.append(CHART_JS_FPS)
+        if has_traffic:
+            charts_section += """
+        <div class="chart-wrap">
+            <canvas id="trafficChart"></canvas>
+        </div>"""
+            chart_scripts.append(CHART_JS_TRAFFIC)
+        if charts_section:
+            charts_section = '<h2>📈 实时曲线</h2>' + charts_section
+        charts_js = "\n\n".join(chart_scripts)
 
         html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -302,40 +444,12 @@ class PerfReportGenerator:
 
         <h2>📊 关键指标</h2>
         <div class="summary">
-            <div class="card">
-                <div class="value">{stats.get('cpu', {}).get('max', 0):.1f}%</div>
-                <div class="label">CPU 峰值</div>
-            </div>
-            <div class="card">
-                <div class="value">{stats.get('cpu', {}).get('avg', 0):.1f}%</div>
-                <div class="label">CPU 均值</div>
-            </div>
-            <div class="card">
-                <div class="value">{stats.get('mem', {}).get('max', 0):.0f}MB</div>
-                <div class="label">内存峰值</div>
-            </div>
-            <div class="card">
-                <div class="value">{stats.get('fps', {}).get('avg', 0):.0f}</div>
-                <div class="label">FPS 均值</div>
-            </div>
-            {traffic_summary_html}
+            {summary_cards_html}
         </div>
 
         {baseline_html}
 
-        <h2>📈 实时曲线</h2>
-        <div class="chart-wrap">
-            <canvas id="cpuChart"></canvas>
-        </div>
-        <div class="chart-wrap">
-            <canvas id="memChart"></canvas>
-        </div>
-        <div class="chart-wrap">
-            <canvas id="fpsChart"></canvas>
-        </div>
-        <div class="chart-wrap" id="trafficChartWrap" {'style="display:none;"' if not has_traffic else ''}>
-            <canvas id="trafficChart"></canvas>
-        </div>
+        {charts_section}
 
         {alerts_html}
 
@@ -363,98 +477,14 @@ class PerfReportGenerator:
             elements: {{ point: {{ radius: 0 }} }}
         }};
 
-        new Chart(document.getElementById('cpuChart'), {{
-            type: 'line',
-            data: {{
-                labels: timestamps,
-                datasets: [{{
-                    label: 'CPU (%)',
-                    data: cpuData,
-                    borderColor: '#3498db',
-                    backgroundColor: 'rgba(52,152,219,0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.3
-                }}]
-            }},
-            options: commonOptions
-        }});
-
-        new Chart(document.getElementById('memChart'), {{
-            type: 'line',
-            data: {{
-                labels: timestamps,
-                datasets: [{{
-                    label: '内存 (MB)',
-                    data: memData,
-                    borderColor: '#27ae60',
-                    backgroundColor: 'rgba(39,174,96,0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.3
-                }}]
-            }},
-            options: commonOptions
-        }});
-
-        new Chart(document.getElementById('fpsChart'), {{
-            type: 'line',
-            data: {{
-                labels: timestamps,
-                datasets: [{{
-                    label: 'FPS',
-                    data: fpsData,
-                    borderColor: '#f39c12',
-                    backgroundColor: 'rgba(243,156,18,0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.3
-                }}]
-            }},
-            options: commonOptions
-        }});
-
-        new Chart(document.getElementById('trafficChart'), {{
-            type: 'line',
-            data: {{
-                labels: timestamps,
-                datasets: [
-                    {{
-                        label: '接收 (KB/s)',
-                        data: rxRateData,
-                        borderColor: '#9b59b6',
-                        backgroundColor: 'rgba(155,89,182,0.1)',
-                        borderWidth: 2,
-                        fill: true,
-                        tension: 0.3
-                    }},
-                    {{
-                        label: '发送 (KB/s)',
-                        data: txRateData,
-                        borderColor: '#e67e22',
-                        backgroundColor: 'rgba(230,126,34,0.1)',
-                        borderWidth: 2,
-                        fill: false,
-                        tension: 0.3
-                    }}
-                ]
-            }},
-            options: {{
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {{ legend: {{ display: true }}, title: {{ display: true, text: '流量速率 (KB/s)' }} }},
-                scales: {{
-                    x: {{ display: true, title: {{ display: true, text: '时间 (秒)' }} }},
-                    y: {{ beginAtZero: true }}
-                }},
-                elements: {{ point: {{ radius: 0 }} }}
-            }}
-        }});
+        {charts_js}
     </script>
 </body>
 </html>"""
 
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        out_dir = os.path.dirname(file_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(html)
         return file_path

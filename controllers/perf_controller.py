@@ -612,8 +612,9 @@ class PerfController(QObject):
             )
             WarningDialog.show_warning(
                 self.view,
-                f"性能劣化告警（vs 基线「{baseline.name}」）",
-                f"检测到 {len(worse)} 项指标明显劣化：\n\n{detail}\n\n"
+                "性能劣化告警",
+                f"对比基线：{baseline.name}\n\n"
+                f"检测到 {len(worse)} 项指标明显劣化：\n\n{detail}",
                 f"完整对比：{line}"
             )
             if self.logs_view:

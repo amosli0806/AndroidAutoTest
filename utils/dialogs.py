@@ -58,8 +58,8 @@ class ConfirmDeleteDialog(QDialog):
 
         title_label = QLabel(title)
         title_label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        title_layout.addWidget(title_label)
-        title_layout.addStretch()
+        title_label.setWordWrap(True)
+        title_layout.addWidget(title_label, 1)
         container_layout.addLayout(title_layout)
 
         line = QFrame()
@@ -245,8 +245,8 @@ class WarningDialog(QDialog):
 
         title_label = QLabel(title)
         title_label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        title_layout.addWidget(title_label)
-        title_layout.addStretch()
+        title_label.setWordWrap(True)
+        title_layout.addWidget(title_label, 1)
         container_layout.addLayout(title_layout)
 
         line = QFrame()
@@ -343,8 +343,8 @@ class ErrorDialog(QDialog):
 
         title_label = QLabel(title)
         title_label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        title_layout.addWidget(title_label)
-        title_layout.addStretch()
+        title_label.setWordWrap(True)
+        title_layout.addWidget(title_label, 1)
         container_layout.addLayout(title_layout)
 
         line = QFrame()
@@ -444,8 +444,8 @@ class QuestionDialog(QDialog):
 
         title_label = QLabel(title)
         title_label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        title_layout.addWidget(title_label)
-        title_layout.addStretch()
+        title_label.setWordWrap(True)
+        title_layout.addWidget(title_label, 1)
         container_layout.addLayout(title_layout)
 
         line = QFrame()
