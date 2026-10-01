@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QFrame, QScrollArea, QKeySequenceEdit, QCheckBox, QToolButton
 )
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal, QSize
-from PyQt6.QtGui import QKeySequence, QIcon, QPixmap
+from PyQt6.QtGui import QKeySequence, QIcon, QPixmap, QImageReader
 
 from utils import tree_state
 
@@ -66,6 +66,54 @@ from utils.toast import show_toast
 
 # 试听念什么见 _on_test_voice：**当前唤醒词本身**。
 # 原来这里写死一句跟唤醒词无关的样例文案，改了唤醒词再点试听，听到的还是老句子。
+
+
+class WallpaperThumbLoader(QThread):
+    """后台加载预设壁纸缩略图，避免解码高清大图卡住设置对话框"""
+    thumbs_ready = pyqtSignal(list)  # [(path, QImage), ...]
+
+    def __init__(self, paths, tw, th, parent=None):
+        super().__init__(parent)
+        self._paths = paths
+        self._tw = tw
+        self._th = th
+
+    def run(self):
+        thumbs = []
+        try:
+            for path in self._paths:
+                img = self._make_thumb(path)
+                if img is not None:
+                    thumbs.append((path, img))
+        except Exception as e:
+            print(f"[WallpaperThumbLoader] 缩略图加载失败: {e}")
+        self.thumbs_ready.emit(thumbs)
+
+    def _make_thumb(self, path):
+        tw, th = self._tw, self._th
+        reader = QImageReader(path)
+        reader.setAutoTransform(True)
+        orig = reader.size()
+        # 解码时直接缩到覆盖尺寸（JPEG 硬解缩放，避免解全图）
+        if orig.isValid() and orig.width() > 0 and orig.height() > 0:
+            s = max(tw / orig.width(), th / orig.height())
+            if s < 1.0:
+                reader.setScaledSize(QSize(
+                    max(tw, int(round(orig.width() * s))),
+                    max(th, int(round(orig.height() * s))),
+                ))
+        img = reader.read()
+        if img.isNull():
+            return None
+        # 覆盖式缩放到恰好覆盖 tw×th（小图会放大），再居中裁剪
+        filled = img.scaled(
+            tw, th,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        x = (filled.width() - tw) // 2
+        y = (filled.height() - th) // 2
+        return filled.copy(x, y, tw, th)
 
 
 class VoiceTestWorker(QThread):
@@ -164,6 +212,7 @@ class SettingsDialog(QDialog):
 
         wallpaper_item = QTreeWidgetItem(["壁纸"])
         wallpaper_item.setData(0, Qt.ItemDataRole.UserRole, idx)
+        self._wallpaper_page_idx = idx
         appearance_root.addChild(wallpaper_item)
         self.content_stack.addWidget(self._build_wallpaper_page())
         idx += 1
@@ -419,50 +468,23 @@ class SettingsDialog(QDialog):
         return [os.path.join(d, f) for f in sorted(files, key=str.lower)]
 
     def _build_preset_wallpaper_grid(self):
-        """三列缩略图网格：单选一个后点「应用/确定」生效；再点一次取消选择"""
+        """三列缩略图网格容器：缩略图改为后台懒加载（_ensure_wallpaper_thumbs），
+        打开设置对话框时不再同步解码 25 张高清大图，避免卡顿"""
         container = QWidget()
         container.setObjectName("WallpaperGridContainer")
-        grid = QGridLayout(container)
-        grid.setContentsMargins(0, 4, 4, 4)
-        grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(14)
+        self._wallpaper_grid = QGridLayout(container)
+        self._wallpaper_grid.setContentsMargins(0, 4, 4, 4)
+        self._wallpaper_grid.setHorizontalSpacing(10)
+        self._wallpaper_grid.setVerticalSpacing(14)
 
-        self._preset_buttons = {}  # path -> QToolButton
+        self._preset_buttons = {}  # path -> QToolButton（后台加载完成后填充）
+        self._thumb_loader = None
+        self._thumbs_loaded = False
+
         col_count = 3
-        tw, th = self.PRESET_THUMB_W, self.PRESET_THUMB_H
-
-        for i, path in enumerate(self._list_preset_wallpapers()):
-            btn = QToolButton()
-            btn.setObjectName("wallpaperThumbBtn")
-            btn.setCheckable(True)
-            btn.setAutoExclusive(True)
-            btn.setFixedSize(tw + 16, th + 44)
-            btn.setIconSize(QSize(tw, th))
-            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-            name = os.path.splitext(os.path.basename(path))[0]
-            btn.setText(name)
-            pixmap = QPixmap(path)
-            if not pixmap.isNull():
-                # 居中裁剪成统一比例：按覆盖方式缩放后取中间部分，宽高完全一致
-                filled = pixmap.scaled(
-                    tw, th,
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-                x = (filled.width() - tw) // 2
-                y = (filled.height() - th) // 2
-                btn.setIcon(QIcon(filled.copy(x, y, tw, th)))
-            btn.setToolTip("选择后点击「应用」或「确定」生效")
-            btn.clicked.connect(lambda checked, p=path: self._on_preset_clicked(checked, p))
-            self._preset_buttons[path] = btn
-            row, col = i // col_count, i % col_count
-            # 三列均分剩余宽度，按钮在各自单元格里居中 → 最右列贴住滚动条，不留大空隙
-            grid.addWidget(btn, row, col,
-                           Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
-
         for c in range(col_count):
-            grid.setColumnStretch(c, 1)
-        grid.setRowStretch(grid.rowCount(), 1)
+            self._wallpaper_grid.setColumnStretch(c, 1)
+        self._wallpaper_grid.setRowStretch(0, 1)
 
         scroll = QScrollArea()
         scroll.setObjectName("WallpaperScroll")
@@ -472,6 +494,53 @@ class SettingsDialog(QDialog):
         # 只保留上下滚动；列宽已按面板宽度算好，横向滚动条一律不出现
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         return scroll
+
+    def _ensure_wallpaper_thumbs(self):
+        """启动后台线程加载缩略图（只做一次，失败不重试避免反复开销）"""
+        if self._thumbs_loaded or self._thumb_loader is not None:
+            return
+        paths = self._list_preset_wallpapers()
+        if not paths:
+            self._thumbs_loaded = True
+            return
+        loader = WallpaperThumbLoader(
+            paths, self.PRESET_THUMB_W, self.PRESET_THUMB_H, self)
+        loader.thumbs_ready.connect(self._on_thumbs_ready)
+        self._thumb_loader = loader
+        loader.start()
+
+    def _on_thumbs_ready(self, thumbs):
+        """后台缩略图就绪：填充网格按钮并恢复当前壁纸的选中态"""
+        self._thumb_loader = None
+        self._thumbs_loaded = True
+        tw, th = self.PRESET_THUMB_W, self.PRESET_THUMB_H
+        col_count = 3
+        for i, (path, img) in enumerate(thumbs):
+            btn = QToolButton()
+            btn.setObjectName("wallpaperThumbBtn")
+            btn.setCheckable(True)
+            btn.setAutoExclusive(True)
+            btn.setFixedSize(tw + 16, th + 44)
+            btn.setIconSize(QSize(tw, th))
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            name = os.path.splitext(os.path.basename(path))[0]
+            btn.setText(name)
+            btn.setIcon(QIcon(QPixmap.fromImage(img)))
+            btn.setToolTip("选择后点击「应用」或「确定」生效")
+            btn.clicked.connect(lambda checked, p=path: self._on_preset_clicked(checked, p))
+            self._preset_buttons[path] = btn
+            row, col = i // col_count, i % col_count
+            # 三列均分剩余宽度，按钮在各自单元格里居中 → 最右列贴住滚动条，不留大空隙
+            self._wallpaper_grid.addWidget(
+                btn, row, col,
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        # 最后一行撑开，按钮整体靠上
+        rows = (len(thumbs) + col_count - 1) // col_count
+        self._wallpaper_grid.setRowStretch(rows, 1)
+        # 若已保存的壁纸是预设图，恢复选中态
+        wp = Settings.get_wallpaper_path()
+        if wp:
+            self._select_preset_by_path(wp)
 
     def _on_preset_clicked(self, checked, path):
         if checked:
@@ -1058,6 +1127,9 @@ class SettingsDialog(QDialog):
         idx = current.data(0, Qt.ItemDataRole.UserRole)
         if idx is not None and 0 <= idx < self.content_stack.count():
             self.content_stack.setCurrentIndex(idx)
+        # 切到「壁纸」页时才后台加载缩略图，设置对话框打开本身不卡
+        if idx == getattr(self, "_wallpaper_page_idx", -1):
+            self._ensure_wallpaper_thumbs()
 
     # ------------------------------------------------------------------
     # 数据加载 / 保存
