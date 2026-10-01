@@ -279,8 +279,8 @@
     <p class="small" style="margin-top:0">这些是当前尚未补齐、或做了半截的能力，是下一步要优先解决的问题。</p>
 
     <div class="card">
-      <div class="gap-item"><span class="tag stub">🚧</span>
-        <div><b>复杂手势序列仍是桩实现</b> — 目前只打印序列编号、未真正执行，点了卡片看不到效果。</div>
+      <div class="gap-item"><span class="tag done">✅</span>
+        <div><b>复杂手势序列已下架</b> — 该卡片只是桩实现（未真正执行），已从动作卡片区移除；执行后端保留，旧项目数据不受影响。</div>
       </div>
     </div>
     <div class="card">
@@ -323,7 +323,7 @@
         <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报空白</b> — 唤醒词只有一条、无车型模板、无法验证「真执行了」。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无工程化配套</b> — 无 Git 集成、插件机制、多语言、云端同步。</div></div>
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>无工程化配套</b> — 无 Git 集成、插件机制。</div></div>
       </div>
     </div>
   </section>
@@ -331,7 +331,7 @@
   <!-- ============ 三、扩展方向 ============ -->
   <section class="chapter" id="s3">
     <h2><span class="num">3</span>扩展方向（按优先级）</h2>
-    <p class="small" style="margin-top:0">19 项规划按「高 / 中 / 常规 / 进阶 / 远期」五档组织，每项都配了一个生活化类比帮助理解。</p>
+    <p class="small" style="margin-top:0">17 项规划按「高 / 中 / 常规 / 进阶」四档组织，每项都配了一个生活化类比帮助理解。</p>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 高优先级 · 显著提升用户体验</h3>
 
@@ -370,10 +370,10 @@
       <ul>
         <li class="done-li">✅ 帮助中心各章节已按实际能力重写、补全、文案精简</li>
         <li class="done-li">✅ 接口自动化已从占位走向可用</li>
-        <li class="plan-li">📋 实现复杂手势序列真实执行（或下架该卡片）</li>
+        <li class="done-li">✅ 复杂手势序列卡片已下架（桩实现不再误导用户）</li>
         <li class="plan-li">📋 接口模块二期：前后置脚本、链路编排、数据驱动</li>
       </ul>
-      <div class="example">💡 <b>打个比方：</b>「复杂手势」现在就像只写了个舞蹈动作的名字、还没真正教机器人跳。补全后，你画出的一条轨迹能被原样回放出来。</div>
+      <div class="example">💡 <b>打个比方：</b>文档一致性就像「菜单和后厨要对得上」——菜单纯净了、后厨也要跟得上，用户才不会被页面上的空承诺误导。</div>
     </div>
 
     <div class="card">
@@ -438,14 +438,14 @@
     </div>
 
     <div class="card">
-      <h3>12. 性能检测增强 <span class="tag part">⚙️ 部分完成</span></h3>
+      <h3>12. 性能检测增强 <span class="tag part">⚙️ 部分完成</span> <span class="tag plan">🥇 优先</span></h3>
       <ul>
-        <li class="plan-li">📋 HTML 报告补充流量曲线</li>
-        <li class="plan-li">📋 基线自动回归对比（跑完自动比对基线、判定劣化）</li>
-        <li class="plan-li">📋 启动耗时历史趋势与基线对比</li>
-        <li class="plan-li">📋 并入 mapauto-perf-test 的采集能力（GPU / 系统内存 / 整机 CPU 等，范围待定）</li>
+        <li class="plan-li">🥇 <b>HTML 报告补充流量曲线</b>（优先做）</li>
+        <li class="plan-li">🥇 <b>基线自动回归对比</b>（跑完自动比对基线、判定劣化，优先做）</li>
+        <li class="plan-li">🥇 <b>启动耗时历史趋势与基线对比</b>（优先做）</li>
+        <li class="plan-li">📋 并入 mapauto-perf-test 的采集能力（GPU / 系统内存 / 整机 CPU 等，范围待定，后置）</li>
       </ul>
-      <div class="example">💡 <b>打个比方：</b>像「体检报告自动对比」——每次测完自动和上次体检结果比，哪项指标变差了直接标红提醒，不用自己逐项对照。</div>
+      <div class="example">💡 <b>打个比方：</b>像「体检报告自动对比」——每次测完自动和上次体检结果比，哪项指标变差了直接标红提醒，不用自己逐项对照。优先做的三项就是把「体检报告」补全（流量曲线）+ 让它「自动对比」（基线回归、启动耗时趋势）。</div>
     </div>
 
     <div class="card">
@@ -480,19 +480,6 @@
       <div class="example">💡 <b>打个比方：</b>像「同时炒几锅菜」——多台车机 / 多块屏同时跑不同测试，回归时间从 1 小时缩到 10 分钟。</div>
     </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 远期规划 · 生态建设</h3>
-
-    <div class="card">
-      <h3>18. 云端存储与同步 <span class="tag plan">📋 规划中</span></h3>
-      <p>项目数据同步到云端，支持多端协同编辑与用例库共享。</p>
-      <div class="example">💡 <b>打个比方：</b>像手机相册云备份——换台电脑，登录就能继续用，数据不丢、还能团队共享用例库。</div>
-    </div>
-
-    <div class="card">
-      <h3>19. 多语言支持 <span class="tag plan">📋 规划中</span></h3>
-      <p>界面支持中文 / 英文切换，便于国际化团队使用。</p>
-      <div class="example">💡 <b>打个比方：</b>像手机系统的「语言」设置，一键切换，同一套软件服务不同语言的团队。</div>
-    </div>
   </section>
 
   <!-- ============ 四、优先级建议 ============ -->
@@ -505,13 +492,13 @@
           <tr><td class="stars">⭐⭐⭐</td><td>变量 / 参数化</td><td>数据驱动是自动化测试的核心，是关键字驱动与数据驱动的共同地基</td></tr>
           <tr><td class="stars">⭐⭐⭐</td><td>日志过滤与搜索</td><td>改动集中、开发成本低、调试收益立竿见影</td></tr>
           <tr><td class="stars">⭐⭐⭐</td><td>批量操作增强</td><td>高频诉求，效率提升显著</td></tr>
-          <tr><td class="stars">⭐⭐⭐</td><td>补齐桩实现与文档</td><td>复杂手势是桩，直接影响用户信任</td></tr>
+          <tr><td class="stars">✅</td><td>补齐桩实现与文档</td><td>复杂手势序列已下架，帮助中心与文档已对齐实际能力</td></tr>
           <tr><td class="stars">⭐⭐</td><td>执行健壮性（重试 + 显式等待）</td><td>直接影响用例稳定性与回归可信度</td></tr>
           <tr><td class="stars">⭐⭐</td><td>测试套件增强</td><td>套件级报告与排序，提升组织效率</td></tr>
           <tr><td class="stars">✅</td><td>接口自动化最小闭环</td><td>已于 2026-09-28 完成</td></tr>
           <tr><td class="stars">⭐⭐</td><td>关键字驱动</td><td>封装复用，降低用例编写成本</td></tr>
           <tr><td class="stars">⭐</td><td>语音播报增强</td><td>回执验证已落地，剩余是唤醒词多套 / 车型模板 / 执行结果校验</td></tr>
-          <tr><td class="stars">⭐</td><td>性能检测增强</td><td>流量曲线、自动基线回归、启动耗时趋势</td></tr>
+          <tr><td class="stars">⭐⭐⭐</td><td>性能检测增强（三项优先）</td><td>HTML 报告流量曲线、基线自动回归对比、启动耗时趋势，先做这三项</td></tr>
           <tr><td class="stars">⭐</td><td>命令行模式</td><td>价值高、开发量适中，是打开 CI/CD 的钥匙</td></tr>
           <tr><td class="stars">⭐</td><td>图像识别定位</td><td>覆盖面广，但引入 OpenCV、工作量较大</td></tr>
         </tbody>
@@ -593,9 +580,9 @@
     <div class="card">
       <h3>穿插任务 <span class="tag part">⚙️ 随时可做</span></h3>
       <ul>
-        <li>复杂手势序列：实现真实执行，或先下架卡片避免误导</li>
+        <li class="done-li">✅ 复杂手势序列：已下架卡片（执行后端保留兼容旧项目数据）</li>
         <li>语音播报增强：唤醒词多套 + 车型模板 + 执行结果校验</li>
-        <li>性能检测增强：流量曲线、基线回归、启动耗时趋势、并入采集能力</li>
+        <li>性能检测增强（优先）：流量曲线、基线回归、启动耗时趋势；并入采集能力后置</li>
         <li>版本控制（Git 集成）：数据文件接入版本管理</li>
         <li class="done-li">✅ 增量更新已落地并实测兑现（1.2.8→1.2.9 补丁仅 12MB）</li>
       </ul>

@@ -280,10 +280,6 @@ class ActionCardView(QScrollArea):
                 {'key': 'distance', 'label': '距离像素：', 'type': 'spin', 'default': 300},
                 {'key': 'velocity', 'label': '速度(px/s)', 'type': 'spin', 'default': 3000}
             ]},
-            {'type': 'gesture_seq', 'title': '复杂手势序列', 'fields': [
-                {'key': 'sequenceId', 'label': '序列编号：', 'type': 'line', 'default': 'pattern_01', 'required': True},
-                {'key': 'description', 'label': '手势描述：', 'type': 'line', 'default': '自定义手势序列'}
-            ]},
             {'type': 'physical_key', 'title': '物理按键', 'fields': [
                 {'key': 'keyName', 'label': '按键名称：', 'type': 'select',
                  'options': ['返回', '主页', '菜单', '音量+', '音量-', '电源', '相机']}
@@ -348,9 +344,7 @@ class ActionCardView(QScrollArea):
             # 第七行
             'drag_drop', 'gesture_zoom',
             # 第八行
-            'gesture_seq', 'screenshot',
-            # 第九行
-            'voice',
+            'screenshot', 'voice',
         ]
         type_to_cfg = {c['type']: c for c in configs}
         configs_sorted = [type_to_cfg[t] for t in ordered_types if t in type_to_cfg]
@@ -403,7 +397,6 @@ class ActionCard(QGroupBox):
         'multi_swipe': '#16a085',
         'gesture_zoom': '#27ae60',
         'flick': '#2980b9',
-        'gesture_seq': '#c0392b',
         'physical_key': '#7f8c8d',
         'screen_ctrl': '#2c3e50',
         'app_mgr': '#d35400',
