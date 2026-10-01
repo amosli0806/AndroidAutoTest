@@ -21,7 +21,16 @@ CHART_JS_CPU = """new Chart(document.getElementById('cpuChart'), {
             tension: 0.3
         }]
     },
-    options: commonOptions
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, title: { display: true, text: 'CPU 使用率 (%)' } },
+        scales: {
+            x: { display: true, title: { display: true, text: '时间 (秒)' } },
+            y: { beginAtZero: true }
+        },
+        elements: { point: { radius: 0 } }
+    }
 });"""
 
 CHART_JS_MEM = """new Chart(document.getElementById('memChart'), {
@@ -38,7 +47,16 @@ CHART_JS_MEM = """new Chart(document.getElementById('memChart'), {
             tension: 0.3
         }]
     },
-    options: commonOptions
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, title: { display: true, text: '内存占用 (MB)' } },
+        scales: {
+            x: { display: true, title: { display: true, text: '时间 (秒)' } },
+            y: { beginAtZero: true }
+        },
+        elements: { point: { radius: 0 } }
+    }
 });"""
 
 CHART_JS_FPS = """new Chart(document.getElementById('fpsChart'), {
@@ -55,7 +73,16 @@ CHART_JS_FPS = """new Chart(document.getElementById('fpsChart'), {
             tension: 0.3
         }]
     },
-    options: commonOptions
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, title: { display: true, text: 'FPS 帧率' } },
+        scales: {
+            x: { display: true, title: { display: true, text: '时间 (秒)' } },
+            y: { beginAtZero: true }
+        },
+        elements: { point: { radius: 0 } }
+    }
 });"""
 
 CHART_JS_TRAFFIC = """new Chart(document.getElementById('trafficChart'), {
@@ -474,17 +501,6 @@ class PerfReportGenerator:
         const fpsData = [{','.join(fps_series)}];
         const rxRateData = [{','.join(rx_rate_series)}];
         const txRateData = [{','.join(tx_rate_series)}];
-
-        const commonOptions = {{
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {{ legend: {{ display: false }} }},
-            scales: {{
-                x: {{ display: true, title: {{ display: true, text: '时间 (秒)' }} }},
-                y: {{ beginAtZero: true }}
-            }},
-            elements: {{ point: {{ radius: 0 }} }}
-        }};
 
         {charts_js}
     </script>
