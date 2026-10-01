@@ -142,7 +142,7 @@ class DeviceService:
         avail = self.available_imes()
 
         if cur and (not avail or cur in avail):
-            return f"当前输入法正常（{cur}），无需恢复"
+            return "当前输入法正常，无需恢复"
 
         # 需要恢复：通用键盘优先，其次设备里任意一个可用输入法
         if avail:

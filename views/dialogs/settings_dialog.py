@@ -959,7 +959,7 @@ class SettingsDialog(QDialog):
             show_toast(self, "设备服务未初始化", duration=2000)
             return
         try:
-            # 直接展示服务返回的结论：正常时是「当前输入法正常（xxx），无需恢复」，
+            # 直接展示服务返回的结论：正常时是「当前输入法正常，无需恢复」，
             # 真恢复过则是「已恢复输入法：xxx」，比笼统的"成功"更有信息量
             show_toast(self, ds.restore_ime(), duration=2500)
         except Exception as e:
