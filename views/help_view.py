@@ -333,27 +333,23 @@ class HelpView(QFrame):
                 "安装 adb": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">⚙️ 环境准备：安装 adb</h2>
                 <p style="font-size: 15px;">
-                    虫师通过 <b>adb</b>（Android Debug Bridge）与安卓设备通信，需要电脑上
-                    已安装 adb 并加入 <b>系统 PATH</b>。未安装时启动虫师会提示
-                    「未检测到 adb」，此时无法连接设备。
+                    虫师通过 <b>adb</b> 与安卓设备通信，电脑上需要先装好 adb，否则无法连接设备。
                 </p>
 
                 {self._get_steps_html([
-                    {'image': 'adb_setup_1_download.png', 'desc': '① 下载 adb 链接：https://adbdownload.com/'},
-                    {'image': 'adb_setup_2_extract.png', 'desc': '② 解压到任意目录，例如 D:\\platform-tools（内含 adb.exe）'},
-                    {'image': '', 'desc': '③ 把该目录加入系统 PATH：此电脑右键 → 属性 → 高级系统设置 → 环境变量 → 选中 Path → 编辑 → 新建 → 填入目录路径'},
-                    {'image': 'adb_setup_4_verify.png', 'desc': '④ 验证：打开新的命令行窗口，输入 adb version，能显示版本号即成功'},
-                    {'image': 'adb_setup_5_restart.png', 'desc': '⑤ 重启虫师，顶部设备下拉框应能发现已连接的设备'},
+                    {'image': 'adb_setup_1_download.png', 'desc': '① 下载 adb：https://adbdownload.com/'},
+                    {'image': 'adb_setup_2_extract.png', 'desc': '② 解压到任意目录，例如 D:\\platform-tools'},
+                    {'image': '', 'desc': '③ 把该目录加入系统 PATH：此电脑右键 → 属性 → 高级系统设置 → 环境变量 → 编辑 Path → 新建'},
+                    {'image': 'adb_setup_4_verify.png', 'desc': '④ 打开新的命令行窗口，输入 adb version，显示版本号即成功'},
+                    {'image': 'adb_setup_5_restart.png', 'desc': '⑤ 重启虫师，顶部应能看到已连接的设备'},
                 ])}
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 <b>手机端</b>还需开启「开发者选项 → USB 调试」；车机/电视设备请在系统设置里找到
-                    开发者选项开启 adb 调试。首次连接设备时，设备上会弹「是否允许 USB 调试」授权框，点允许。
+                    💡 手机端需开启「开发者选项 → USB 调试」；首次连接时设备会弹授权框，点允许即可。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 无线设备（adb connect ip:port）连接后若提示 offline，多为设备端未授权或网络不通，
-                    可在设备上重新授权或改用 USB 连接。
+                    ⚠️ 无线连接提示 offline 时，多为设备未授权或网络不通，重新授权或改用 USB 即可。
                 </div>
                 """,
             },
@@ -361,22 +357,16 @@ class HelpView(QFrame):
                 "迷你模式": """
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🪟 迷你模式</h2>
                 <p style="font-size: 15px;">
-                    屏幕不够用时，可以把虫师缩成一个<b>只显示 ADB 指令管理区</b>的小窗口：点左侧工具栏
-                    最底部的<b>迷你模式按钮</b>进入，再点一次恢复全屏。
+                    屏幕不够用时，可把虫师缩成一个只显示 ADB 指令管理的小窗口：点左侧工具栏最底部的
+                    <b>迷你模式按钮</b>进入，再点一次恢复全屏。
                 </p>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    <b>迷你窗口保留什么</b><br>
-                    • 顶部：设备下拉框 + 刷新按钮<br>
-                    • 主区域：ADB 工具箱的「指令管理」区（右侧的搜索 / 弱网模拟 / Monkey 隐藏）<br>
-                    • 右侧工具栏：消息按钮（帮助中心隐藏）<br>
-                    • 左下：硬件信息 / Crash / ANR / 日志四个按钮，仍可调出底部面板<br>
-                    • 底部状态栏保留
+                    小窗口里保留：顶部设备选择、ADB 指令管理区、底部日志面板，常用操作不受影响。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 迷你窗口是<b>固定尺寸</b>的，所以标题栏的最大化按钮会一并隐藏 ——
-                    避免误点后窗口又铺满全屏。退出迷你模式会自动恢复最大化与全部功能入口。
+                    💡 迷你窗口是固定尺寸，所以没有最大化按钮；退出后会自动恢复原来的窗口大小。
                 </div>
                 """
             },
@@ -384,73 +374,54 @@ class HelpView(QFrame):
                 "使用说明": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🔧 ADB工具箱</h2>
                 <p style="font-size: 15px;">
-                    <b>ADB工具箱</b> 集成了常用 ADB 命令与设备调试工具，
-                    覆盖<b>设备管理、指令执行、文件操作、日志抓取、网络诊断</b>等场景。
-                </p>
-                <p style="font-size: 15px;">
-                    页面分左右两栏：左侧是<b>指令管理</b>（命令列表 + 菜单 + 执行选中），
-                    右侧自上而下是<b>搜索框</b>、<b>弱网模拟</b>、<b>Monkey 测试</b>。
-                    设备相关的常用工具已按用途分散到顶部工具栏、左侧工具栏和性能检测页，
-                    详见「快捷功能」一节。
+                    集成常用 ADB 命令与调试工具，覆盖设备管理、指令执行、文件操作、日志抓取等场景。
+                    左侧是<b>指令管理</b>，右侧自上而下是<b>搜索框</b>、<b>弱网模拟</b>、<b>Monkey 测试</b>。
                 </p>
 
                 {self._get_steps_html([
-                    {'image': 'adb_2_search.png', 'desc': '右侧搜索框支持预设、自定义、ADB 库三类命令'},
-                    {'image': 'adb_3_cmdlist.png', 'desc': '左侧命令列表：勾选 + 执行/停止，每条命令独立控制'},
-                    {'image': 'adb_4_quick.png', 'desc': '搜索框下方内嵌「弱网模拟」「Monkey 测试」两块面板（弱网在上）'},
-                    {'image': 'adb_5_logs.png', 'desc': '结果统一输出到主窗口底部「虫师日志」面板'},
+                    {'image': 'adb_2_search.png', 'desc': '搜索框支持预设、自定义、ADB 库三类命令'},
+                    {'image': 'adb_3_cmdlist.png', 'desc': '左侧命令列表：勾选后执行或停止，互不影响'},
+                    {'image': 'adb_4_quick.png', 'desc': '「弱网模拟」「Monkey 测试」面板内嵌在右栏'},
+                    {'image': 'adb_5_logs.png', 'desc': '执行结果统一显示在底部「虫师日志」面板'},
                 ])}
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 <b>自定义指令</b>：通过「菜单 → 新增指令」保存常用命令，支持定时执行、循环、保存输出等。
+                    💡 通过「菜单 → 新增指令」可保存自己的常用命令，支持定时执行、循环等。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 主项目正在执行用例时，会改动设备状态的命令（权限获取 / monkey / tcpdump / reboot 等）会被自动禁用，避免干扰测试；
-                    而 logcat、录屏、截图、导出日志（pull）这类<b>只读采集</b>命令仍可正常执行 —— 用例跑到一半出问题，正好用它把现场日志和视频捞出来。
+                    ⚠️ 用例执行期间，会改动设备状态的命令会被自动禁用，避免干扰测试；
+                    日志、录屏、截图等只读命令不受影响，随时可用于抓取现场信息。
                 </div>
                 """,
 
                 "快捷功能": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🛠️ 快捷功能</h2>
                 <p style="font-size: 15px;">
-                    常用工具按用途分布在三处：<b>顶部工具栏</b>、<b>左侧工具栏下方</b>、
-                    <b>性能检测页的「性能工具」卡片</b>，以及 ADB 工具箱右栏的<b>内嵌面板</b>。
+                    常用小工具按用途分布在三处：<b>顶部工具栏</b>、<b>左侧工具栏下方</b>、<b>性能检测页</b>，
+                    ADB 工具箱右栏还有弱网与 Monkey 两个内嵌面板。
                 </p>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    <b>顶部工具栏</b>（左侧为设备选择 / 刷新）<br>
-                    • 分割线右侧（左对齐）：<b>无线</b>、<b>投屏</b>（scrcpy 镜像，支持参数调节与同步录屏）<br>
-                    • 工具栏最右侧（与菜单按钮同组，只显示图标）：<b>安装</b>（APK 安装并智能解析失败原因）、
-                    <b>推送</b>（push 文件/文件夹，实时进度）、<b>MD5</b>（计算 APK 的 MD5 值）<br>
-                    • 图标按钮的用途看悬浮提示，提示里带对应快捷键
+                    <b>顶部工具栏</b><br>
+                    • <b>无线</b>：无线连接设备　<b>投屏</b>：scrcpy 镜像到电脑，支持同步录屏<br>
+                    • <b>安装</b>：装 APK，失败会给出原因　<b>推送</b>：传文件到设备　<b>MD5</b>：算 APK 的 MD5
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    <b>左侧工具栏下方</b>（只显示图标，点击后内容显示在底部面板）<br>
+                    <b>左侧工具栏下方</b>（点开显示在底部面板，再点收起）<br>
                     • <b>硬件信息</b>：分辨率 / 屏幕密度 / 安卓版本<br>
-                    • <b>Crash 日志</b>：拉取 logcat -b crash，完整输出不限行数<br>
-                    • <b>ANR 日志</b>：拉取 /data/anr/ 最新一份并解析；设备未 root 时给出提示文案<br>
-                    • <b>日志</b>：虫师日志<br>
-                    这四者是互斥开关：再点一次当前按钮收起面板
+                    • <b>Crash / ANR 日志</b>：一键拉取对应崩溃日志<br>
+                    • <b>日志</b>：虫师运行日志
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    <b>ADB 工具箱右栏内嵌面板</b><br>
-                    • <b>弱网模拟</b>：tc netem 模拟延迟 / 丢包 / 带宽限制，需设备已 root；
-                    应用/清除的结果会输出到「虫师日志」<br>
-                    • <b>Monkey 测试</b>：图形化配置事件数量、随机种子、包名与各类事件比例
+                    <b>性能检测页 · 性能工具</b><br>
+                    • <b>堆转储</b>：导出应用内存快照　<b>抓包</b>：抓取网络流量（Wireshark 可打开）
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    <b>性能检测页 · 性能工具卡片</b><br>
-                    • <b>堆转储</b>：选择应用 → dump hprof 到本地<br>
-                    • <b>抓包</b>：tcpdump 抓取流量到 pcap 文件（Wireshark 可打开）
-                </div>
-
-                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 主项目正在执行用例时，会改动设备状态的命令（权限获取 / monkey / tcpdump / reboot 等）会被自动禁用，避免干扰测试；
-                    而 logcat、录屏、截图、导出日志（pull）这类<b>只读采集</b>命令仍可正常执行 —— 用例跑到一半出问题，正好用它把现场日志和视频捞出来。
+                    ⚠️ 用例执行期间，会改动设备状态的操作会被自动禁用；日志、录屏、截图等只读操作不受影响。
                 </div>
                 """
             },
@@ -598,16 +569,11 @@ class HelpView(QFrame):
                     {'image': 'element_7_import_export.png', 'desc': '支持导入/导出 Excel 表格，便于备份、共享与批量维护'},
                 ])}
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    📄 <b>导入 / 导出元素表格</b>：<b>一个所属应用一张工作表</b>，表名即应用名
-                    （所以表里不再重复放应用列，要换应用就把整行挪到另一张表）。每张表五列 ——
-                    <b>所属模块 / 名称 / 定位方式 / 定位值 / 备注</b>，「定位方式」是下拉，只能选
-                    资源ID、坐标、文本、描述、XPath 之一<br>
-                    • 导入时按「<b>所属模块 + 名称</b>」匹配本应用下的元素：命中就<b>覆盖</b>它的
-                    定位方式 / 定位值 / 备注（<b>保留内部 id</b>，步骤里的引用不会失效），
-                    没命中才新增<br>
-                    • 导入<b>只新增 + 覆盖，不删除</b>：表格里少一行不代表要删元素。要删请在界面里
-                    选中后删（那边会检查引用）<br>
-                    • 不合格的行（没名称 / 没模块 / 没定位值 / 定位方式写错）会被跳过并逐行提示
+                    📄 <b>导入 / 导出 Excel</b>：一个所属应用一张工作表（表名即应用名），每张表五列 ——
+                    <b>所属模块 / 名称 / 定位方式 / 定位值 / 备注</b>，定位方式可下拉选择<br>
+                    • 导入时按「模块 + 名称」匹配：已有元素会覆盖定位信息（步骤里的引用不受影响），没有的新增<br>
+                    • 导入<b>只新增和覆盖，不会删除</b>；要删请在界面里选中后删<br>
+                    • 缺名称、模块或定位值的行会跳过并逐行提示
                 </div>
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     💡 验证元素需要设备连接，且仅支持资源ID、文本、描述、XPath。
@@ -658,43 +624,34 @@ class HelpView(QFrame):
                 "使用说明": """
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🔌 接口自动化</h2>
                 <p style="font-size: 15px;">
-                    <b>接口自动化</b> 用来对 HTTP 接口做自动化测试：配好接口与环境，一键发送、
-                    批量跑、看断言结果、出报告。它<b>不依赖设备</b>，连不连车机都能用，
-                    接口数据单独存在 <code>data/api_data.json</code>，与 UI 用例互不影响。
+                    对 HTTP 接口做自动化测试：配好接口与环境，一键发送、批量执行、查看断言结果并生成报告。
+                    <b>不依赖设备</b>，接口数据独立保存，与 UI 用例互不影响。
                 </p>
                 <p style="font-size: 15px;">
-                    页面分三栏：左侧<b>接口管理</b>（分组 → 接口的导航树）、中间<b>接口列表</b>
-                    （当前分组的接口 + 环境选择 + 发送 / 执行选中 / 生成报告）、
-                    右侧<b>详情</b>（上半填请求参数，下半看响应与断言结果）。
+                    页面分三栏：左侧<b>接口管理</b>（分组树）、中间<b>接口列表</b>（发送 / 执行 / 报告）、
+                    右侧<b>详情</b>（上半填参数，下半看响应与断言结果）。
                 </p>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     <b>新建接口</b><br>
-                    • 在左侧分组上右键 →「在此分组新建接口」，或中间列表里右键 →「新建接口」<br>
-                    • 填<b>名称</b>、<b>方法</b>（GET / POST / PUT / DELETE / PATCH / HEAD）与 <b>URL</b><br>
-                    • <b>请求头</b>一行一个，格式 <code>名称: 值</code>（空行和 <code>#</code> 开头会被忽略）<br>
-                    • <b>请求体</b>先选类型：JSON / 表单 / 原始文本。选 JSON 时会校验合法性，写错会当场提示<br>
-                    • 右侧改完点 <b>「保存」</b>；点 <b>「发送」会先自动保存再发</b> ——
-                    所见即所跑，不会出现"改了没保存、跑的还是旧参数"
+                    • 左侧分组上右键 →「新建接口」，填<b>名称</b>、<b>请求方法</b>与 <b>URL</b><br>
+                    • <b>请求头</b>一行一个，格式 <code>名称: 值</code>；<b>请求体</b>支持 JSON / 表单 / 文本，JSON 写错会当场提示<br>
+                    • 点「发送」会先自动保存再发，不会出现改了没保存的情况
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     <b>执行与结果</b><br>
-                    • <b>发送</b>：只跑当前选中的这一个接口<br>
-                    • <b>执行选中</b>：在中间列表里 Ctrl / Shift 多选后批量跑，跑的过程可以点「停止」<br>
-                    • 中间列表的<b>「结果」列</b>实时刷新（通过 / 失败 + 耗时），右下角看响应体与断言明细<br>
-                    • <b>生成报告</b>：把最近一次执行结果出成 HTML，存到「设置 → 输出目录」，
-                    含每条接口的请求 / 响应与断言明细（长文本折叠显示）
+                    • <b>发送</b>：只跑当前选中接口；<b>执行选中</b>：多选后批量跑，可随时停止<br>
+                    • 列表的「结果」列实时显示通过 / 失败与耗时，右下角看响应与断言明细<br>
+                    • <b>生成报告</b>：把最近一次执行结果保存为 HTML 报告
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 左下角可以<b>导入 / 导出</b>整份接口配置（分组 + 接口 + 环境）。
-                    导入是增量合并、同名跳过，不会覆盖你现有的接口。
+                    💡 左下角可导入 / 导出整份接口配置，导入为增量合并，不会覆盖现有接口。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 本轮实现的是<b>最小闭环</b>：接口管理 / 环境变量 / 断言 / 执行 / 报告。
-                    前后置脚本、链路场景编排（上一步响应喂给下一步）、数据驱动参数化<b>尚未支持</b>。
+                    ⚠️ 目前支持接口管理、环境变量、断言、执行与报告；前后置脚本、链路编排、数据驱动暂未支持。
                 </div>
                 """,
 
@@ -702,36 +659,26 @@ class HelpView(QFrame):
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🌐 环境变量与断言</h2>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    <b>环境</b>（中间列表上方的下拉框 + 「设置」按钮）<br>
-                    • 一套环境 = 一个 <b>base_url</b> + 若干自定义变量<br>
-                    • 变量写法 <code>{{名称}}</code>，可以用在 <b>URL / 请求头 / 请求体</b> 里<br>
-                    • <code>{{base_url}}</code> 是内置的，取当前环境的 base_url，所以接口 URL 通常写成
-                    <code>{{base_url}}/api/user</code>，换环境不用改接口<br>
-                    • 变量<b>没定义</b>时请求会直接失败，并告诉你是哪个变量没定义 —— 不会拿半截 URL 硬发
+                    <b>环境</b>（接口列表上方的下拉框 + 「设置」按钮）<br>
+                    • 一套环境 = 一个 <b>base_url</b> + 若干自定义变量，变量用 <code>{{名称}}</code> 引用<br>
+                    • 接口 URL 一般写成 <code>{{base_url}}/api/user</code>，换环境不用改接口<br>
+                    • 变量没定义时请求会直接失败，并提示是哪个变量没定义
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    <b>断言</b>：右下请求区底部的表格，一行一条，可勾选启用 / 停用<br>
-                    • <b>状态码</b>：期望值填 <code>200</code>；操作符支持 等于 / 不等于 / 大于 / 小于<br>
-                    • <b>响应取值</b>：表达式填 JSON 路径，如 <code>data.name</code>、
-                    <code>data.list[0].id</code>、<code>$.a.b</code>；操作符支持
-                    等于 / 不等于 / 包含 / 不包含 / 正则匹配<br>
-                    • <b>包含文本</b>：期望值填要出现在响应体里的文本<br>
-                    • <b>正则匹配</b>：期望值填正则表达式<br>
-                    • <b>耗时(毫秒)</b>：操作符用 小于 / 大于，期望值填毫秒数（如 <code>800</code>）<br>
-                    • 操作符「正则匹配」和类型「正则匹配」不是一回事：前者是拿正则去比取值结果，
-                    后者是拿正则去扫整个响应体
+                    <b>断言</b>（右下角表格，一行一条，可勾选启用）<br>
+                    • <b>状态码</b>：如期望 <code>200</code><br>
+                    • <b>响应取值</b>：填 JSON 路径（如 <code>data.name</code>），支持等于、包含、正则等比较<br>
+                    • <b>包含文本</b>：期望文本出现在响应里　<b>正则匹配</b>：按正则匹配响应<br>
+                    • <b>耗时</b>：限制接口响应时间（毫秒）
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 一个接口<b>没配任何断言</b>时，只要请求成功发出就算通过（HTTP 层面无异常）。
-                    要让"返回内容不对"也能被抓住，就得配断言。
+                    💡 没配断言时，请求发送成功即算通过；要让「返回内容不对」也能被发现，需要配断言。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 为兼容内网常见的自签证书，HTTPS <b>默认不校验证书</b>。
-                    如果要拿它连生产环境，请把 <code>services/api_service.py</code> 里的
-                    <code>VERIFY_SSL</code> 改成 <code>True</code>。
+                    ⚠️ 为兼容内网自签证书，HTTPS 默认不校验证书；连接生产环境时请注意这一风险。
                 </div>
                 """
             },
@@ -740,59 +687,52 @@ class HelpView(QFrame):
                 "使用说明": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">⚙️ 性能检测</h2>
                 <p style="font-size: 15px;">
-                    <b>性能检测</b> 通过 ADB 实时采集被测应用的核心指标，包括
-                    <b>CPU、内存、FPS、流量</b>（原「卡顿」指标已下线）。支持「独立监控」和「场景化测试」两种模式。
-                    卡片区最后一行是<b>性能工具</b>卡片，提供「堆转储」「抓包」入口。
+                    实时采集被测应用的 <b>CPU、内存、FPS、流量</b> 四项指标，支持「独立监控」和
+                    「场景化测试」两种模式；卡片区右下角还有堆转储、抓包两个工具入口。
                 </p>
 
                 {self._get_steps_html([
-                    {'image': 'perf_1_select_app.png', 'desc': '顶部下拉选择目标应用，点「刷新应用」可重新拉取列表'},
-                    {'image': 'perf_2_choose_metrics.png', 'desc': '勾选需要监控的指标，支持多选；设备不支持的指标会置灰'},
-                    {'image': 'perf_3_set_interval.png', 'desc': '设置采样间隔：单项 1 秒即可，多项建议 ≥ 5 秒'},
-                    {'image': 'perf_4_start_monitor.png', 'desc': '点「开始监控」，曲线与统计数据实时刷新'},
-                    {'image': 'perf_5_view_charts.png', 'desc': '实时查看 CPU / 内存 / FPS / 流量曲线'},
-                    {'image': 'perf_6_export_report.png', 'desc': '采集完成后可保存基线、导出 CSV、生成性能报告'},
+                    {'image': 'perf_1_select_app.png', 'desc': '顶部选择目标应用，点「刷新应用」可重新获取列表'},
+                    {'image': 'perf_2_choose_metrics.png', 'desc': '勾选要监控的指标（设备不支持的会置灰）'},
+                    {'image': 'perf_3_set_interval.png', 'desc': '设置采样间隔：单项 1 秒即可，多项建议 5 秒以上'},
+                    {'image': 'perf_4_start_monitor.png', 'desc': '点「开始监控」，曲线与统计实时刷新'},
+                    {'image': 'perf_5_view_charts.png', 'desc': '实时查看各项指标曲线'},
+                    {'image': 'perf_6_export_report.png', 'desc': '完成后可保存基线、导出 CSV、生成报告'},
                 ])}
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    📊 <b>指标口径</b><br>
-                    • <b>CPU</b>：多核累计，8 核设备上限 800%（单核满载 = 100%）<br>
-                    • <b>内存</b>：主进程 PSS，不含子进程<br>
-                    • <b>FPS</b>：基于 gfxinfo 渲染帧数差分<br>
-                    • <b>流量</b>：按 UID 汇总，展示为速率（KB/s）<br>
-                    • <b>性能工具</b>：卡片区右下角提供「堆转储 / 抓包」入口
+                    📊 <b>指标说明</b><br>
+                    • <b>CPU</b>：多核累计（8 核设备上限 800%）　<b>内存</b>：应用主进程占用<br>
+                    • <b>FPS</b>：每秒渲染帧数　<b>流量</b>：应用网络速率（KB/s）
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 采集命令本身会占用设备资源，勾选越多、间隔越短，被测数据越不可信。
-                    推荐：单项 1 秒 / 两项 2 秒 / 三项以上 5 秒 / 含流量 10 秒。
+                    💡 采集本身会占用设备资源：勾选越多、间隔越短，数据越不可信。
+                    推荐单项 1 秒 / 两项 2 秒 / 三项以上 5 秒 / 含流量 10 秒。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 某项指标持续为 0 或恒定不变时，多为命令输出格式与解析不匹配。
-                    可在 PC 端执行 <code>adb shell &lt;对应命令&gt;</code> 查看原始输出。
+                    ⚠️ 某项指标一直为 0 或不变时，多为设备不支持，可换设备或降低采样频率验证。
                 </div>
                 """,
 
                 "场景化模式": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🎬 场景化模式</h2>
                 <p style="font-size: 15px;">
-                    在「场景化测试」模式下，性能采集与用例执行 <b>同步进行</b>：
-                    指定一个测试套件，执行期间持续采集性能数据，采集结束后将会话与应用场景关联，
-                    便于定位哪一步导致性能下降。
+                    场景化模式下，性能采集与用例执行<b>同步进行</b>：执行指定套件期间持续采集性能数据，
+                    方便定位性能问题出现在哪一步。
                 </p>
 
                 {self._get_steps_html([
-                    {'image': 'perf_scenario_1_select_app.png', 'desc': '选择目标应用，启动并保持在前台'},
-                    {'image': 'perf_scenario_2_choose_suite.png', 'desc': '模式切换为「场景化测试」，选择一个套件'},
+                    {'image': 'perf_scenario_1_select_app.png', 'desc': '选择目标应用并保持在前后台'},
+                    {'image': 'perf_scenario_2_choose_suite.png', 'desc': '模式切换为「场景化测试」，选择套件'},
                     {'image': 'perf_scenario_3_set_loop.png', 'desc': '设置循环次数（建议 1~3 次），按需勾选「失败停止」'},
-                    {'image': 'perf_scenario_4_start.png', 'desc': '点「开始监控」，采集与用例执行同时进行'},
-                    {'image': 'perf_scenario_5_view_logs.png', 'desc': '左侧日志实时显示用例执行进度，曲线同步展示性能数据'},
+                    {'image': 'perf_scenario_4_start.png', 'desc': '点「开始监控」，采集与执行同时进行'},
+                    {'image': 'perf_scenario_5_view_logs.png', 'desc': '左侧看执行进度，曲线区看性能数据'},
                 ])}
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 场景化模式下的性能数据包含用例执行开销（点击、滑动、截图等），
-                    与独立监控模式（用户手动操作）的基线不具直接可比性。
+                    ⚠️ 场景化模式的性能数据包含自动化操作开销，与独立监控（手动操作）的数据不宜直接对比。
                 </div>
                 """
             },
@@ -801,156 +741,117 @@ class HelpView(QFrame):
                 "使用说明": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🎤 语音播报</h2>
                 <p style="font-size: 15px;">
-                    <b>语音播报</b> 做的是<b>声学耦合</b>：电脑扬声器把文案念出来，车机麦克风拾音后
-                    交给它自己的语音助手。所以这页要解决的是<b>「声音从哪个扬声器出去」</b>、
-                    <b>「每句之间等多久」</b>，以及<b>「车机到底听清没有」</b>，不跟车机做任何协议对接。
+                    语音播报用来测试车机语音助手：电脑扬声器播放文案，车机麦克风拾音后交给它自己的语音助手处理，
+                    无需与车机做任何对接。配置好<b>播什么</b>、<b>等多久</b>、<b>怎么判断听清没有</b>即可。
                 </p>
                 <p style="font-size: 15px;">
-                    页面分三栏：左侧<b>语音管理</b>（独立的语音用例库）、中间<b>用例步骤</b>
-                    （该用例的文案与检测步骤）、右侧<b>执行</b>
-                    （勾选要播的用例 + 语速 / 循环 / 执行选中 / 停止）。
+                    页面分三栏：左侧<b>语音管理</b>（语音用例库）、中间<b>用例步骤</b>（文案与检测步骤）、
+                    右侧<b>执行</b>（勾选用例、设置语速与循环）。
                 </p>
 
                 {self._get_steps_html([
-                    {'image': 'voice_1_manage.png', 'desc': '左侧语音管理：右键分组/用例可新建、复制、重命名、删除'},
-                    {'image': 'voice_2_phrases.png', 'desc': '中间用例步骤：增删改文案，每行可设「播后等待」，可单条播报'},
-                    {'image': 'voice_3_execute.png', 'desc': '右侧执行：勾选要播的用例（分组勾选会级联），设置语速与循环'},
+                    {'image': 'voice_1_manage.png', 'desc': '左侧：右键分组 / 用例可新建、复制、重命名、删除'},
+                    {'image': 'voice_2_phrases.png', 'desc': '中间：增删改文案，每行可设「播后等待」，可单条试播'},
+                    {'image': 'voice_3_execute.png', 'desc': '右侧：勾选用例（勾分组会带全组），设置语速与循环'},
                 ])}
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     <b>两类步骤</b><br>
-                    • <b>播报步骤</b>：要念的文案 + 「播后等待」（<b>这句播完之后</b>再等多久，
-                    给车机「听懂 → 处理 → 回话说完」以及页面加载留时间）。
-                    等待时间可按文案长度一键估算；「批量重算」则重算<b>全部用例</b>的等待时间
-                    （表格导入后一次性补齐用）；每条步骤还能一键复制<br>
-                    • <b>检测步骤</b>（预期结果）：点中栏右上角的 <b>「+ 添加检测」</b> 加一条，
-                    填期望在车机日志里出现的关键词。它<b>永远跟着紧挨在它前面的那句播报</b>，
-                    播完就按它判定这句有没有被正确识别。没配检测步骤的播报<b>不做任何验证</b>
+                    • <b>播报步骤</b>：要念的文案；「播后等待」是这句播完后再等的秒数，给车机反应时间，
+                    可按文案长度一键估算，也可点「批量重算」补齐全部用例<br>
+                    • <b>检测步骤</b>：点「+ 添加检测」添加，填期望出现在车机回话里的关键词，
+                    用来判断这句话有没有被正确识别；没配检测的播报不做验证
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 <b>语音用例与「自动化编辑」里的用例是两套独立的东西</b>：那边是 App 操作序列
-                    （点击 / 输入 / 断言…），这里是纯播报脚本，互不影响。
+                    💡 语音用例与「自动化编辑」里的用例相互独立，互不影响。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    📄 <b>导入 / 导出用例表格</b>（「语音管理 ▾」菜单）走 Excel：<b>一个分组一张工作表</b>，
-                    表名即分组名；每张表三列 —— <b>用例名称 / 操作步骤 / 预期结果</b>，一个用例占一行<br>
-                    • 操作步骤、预期结果各写在一个单元格里，<b>一行一条、带序号</b>
-                    （如 <code>1. 你好本田</code>），单元格内换行<br>
-                    • <b>预期的序号就是它对应的步骤号</b>：<code>2. 正在为您切换为全屏地图</code>
-                    表示它是第 2 条操作步骤的预期；某条步骤没有预期，它就不出现在预期列里<br>
-                    • 一句播报配多条预期时，预期列会出现多行<b>相同序号</b>（各自算一条独立预期）<br>
-                    • 导入时<b>按表名匹配分组</b>（没有就新建），组内<b>同名用例覆盖其步骤</b>，
-                    没有的按新用例建；空行 / 没写用例名 / 没有操作步骤的行会被跳过并提示<br>
-                    • 注意：<b>「播后等待」不在表格里</b>，导入后点一次「批量重算」即可
-                    一次性补齐全部用例的等待时间
+                    📄 <b>导入 / 导出 Excel</b>（「语音管理 ▾」菜单）：一个分组一张工作表，
+                    每张表三列 —— <b>用例名称 / 操作步骤 / 预期结果</b>，一行一个用例，步骤和预期带序号
+                    （如 <code>1. 你好本田</code>），预期序号对应第几条步骤<br>
+                    • 导入按表名匹配分组（没有就新建），同名用例覆盖其步骤；格式不对的行会跳过并提示<br>
+                    • 「播后等待」不在表格里，导入后点一次「批量重算」即可补齐
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 执行期间请保持车机语音助手处于可被唤醒的状态，并让电脑扬声器音量足够大 ——
-                    车机那边的识别结果取决于拾音质量，与文案本身是否正确无关。
+                    ⚠️ 执行期间请保持车机语音助手可被唤醒、电脑扬声器音量足够大。
                 </div>
                 """,
 
                 "唤醒词": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🗣️ 唤醒词</h2>
                 <p style="font-size: 15px;">
-                    车机助手要先被叫醒才听得进后面的指令，所以每个用例开头通常都有一句唤醒词。
-                    中间栏标题旁的 <b>「唤醒词」按钮</b> 就是为省打字准备的：点一下，把它<b>追加到当前用例末尾</b>。
+                    车机助手要先被唤醒才听得进指令，用例开头通常都有一句唤醒词。
+                    点中栏标题旁的 <b>「唤醒词」按钮</b>，可把它直接追加到当前用例末尾，省去打字。
                 </p>
 
                 {self._get_steps_html([
                     {'image': 'voice_4_wake_word.png', 'desc': '点「唤醒词」追加一条唤醒词文案；未选用例时按钮置灰'},
-                    {'image': 'voice_5_wake_word_setting.png', 'desc': '文案在「设置 → 语音设置」里改，默认「你好虫师」'},
+                    {'image': 'voice_5_wake_word_setting.png', 'desc': '文案在「设置 → 语音设置」里修改，默认「你好虫师」'},
                 ])}
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 追加是<b>加在末尾</b>的。想让唤醒词当第一句，就在空用例上先点「唤醒词」，
-                    再用「+ 添加步骤」补后面的指令。
-                </div>
-
-                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 唤醒词在<b>「设置 → 语音设置」</b>页面配置，<b>留空则用默认的「你好虫师」</b>；
-                    在设置里改完立刻生效，不用重启。
+                    💡 追加在末尾；想让唤醒词当第一句，可在空用例上先点「唤醒词」再补其他步骤。
+                    唤醒词改完立即生效，无需重启。
                 </div>
                 """,
 
                 "执行与设置": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">▶️ 执行与设置</h2>
                 <p style="font-size: 15px;">
-                    右栏勾选要播的用例后点 <b>「执行选中」</b>，会用配置好的音色和输出设备依次播报；
-                    播报中 <b>「停止」</b> 会立刻打断当前这一句，不用等它念完。
+                    右栏勾选要播的用例，点 <b>「执行选中」</b> 依次播报；播报中点 <b>「停止」</b> 立即打断。
                 </p>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     <b>勾选方式</b><br>
-                    • <b>点行内任意位置</b>即可勾选 / 取消，不用对准那个小方框<br>
-                    • 勾选<b>分组</b>会级联到组内所有用例；组内只勾了一部分时，分组显示为部分选中<br>
-                    • <b>「全选」/「取消全选」</b> 一次处理整棵树<br>
-                    • <b>循环</b>设几次就整轮播几遍，<b>语速</b>与用例里的语音步骤共用
+                    • 点行内任意位置即可勾选 / 取消；勾选分组会带全组内用例<br>
+                    • <b>全选 / 取消全选</b> 一次处理整棵树；<b>循环</b>设几次就整轮播几遍
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     <b>设置 → 语音设置</b><br>
-                    • <b>音色</b>：引擎里可用的发音人（含在线音色库与方言）<br>
-                    • <b>输出设备</b>：声音从哪个扬声器 / 声卡出去，<b>选错车机就完全听不见</b><br>
-                    • <b>唤醒词</b>：上面那个按钮追加的文案<br>
-                    • 改完可点「试听」确认车机那边真能听见
+                    • <b>音色</b>：选择发音人　<b>输出设备</b>：选择扬声器，选错车机听不见<br>
+                    • <b>唤醒词</b>：唤醒词按钮追加的文案；改完可点「试听」确认
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 响度直接用电脑的系统音量，程序内不单独调音量。
+                    ⚠️ 音量跟随电脑系统音量，程序内不单独调节。
                 </div>
                 """,
 
                 "回执验证": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">✅ 回执验证</h2>
                 <p style="font-size: 15px;">
-                    车机到底听清没有，以前只能靠人耳一句句判断。开启<b>回执验证</b>后，虫师会在每句播报
-                    之后抓一次车机 logcat，按<b>检测步骤</b>里填的关键词判定这句有没有被正确识别；
-                    没命中会在「虫师日志」里写一行结论 —— 报「本次抓取了多少行日志」，
-                    <b>不会把车机日志原文贴进面板</b>（原文带着时间戳和 PID，大多是无关内容，只会刷屏）。
+                    开启回执验证后，每句播报之后虫师会自动检查车机日志，按<b>检测步骤</b>里填的关键词
+                    判断这句话有没有被正确识别，结果写在「虫师日志」里。
                 </p>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     <b>怎么开</b><br>
                     • 在 <b>「设置 → 回执验证」</b> 打开「启用回执验证」<br>
-                    • <b>日志标签</b>：填车机语音助手打日志用的 tag，<b>可以填多个</b>
-                    （空格或逗号分隔，如 <code>TtsBusinessManager TestManager</code>）。
-                    留空则抓全量日志 —— 量大，而且别的应用打出的日志可能碰巧命中关键词，建议至少填一个<br>
-                    • <b>失败关键词</b>：车机说「没听清」这类失败话术里会出现的词，逗号分隔。
-                    <b>预期结果里已经写明的词不算失败</b> —— 用例本来就要验证失败场景时，
-                    预期里会写着「抱歉」这类词，此时不会反过来判它失败；
-                    只有预期里没写、车机回话却冒出来的失败词才算真失败
+                    • <b>日志标签</b>：填车机语音助手的日志标签，可填多个（空格或逗号分隔）；
+                    留空会抓取全部日志，建议至少填一个<br>
+                    • <b>失败关键词</b>：车机说「没听清」这类话术里的词，逗号分隔；
+                    预期结果里已写明的词不会误判为失败
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 <b>开关只是总闸</b>：真正决定「验不验」的是这条播报后面有没有检测步骤 ——
-                    没配检测步骤的播报一律不验证。
+                    💡 只有配了<b>检测步骤</b>的播报才会被验证；预期没命中不会中断执行，只记一条失败日志，最后统一汇总。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 <b>预期结果没命中不会中断执行</b>：只记一行 ❌ 日志，后面的步骤和用例照常跑完，
-                    收尾再汇总成一句「共 N 条预期结果未命中」—— 多条用例连跑时不会因为某一条没命中
-                    就把剩下的全掐掉。只有点「停止」或播报本身出错（如超时）才会中断。
+                    💡 不知道日志标签填什么：先留空跑一遍，在「虫师日志」里找到车机回话所在的标签，再填进来，判定会更准。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 <b>日志标签怎么找</b>：先留空抓全量跑一遍，在「虫师日志」里看车机那句反馈文案
-                    出现在哪个 tag 下面，再把那个 tag 填进来，日志会干净很多、判定也更准。
+                    ⚠️ 「播后等待」要留够时间，太短会在车机回话前就去抓日志（默认值已留余量，车机偏慢可调大）。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ <b>「播后等待」要留够时间</b>：它算的是<b>这句播完之后</b>的缓冲，
-                    给车机「听懂 → 处理 → 回话说完」以及页面加载留时间。
-                    等待太短就会在车机回话之前去抓日志，自然什么都抓不到
-                    （默认公式给的 4~7 秒已留了余量；车机偏慢就手动调大）。
-                </div>
-
-                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    ⚠️ 回执验证只能判断<b>「这句话有没有被正确识别」</b>，判断不了<b>「是否真的执行了」</b>
-                    （比如地图有没有真的切成全屏）—— 后者请用「自动化编辑」里的断言步骤。
+                    ⚠️ 回执验证只判断「有没有被正确识别」，判断不了功能是否真的执行（如地图是否切了全屏）——
+                    那请用「自动化编辑」里的断言步骤。
                 </div>
                 """
             },
