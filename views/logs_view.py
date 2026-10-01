@@ -200,10 +200,10 @@ class LogsView(QWidget):
 
     def _on_ai_analyze(self):
         if not Settings.is_ai_ready():
-            show_toast(self, "请先在 设置 → AI 辅助 中启用 AI", duration=2500)
+            show_toast(self.window(), "请先在 设置 → AI 辅助 中启用 AI", duration=2500)
             return
         if self.model is None or not self.model.failure_contexts:
-            show_toast(self, "暂无失败用例可分析", duration=2500)
+            show_toast(self.window(), "暂无失败用例可分析", duration=2500)
             return
         if self._ai_worker is not None and self._ai_worker.isRunning():
             return
