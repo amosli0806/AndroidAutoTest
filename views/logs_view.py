@@ -8,6 +8,7 @@ from models.execution_model import ExecutionModel
 from utils.theme import ThemeMode
 from utils.settings import Settings
 from utils import log_colors
+from utils.toast import show_toast
 
 
 class AIAnalyzeWorker(QThread):
@@ -59,12 +60,14 @@ class LogsView(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.model = None
         self._ai_worker = None
+        self._dark = False
         self.setup_ui()
 
     def apply_theme(self, theme_mode: ThemeMode):
         # 日志行内颜色优先于控件配色，这里同步刷新日志配色表，
         # 否则切到夜间模式后日志文字仍是深色
-        log_colors.refresh(theme_mode == ThemeMode.DARK)
+        self._dark = theme_mode == ThemeMode.DARK
+        log_colors.refresh(self._dark)
         # 已输出的日志颜色写死在 HTML 里，需要按新主题整体重渲染一遍
         if self.model is not None and getattr(self.model, "logs", None):
             self._on_logs_changed()
@@ -73,33 +76,42 @@ class LogsView(QWidget):
             self.donut.set_text_color("#eeeeee")
         else:
             self.donut.set_text_color("#323232")
-        # AI 按钮配色
-        if theme_mode == ThemeMode.DARK:
-            self.ai_btn.setStyleSheet("""
-                QPushButton#aiAnalyzeBtn {
+        # AI 按钮配色（是否高亮取决于 AI 是否启用）
+        self._apply_ai_style(theme_mode == ThemeMode.DARK)
+
+    def _apply_ai_style(self, dark: bool):
+        """AI 按钮常驻样式：已启用 AI → 紫色高亮；未启用 → 置灰。"""
+        if Settings.is_ai_ready():
+            disabled = "#555" if dark else "#b0b0b0"
+            disabled_text = "#999" if dark else "#e0e0e0"
+            self.ai_btn.setStyleSheet(f"""
+                QPushButton#aiAnalyzeBtn {{
                     background-color: #7e57c2;
                     color: #ffffff;
                     border: none;
                     border-radius: 4px;
                     font-weight: 500;
                     padding: 0 14px;
-                }
-                QPushButton#aiAnalyzeBtn:hover { background-color: #9575cd; }
-                QPushButton#aiAnalyzeBtn:disabled { background-color: #555; color: #999; }
+                }}
+                QPushButton#aiAnalyzeBtn:hover {{ background-color: #9575cd; }}
+                QPushButton#aiAnalyzeBtn:disabled {{ background-color: {disabled}; color: {disabled_text}; }}
             """)
+            self.ai_btn.setToolTip("让 AI 结合步骤、日志、截图给出失败归因")
         else:
-            self.ai_btn.setStyleSheet("""
-                QPushButton#aiAnalyzeBtn {
-                    background-color: #7e57c2;
-                    color: #ffffff;
+            bg, hover, text = ("#3a3a3a", "#454545", "#8a8a8a") if dark \
+                else ("#e4e4e4", "#dadada", "#909090")
+            self.ai_btn.setStyleSheet(f"""
+                QPushButton#aiAnalyzeBtn {{
+                    background-color: {bg};
+                    color: {text};
                     border: none;
                     border-radius: 4px;
                     font-weight: 500;
                     padding: 0 14px;
-                }
-                QPushButton#aiAnalyzeBtn:hover { background-color: #9575cd; }
-                QPushButton#aiAnalyzeBtn:disabled { background-color: #b0b0b0; color: #e0e0e0; }
+                }}
+                QPushButton#aiAnalyzeBtn:hover {{ background-color: {hover}; }}
             """)
+            self.ai_btn.setToolTip("在 设置 → AI 辅助 中启用后可用")
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -123,16 +135,14 @@ class LogsView(QWidget):
         stats_layout.addStretch()
         layout.addLayout(stats_layout)
 
-        # AI 分析按钮行：只有配置了 AI 且本次执行有失败时才显示
+        # AI 分析按钮：常驻显示，AI 已启用时高亮、未启用时置灰（点击有提示）
         ai_row = QHBoxLayout()
         ai_row.addStretch()
         self.ai_btn = QPushButton("✨ AI 分析失败")
         self.ai_btn.setObjectName("aiAnalyzeBtn")
         self.ai_btn.setFixedHeight(28)
         self.ai_btn.setMinimumWidth(120)
-        self.ai_btn.setToolTip("让 AI 结合步骤、日志、截图给出失败归因")
         self.ai_btn.clicked.connect(self._on_ai_analyze)
-        self.ai_btn.setVisible(False)
         ai_row.addWidget(self.ai_btn)
         layout.addLayout(ai_row)
 
@@ -180,20 +190,20 @@ class LogsView(QWidget):
 
     # ---------- AI 分析 ----------
     def set_ai_available(self, available: bool):
-        """执行结束后由控制器调用：有失败上下文且 AI 已启用时，显示按钮"""
-        show = bool(
-            available
-            and self.model is not None
-            and self.model.failure_contexts
-            and Settings.is_ai_ready()
-        )
-        self.ai_btn.setVisible(show)
-        if show:
+        """执行结束后由控制器调用。按钮常驻，这里只刷新文案与状态：
+        AI 已启用 → 高亮可用；未启用 → 置灰（样式在 _apply_ai_style）"""
+        self.ai_btn.setVisible(True)
+        self._apply_ai_style(self._dark)
+        if available:
             self.ai_btn.setEnabled(True)
             self.ai_btn.setText("✨ AI 分析失败")
 
     def _on_ai_analyze(self):
+        if not Settings.is_ai_ready():
+            show_toast(self, "请先在 设置 → AI 辅助 中启用 AI", duration=2500)
+            return
         if self.model is None or not self.model.failure_contexts:
+            show_toast(self, "暂无失败用例可分析", duration=2500)
             return
         if self._ai_worker is not None and self._ai_worker.isRunning():
             return

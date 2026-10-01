@@ -533,7 +533,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "开启后，失败日志面板会出现「AI 分析失败」按钮，"
+            "开启后，失败日志面板的「AI 分析失败」按钮会亮起，"
             "由 AI 结合步骤、错误信息、截图给出失败归因"
         )
         subtitle.setObjectName("SettingsPageSubtitle")
