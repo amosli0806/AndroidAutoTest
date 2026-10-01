@@ -68,18 +68,30 @@
   .chip.stub { background: var(--stub-bg); color: var(--stub); }
   .chip.plan { background: var(--plan-bg); color: var(--plan); }
 
-  /* 目录 */
+  /* 目录：宽屏固定在左侧，窄屏回落为顶部横向目录 */
   nav.toc {
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-    padding: 18px 22px; margin-bottom: 22px;
+    padding: 14px 12px; margin-bottom: 22px;
+    position: fixed; left: 20px; top: 24px; width: 150px; z-index: 10;
+    box-shadow: 0 4px 18px rgba(31,41,55,.10);
   }
-  nav.toc h2 { margin: 0 0 12px; font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
-  nav.toc .links { display: flex; flex-wrap: wrap; gap: 8px; }
+  nav.toc h2 { margin: 0 0 10px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; text-align: center; }
+  nav.toc .links { display: flex; flex-direction: column; gap: 6px; }
   nav.toc a {
-    text-decoration: none; color: var(--primary); font-weight: 600; font-size: 14px;
-    padding: 6px 14px; border-radius: 8px; background: var(--primary-bg); transition: .15s;
+    text-decoration: none; color: var(--primary); font-weight: 600; font-size: 13.5px;
+    padding: 7px 10px; border-radius: 8px; background: var(--primary-bg);
+    transition: .15s; text-align: center; white-space: nowrap;
   }
   nav.toc a:hover { background: #d4e3f8; }
+  @media (max-width: 1380px) {
+    nav.toc {
+      position: static; width: auto; box-shadow: none; padding: 18px 22px;
+    }
+    nav.toc h2 { text-align: left; }
+    nav.toc .links { flex-direction: row; flex-wrap: wrap; gap: 8px; }
+  }
+  section.chapter { scroll-margin-top: 24px; }
+  html { scroll-behavior: smooth; }
 
   /* 章节 */
   section.chapter { margin-bottom: 30px; }
@@ -158,7 +170,7 @@
     <div class="badges">
       <span class="badge">当前版本 v1.3.0</span>
       <span class="badge">8 个功能入口</span>
-      <span class="badge">19 项扩展方向</span>
+      <span class="badge">16 项扩展方向</span>
       <span class="badge">6 个开发阶段</span>
     </div>
   </header>
@@ -203,6 +215,7 @@
         <ul>
           <li>项目 → 模块 → 用例三层树，右键菜单齐全</li>
           <li>17 种动作卡片 + 5 种定位方式</li>
+          <li>批量删除用例 / 批量删除元素</li>
           <li>录制回放（自动识别手势、语义定位）</li>
           <li>自然语言生成步骤 + 内置 weditor 可视化</li>
         </ul>
@@ -211,7 +224,7 @@
         <h3>⚡ 自动化执行 <span class="tag done">✅</span></h3>
         <ul>
           <li>循环 1~999 次、失败停止、可中途打断</li>
-          <li>测试套件 + HTML 报告（含失败截图）</li>
+          <li>测试套件（创建 / 保存 / 加载 / 自动匹配 / 失效清理）+ HTML 报告（含失败截图）</li>
           <li>日志类型筛选 + 关键字搜索高亮、AI 失败分析</li>
           <li>定时执行（每天 / 每周 / 每月）</li>
           <li>设备离线自动重连、任务串行队列</li>
@@ -250,7 +263,7 @@
           <li>声学耦合，不碰车机协议</li>
           <li>回执验证（播后自动判断是否被识别）</li>
           <li>预合成消除静默期（2~3 秒 → 0）</li>
-          <li>唤醒词一键追加、批量重算等待时间</li>
+          <li>唤醒词全局配置、被步骤引用、一键追加、批量重算等待时间</li>
         </ul>
       </div>
       <div class="card">
@@ -258,6 +271,7 @@
         <ul>
           <li>迷你模式、主题系统（日夜 + 自定义壁纸）</li>
           <li>壁纸预设专区（三列缩略图单选生效）</li>
+          <li>帮助中心 19 页图文说明（图片统一等宽高清、文案精简）</li>
           <li>统一弹窗 / Toast / 树控件交互</li>
           <li>全局异常兜底 + 数据本地持久化</li>
         </ul>
@@ -280,18 +294,8 @@
     <p class="small" style="margin-top:0">这些是当前尚未补齐、或做了半截的能力，是下一步要优先解决的问题。</p>
 
     <div class="card">
-      <div class="gap-item"><span class="tag done">✅</span>
-        <div><b>复杂手势序列已下架</b> — 该卡片只是桩实现（未真正执行），已从动作卡片区移除；执行后端保留，旧项目数据不受影响。</div>
-      </div>
-    </div>
-    <div class="card">
       <div class="gap-item"><span class="tag part">⚙️</span>
         <div><b>帮助中心与文档一致性</b> — 已大幅推进（各章节补齐、图片高清、文案精简），基本无残留空占位。</div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="gap-item"><span class="tag done">✅</span>
-        <div><b>接口自动化最小闭环</b> — 已落地；二期（前后置脚本、链路编排、数据驱动）仍未做。</div>
       </div>
     </div>
 
@@ -310,9 +314,6 @@
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>套件能力不完整</b> — 无套件级报告、排序、链式执行。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag done">✅</span><div><b>日志过滤搜索已上线</b> — 类型筛选 + 关键字搜索高亮已落地；剩余：日志导出/着色规则自定义（未排期）。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>执行能力受限</b> — 仅单设备串行，无命令行 / 无 CI/CD 接入。</div></div>
@@ -349,29 +350,26 @@
     <div class="card">
       <h3>2. 批量操作增强 <span class="tag part">⚙️ 部分完成</span></h3>
       <ul>
-        <li class="done-li">✅ 已支持批量删除用例、批量删除元素</li>
-        <li class="plan-li">📋 批量修改定位方式（如全部「资源ID」→「XPath」）</li>
-        <li class="plan-li">📋 批量修改步骤参数（超时时间、等待时长、步骤间隔）</li>
+        <li>批量修改定位方式（如全部「资源ID」→「XPath」）</li>
+        <li>批量修改步骤参数（超时时间、等待时长、步骤间隔）</li>
       </ul>
       <div class="example">💡 <b>打个比方：</b>像 Excel 的「查找替换」——100 个步骤里所有「等待 3 秒」一次全改成「等待 5 秒」，不用一条条手改。</div>
     </div>
 
     <div class="card">
-      <h3>3. 补齐桩实现与文档一致性 <span class="tag part">⚙️ 部分完成</span></h3>
+      <h3>3. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
       <ul>
-        <li class="done-li">✅ 帮助中心各章节已按实际能力重写、补全、文案精简</li>
-        <li class="done-li">✅ 接口自动化已从占位走向可用</li>
-        <li class="done-li">✅ 复杂手势序列卡片已下架（桩实现不再误导用户）</li>
-        <li class="plan-li">📋 接口模块二期：前后置脚本、链路编排、数据驱动</li>
+        <li>前后置脚本（Python 钩子，处理签名 / 加解密 / 数据提取）</li>
+        <li>链路场景编排（接口串联，上一步响应作为下一步入参）</li>
+        <li>数据驱动（与「变量 / 参数化」合并实现更合理）</li>
       </ul>
-      <div class="example">💡 <b>打个比方：</b>文档一致性就像「菜单和后厨要对得上」——菜单纯净了、后厨也要跟得上，用户才不会被页面上的空承诺误导。</div>
+      <div class="example">💡 <b>打个比方：</b>前后置脚本像「做饭前的备菜 + 上桌前的摆盘」——请求前先签名、加密，响应后把数据提炼出来；链路编排像「接力赛」——上一个接口的返回，直接变成下一个接口的入参。</div>
     </div>
 
     <div class="card">
-      <h3>4. 变量 / 参数化落地到语音播报 <span class="tag part">⚙️ 部分完成</span></h3>
+      <h3>4. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
       <ul>
-        <li class="done-li">✅ 唤醒词已经是「全局配置被步骤引用」的雏形</li>
-        <li class="plan-li">📋 把唤醒词、语速等提升为可参数化变量，用例内可覆盖</li>
+        <li>把唤醒词、语速等提升为可参数化变量，用例内可覆盖</li>
       </ul>
       <div class="example">💡 <b>打个比方：</b>现在只有一句「你好虫师」打天下；将来像「对不同的人用不同称呼」——测本田车就喊「你好本田」，测小鹏车就喊「你好小P」，在用例里各配各的。</div>
     </div>
@@ -391,10 +389,9 @@
     </div>
 
     <div class="card">
-      <h3>7. 测试套件增强 <span class="tag part">⚙️ 部分完成</span></h3>
+      <h3>7. 测试套件增强 <span class="tag plan">📋 规划中</span></h3>
       <ul>
-        <li class="done-li">✅ 套件创建、保存、加载、删除、自动匹配、失效清理</li>
-        <li class="plan-li">📋 套件级执行报告与通过率　📋 套件内用例拖拽排序　📋 套件链式执行（A→B）</li>
+        <li>套件级执行报告与通过率　套件内用例拖拽排序　套件链式执行（A→B）</li>
       </ul>
       <div class="example">💡 <b>打个比方：</b>像「歌单」——用例按「冒烟测试」「回归测试」分组，跑完自动出这份歌单的「成绩单」（通过率），还能拖拽排序，A 歌单放完自动放 B。</div>
     </div>
@@ -417,26 +414,22 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 常规优先级 · 提升效率与易用性</h3>
 
     <div class="card">
-      <h3>10. 语音播报增强 <span class="tag part">⚙️ 部分完成</span></h3>
+      <h3>10. 语音播报增强 <span class="tag plan">📋 规划中</span></h3>
       <ul>
-        <li class="done-li">✅ 回执验证（自动判断「是否被识别」）+ 一键批量重算等待时间</li>
-        <li class="plan-li">📋 唤醒词多套管理（按用例 / 车型切换、多条候选轮播）</li>
-        <li class="plan-li">📋 车型模板（日志标签 + 关键词存成预设，换车一键套用）</li>
-        <li class="plan-li">📋 执行结果校验（除「被识别」，再验「真执行了」，如地图是否全屏）</li>
-        <li class="plan-li">📋 语音用例 ↔ 自动化用例互转</li>
+        <li>唤醒词多套管理（按用例 / 车型切换、多条候选轮播）</li>
+        <li>车型模板（日志标签 + 关键词存成预设，换车一键套用）</li>
+        <li>执行结果校验（除「被识别」，再验「真执行了」，如地图是否全屏）</li>
+        <li>语音用例 ↔ 自动化用例互转</li>
       </ul>
       <div class="example">💡 <b>打个比方：</b>像「给不同车准备不同的话术模板」——每辆车的唤醒词、日志关键词都不一样，做成模板后换车一键套用，不用每次重新摸索；再进一步，还能验证「地图真的切成全屏了没有」，而不只是「车机听懂了没有」。</div>
     </div>
 
     <div class="card">
-      <h3>11. 性能检测增强 <span class="tag part">⚙️ 部分完成</span></h3>
+      <h3>11. 性能检测采集能力并入 <span class="tag plan">📋 规划中</span></h3>
       <ul>
-        <li class="done-li">✅ HTML 报告补充流量曲线（勾选流量指标后，报告多一张「流量速率」曲线与收发汇总）</li>
-        <li class="done-li">✅ 基线自动回归对比（跑完自动比对基线、明显劣化弹窗提醒，报告附对比表：劣化标红、优化标绿）</li>
-        <li class="done-li">✅ 启动耗时历史趋势与基线对比（冷 / 热启动每次耗时连成曲线，基线参考虚线，可一键设为基线）</li>
-        <li class="plan-li">📋 并入 mapauto-perf-test 的采集能力（GPU / 系统内存 / 整机 CPU 等，范围待定，后置）</li>
+        <li>并入 mapauto-perf-test 的采集能力（GPU / 系统内存 / 整机 CPU 等，范围待定）</li>
       </ul>
-      <div class="example">💡 <b>打个比方：</b>像「体检报告自动对比」——每次测完自动和上次体检结果比，哪项指标变差了直接标红提醒，不用自己逐项对照。报告补全（流量曲线）和自动对比（基线回归、启动耗时趋势）都已上线，下一步是把更多「体检项目」（GPU / 整机 CPU 等）并入进来。</div>
+      <div class="example">💡 <b>打个比方：</b>像「体检报告」升级——基础项目（CPU / 内存 / FPS / 流量）已能采集并自动对比基线，下一步是把更多「体检项目」（GPU / 整机 CPU 等）并入进来，一次查得更全。</div>
     </div>
 
     <div class="card">
@@ -481,15 +474,12 @@
         <thead><tr><th>优先级</th><th>功能模块</th><th>理由</th></tr></thead>
         <tbody>
           <tr><td class="stars">⭐⭐⭐</td><td>变量 / 参数化</td><td>数据驱动是自动化测试的核心，是关键字驱动与数据驱动的共同地基</td></tr>
-          <tr><td class="stars">✅</td><td>日志过滤与搜索</td><td>类型筛选 + 关键字搜索高亮已上线（2026-10-01），改动集中、收益立竿见影</td></tr>
           <tr><td class="stars">⭐⭐⭐</td><td>批量操作增强</td><td>高频诉求，效率提升显著</td></tr>
-          <tr><td class="stars">✅</td><td>补齐桩实现与文档</td><td>复杂手势序列已下架，帮助中心与文档已对齐实际能力</td></tr>
           <tr><td class="stars">⭐⭐</td><td>执行健壮性（重试 + 显式等待）</td><td>直接影响用例稳定性与回归可信度</td></tr>
           <tr><td class="stars">⭐⭐</td><td>测试套件增强</td><td>套件级报告与排序，提升组织效率</td></tr>
-          <tr><td class="stars">✅</td><td>接口自动化最小闭环</td><td>已于 2026-09-28 完成</td></tr>
           <tr><td class="stars">⭐⭐</td><td>关键字驱动</td><td>封装复用，降低用例编写成本</td></tr>
-          <tr><td class="stars">⭐</td><td>语音播报增强</td><td>回执验证已落地，剩余是唤醒词多套 / 车型模板 / 执行结果校验</td></tr>
-          <tr><td class="stars">✅</td><td>性能检测增强（三项优先）</td><td>流量曲线、基线自动回归对比、启动耗时趋势已上线；剩余并入采集能力后置</td></tr>
+          <tr><td class="stars">⭐</td><td>语音播报增强</td><td>剩余是唤醒词多套 / 车型模板 / 执行结果校验</td></tr>
+          <tr><td class="stars">⭐</td><td>性能检测采集能力并入</td><td>补齐 GPU / 系统内存 / 整机 CPU 等维度，范围待定</td></tr>
           <tr><td class="stars">⭐</td><td>命令行模式</td><td>价值高、开发量适中，是打开 CI/CD 的钥匙</td></tr>
           <tr><td class="stars">⭐</td><td>图像识别定位</td><td>覆盖面广，但引入 OpenCV、工作量较大</td></tr>
         </tbody>
@@ -543,7 +533,6 @@
     <div class="card">
       <h3>阶段四 · 测试套件增强 <span class="tag plan">📋 可穿插，见效快</span></h3>
       <ul>
-        <li class="done-li">✅ 日志检索：按类型筛选 + 关键字搜索（已上线，与 AI 分析按钮同行）</li>
         <li>套件：级报告与通过率、套件内拖拽排序、链式执行（A→B）</li>
       </ul>
       <div class="example">💡 <b>打个比方：</b>「歌单出成绩单」——开发量小、见效快，随时可以插队做。</div>
@@ -571,11 +560,9 @@
     <div class="card">
       <h3>穿插任务 <span class="tag part">⚙️ 随时可做</span></h3>
       <ul>
-        <li class="done-li">✅ 复杂手势序列：已下架卡片（执行后端保留兼容旧项目数据）</li>
         <li>语音播报增强：唤醒词多套 + 车型模板 + 执行结果校验</li>
-        <li class="done-li">✅ 性能检测增强（优先三项）：流量曲线、基线回归、启动耗时趋势已上线；并入采集能力后置</li>
+        <li>性能检测：并入 mapauto-perf-test 采集能力（GPU / 系统内存 / 整机 CPU 等）</li>
         <li>版本控制（Git 集成）：数据文件接入版本管理</li>
-        <li class="done-li">✅ 增量更新已落地并实测兑现（1.2.8→1.2.9 补丁仅 12MB）</li>
       </ul>
     </div>
   </section>
@@ -587,18 +574,16 @@
       <table>
         <thead><tr><th>阶段</th><th>能力</th><th>优先级</th><th>理由</th></tr></thead>
         <tbody>
-          <tr><td>阶段一</td><td>接口自动化最小闭环</td><td class="stars">✅ 已完成</td><td>2026-09-28 交付：接口管理 + 环境变量 + 断言 + 执行 + 报告</td></tr>
           <tr><td>阶段二</td><td>变量 / 参数化</td><td class="stars">⭐⭐⭐</td><td>关键字 / 数据驱动 / CI 的共同地基</td></tr>
           <tr><td>阶段三</td><td>执行健壮性</td><td class="stars">⭐⭐</td><td>提升用例稳定性，车机慢响应刚需</td></tr>
-          <tr><td>阶段四</td><td>套件增强 + 日志检索</td><td class="stars">⭐⭐</td><td>日志检索已上线；剩余套件级报告与排序，可穿插</td></tr>
+          <tr><td>阶段四</td><td>套件增强</td><td class="stars">⭐⭐</td><td>套件级报告与排序，可穿插</td></tr>
           <tr><td>阶段五</td><td>关键字 / 步骤模板</td><td class="stars">⭐⭐</td><td>复用提升，依赖阶段二</td></tr>
           <tr><td>阶段六</td><td>图像识别 + CI/CD</td><td class="stars">⭐</td><td>进阶能力，工作量大，逐步推进</td></tr>
-          <tr><td>穿插</td><td>增量更新（差分下载）</td><td class="stars">✅ 已完成</td><td>1.2.8→1.2.9 补丁实测 12MB，下载量 290MB → 几~十几 MB</td></tr>
           <tr><td>穿插</td><td>性能检测能力并入</td><td class="stars">⭐⭐</td><td>补齐采集维度（GPU / 系统内存 / 整机 CPU 等），范围待定</td></tr>
         </tbody>
       </table>
     </div>
-    <div class="tip">💡 阶段一已交付，建议接着从「阶段二 · 变量 / 参数化」起步——它是关键字驱动、数据驱动、接口模块二期与 CI/CD 的共同地基，先做扎实，后面几项才不返工。</div>
+    <div class="tip">💡 建议从「阶段二 · 变量 / 参数化」起步——它是关键字驱动、数据驱动、接口模块二期与 CI/CD 的共同地基，先做扎实，后面几项才不返工。</div>
   </section>
 
   <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-10-01 · v1.3.0</footer>
