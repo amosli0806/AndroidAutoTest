@@ -306,12 +306,26 @@ class PerfService:
             return -1
 
     def measure_warm_launch(self, package: str, activity: str = None) -> int:
-        """测量热启动耗时"""
+        """测量热启动耗时。
+
+        刚冷启动完的应用可能仍在加载中，此时 am start 只是把已有任务切到前台，
+        输出里没有 TotalTime（LaunchState: UNKNOWN），解析不到会返回 -1；
+        等应用加载稳定后才能测到 LaunchState: HOT 的真实热启动耗时，
+        因此首测失败时自动等待重试。
+        """
         try:
-            # 按 Home 键回桌面，但应用仍在内存中
-            shell_text(self.device, "input keyevent KEYCODE_HOME")
-            time.sleep(0.5)
-            return self._do_launch(package, activity)
+            for attempt in range(4):
+                # 按 Home 键回桌面，但应用仍在内存中
+                shell_text(self.device, "input keyevent KEYCODE_HOME")
+                time.sleep(0.5 if attempt == 0 else 2.0)
+                ms = self._do_launch(package, activity)
+                if ms > 0:
+                    return ms
+                logger.debug(
+                    f"[PerfService] 热启动第 {attempt + 1} 次未测到 TotalTime，"
+                    f"{'等待后重试' if attempt < 3 else '放弃'}"
+                )
+            return -1
         except Exception as e:
             logger.warning(f"[PerfService] 热启动失败: {e}")
             return -1
@@ -332,6 +346,8 @@ class PerfService:
         m = re.search(r"TotalTime:\s*(\d+)", out)
         if m:
             return int(m.group(1))
+        # 任务仅被切到前台时（LaunchState: UNKNOWN）输出里没有 TotalTime
+        logger.debug(f"[PerfService] am start -W 输出未解析到 TotalTime: {out!r}")
         return -1
 
     def _get_launcher_activity(self, package: str) -> Optional[str]:
