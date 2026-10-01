@@ -307,13 +307,15 @@ class PerfView(QWidget):
         self.mode_combo.setEnabled(idle)
         self.launch_test_btn.setEnabled(idle)
 
-        # 场景化相关控件
-        scenario_on = (self.mode_combo.currentIndex() == 1) and idle
+        # 场景化相关控件：只要模式是「场景化测试」就保持显示（运行中仅置灰不隐藏，
+        # 隐藏会导致开始监控后参数区突然空一块、结束后又弹回）
+        scenario_on = (self.mode_combo.currentIndex() == 1)
         # 只切换子控件可见性，scenario_row 本身保持固定高度占位
         for w in (self.suite_label, self.suite_combo,
                   self.loop_label, self.loop_spin,
                   self.stop_on_fail_check):
             w.setVisible(scenario_on)
+            w.setEnabled(scenario_on and idle)
 
         # 指标单选按钮：运行中禁用；空闲/暂停时按设备兼容性恢复
         for key, cb in self.metric_radios.items():
