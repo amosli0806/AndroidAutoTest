@@ -540,7 +540,31 @@ class PerfController(QObject):
                 if self.logs_view:
                     self.logs_view.add_log(
                         f"[堆转储] 完成：{local_path}", "success")
+            except subprocess.CalledProcessError as e:
+                # dumpheap/pull 失败：清掉设备侧可能残留的 0 字节空文件，避免堆积垃圾
+                try:
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", "rm", remote_path],
+                        timeout=5, creationflags=creationflags,
+                    )
+                except Exception:
+                    pass
+                # 判断是否为「应用不可调试」这一最常见根因，给出可读提示
+                if "not debuggable" in (e.stderr or "") or "not debuggable" in (e.output or ""):
+                    reason = "应用不是 debug 包，系统拒绝转储其堆（需 debuggable 构建或 root）"
+                else:
+                    reason = str(e)
+                if self.logs_view:
+                    self.logs_view.add_log(f"[堆转储] 失败：{reason}", "error")
+                show_toast(self.view, f"堆转储失败：{reason}")
             except Exception as e:
+                try:
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", "rm", remote_path],
+                        timeout=5, creationflags=creationflags,
+                    )
+                except Exception:
+                    pass
                 if self.logs_view:
                     self.logs_view.add_log(f"[堆转储] 失败：{e}", "error")
             finally:
