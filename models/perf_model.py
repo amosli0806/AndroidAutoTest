@@ -209,19 +209,22 @@ def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.
         _row('cpu', 'CPU 峰值 (%)', b.get('max'), c.get('max'))
     b, c = base_metrics.get('mem'), cur_stats.get('mem')
     if _is_stats(b) and _is_stats(c):
-        _row('mem', '内存峰值 (MB)', b.get('max'), c.get('max'))
-        _row('mem_avg', '内存均值 (MB)', b.get('avg'), c.get('avg'))
-        _row('mem_current', '内存当前 (MB)', b.get('current'), c.get('current'))
-        _row('mem_min', '内存最低 (MB)', b.get('min'), c.get('min'))
-    # 内存分类拆解对比（各分类峰值，旧数据无拆解时自动跳过）
+        _row('mem_avg', 'Total均值 (MB)', b.get('avg'), c.get('avg'))
+        _row('mem', 'Total峰值 (MB)', b.get('max'), c.get('max'))
+        _row('mem_min', 'Total最低 (MB)', b.get('min'), c.get('min'))
+    # 内存分类拆解对比（各分类均值/峰值/最低，旧数据无拆解时自动跳过）
     bb = base_metrics.get('mem_breakdown', {})
     cc = cur_stats.get('mem_breakdown', {})
     if isinstance(bb, dict) and isinstance(cc, dict):
         for cat, lbl, _color in MEM_CATEGORIES:
             bcat, ccat = bb.get(cat), cc.get(cat)
             if _is_stats(bcat) and _is_stats(ccat):
-                _row(f'mem_{cat}', f'{lbl} 内存峰值 (MB)',
+                _row(f'mem_{cat}_avg', f'{lbl}均值 (MB)',
+                     bcat.get('avg'), ccat.get('avg'))
+                _row(f'mem_{cat}', f'{lbl}峰值 (MB)',
                      bcat.get('max'), ccat.get('max'))
+                _row(f'mem_{cat}_min', f'{lbl}最低 (MB)',
+                     bcat.get('min'), ccat.get('min'))
     b, c = base_metrics.get('fps'), cur_stats.get('fps')
     if _is_stats(b) and _is_stats(c):
         _row('fps', 'FPS 均值', b.get('avg'), c.get('avg'), lower_is_worse=True)

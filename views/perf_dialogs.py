@@ -20,6 +20,7 @@ from utils.toast import show_toast
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 from utils.dialogs import ConfirmDeleteDialog
+from models.perf_model import MEM_CATEGORIES
 from PyQt6.QtWidgets import QStyleOptionButton, QStyle
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush
 
@@ -537,7 +538,7 @@ class PerfCompareDialog(QDialog):
         self.setObjectName("PerfCompareDialog")
         self.setWindowTitle(f"性能对比 - {baseline_name}")
         self.setModal(True)
-        self.resize(640, 460)
+        self.resize(640, 620)
 
         self.baseline = baseline
         self.session = session
@@ -612,27 +613,38 @@ class PerfCompareDialog(QDialog):
         b = self.baseline.metrics.get('mem', {})
         c = self.current_stats.get('mem', {})
         if b and c:
-            change, worse = calc_change(b.get('max', 0), c.get('max', 0))
-            rows.append(('内存峰值(MB)', fmt(b.get('max', 0)), fmt(c.get('max', 0)), change, worse))
             change, worse = calc_change(b.get('avg', 0), c.get('avg', 0))
-            rows.append(('内存均值(MB)', fmt(b.get('avg', 0)), fmt(c.get('avg', 0)), change, worse))
-            if b.get('current') is not None and c.get('current') is not None:
-                change, worse = calc_change(b.get('current', 0), c.get('current', 0))
-                rows.append(('内存当前(MB)', fmt(b.get('current', 0)), fmt(c.get('current', 0)), change, worse))
+            rows.append(('Total均值(MB)', fmt(b.get('avg', 0)), fmt(c.get('avg', 0)), change, worse))
+            change, worse = calc_change(b.get('max', 0), c.get('max', 0))
+            rows.append(('Total峰值(MB)', fmt(b.get('max', 0)), fmt(c.get('max', 0)), change, worse))
             if b.get('min') is not None and c.get('min') is not None:
                 change, worse = calc_change(b.get('min', 0), c.get('min', 0))
-                rows.append(('内存最低(MB)', fmt(b.get('min', 0)), fmt(c.get('min', 0)), change, worse))
+                rows.append(('Total最低(MB)', fmt(b.get('min', 0)), fmt(c.get('min', 0)), change, worse))
 
-        # 系统可用内存（旧基线无此项时不展示）：越低越紧张，负值（变低）视为恶化
-        b = self.baseline.metrics.get('mem_avail', {})
-        c = self.current_stats.get('mem_avail', {})
-        if b and c:
-            if b.get('avg') is not None and c.get('avg') is not None:
-                change, worse = calc_change(b.get('avg', 0), c.get('avg', 0), is_reverse=True)
-                rows.append(('可用内存均值(MB)', fmt(b.get('avg', 0)), fmt(c.get('avg', 0)), change, worse))
-            if b.get('min') is not None and c.get('min') is not None:
-                change, worse = calc_change(b.get('min', 0), c.get('min', 0), is_reverse=True)
-                rows.append(('可用内存最低(MB)', fmt(b.get('min', 0)), fmt(c.get('min', 0)), change, worse))
+        # 内存分类拆解（各分类均值/峰值/最低，旧数据无拆解时跳过）
+        bb = self.baseline.metrics.get('mem_breakdown', {})
+        cc = self.current_stats.get('mem_breakdown', {})
+        if isinstance(bb, dict) and isinstance(cc, dict):
+            for cat, lbl, _color in MEM_CATEGORIES:
+                bcat = bb.get(cat, {})
+                ccat = cc.get(cat, {})
+                if not bcat or not ccat:
+                    continue
+                change, worse = calc_change(bcat.get('avg', 0), ccat.get('avg', 0))
+                rows.append(
+                    (f'{lbl}均值(MB)', fmt(bcat.get('avg', 0)),
+                     fmt(ccat.get('avg', 0)), change, worse)
+                )
+                change, worse = calc_change(bcat.get('max', 0), ccat.get('max', 0))
+                rows.append(
+                    (f'{lbl}峰值(MB)', fmt(bcat.get('max', 0)),
+                     fmt(ccat.get('max', 0)), change, worse)
+                )
+                change, worse = calc_change(bcat.get('min', 0), ccat.get('min', 0))
+                rows.append(
+                    (f'{lbl}最低(MB)', fmt(bcat.get('min', 0)),
+                     fmt(ccat.get('min', 0)), change, worse)
+                )
 
         # FPS
         b = self.baseline.metrics.get('fps', {})

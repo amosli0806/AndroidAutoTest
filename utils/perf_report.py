@@ -64,13 +64,13 @@ CHART_JS_MEM_BREAKDOWN = """new Chart(document.getElementById('memChart'), {
     data: {
         labels: timestamps,
         datasets: [
+            { label: 'Total', data: memData, borderColor: '#27ae60', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Java', data: javaData, borderColor: '#f39c12', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Native', data: nativeData, borderColor: '#9b59b6', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Graphics', data: graphicsData, borderColor: '#e74c3c', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Stack', data: stackData, borderColor: '#1abc9c', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Code', data: codeData, borderColor: '#3498db', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
-            { label: 'Others', data: othersData, borderColor: '#95a5a6', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
-            { label: 'Total', data: memData, borderColor: '#27ae60', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 }
+            { label: 'Others', data: othersData, borderColor: '#95a5a6', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 }
         ]
     },
     options: {
