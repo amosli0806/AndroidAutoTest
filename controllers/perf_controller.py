@@ -126,6 +126,8 @@ class PerfController(QObject):
 
     # 堆转储结果回投主线程（worker 线程不直接碰 GUI，避免跨线程操作导致界面未响应）
     hprof_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
+    # 启动测试等结果 -> 底部「虫师日志」（main.py 里连 append_bottom_log）
+    log_emitted = pyqtSignal(str)
 
     def __init__(self, perf_model: PerfModel, perf_view,
                  device_service, project_model, step_model, suite_model,
@@ -709,11 +711,12 @@ class PerfController(QObject):
                 )
                 dlg.exec()
 
-                if self.logs_view:
-                    self.logs_view.add_log(
-                        f"[性能] 启动测试: 冷启动 {cold_ms} ms, 热启动 {warm_ms} ms",
-                        "info"
-                    )
+                # 结果写进底部「虫师日志」，不进自动化执行日志区
+                from utils import log_colors
+                self.log_emitted.emit(
+                    f"<span style='color:{log_colors.log_color(log_colors.RESULT)};'>"
+                    f"[性能] 启动测试: 冷启动 {cold_ms} ms, 热启动 {warm_ms} ms</span>"
+                )
 
                 # 点「重新测试」则继续循环，否则结束
                 if not dlg.retest_requested:

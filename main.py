@@ -957,6 +957,9 @@ def main():
     perf_controller.perf_finished.connect(notification_controller.on_perf_finished)
     perf_controller.perf_alert.connect(notification_controller.on_perf_alert)
 
+    # 性能检测的启动测试结果 -> 底部「虫师日志」（不进自动化执行日志区）
+    perf_controller.log_emitted.connect(append_bottom_log)
+
     # ---------- 语音播报 ----------
     from models.voice_model import VoiceModel
     from services.voice_service import get_voice_service
