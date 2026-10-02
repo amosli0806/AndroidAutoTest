@@ -598,8 +598,8 @@ class PerfController(QObject):
     def _auto_compare_baseline(self, session):
         """采集结束自动比对同应用基线，判定性能劣化。
 
-        无基线或无法对比时静默跳过；有劣化时弹结果提示 + 记日志，否则只记一条
-        「无劣化」信息，不打扰用户。
+        无基线或无法对比时静默跳过；有劣化时弹窗提示，无劣化不打扰用户。
+        对比结果只走弹窗，不写入自动化执行日志区。
         """
         baseline = self.model.find_baseline_for_package(
             session.app_package, session.metrics)
@@ -618,10 +618,6 @@ class PerfController(QObject):
             return (f"{r['label']}：基线 {r['base']:.{digits}f} → "
                     f"本次 {r['cur']:.{digits}f}（{r['change_pct']:+.1f}%）")
 
-        line = "；".join(
-            f"{r['label']} {r['base']:.1f}→{r['cur']:.1f}（{r['change_pct']:+.1f}%）"
-            for r in rows
-        )
         if worse:
             detail = "\n".join(f"• {_fmt(r)}" for r in worse)
             full_detail = (
@@ -635,15 +631,6 @@ class PerfController(QObject):
                 f"检测到 {len(worse)} 项指标明显劣化：\n\n{detail}",
                 full_detail
             )
-            if self.logs_view:
-                self.logs_view.add_log(
-                    f"[性能] 基线对比发现 {len(worse)} 项劣化：{line}", "warning"
-                )
-        else:
-            if self.logs_view:
-                self.logs_view.add_log(
-                    f"[性能] 与基线「{baseline.name}」对比无劣化：{line}", "info"
-                )
 
     def _on_save_baseline(self):
         if not self.current_session and not self.model.sessions:
