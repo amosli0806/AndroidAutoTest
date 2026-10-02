@@ -43,7 +43,9 @@ class PerfService:
 
         if 'mem' in metrics:
             try:
-                sample.mem_pss_mb = self._collect_mem(package)
+                pss_mb, avail_mb = self._collect_mem(package)
+                sample.mem_pss_mb = pss_mb
+                sample.mem_avail_mb = avail_mb
             except Exception as e:
                 sample.errors.append(f"mem:{e}")
 
@@ -132,20 +134,26 @@ class PerfService:
     # ============================================================
     # 内存
     # ============================================================
-    def _collect_mem(self, package: str) -> float:
+    def _collect_mem(self, package: str) -> tuple:
         """
-        通过 dumpsys meminfo <pkg> 采集 TOTAL PSS（单位 KB）。
-        输出中找：
-          TOTAL    45000    42000    1000    ... (KB)
+        一次 shell 调用同时采集应用与系统内存（单位 MB）：
+          - 应用 TOTAL PSS：dumpsys meminfo <pkg> 输出中找 TOTAL 行
+          - 系统可用内存：/proc/meminfo 的 MemAvailable
+        返回 (pss_mb, avail_mb)。
         """
-        out = shell_text(self.device, f"dumpsys meminfo {package}")
-        if not out:
-            return 0.0
-        # 优先找带 pid 的块
-        m = re.search(r"TOTAL\s+(\d+)", out)
-        if m:
-            return int(m.group(1)) / 1024.0  # KB -> MB
-        return 0.0
+        out = shell_text(
+            self.device,
+            f"dumpsys meminfo {package}; echo ===MEMINFO===; cat /proc/meminfo",
+        )
+        pss_mb, avail_mb = 0.0, 0.0
+        if out:
+            m = re.search(r"TOTAL\s+(\d+)", out)
+            if m:
+                pss_mb = int(m.group(1)) / 1024.0  # KB -> MB
+            ma = re.search(r"MemAvailable:\s+(\d+)\s*kB", out)
+            if ma:
+                avail_mb = int(ma.group(1)) / 1024.0
+        return pss_mb, avail_mb
 
     # ============================================================
     # FPS

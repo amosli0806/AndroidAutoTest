@@ -509,13 +509,14 @@ class PerfController(QObject):
             with open(path, 'w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    'timestamp', 'cpu_percent', 'mem_pss_mb',
+                    'timestamp', 'cpu_percent', 'mem_pss_mb', 'mem_avail_mb',
                     'fps', 'rx_bytes', 'tx_bytes'
                 ])
                 for s in session.samples:
                     writer.writerow([
                         f"{s.timestamp:.3f}", f"{s.cpu_percent:.2f}",
-                        f"{s.mem_pss_mb:.2f}", s.fps,
+                        f"{s.mem_pss_mb:.2f}", f"{getattr(s, 'mem_avail_mb', 0.0):.2f}",
+                        s.fps,
                         s.rx_bytes, s.tx_bytes
                     ])
             show_toast(self.view, "导出成功")

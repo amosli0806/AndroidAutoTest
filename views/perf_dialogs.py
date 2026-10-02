@@ -616,6 +616,23 @@ class PerfCompareDialog(QDialog):
             rows.append(('内存峰值(MB)', fmt(b.get('max', 0)), fmt(c.get('max', 0)), change, worse))
             change, worse = calc_change(b.get('avg', 0), c.get('avg', 0))
             rows.append(('内存均值(MB)', fmt(b.get('avg', 0)), fmt(c.get('avg', 0)), change, worse))
+            if b.get('current') is not None and c.get('current') is not None:
+                change, worse = calc_change(b.get('current', 0), c.get('current', 0))
+                rows.append(('内存当前(MB)', fmt(b.get('current', 0)), fmt(c.get('current', 0)), change, worse))
+            if b.get('min') is not None and c.get('min') is not None:
+                change, worse = calc_change(b.get('min', 0), c.get('min', 0))
+                rows.append(('内存最低(MB)', fmt(b.get('min', 0)), fmt(c.get('min', 0)), change, worse))
+
+        # 系统可用内存（旧基线无此项时不展示）：越低越紧张，负值（变低）视为恶化
+        b = self.baseline.metrics.get('mem_avail', {})
+        c = self.current_stats.get('mem_avail', {})
+        if b and c:
+            if b.get('avg') is not None and c.get('avg') is not None:
+                change, worse = calc_change(b.get('avg', 0), c.get('avg', 0), is_reverse=True)
+                rows.append(('可用内存均值(MB)', fmt(b.get('avg', 0)), fmt(c.get('avg', 0)), change, worse))
+            if b.get('min') is not None and c.get('min') is not None:
+                change, worse = calc_change(b.get('min', 0), c.get('min', 0), is_reverse=True)
+                rows.append(('可用内存最低(MB)', fmt(b.get('min', 0)), fmt(c.get('min', 0)), change, worse))
 
         # FPS
         b = self.baseline.metrics.get('fps', {})

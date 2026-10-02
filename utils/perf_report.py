@@ -59,6 +59,43 @@ CHART_JS_MEM = """new Chart(document.getElementById('memChart'), {
     }
 });"""
 
+CHART_JS_MEM_DUAL = """new Chart(document.getElementById('memChart'), {
+    type: 'line',
+    data: {
+        labels: timestamps,
+        datasets: [
+            {
+                label: '应用内存 PSS (MB)',
+                data: memData,
+                borderColor: '#27ae60',
+                backgroundColor: 'rgba(39,174,96,0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.3
+            },
+            {
+                label: '系统可用内存 (MB)',
+                data: memAvailData,
+                borderColor: '#3498db',
+                backgroundColor: 'rgba(52,152,219,0.08)',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.3
+            }
+        ]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: true }, title: { display: true, text: '内存占用 (MB)' } },
+        scales: {
+            x: { display: true, title: { display: true, text: '时间 (秒)' } },
+            y: { beginAtZero: true }
+        },
+        elements: { point: { radius: 0 } }
+    }
+});"""
+
 CHART_JS_FPS = """new Chart(document.getElementById('fpsChart'), {
     type: 'line',
     data: {
@@ -135,6 +172,7 @@ class PerfReportGenerator:
         timestamps = []
         cpu_series = []
         mem_series = []
+        mem_avail_series = []
         fps_series = []
         rx_rate_series = []   # 流量速率（KB/s），按相邻采样差分
         tx_rate_series = []
@@ -148,6 +186,7 @@ class PerfReportGenerator:
                 timestamps.append(f"{t - t0:.1f}")
                 cpu_series.append(f"{s.cpu_percent:.2f}")
                 mem_series.append(f"{s.mem_pss_mb:.2f}")
+                mem_avail_series.append(f"{getattr(s, 'mem_avail_mb', 0.0):.2f}")
                 fps_series.append(str(s.fps))
                 # 流量速率：相邻采样点差分换算 KB/s（首次只记基准不画点）
                 if prev_rx is not None and prev_ts is not None and (t - prev_ts) > 0:
@@ -291,7 +330,9 @@ class PerfReportGenerator:
         <div class="chart-wrap">
             <canvas id="memChart"></canvas>
         </div>"""
-            chart_scripts.append(CHART_JS_MEM)
+            # 采集到了系统可用内存时画双线（PSS + 可用内存），否则保持单线
+            has_mem_avail = any(getattr(s, 'mem_avail_mb', 0.0) > 0 for s in samples)
+            chart_scripts.append(CHART_JS_MEM_DUAL if has_mem_avail else CHART_JS_MEM)
         if 'fps' in metrics:
             charts_section += """
         <div class="chart-wrap">
@@ -498,6 +539,7 @@ class PerfReportGenerator:
         const timestamps = [{','.join(timestamps)}];
         const cpuData = [{','.join(cpu_series)}];
         const memData = [{','.join(mem_series)}];
+        const memAvailData = [{','.join(mem_avail_series)}];
         const fpsData = [{','.join(fps_series)}];
         const rxRateData = [{','.join(rx_rate_series)}];
         const txRateData = [{','.join(tx_rate_series)}];

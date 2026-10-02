@@ -14,6 +14,7 @@ class PerfSample:
     timestamp: float = 0.0            # 采集时间（unix 秒）
     cpu_percent: float = 0.0          # CPU 占用率（%）
     mem_pss_mb: float = 0.0           # 内存 PSS（MB）
+    mem_avail_mb: float = 0.0         # 系统可用内存（MB），0 表示未采集到
     fps: int = 0                      # 帧率
     rx_bytes: int = 0                 # 接收字节（累计）
     tx_bytes: int = 0                 # 发送字节（累计）
@@ -115,6 +116,12 @@ class PerfSession:
             stat = calc([s.mem_pss_mb for s in self.samples if s.mem_pss_mb > 0])
             stat['current'] = self.samples[-1].mem_pss_mb
             result['mem'] = stat
+            # 系统可用内存（旧会话数据没有该字段，全 0 时不产出，兼容基线对比）
+            avail_values = [s.mem_avail_mb for s in self.samples if s.mem_avail_mb > 0]
+            if avail_values:
+                avail_stat = calc(avail_values)
+                avail_stat['current'] = self.samples[-1].mem_avail_mb
+                result['mem_avail'] = avail_stat
         # FPS
         if 'fps' in self.metrics:
             stat = calc([s.fps for s in self.samples if s.fps > 0])
@@ -174,18 +181,31 @@ def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.
             'change_pct': change_pct, 'status': status,
         })
 
+    def _is_stats(d):
+        # 防御历史遗留的非 dict 格式基线（如纯数值），跳过而不是崩
+        return isinstance(d, dict) and bool(d)
+
     b, c = base_metrics.get('cpu'), cur_stats.get('cpu')
-    if b and c:
+    if _is_stats(b) and _is_stats(c):
         _row('cpu', 'CPU 峰值 (%)', b.get('max'), c.get('max'))
     b, c = base_metrics.get('mem'), cur_stats.get('mem')
-    if b and c:
+    if _is_stats(b) and _is_stats(c):
         _row('mem', '内存峰值 (MB)', b.get('max'), c.get('max'))
         _row('mem_avg', '内存均值 (MB)', b.get('avg'), c.get('avg'))
+        _row('mem_current', '内存当前 (MB)', b.get('current'), c.get('current'))
+        _row('mem_min', '内存最低 (MB)', b.get('min'), c.get('min'))
+    # 系统可用内存：越低说明系统内存越紧张（旧基线无此项时自动跳过）
+    b, c = base_metrics.get('mem_avail'), cur_stats.get('mem_avail')
+    if _is_stats(b) and _is_stats(c):
+        _row('mem_avail_avg', '可用内存均值 (MB)',
+             b.get('avg'), c.get('avg'), lower_is_worse=True)
+        _row('mem_avail_min', '可用内存最低 (MB)',
+             b.get('min'), c.get('min'), lower_is_worse=True)
     b, c = base_metrics.get('fps'), cur_stats.get('fps')
-    if b and c:
+    if _is_stats(b) and _is_stats(c):
         _row('fps', 'FPS 均值', b.get('avg'), c.get('avg'), lower_is_worse=True)
     b, c = base_metrics.get('traffic'), cur_stats.get('traffic')
-    if b and c:
+    if _is_stats(b) and _is_stats(c):
         base_total = b.get('rx_mb', 0) + b.get('tx_mb', 0)
         cur_total = c.get('rx_mb', 0) + c.get('tx_mb', 0)
         _row('traffic', '流量总量 (MB)', base_total, cur_total)

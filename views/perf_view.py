@@ -188,7 +188,12 @@ class PerfView(QWidget):
         if 'cpu' in self._active_metrics and 'cpu' in self._cards:
             self._cards['cpu'].append_data(ts, {'value': sample.cpu_percent})
         if 'mem' in self._active_metrics and 'mem' in self._cards:
-            self._cards['mem'].append_data(ts, {'value': sample.mem_pss_mb})
+            # 双线：应用 PSS + 系统可用内存；可用内存采集失败（0）时该点不画，避免砸到 0
+            mem_vals = {'PSS': sample.mem_pss_mb}
+            avail = getattr(sample, 'mem_avail_mb', 0.0)
+            if avail > 0:
+                mem_vals['可用内存'] = avail
+            self._cards['mem'].append_data(ts, mem_vals)
         if 'fps' in self._active_metrics and 'fps' in self._cards:
             self._cards['fps'].append_data(ts, {'value': sample.fps})
         if 'traffic' in self._active_metrics and 'traffic' in self._cards:
@@ -223,11 +228,13 @@ class PerfView(QWidget):
             )
         if 'mem' in stats and 'mem' in self._cards:
             s = stats['mem']
+            # 底部统计保持 PSS 的当前/峰值/均值；可用内存放第四格补充展示
+            avail_cur = stats.get('mem_avail', {}).get('current', 0)
             self._cards['mem'].set_stats(
                 current_text=f"当前 {s.get('current', s['avg']):.0f}MB",
                 peak_text=f"峰值 {s['max']:.0f}MB",
                 avg_text=f"均值 {s['avg']:.0f}MB",
-                extra_text="",
+                extra_text=f"可用 {avail_cur:.0f}MB" if avail_cur > 0 else "",
             )
         if 'fps' in stats and 'fps' in self._cards:
             s = stats['fps']
@@ -568,8 +575,12 @@ class PerfView(QWidget):
             y_min=0, y_max=800
         )
         self._cards['mem'] = MetricCard(
-            'mem', '内存占用 (PSS)', 'MB', '#27ae60',
-            y_min=0, y_max=500
+            'mem', '内存占用 (应用/系统可用)', 'MB', '#27ae60',
+            y_min=0, y_max=500,
+            series=[
+                {'name': 'PSS', 'color': '#27ae60'},
+                {'name': '可用内存', 'color': '#3498db'},
+            ]
         )
         self._cards['fps'] = MetricCard(
             'fps', 'FPS', '帧/秒', '#f39c12',
