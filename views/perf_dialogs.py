@@ -353,7 +353,16 @@ class PerfBaselineDialog(QDialog):
             rows.append(('CPU (%)', s['min'], s['max'], s['avg'], s['std']))
         if 'mem' in metrics:
             s = metrics['mem']
-            rows.append(('内存 (MB)', s['min'], s['max'], s['avg'], s['std']))
+            rows.append(('Total (MB)', s['min'], s['max'], s['avg'], s['std']))
+            # 内存分类拆解（Java/Native/Graphics/Stack/Code/Others，旧基线无拆解时不展示）
+            bb = metrics.get('mem_breakdown', {})
+            if isinstance(bb, dict):
+                for cat, lbl, _color in MEM_CATEGORIES:
+                    cs = bb.get(cat)
+                    if isinstance(cs, dict) and cs:
+                        rows.append(
+                            (f'{lbl} (MB)', cs['min'], cs['max'], cs['avg'], cs['std'])
+                        )
         if 'fps' in metrics:
             s = metrics['fps']
             rows.append(('FPS', s['min'], s['max'], s['avg'], s['std']))
