@@ -235,13 +235,12 @@ class PerfView(QWidget):
             )
         if 'mem' in stats and 'mem' in self._cards:
             s = stats['mem']
-            # 底部统计只放峰值/均值（当前值与曲线重复，不再展示）；第四格放 Java 堆峰值作分类速览
-            java_peak = stats.get('mem_breakdown', {}).get('Java', {}).get('max', 0)
+            # 底部统计放当前/峰值/均值；第四格留空
             self._cards['mem'].set_stats(
-                current_text="",
+                current_text=f"当前 {s.get('current', s['avg']):.0f}MB",
                 peak_text=f"峰值 {s['max']:.0f}MB",
                 avg_text=f"均值 {s['avg']:.0f}MB",
-                extra_text=f"Java {java_peak:.0f}MB" if java_peak > 0 else "",
+                extra_text="",
             )
         if 'fps' in stats and 'fps' in self._cards:
             s = stats['fps']

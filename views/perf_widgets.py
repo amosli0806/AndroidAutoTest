@@ -216,7 +216,7 @@ class MetricCard(QFrame):
             )
         elif self._key == 'mem':
             self.set_stats(
-                current_text="", peak_text="峰值 0MB",
+                current_text="当前 0MB", peak_text="峰值 0MB",
                 avg_text="均值 0MB", extra_text="",
             )
         elif self._key == 'fps':
