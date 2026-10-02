@@ -254,8 +254,6 @@ perf_view.set_suite_model(suite_model)
 perf_view.set_project_model(project_model)
 main_window.set_perf_view(perf_view)
 main_window.register_sub_view(perf_view)
-perf_view.hprof_requested.connect(adb_toolbox_controller._action_hprof)
-perf_view.packet_requested.connect(adb_toolbox_controller._action_packet)
 perf_controller.perf_finished.connect(notification_controller.on_perf_finished)
 perf_controller.perf_alert.connect(notification_controller.on_perf_alert)
 

@@ -931,9 +931,8 @@ def main():
     main_window.set_perf_view(perf_view)
     main_window.register_sub_view(perf_view)
 
-    # 性能工具卡片：堆转储 / 抓包（入口在性能检测页，能力复用 ADB 工具箱控制器）
-    perf_view.hprof_requested.connect(adb_toolbox_controller._action_hprof)
-    perf_view.packet_requested.connect(adb_toolbox_controller._action_packet)
+    # 性能工具卡片：堆转储 / 抓包（入口在性能检测页，能力已下沉到性能控制器，
+    # 不再依赖 ADB 工具箱控制器）
 
     # ---------- 接口自动化 ----------
     # 与设备无关的纯 HTTP 模块：不依赖 device_service，独立数据文件 api_data.json

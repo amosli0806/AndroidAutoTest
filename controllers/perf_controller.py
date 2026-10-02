@@ -141,6 +141,12 @@ class PerfController(QObject):
         self.scenario_worker = None
         self._alert_cache = {}  # {metric: bool}
 
+        # 堆转储自动循环状态
+        self._hprof_loop_timer = None
+        self._hprof_dumping = False
+        # 抓包状态
+        self._capture_worker = None
+
         # 采样统计刷新定时器
         self._stats_timer = QTimer(self)
         self._stats_timer.setInterval(1000)
@@ -164,6 +170,11 @@ class PerfController(QObject):
         self.view.clear_requested.connect(self._on_clear_requested)
         self.view.threshold_config_requested.connect(self._on_threshold_config)
         self.view.report_requested.connect(self._on_generate_report)
+        # 堆转储 / 抓包（性能检测页工具卡片）
+        self.view.hprof_toggle_requested.connect(self._on_hprof_toggle)
+        self.view.hprof_once_requested.connect(self._on_hprof_once)
+        self.view.hprof_interval_changed.connect(self._on_hprof_interval_changed)
+        self.view.packet_toggle_requested.connect(self._on_packet_toggle)
 
     # ------------------------------------------------------------------
     def _check_compat_on_startup(self):
@@ -416,6 +427,184 @@ class PerfController(QObject):
 
     def _on_worker_error(self, msg):
         logger.warning(f"[PerfController] 采集错误: {msg}")
+
+    # ------------------------------------------------------------------
+    # 堆转储 / 抓包（性能检测页工具卡片）
+    # ------------------------------------------------------------------
+    def _on_hprof_toggle(self, enabled: bool):
+        """堆转储自动循环开关"""
+        if enabled:
+            self._start_hprof_loop()
+        else:
+            self._stop_hprof_loop()
+
+    def _on_hprof_interval_changed(self):
+        """间隔变更：若循环正在跑，重启定时器以套用新间隔"""
+        if self._hprof_loop_timer is not None:
+            self._hprof_loop_timer.setInterval(
+                int(self.view.get_hprof_interval() * 1000))
+
+    def _on_hprof_once(self):
+        """手动触发一次堆转储（与循环互不干扰）"""
+        self._dump_hprof_now()
+
+    def _start_hprof_loop(self):
+        package = self.view.get_selected_package()
+        if not package:
+            show_toast(self.view, "请先在左上角选择要监控的应用")
+            self.view.hprof_enable_check.blockSignals(True)
+            self.view.hprof_enable_check.setChecked(False)
+            self.view.hprof_enable_check.blockSignals(False)
+            return
+        if self._hprof_loop_timer is None:
+            self._hprof_loop_timer = QTimer(self)
+            self._hprof_loop_timer.timeout.connect(self._dump_hprof_now)
+        self._hprof_loop_timer.start(
+            int(self.view.get_hprof_interval() * 1000))
+        # 立即执行一次，避免用户等一个完整间隔
+        self._dump_hprof_now()
+
+    def _stop_hprof_loop(self):
+        if self._hprof_loop_timer is not None:
+            self._hprof_loop_timer.stop()
+
+    def _dump_hprof_now(self):
+        """对当前所选应用执行一次堆转储（后台线程，防重入）"""
+        if self._hprof_dumping:
+            return
+        package = self.view.get_selected_package()
+        if not package:
+            show_toast(self.view, "请先在左上角选择要监控的应用")
+            return
+        if not self.device_service or not self.device_service.device:
+            show_toast(self.view, "设备未连接")
+            return
+        self._hprof_dumping = True
+
+        import subprocess, sys as _sys
+        from utils.adb_path import get_adb_path
+        from utils.settings import Settings as _Settings
+        serial = self.device_service.serial
+        adb = get_adb_path()
+
+        def worker():
+            creationflags = subprocess.CREATE_NO_WINDOW if _sys.platform == 'win32' else 0
+            try:
+                # 由包名直接定位进程 PID（不再弹进程选择框）
+                pid = None
+                try:
+                    r = subprocess.run(
+                        [adb, "-s", serial, "shell", "pidof", package],
+                        capture_output=True, text=True, timeout=5,
+                        creationflags=creationflags,
+                        encoding='utf-8', errors='replace',
+                    )
+                    out = (r.stdout or "").strip()
+                    if out:
+                        pid = out.split()[0]
+                except Exception:
+                    pid = None
+                if not pid:
+                    show_toast(self.view, f"未找到运行中的进程：{package}")
+                    return
+
+                output_dir = _Settings.get_output_dir()
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                safe_serial = serial.replace(':', '_')
+                device_dir = os.path.join(output_dir, safe_serial)
+                os.makedirs(device_dir, exist_ok=True)
+                remote_path = f"/data/local/tmp/heap_{timestamp}.hprof"
+                local_path = os.path.join(device_dir, f"heap_{timestamp}.hprof")
+
+                subprocess.run(
+                    [adb, "-s", serial, "shell", "am", "dumpheap",
+                     str(pid), remote_path],
+                    check=True, timeout=60, creationflags=creationflags,
+                )
+                subprocess.run(
+                    [adb, "-s", serial, "pull", remote_path, local_path],
+                    check=True, timeout=120, creationflags=creationflags,
+                )
+                subprocess.run(
+                    [adb, "-s", serial, "shell", "rm", remote_path],
+                    timeout=5, creationflags=creationflags,
+                )
+                if self.logs_view:
+                    self.logs_view.add_log(
+                        f"[堆转储] 完成：{local_path}", "success")
+            except Exception as e:
+                if self.logs_view:
+                    self.logs_view.add_log(f"[堆转储] 失败：{e}", "error")
+            finally:
+                self._hprof_dumping = False
+
+        import threading
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_packet_toggle(self, capturing: bool):
+        """抓包开始/停止"""
+        if capturing:
+            self._start_capture()
+        else:
+            self._stop_capture()
+
+    def _start_capture(self):
+        if not self.device_service or not self.device_service.device:
+            show_toast(self.view, "设备未连接")
+            self.view.set_packet_capturing(False)
+            return
+        from views.adb_dialogs.packet_capture_dialog import (
+            TcpdumpDeployThread, CaptureWorker)
+        from utils.settings import Settings as _Settings
+
+        serial = self.device_service.serial
+        output_dir = _Settings.get_output_dir()
+
+        # 先部署 tcpdump（含 root 检测），就绪后再启动抓包
+        from utils.adb_path import get_adb_path
+        adb = get_adb_path()
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        tcpdump_path = os.path.join(os.path.dirname(adb), "tcpdump")
+        if not os.path.exists(tcpdump_path):
+            tcpdump_path = os.path.join(project_root, "tools", "tcpdump")
+
+        self._deploy_thread = TcpdumpDeployThread(serial, tcpdump_path)
+        self._deploy_thread.finished_with.connect(self._on_capture_deployed)
+        self._deploy_thread.start()
+        self.view.set_packet_status("准备 tcpdump…")
+
+    def _on_capture_deployed(self, ok: bool, message: str):
+        from views.adb_dialogs.packet_capture_dialog import CaptureWorker
+        from utils.settings import Settings as _Settings
+        if not ok:
+            self.view.set_packet_capturing(False)
+            self.view.set_packet_status(f"无法抓包：{message}")
+            WarningDialog.show_warning(self.view, "抓包不可用", message)
+            return
+        if self._capture_worker and self._capture_worker.isRunning():
+            return
+        self._capture_worker = CaptureWorker(
+            self.device_service.serial, _Settings.get_output_dir(), "")
+        self._capture_worker.finished_signal.connect(self._on_capture_finished)
+        self._capture_worker.error_signal.connect(
+            lambda m: self.view.set_packet_status(f"❌ {m}"))
+        self._capture_worker.start()
+        self.view.set_packet_status("抓包中…")
+
+    def _on_capture_finished(self, success: bool, result: str):
+        if success:
+            self.view.set_packet_capturing(False)
+            self.view.set_packet_status(f"完成：{os.path.basename(result)}")
+            if self.logs_view:
+                self.logs_view.add_log(f"[抓包] 完成：{result}", "success")
+        else:
+            self.view.set_packet_capturing(False)
+            self.view.set_packet_status(f"❌ {result}")
+
+    def _stop_capture(self):
+        if self._capture_worker and self._capture_worker.isRunning():
+            self._capture_worker.stop()
+            self.view.set_packet_status("正在停止…")
 
     # ------------------------------------------------------------------
     def _on_scenario_progress(self, message, log_type):

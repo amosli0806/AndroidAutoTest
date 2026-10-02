@@ -116,8 +116,10 @@ class PerfView(QWidget):
     baseline_manager_requested = pyqtSignal()
     clear_requested = pyqtSignal()
     threshold_config_requested = pyqtSignal()
-    hprof_requested = pyqtSignal()          # 堆转储（性能工具卡片入口）
-    packet_requested = pyqtSignal()         # 抓包（性能工具卡片入口）
+    hprof_toggle_requested = pyqtSignal(bool)      # 堆转储自动循环开关（性能工具卡片）
+    hprof_once_requested = pyqtSignal()            # 手动触发一次堆转储
+    hprof_interval_changed = pyqtSignal()          # 堆转储间隔变更
+    packet_toggle_requested = pyqtSignal(bool)     # 抓包开始/停止
 
     # 状态枚举
     STATE_IDLE = 'idle'
@@ -134,7 +136,8 @@ class PerfView(QWidget):
         self._suite_model = None
         self._project_model = None
         self._cards = {}
-        self._tool_card = None
+        self._hprof_card = None
+        self._packet_card = None
         self._metric_available = {}  # 各指标在当前设备上的可用性
         self._active_metrics = []  # 本次会话实际勾选的指标
         # 流量速率差分基准
@@ -336,6 +339,9 @@ class PerfView(QWidget):
                 cb.setEnabled(self._metric_available.get(key, True))
             else:
                 cb.setEnabled(False)
+
+        # 堆转储间隔：仅在「自动循环」勾选时可用
+        self.hprof_interval_combo.setEnabled(self.hprof_enable_check.isChecked())
         # 置灰时只显示文案，不显示图标
         for btn, icon_name in self._btn_icon_map.items():
             if btn.isEnabled():
@@ -602,37 +608,129 @@ class PerfView(QWidget):
         )
 
         # 性能工具卡片：堆转储 / 抓包（原来挂在 ADB 工具箱，移到性能检测页）
-        self._build_tool_card()
+        self._build_tool_cards()
 
         # 初始布局
         self._relayout_cards()
 
-    def _build_tool_card(self):
-        """性能工具卡片：与指标卡片同一视觉风格，放两个设备分析入口"""
-        self._tool_card = QFrame()
-        self._tool_card.setObjectName("PerfToolCard")
+    def _build_tool_cards(self):
+        """构建两个工具卡片：堆转储（可自动循环）、抓包（手动开始/停止）"""
+        # ---- 堆转储卡片 ----
+        self._hprof_card = QFrame()
+        self._hprof_card.setObjectName("PerfToolCard")
 
-        tool_layout = QHBoxLayout(self._tool_card)
-        tool_layout.setContentsMargins(12, 10, 12, 10)
-        tool_layout.setSpacing(10)
+        hprof_layout = QVBoxLayout(self._hprof_card)
+        hprof_layout.setContentsMargins(12, 10, 12, 10)
+        hprof_layout.setSpacing(8)
 
-        self._tool_title = QLabel("性能工具")
-        tool_layout.addWidget(self._tool_title)
-        tool_layout.addSpacing(6)
+        hprof_title_row = QHBoxLayout()
+        hprof_title_row.setSpacing(8)
+        self._hprof_dot = QLabel("●")
+        self._hprof_dot.setStyleSheet("color: #e67e22; font-size: 14px; background: transparent;")
+        hprof_title_row.addWidget(self._hprof_dot)
+        self._hprof_title = QLabel("堆转储")
+        self._hprof_title.setStyleSheet("font-weight: 600; font-size: 13px; background: transparent;")
+        hprof_title_row.addWidget(self._hprof_title)
+        hprof_title_row.addStretch()
+        hprof_layout.addLayout(hprof_title_row)
 
-        self.hprof_btn = QPushButton("堆转储")
-        self.hprof_btn.setIcon(qta.icon('fa6s.database', color='white'))
-        self.hprof_btn.setToolTip("导出指定进程的 Java 堆快照 (.hprof)")
-        self.hprof_btn.clicked.connect(self.hprof_requested.emit)
-        tool_layout.addWidget(self.hprof_btn)
+        hprof_ctrl_row = QHBoxLayout()
+        hprof_ctrl_row.setSpacing(10)
+        self.hprof_enable_check = BorderedCheckBox("自动循环")
+        self.hprof_enable_check.setToolTip("开启后按右侧间隔自动对所选应用执行堆转储")
+        self.hprof_enable_check.toggled.connect(self._on_hprof_toggle)
+        hprof_ctrl_row.addWidget(self.hprof_enable_check)
 
-        self.packet_btn = QPushButton("抓包")
-        self.packet_btn.setIcon(qta.icon('fa6s.network-wired', color='white'))
-        self.packet_btn.setToolTip("抓取设备侧网络包并保存")
-        self.packet_btn.clicked.connect(self.packet_requested.emit)
-        tool_layout.addWidget(self.packet_btn)
+        hprof_ctrl_row.addWidget(QLabel("间隔:"))
+        self.hprof_interval_combo = QComboBox()
+        self.hprof_interval_combo.addItems(
+            ["30 秒", "1 分钟", "2 分钟", "5 分钟", "10 分钟"]
+        )
+        self.hprof_interval_combo.setCurrentText("2 分钟")
+        self.hprof_interval_combo.setFixedWidth(100)
+        self.hprof_interval_combo.setEnabled(False)
+        self.hprof_interval_combo.currentTextChanged.connect(
+            lambda _: self.hprof_interval_changed.emit()
+        )
+        hprof_ctrl_row.addWidget(self.hprof_interval_combo)
 
-        tool_layout.addStretch()
+        self.hprof_once_btn = QPushButton("立即转储一次")
+        self.hprof_once_btn.setIcon(qta.icon('fa6s.database', color='white'))
+        self.hprof_once_btn.clicked.connect(self.hprof_once_requested.emit)
+        hprof_ctrl_row.addWidget(self.hprof_once_btn)
+        hprof_ctrl_row.addStretch()
+        hprof_layout.addLayout(hprof_ctrl_row)
+
+        # ---- 抓包卡片 ----
+        self._packet_card = QFrame()
+        self._packet_card.setObjectName("PerfToolCard")
+
+        packet_layout = QVBoxLayout(self._packet_card)
+        packet_layout.setContentsMargins(12, 10, 12, 10)
+        packet_layout.setSpacing(8)
+
+        packet_title_row = QHBoxLayout()
+        packet_title_row.setSpacing(8)
+        self._packet_dot = QLabel("●")
+        self._packet_dot.setStyleSheet("color: #9b59b6; font-size: 14px; background: transparent;")
+        packet_title_row.addWidget(self._packet_dot)
+        self._packet_title = QLabel("网络抓包")
+        self._packet_title.setStyleSheet("font-weight: 600; font-size: 13px; background: transparent;")
+        packet_title_row.addWidget(self._packet_title)
+        packet_title_row.addStretch()
+        packet_layout.addLayout(packet_title_row)
+
+        packet_ctrl_row = QHBoxLayout()
+        packet_ctrl_row.setSpacing(10)
+        self.packet_toggle_btn = QPushButton("开始抓包")
+        self.packet_toggle_btn.setIcon(qta.icon('fa6s.network-wired', color='white'))
+        self.packet_toggle_btn.setCheckable(True)
+        self.packet_toggle_btn.toggled.connect(self.packet_toggle_requested.emit)
+        packet_ctrl_row.addWidget(self.packet_toggle_btn)
+        self.packet_status_label = QLabel("未开始")
+        self.packet_status_label.setStyleSheet("font-size: 12px; color: #999999; background: transparent;")
+        packet_ctrl_row.addWidget(self.packet_status_label)
+        packet_ctrl_row.addStretch()
+        packet_layout.addLayout(packet_ctrl_row)
+
+    def get_hprof_interval(self) -> float:
+        """返回堆转储循环间隔（秒）"""
+        text = self.hprof_interval_combo.currentText()
+        mapping = {
+            "30 秒": 30.0, "1 分钟": 60.0, "2 分钟": 120.0,
+            "5 分钟": 300.0, "10 分钟": 600.0,
+        }
+        return mapping.get(text, 120.0)
+
+    def get_selected_package(self) -> str:
+        """返回性能检测页左上角下拉框选中的应用包名"""
+        pkg = self.app_combo.currentText().strip()
+        return "" if pkg == "未检测到应用" else pkg
+
+    def _on_hprof_toggle(self, checked: bool):
+        """自动循环勾选状态变化：刷新间隔控件可用性并通知控制器"""
+        self.hprof_interval_combo.setEnabled(checked)
+        self.hprof_toggle_requested.emit(checked)
+
+    def set_packet_capturing(self, capturing: bool):
+        """更新抓包按钮外观与文案（由控制器回写，避免按钮/状态不同步）"""
+        self.packet_toggle_btn.blockSignals(True)
+        self.packet_toggle_btn.setChecked(capturing)
+        self.packet_toggle_btn.blockSignals(False)
+        if capturing:
+            self.packet_toggle_btn.setText("停止抓包")
+            self.packet_status_label.setText("抓包中…")
+            self.packet_status_label.setStyleSheet(
+                "font-size: 12px; color: #e74c3c; background: transparent;")
+        else:
+            self.packet_toggle_btn.setText("开始抓包")
+            self.packet_status_label.setText("未开始")
+            self.packet_status_label.setStyleSheet(
+                "font-size: 12px; color: #999999; background: transparent;")
+
+    def set_packet_status(self, text: str):
+        """更新抓包状态文字（例如完成路径 / 失败原因）"""
+        self.packet_status_label.setText(text)
 
     def _relayout_cards(self):
         """根据当前宽度决定是两列还是一列"""
@@ -655,24 +753,30 @@ class PerfView(QWidget):
                 card.setParent(self.cards_container)
                 card.setVisible(True)
                 self.cards_grid.addWidget(card, r, c)
-            # 性能工具占满一行，放在指标卡片下方
-            self._tool_card.setParent(self.cards_container)
-            self._tool_card.setVisible(True)
-            self.cards_grid.addWidget(self._tool_card, 2, 0, 1, 2)
+            # 堆转储、抓包两张卡片，放在指标卡片下方、各占半行
+            self._hprof_card.setParent(self.cards_container)
+            self._hprof_card.setVisible(True)
+            self.cards_grid.addWidget(self._hprof_card, 2, 0)
+            self._packet_card.setParent(self.cards_container)
+            self._packet_card.setVisible(True)
+            self.cards_grid.addWidget(self._packet_card, 2, 1)
         else:
             for i, key in enumerate(order):
                 card = self._cards[key]
                 card.setParent(self.cards_container)
                 card.setVisible(True)
                 self.cards_grid.addWidget(card, i, 0)
-            self._tool_card.setParent(self.cards_container)
-            self._tool_card.setVisible(True)
-            self.cards_grid.addWidget(self._tool_card, len(order), 0)
+            self._hprof_card.setParent(self.cards_container)
+            self._hprof_card.setVisible(True)
+            self.cards_grid.addWidget(self._hprof_card, len(order), 0)
+            self._packet_card.setParent(self.cards_container)
+            self._packet_card.setVisible(True)
+            self.cards_grid.addWidget(self._packet_card, len(order) + 1, 0)
 
         # 让多余空间落到最末行下方，而不是分散到卡片之间
         for r in range(0, 20):
             self.cards_grid.setRowStretch(r, 0)
-        used_rows = 3 if two_cols else 5
+        used_rows = 3 if two_cols else 6
         self.cards_grid.setRowStretch(used_rows, 1)
 
         self.cards_container.updateGeometry()
@@ -1009,8 +1113,13 @@ class PerfView(QWidget):
             if hasattr(card, 'apply_theme'):
                 card.apply_theme(theme_mode, has_wallpaper)
 
-        # 性能工具卡片：与指标卡片保持同一套配色
-        if self._tool_card is not None:
+        # 性能工具卡片（堆转储 / 抓包）：与指标卡片保持同一套配色
+        for tool_card, title_widget, dot_widget in (
+            (self._hprof_card, self._hprof_title, self._hprof_dot),
+            (self._packet_card, self._packet_title, self._packet_dot),
+        ):
+            if tool_card is None:
+                continue
             if is_dark:
                 tool_bg = "rgba(35, 36, 39, 0.85)" if has_wallpaper else "#232427"
                 tool_border = "#3a3a3a"
@@ -1019,15 +1128,34 @@ class PerfView(QWidget):
                 tool_bg = "rgba(232, 234, 237, 0.85)" if has_wallpaper else "#e8eaed"
                 tool_border = "#d0d0d0"
                 tool_title = "#333333"
-            self._tool_card.setStyleSheet(f"""
+            tool_card.setStyleSheet(f"""
                 #PerfToolCard {{
                     background-color: {tool_bg};
                     border: 1px solid {tool_border};
                     border-radius: 8px;
                 }}
+                #PerfToolCard QLabel {{
+                    color: {text};
+                    background: transparent;
+                }}
+                #PerfToolCard QComboBox {{
+                    background-color: {input_bg};
+                    color: {text};
+                    border: 1px solid {panel_border};
+                    border-radius: 4px;
+                    padding: 3px 8px;
+                    min-height: 22px;
+                }}
             """)
-            self._tool_title.setStyleSheet(
+            title_widget.setStyleSheet(
                 f"font-weight: 600; font-size: 13px; color: {tool_title}; background: transparent;"
             )
+            # 圆点颜色不随主题变（品牌色固定）
+            if dot_widget is self._hprof_dot:
+                dot_widget.setStyleSheet(
+                    "color: #e67e22; font-size: 14px; background: transparent;")
+            else:
+                dot_widget.setStyleSheet(
+                    "color: #9b59b6; font-size: 14px; background: transparent;")
 
         # 复选框颜色由父级 QSS 的 :enabled / :disabled 分支控制，无需额外刷新
