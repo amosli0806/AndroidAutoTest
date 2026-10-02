@@ -535,14 +535,20 @@ class PerfController(QObject):
                     [adb, "-s", serial, "shell", "am", "dumpheap",
                      str(pid), remote_path],
                     check=True, timeout=60, creationflags=creationflags,
+                    capture_output=True, text=True,
+                    encoding='utf-8', errors='replace',
                 )
                 subprocess.run(
                     [adb, "-s", serial, "pull", remote_path, local_path],
                     check=True, timeout=120, creationflags=creationflags,
+                    capture_output=True, text=True,
+                    encoding='utf-8', errors='replace',
                 )
                 subprocess.run(
                     [adb, "-s", serial, "shell", "rm", remote_path],
                     timeout=5, creationflags=creationflags,
+                    capture_output=True, text=True,
+                    encoding='utf-8', errors='replace',
                 )
                 self.hprof_finished.emit("success", local_path)
             except subprocess.CalledProcessError as e:
@@ -554,12 +560,8 @@ class PerfController(QObject):
                     )
                 except Exception:
                     pass
-                # 判断是否为「应用不可调试」这一最常见根因，给出可读提示
-                err_text = (e.stderr or "") + (e.output or "")
-                if "not debuggable" in err_text:
-                    self.hprof_finished.emit("error", "应用不可调试，无法转储堆")
-                else:
-                    self.hprof_finished.emit("error", str(e))
+                self.hprof_finished.emit(
+                    "error", self._hprof_fail_reason(e))
             except Exception as e:
                 try:
                     subprocess.run(
@@ -575,16 +577,29 @@ class PerfController(QObject):
         import threading
         threading.Thread(target=worker, daemon=True).start()
 
+    @staticmethod
+    def _hprof_fail_reason(e: 'subprocess.CalledProcessError') -> str:
+        """把 dumpheap/pull 的失败原因提炼成一句可读文案（日志用）"""
+        err_text = (e.stderr or "") + (e.stdout or "") + (e.output or "")
+        if "not debuggable" in err_text:
+            return "应用不可调试，无法转储堆"
+        # 取 stderr 里最有信息量的一行：优先异常详情行，跳过 "Exception occurred..." 标头
+        lines = [ln.strip() for ln in (e.stderr or "").splitlines() if ln.strip()]
+        for ln in lines:
+            if "Exception" in ln and "occurred" not in ln:
+                return ln
+        if lines:
+            return lines[0]
+        return f"adb 命令执行失败（退出码 {e.returncode}）"
+
     def _on_hprof_finished(self, status: str, message: str):
-        """堆转储结果回投到主线程：只在这里碰 GUI（toast / 日志）"""
+        """堆转储结果回投到主线程：只写虫师日志，不弹 toast"""
         if status == "success":
             if self.logs_view:
                 self.logs_view.add_log(f"[堆转储] 完成：{message}", "success")
-            show_toast(self.view, f"堆转储完成：{os.path.basename(message)}")
         else:
             if self.logs_view:
                 self.logs_view.add_log(f"[堆转储] 失败：{message}", "error")
-            show_toast(self.view, f"堆转储失败：{message}", duration=4000)
 
     def _on_packet_toggle(self, capturing: bool):
         """抓包开始/停止"""
