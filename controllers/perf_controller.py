@@ -124,6 +124,9 @@ class PerfController(QObject):
     perf_finished = pyqtSignal(int)   # 采样点数
     perf_alert = pyqtSignal(str)      # 异常文案
 
+    # 堆转储结果回投主线程（worker 线程不直接碰 GUI，避免跨线程操作导致界面未响应）
+    hprof_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
+
     def __init__(self, perf_model: PerfModel, perf_view,
                  device_service, project_model, step_model, suite_model,
                  logs_view=None, parent=None):
@@ -151,6 +154,9 @@ class PerfController(QObject):
         self._stats_timer = QTimer(self)
         self._stats_timer.setInterval(1000)
         self._stats_timer.timeout.connect(self._refresh_stats)
+
+        # 堆转储结果回主线程处理（toast / 日志）
+        self.hprof_finished.connect(self._on_hprof_finished)
 
         self._connect_signals()
         self._check_compat_on_startup()
@@ -513,10 +519,8 @@ class PerfController(QObject):
                 except Exception:
                     pid = None
                 if not pid:
-                    show_toast(self.view, f"堆转储失败：应用未运行", duration=4000)
-                    if self.logs_view:
-                        self.logs_view.add_log(
-                            f"[堆转储] 失败：应用「{package}」未在运行", "error")
+                    self.hprof_finished.emit(
+                        "error", f"应用「{package}」未在运行")
                     return
 
                 output_dir = _Settings.get_output_dir()
@@ -540,9 +544,7 @@ class PerfController(QObject):
                     [adb, "-s", serial, "shell", "rm", remote_path],
                     timeout=5, creationflags=creationflags,
                 )
-                if self.logs_view:
-                    self.logs_view.add_log(
-                        f"[堆转储] 完成：{local_path}", "success")
+                self.hprof_finished.emit("success", local_path)
             except subprocess.CalledProcessError as e:
                 # dumpheap/pull 失败：清掉设备侧可能残留的 0 字节空文件，避免堆积垃圾
                 try:
@@ -555,12 +557,9 @@ class PerfController(QObject):
                 # 判断是否为「应用不可调试」这一最常见根因，给出可读提示
                 err_text = (e.stderr or "") + (e.output or "")
                 if "not debuggable" in err_text:
-                    reason = "应用不可调试，无法转储堆"
+                    self.hprof_finished.emit("error", "应用不可调试，无法转储堆")
                 else:
-                    reason = str(e)
-                if self.logs_view:
-                    self.logs_view.add_log(f"[堆转储] 失败：{reason}", "error")
-                show_toast(self.view, f"堆转储失败：{reason}", duration=4000)
+                    self.hprof_finished.emit("error", str(e))
             except Exception as e:
                 try:
                     subprocess.run(
@@ -569,13 +568,23 @@ class PerfController(QObject):
                     )
                 except Exception:
                     pass
-                if self.logs_view:
-                    self.logs_view.add_log(f"[堆转储] 失败：{e}", "error")
+                self.hprof_finished.emit("error", str(e))
             finally:
                 self._hprof_dumping = False
 
         import threading
         threading.Thread(target=worker, daemon=True).start()
+
+    def _on_hprof_finished(self, status: str, message: str):
+        """堆转储结果回投到主线程：只在这里碰 GUI（toast / 日志）"""
+        if status == "success":
+            if self.logs_view:
+                self.logs_view.add_log(f"[堆转储] 完成：{message}", "success")
+            show_toast(self.view, f"堆转储完成：{os.path.basename(message)}")
+        else:
+            if self.logs_view:
+                self.logs_view.add_log(f"[堆转储] 失败：{message}", "error")
+            show_toast(self.view, f"堆转储失败：{message}", duration=4000)
 
     def _on_packet_toggle(self, capturing: bool):
         """抓包开始/停止"""
