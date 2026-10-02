@@ -43,13 +43,14 @@ class MetricCard(QFrame):
 
     def __init__(self, key, title, unit, color,
                  y_min=0, y_max=100,
-                 series=None, parent=None):
+                 series=None, show_legend=False, parent=None):
         """
         key: 指标键（'cpu' / 'mem' / 'fps' / 'traffic'）
         title: 卡片标题，如"CPU 使用率"
         unit: 单位（'%' / 'MB' / ''）
         color: 曲线主色
         series: [{'name': 'RX', 'color': '#xxx'}, ...]，支持多条曲线；None 时单条
+        show_legend: 是否显示图例（多序列时用于区分）
         """
         super().__init__(parent)
         self.setObjectName(f"MetricCard_{key}")
@@ -62,6 +63,8 @@ class MetricCard(QFrame):
         self._y_max = y_max
         self._theme_mode = ThemeMode.LIGHT
         self._alert = False
+        self._legend = None
+        self._show_legend = show_legend
 
         # 序列定义
         if series is None:
@@ -128,6 +131,13 @@ class MetricCard(QFrame):
                 'y': [],
                 'color': s['color'],
             }
+
+        # 多序列时显示图例（右上角，半透明底）
+        if self._show_legend:
+            self._legend = self.plot.addLegend(offset=(10, 10))
+            self._legend.setBrush(pg.mkBrush(255, 255, 255, 180))
+            for s in self._series:
+                self._legend.addItem(self._curves[s['name']]['curve'], s['name'])
 
         layout.addWidget(self.plot, 1)
 
@@ -300,6 +310,17 @@ class MetricCard(QFrame):
             axis = self.plot.getAxis(ax)
             axis.setPen(pg.mkPen(color=grid_color))
             axis.setTextPen(pg.mkPen(color='#888888' if theme_mode == ThemeMode.LIGHT else '#aaaaaa'))
+
+        # 图例配色随主题
+        if self._legend is not None:
+            if theme_mode == ThemeMode.DARK:
+                self._legend.setBrush(pg.mkBrush(35, 36, 39, 200))
+                self._legend.setLabelTextColor('#cccccc')
+                self._legend.setPen(pg.mkPen('#3a3a3a'))
+            else:
+                self._legend.setBrush(pg.mkBrush(255, 255, 255, 180))
+                self._legend.setLabelTextColor('#555555')
+                self._legend.setPen(pg.mkPen('#d0d0d0'))
 
 class StatCard(QFrame):
     """纯数字展示卡片（用于卡顿统计、启动耗时等）"""
