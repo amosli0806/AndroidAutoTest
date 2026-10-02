@@ -340,8 +340,9 @@ class PerfView(QWidget):
             else:
                 cb.setEnabled(False)
 
-        # 堆转储间隔：仅在「自动循环」勾选时可用
-        self.hprof_interval_combo.setEnabled(self.hprof_enable_check.isChecked())
+        # 堆转储设置：监控中锁定（自动循环勾选与间隔不可改）；空闲时按勾选状态开放间隔
+        self.hprof_enable_check.setEnabled(idle)
+        self.hprof_interval_combo.setEnabled(idle and self.hprof_enable_check.isChecked())
         # 置灰时只显示文案，不显示图标
         for btn, icon_name in self._btn_icon_map.items():
             if btn.isEnabled():
@@ -469,7 +470,20 @@ class PerfView(QWidget):
         for key, label in [('fps', 'FPS'), ('traffic', '流量')]:
             cb = BorderedCheckBox(label)
             self.metric_radios[key] = cb
+            # 勾选状态联动下方卡片显隐
+            cb.toggled.connect(self._on_card_visibility_changed)
             row2.addWidget(cb)
+
+        # 卡片显隐开关：勾选才显示下方对应工具卡片（不参与采样指标）
+        self.hprof_visible_check = BorderedCheckBox("堆转储")
+        self.hprof_visible_check.setChecked(True)
+        self.hprof_visible_check.toggled.connect(self._on_card_visibility_changed)
+        row2.addWidget(self.hprof_visible_check)
+
+        self.packet_visible_check = BorderedCheckBox("抓包")
+        self.packet_visible_check.setChecked(True)
+        self.packet_visible_check.toggled.connect(self._on_card_visibility_changed)
+        row2.addWidget(self.packet_visible_check)
 
         row2.addSpacing(24)
 
@@ -734,8 +748,12 @@ class PerfView(QWidget):
         """更新抓包状态文字（例如完成路径 / 失败原因）"""
         self.packet_status_label.setText(text)
 
+    def _on_card_visibility_changed(self, *_):
+        """显隐开关变化：重新布局卡片"""
+        self._relayout_cards()
+
     def _relayout_cards(self):
-        """根据当前宽度决定是两列还是一列"""
+        """根据当前宽度决定是两列还是一列，并按勾选状态决定哪些卡片显示"""
         # 清空布局
         while self.cards_grid.count():
             item = self.cards_grid.takeAt(0)
@@ -745,40 +763,53 @@ class PerfView(QWidget):
         width = self.scroll.viewport().width() if self.scroll else 900
         two_cols = width >= 900
 
-        order = ['cpu', 'mem', 'fps', 'traffic']
+        # 可见指标卡片：CPU/内存常驻；FPS/流量按勾选显示
+        visible_metrics = ['cpu', 'mem']
+        if self.metric_radios['fps'].isChecked():
+            visible_metrics.append('fps')
+        if self.metric_radios['traffic'].isChecked():
+            visible_metrics.append('traffic')
+        for key, card in self._cards.items():
+            card.setParent(self.cards_container)
+            card.setVisible(key in visible_metrics)
+
+        # 可见工具卡片：按勾选显示
+        tool_checks = {
+            'hprof': self.hprof_visible_check, 'packet': self.packet_visible_check}
+        tool_cards = {'hprof': self._hprof_card, 'packet': self._packet_card}
+        shown_tools = [tool_cards[k] for k in ('hprof', 'packet')
+                       if tool_checks[k].isChecked()]
+        for tc in tool_cards.values():
+            tc.setParent(self.cards_container)
+            tc.setVisible(tc in shown_tools)
+
         if two_cols:
-            # 4 个指标卡片 2×2 排布
-            for i, key in enumerate(order):
-                r = i // 2
-                c = i % 2
-                card = self._cards[key]
-                card.setParent(self.cards_container)
-                card.setVisible(True)
-                self.cards_grid.addWidget(card, r, c)
-            # 堆转储、抓包两张卡片，放在指标卡片下方、各占半行
-            self._hprof_card.setParent(self.cards_container)
-            self._hprof_card.setVisible(True)
-            self.cards_grid.addWidget(self._hprof_card, 2, 0)
-            self._packet_card.setParent(self.cards_container)
-            self._packet_card.setVisible(True)
-            self.cards_grid.addWidget(self._packet_card, 2, 1)
+            # 指标卡片 2 列排布
+            for i, key in enumerate(visible_metrics):
+                self.cards_grid.addWidget(self._cards[key], i // 2, i % 2)
+            next_row = (len(visible_metrics) + 1) // 2
+            if len(shown_tools) == 2:
+                self.cards_grid.addWidget(shown_tools[0], next_row, 0)
+                self.cards_grid.addWidget(shown_tools[1], next_row, 1)
+                used_rows = next_row + 1
+            elif len(shown_tools) == 1:
+                # 只显示一张工具卡时占满一行
+                self.cards_grid.addWidget(shown_tools[0], next_row, 0, 1, 2)
+                used_rows = next_row + 1
+            else:
+                used_rows = next_row
         else:
-            for i, key in enumerate(order):
-                card = self._cards[key]
-                card.setParent(self.cards_container)
-                card.setVisible(True)
-                self.cards_grid.addWidget(card, i, 0)
-            self._hprof_card.setParent(self.cards_container)
-            self._hprof_card.setVisible(True)
-            self.cards_grid.addWidget(self._hprof_card, len(order), 0)
-            self._packet_card.setParent(self.cards_container)
-            self._packet_card.setVisible(True)
-            self.cards_grid.addWidget(self._packet_card, len(order) + 1, 0)
+            for i, key in enumerate(visible_metrics):
+                self.cards_grid.addWidget(self._cards[key], i, 0)
+            row = len(visible_metrics)
+            for tc in shown_tools:
+                self.cards_grid.addWidget(tc, row, 0)
+                row += 1
+            used_rows = row
 
         # 让多余空间落到最末行下方，而不是分散到卡片之间
         for r in range(0, 20):
             self.cards_grid.setRowStretch(r, 0)
-        used_rows = 3 if two_cols else 6
         self.cards_grid.setRowStretch(used_rows, 1)
 
         self.cards_container.updateGeometry()
