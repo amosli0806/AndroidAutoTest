@@ -513,7 +513,10 @@ class PerfController(QObject):
                 except Exception:
                     pid = None
                 if not pid:
-                    show_toast(self.view, f"未找到运行中的进程：{package}")
+                    show_toast(self.view, f"堆转储失败：应用「{package}」未在运行", duration=4000)
+                    if self.logs_view:
+                        self.logs_view.add_log(
+                            f"[堆转储] 失败：应用「{package}」未在运行", "error")
                     return
 
                 output_dir = _Settings.get_output_dir()
@@ -550,13 +553,14 @@ class PerfController(QObject):
                 except Exception:
                     pass
                 # 判断是否为「应用不可调试」这一最常见根因，给出可读提示
-                if "not debuggable" in (e.stderr or "") or "not debuggable" in (e.output or ""):
-                    reason = "应用不是 debug 包，系统拒绝转储其堆（需 debuggable 构建或 root）"
+                err_text = (e.stderr or "") + (e.output or "")
+                if "not debuggable" in err_text:
+                    reason = "应用不是 debug 包，无法转储堆（需 debuggable 构建或 root 权限）"
                 else:
                     reason = str(e)
                 if self.logs_view:
                     self.logs_view.add_log(f"[堆转储] 失败：{reason}", "error")
-                show_toast(self.view, f"堆转储失败：{reason}")
+                show_toast(self.view, f"堆转储失败：{reason}", duration=4000)
             except Exception as e:
                 try:
                     subprocess.run(
