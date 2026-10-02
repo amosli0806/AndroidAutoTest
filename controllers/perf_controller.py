@@ -593,13 +593,11 @@ class PerfController(QObject):
         return f"adb 命令执行失败（退出码 {e.returncode}）"
 
     def _on_hprof_finished(self, status: str, message: str):
-        """堆转储结果回投到主线程：只写虫师日志，不弹 toast"""
+        """堆转储结果回投到主线程：只弹 toast 结论，不写日志、不展示异常信息"""
         if status == "success":
-            if self.logs_view:
-                self.logs_view.add_log(f"[堆转储] 完成：{message}", "success")
+            show_toast(self.view, "堆转储完成")
         else:
-            if self.logs_view:
-                self.logs_view.add_log(f"[堆转储] 失败：{message}", "error")
+            show_toast(self.view, "堆转储失败", duration=4000)
 
     def _on_packet_toggle(self, capturing: bool):
         """抓包开始/停止"""
