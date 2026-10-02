@@ -3,7 +3,7 @@
 import os
 import base64
 from datetime import datetime
-from models.perf_model import PerfSession, compare_stats
+from models.perf_model import PerfSession, compare_stats, MEM_CATEGORIES
 
 
 # 各指标的 Chart.js 绘图脚本（普通字符串，非 f-string，花括号无需转义）
@@ -59,38 +59,26 @@ CHART_JS_MEM = """new Chart(document.getElementById('memChart'), {
     }
 });"""
 
-CHART_JS_MEM_DUAL = """new Chart(document.getElementById('memChart'), {
+CHART_JS_MEM_BREAKDOWN = """new Chart(document.getElementById('memChart'), {
     type: 'line',
     data: {
         labels: timestamps,
         datasets: [
-            {
-                label: '应用内存 PSS (MB)',
-                data: memData,
-                borderColor: '#27ae60',
-                backgroundColor: 'rgba(39,174,96,0.1)',
-                borderWidth: 2,
-                fill: true,
-                tension: 0.3
-            },
-            {
-                label: '系统可用内存 (MB)',
-                data: memAvailData,
-                borderColor: '#3498db',
-                backgroundColor: 'rgba(52,152,219,0.08)',
-                borderWidth: 2,
-                fill: false,
-                tension: 0.3
-            }
+            { label: 'Java', data: javaData, borderColor: '#f39c12', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
+            { label: 'Native', data: nativeData, borderColor: '#9b59b6', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
+            { label: 'Graphics', data: graphicsData, borderColor: '#e74c3c', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
+            { label: 'Stack', data: stackData, borderColor: '#1abc9c', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
+            { label: 'Code', data: codeData, borderColor: '#3498db', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
+            { label: 'Others', data: othersData, borderColor: '#95a5a6', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 }
         ]
     },
     options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: true }, title: { display: true, text: '内存占用 (MB)' } },
+        plugins: { legend: { display: true, position: 'top' }, title: { display: true, text: '内存占用 (分类拆解, MB)' } },
         scales: {
             x: { display: true, title: { display: true, text: '时间 (秒)' } },
-            y: { beginAtZero: true }
+            y: { beginAtZero: true, title: { display: true, text: 'MB' } }
         },
         elements: { point: { radius: 0 } }
     }
@@ -172,7 +160,7 @@ class PerfReportGenerator:
         timestamps = []
         cpu_series = []
         mem_series = []
-        mem_avail_series = []
+        mem_cat_series = {cat: [] for cat, _l, _c in MEM_CATEGORIES}
         fps_series = []
         rx_rate_series = []   # 流量速率（KB/s），按相邻采样差分
         tx_rate_series = []
@@ -186,7 +174,10 @@ class PerfReportGenerator:
                 timestamps.append(f"{t - t0:.1f}")
                 cpu_series.append(f"{s.cpu_percent:.2f}")
                 mem_series.append(f"{s.mem_pss_mb:.2f}")
-                mem_avail_series.append(f"{getattr(s, 'mem_avail_mb', 0.0):.2f}")
+                for cat, _l, _c in MEM_CATEGORIES:
+                    mem_cat_series[cat].append(
+                        f"{s.mem_breakdown.get(cat, 0.0):.2f}"
+                    )
                 fps_series.append(str(s.fps))
                 # 流量速率：相邻采样点差分换算 KB/s（首次只记基准不画点）
                 if prev_rx is not None and prev_ts is not None and (t - prev_ts) > 0:
@@ -239,6 +230,8 @@ class PerfReportGenerator:
 
         # 是否采集了流量指标
         has_traffic = 'traffic' in metrics
+        # 是否采集到了内存分类拆解（旧数据无拆解时退回单线 PSS）
+        has_mem_breakdown = any(s.mem_breakdown for s in samples)
 
         # 关键指标汇总卡片：只展示本次勾选采集的指标，每项含峰值/均值/最低
         summary_cards_html = ""
@@ -330,9 +323,10 @@ class PerfReportGenerator:
         <div class="chart-wrap">
             <canvas id="memChart"></canvas>
         </div>"""
-            # 采集到了系统可用内存时画双线（PSS + 可用内存），否则保持单线
-            has_mem_avail = any(getattr(s, 'mem_avail_mb', 0.0) > 0 for s in samples)
-            chart_scripts.append(CHART_JS_MEM_DUAL if has_mem_avail else CHART_JS_MEM)
+            # 采集到了分类拆解时画 Android Studio 风格堆叠面积图，否则保持单线 PSS
+            chart_scripts.append(
+                CHART_JS_MEM_BREAKDOWN if has_mem_breakdown else CHART_JS_MEM
+            )
         if 'fps' in metrics:
             charts_section += """
         <div class="chart-wrap">
@@ -539,7 +533,12 @@ class PerfReportGenerator:
         const timestamps = [{','.join(timestamps)}];
         const cpuData = [{','.join(cpu_series)}];
         const memData = [{','.join(mem_series)}];
-        const memAvailData = [{','.join(mem_avail_series)}];
+        const javaData = [{','.join(mem_cat_series['Java'])}];
+        const nativeData = [{','.join(mem_cat_series['Native'])}];
+        const graphicsData = [{','.join(mem_cat_series['Graphics'])}];
+        const stackData = [{','.join(mem_cat_series['Stack'])}];
+        const codeData = [{','.join(mem_cat_series['Code'])}];
+        const othersData = [{','.join(mem_cat_series['Others'])}];
         const fpsData = [{','.join(fps_series)}];
         const rxRateData = [{','.join(rx_rate_series)}];
         const txRateData = [{','.join(tx_rate_series)}];

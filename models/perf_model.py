@@ -8,13 +8,27 @@ from typing import List, Optional
 
 from utils.app_paths import data_path
 
+
+# Android Studio 风格的内存分类拆解：(分类键, 展示名, 曲线颜色)
+# 由 dumpsys meminfo 的 App Summary 归类而来：
+#   Java / Native / Graphics / Stack / Code / Others
+MEM_CATEGORIES = [
+    ("Java", "Java", "#f39c12"),
+    ("Native", "Native", "#9b59b6"),
+    ("Graphics", "Graphics", "#e74c3c"),
+    ("Stack", "Stack", "#1abc9c"),
+    ("Code", "Code", "#3498db"),
+    ("Others", "Others", "#95a5a6"),
+]
+
+
 @dataclass
 class PerfSample:
     """单个采样点"""
     timestamp: float = 0.0            # 采集时间（unix 秒）
     cpu_percent: float = 0.0          # CPU 占用率（%）
-    mem_pss_mb: float = 0.0           # 内存 PSS（MB）
-    mem_avail_mb: float = 0.0         # 系统可用内存（MB），0 表示未采集到
+    mem_pss_mb: float = 0.0           # 内存 PSS 总量（MB）
+    mem_breakdown: dict = field(default_factory=dict)  # 分类拆解 {'Java': MB, ...}
     fps: int = 0                      # 帧率
     rx_bytes: int = 0                 # 接收字节（累计）
     tx_bytes: int = 0                 # 发送字节（累计）
@@ -116,12 +130,17 @@ class PerfSession:
             stat = calc([s.mem_pss_mb for s in self.samples if s.mem_pss_mb > 0])
             stat['current'] = self.samples[-1].mem_pss_mb
             result['mem'] = stat
-            # 系统可用内存（旧会话数据没有该字段，全 0 时不产出，兼容基线对比）
-            avail_values = [s.mem_avail_mb for s in self.samples if s.mem_avail_mb > 0]
-            if avail_values:
-                avail_stat = calc(avail_values)
-                avail_stat['current'] = self.samples[-1].mem_avail_mb
-                result['mem_avail'] = avail_stat
+            # 内存分类拆解（Java/Native/Graphics/Stack/Code/Others，旧数据无拆解时跳过）
+            breakdown = {}
+            for cat, _lbl, _color in MEM_CATEGORIES:
+                vals = [s.mem_breakdown.get(cat, 0.0) for s in self.samples
+                        if s.mem_breakdown.get(cat, 0.0) > 0]
+                if vals:
+                    cs = calc(vals)
+                    cs['current'] = self.samples[-1].mem_breakdown.get(cat, 0.0)
+                    breakdown[cat] = cs
+            if breakdown:
+                result['mem_breakdown'] = breakdown
         # FPS
         if 'fps' in self.metrics:
             stat = calc([s.fps for s in self.samples if s.fps > 0])
@@ -194,13 +213,15 @@ def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.
         _row('mem_avg', '内存均值 (MB)', b.get('avg'), c.get('avg'))
         _row('mem_current', '内存当前 (MB)', b.get('current'), c.get('current'))
         _row('mem_min', '内存最低 (MB)', b.get('min'), c.get('min'))
-    # 系统可用内存：越低说明系统内存越紧张（旧基线无此项时自动跳过）
-    b, c = base_metrics.get('mem_avail'), cur_stats.get('mem_avail')
-    if _is_stats(b) and _is_stats(c):
-        _row('mem_avail_avg', '可用内存均值 (MB)',
-             b.get('avg'), c.get('avg'), lower_is_worse=True)
-        _row('mem_avail_min', '可用内存最低 (MB)',
-             b.get('min'), c.get('min'), lower_is_worse=True)
+    # 内存分类拆解对比（各分类峰值，旧数据无拆解时自动跳过）
+    bb = base_metrics.get('mem_breakdown', {})
+    cc = cur_stats.get('mem_breakdown', {})
+    if isinstance(bb, dict) and isinstance(cc, dict):
+        for cat, lbl, _color in MEM_CATEGORIES:
+            bcat, ccat = bb.get(cat), cc.get(cat)
+            if _is_stats(bcat) and _is_stats(ccat):
+                _row(f'mem_{cat}', f'{lbl} 内存峰值 (MB)',
+                     bcat.get('max'), ccat.get('max'))
     b, c = base_metrics.get('fps'), cur_stats.get('fps')
     if _is_stats(b) and _is_stats(c):
         _row('fps', 'FPS 均值', b.get('avg'), c.get('avg'), lower_is_worse=True)
@@ -291,6 +312,8 @@ class PerfModel:
                 print(f"[PerfModel] 基线加载失败: {e}")
                 self.baselines = []
 
+        self._migrate_baseline_breakdown()
+
         if os.path.exists(self.LAUNCH_FILE):
             try:
                 with open(self.LAUNCH_FILE, 'r', encoding='utf-8') as f:
@@ -314,6 +337,24 @@ class PerfModel:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"[PerfModel] 保存失败: {e}")
+
+    def _migrate_baseline_breakdown(self):
+        """旧基线的统计快照里没有内存分类拆解（该功能上线前保存的基线），
+        导致基线对比表缺 Java/Native 等分类行。这里在加载时从其关联会话
+        补算一次并写回，会话已删除或会话本身无拆解数据时保持原样。"""
+        changed = False
+        for b in self.baselines:
+            if not isinstance(b.metrics, dict) or 'mem_breakdown' in b.metrics:
+                continue
+            session = self.get_session(b.session_id)
+            if session is None:
+                continue
+            breakdown = session.get_stats().get('mem_breakdown')
+            if breakdown:
+                b.metrics['mem_breakdown'] = breakdown
+                changed = True
+        if changed:
+            self.save_baselines()
 
     def save_baselines(self):
         try:
