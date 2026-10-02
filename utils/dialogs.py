@@ -1,6 +1,7 @@
 # utils/dialogs.py
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                             QPushButton, QFrame, QLineEdit, QGraphicsDropShadowEffect)
+                             QPushButton, QFrame, QLineEdit, QGraphicsDropShadowEffect,
+                             QScrollArea)
 from PyQt6.QtCore import Qt, QPoint
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QBrush, QFont
 from utils.theme import Theme, ThemeMode
@@ -76,8 +77,21 @@ class ConfirmDeleteDialog(QDialog):
         if detail:
             detail_label = QLabel(detail)
             detail_label.setWordWrap(True)
-            detail_label.setStyleSheet("font-size: 13px; color: #888;")
-            msg_layout.addWidget(detail_label)
+            detail_label.setStyleSheet(
+                "font-size: 13px; color: #888; background: transparent;"
+            )
+            # 明细放进无框滚动区：内容少时原样展示，内容多时限制高度滚动查看，
+            # 避免整窗超出屏幕
+            detail_scroll = QScrollArea()
+            detail_scroll.setWidgetResizable(True)
+            detail_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            detail_scroll.setStyleSheet(
+                "QScrollArea { background: transparent; border: none; }"
+            )
+            detail_scroll.viewport().setAutoFillBackground(False)
+            detail_scroll.setMaximumHeight(200)
+            detail_scroll.setWidget(detail_label)
+            msg_layout.addWidget(detail_scroll)
         container_layout.addLayout(msg_layout)
 
         btn_layout = QHBoxLayout()
@@ -263,8 +277,21 @@ class WarningDialog(QDialog):
         if detail:
             detail_label = QLabel(detail)
             detail_label.setWordWrap(True)
-            detail_label.setStyleSheet("font-size: 13px; color: #888;")
-            msg_layout.addWidget(detail_label)
+            detail_label.setStyleSheet(
+                "font-size: 13px; color: #888; background: transparent;"
+            )
+            # 明细放进无框滚动区：内容少时原样展示，内容多时限制高度滚动查看，
+            # 避免整窗超出屏幕
+            detail_scroll = QScrollArea()
+            detail_scroll.setWidgetResizable(True)
+            detail_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            detail_scroll.setStyleSheet(
+                "QScrollArea { background: transparent; border: none; }"
+            )
+            detail_scroll.viewport().setAutoFillBackground(False)
+            detail_scroll.setMaximumHeight(200)
+            detail_scroll.setWidget(detail_label)
+            msg_layout.addWidget(detail_scroll)
         container_layout.addLayout(msg_layout)
 
         btn_layout = QHBoxLayout()
@@ -361,8 +388,21 @@ class ErrorDialog(QDialog):
         if detail:
             detail_label = QLabel(detail)
             detail_label.setWordWrap(True)
-            detail_label.setStyleSheet("font-size: 13px; color: #888;")
-            msg_layout.addWidget(detail_label)
+            detail_label.setStyleSheet(
+                "font-size: 13px; color: #888; background: transparent;"
+            )
+            # 明细放进无框滚动区：内容少时原样展示，内容多时限制高度滚动查看，
+            # 避免整窗超出屏幕
+            detail_scroll = QScrollArea()
+            detail_scroll.setWidgetResizable(True)
+            detail_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            detail_scroll.setStyleSheet(
+                "QScrollArea { background: transparent; border: none; }"
+            )
+            detail_scroll.viewport().setAutoFillBackground(False)
+            detail_scroll.setMaximumHeight(200)
+            detail_scroll.setWidget(detail_label)
+            msg_layout.addWidget(detail_scroll)
         container_layout.addLayout(msg_layout)
 
         btn_layout = QHBoxLayout()
@@ -462,8 +502,21 @@ class QuestionDialog(QDialog):
         if detail:
             detail_label = QLabel(detail)
             detail_label.setWordWrap(True)
-            detail_label.setStyleSheet("font-size: 13px; color: #888;")
-            msg_layout.addWidget(detail_label)
+            detail_label.setStyleSheet(
+                "font-size: 13px; color: #888; background: transparent;"
+            )
+            # 明细放进无框滚动区：内容少时原样展示，内容多时限制高度滚动查看，
+            # 避免整窗超出屏幕
+            detail_scroll = QScrollArea()
+            detail_scroll.setWidgetResizable(True)
+            detail_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            detail_scroll.setStyleSheet(
+                "QScrollArea { background: transparent; border: none; }"
+            )
+            detail_scroll.viewport().setAutoFillBackground(False)
+            detail_scroll.setMaximumHeight(200)
+            detail_scroll.setWidget(detail_label)
+            msg_layout.addWidget(detail_scroll)
         container_layout.addLayout(msg_layout)
 
         btn_layout = QHBoxLayout()

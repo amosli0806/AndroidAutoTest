@@ -509,13 +509,22 @@ class PerfController(QObject):
             with open(path, 'w', newline='', encoding='utf-8-sig') as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    'timestamp', 'cpu_percent', 'mem_pss_mb', 'mem_avail_mb',
+                    'timestamp', 'cpu_percent', 'mem_pss_mb',
+                    'mem_java_mb', 'mem_native_mb', 'mem_graphics_mb',
+                    'mem_stack_mb', 'mem_code_mb', 'mem_others_mb',
                     'fps', 'rx_bytes', 'tx_bytes'
                 ])
                 for s in session.samples:
+                    bd = getattr(s, 'mem_breakdown', {}) or {}
                     writer.writerow([
                         f"{s.timestamp:.3f}", f"{s.cpu_percent:.2f}",
-                        f"{s.mem_pss_mb:.2f}", f"{getattr(s, 'mem_avail_mb', 0.0):.2f}",
+                        f"{s.mem_pss_mb:.2f}",
+                        f"{bd.get('Java', 0.0):.2f}",
+                        f"{bd.get('Native', 0.0):.2f}",
+                        f"{bd.get('Graphics', 0.0):.2f}",
+                        f"{bd.get('Stack', 0.0):.2f}",
+                        f"{bd.get('Code', 0.0):.2f}",
+                        f"{bd.get('Others', 0.0):.2f}",
                         s.fps,
                         s.rx_bytes, s.tx_bytes
                     ])
@@ -604,21 +613,27 @@ class PerfController(QObject):
             return
 
         worse = [r for r in rows if r['status'] == 'worse']
+
+        def _fmt(r, digits=2):
+            return (f"{r['label']}：基线 {r['base']:.{digits}f} → "
+                    f"本次 {r['cur']:.{digits}f}（{r['change_pct']:+.1f}%）")
+
         line = "；".join(
             f"{r['label']} {r['base']:.1f}→{r['cur']:.1f}（{r['change_pct']:+.1f}%）"
             for r in rows
         )
         if worse:
-            detail = "\n".join(
-                f"• {r['label']}：基线 {r['base']:.2f} → 本次 {r['cur']:.2f}（{r['change_pct']:+.1f}%）"
-                for r in worse
+            detail = "\n".join(f"• {_fmt(r)}" for r in worse)
+            full_detail = (
+                f"完整对比（共 {len(rows)} 项，其中明显劣化 {len(worse)} 项）：\n"
+                + "\n".join(f"• {_fmt(r)}" for r in rows)
             )
             WarningDialog.show_warning(
                 self.view,
                 "性能劣化告警",
                 f"对比基线：{baseline.name}\n\n"
                 f"检测到 {len(worse)} 项指标明显劣化：\n\n{detail}",
-                f"完整对比：{line}"
+                full_detail
             )
             if self.logs_view:
                 self.logs_view.add_log(
