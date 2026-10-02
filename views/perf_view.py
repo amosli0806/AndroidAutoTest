@@ -637,16 +637,18 @@ class PerfView(QWidget):
         hprof_ctrl_row = QHBoxLayout()
         hprof_ctrl_row.setSpacing(10)
         self.hprof_enable_check = BorderedCheckBox("自动循环")
-        self.hprof_enable_check.setToolTip("开启后按右侧间隔自动对所选应用执行堆转储")
+        self.hprof_enable_check.setToolTip(
+            "开启后，点击「开始监控」即按右侧间隔自动对所选应用执行堆转储\n"
+            "（第一次转储在一个完整间隔后执行）")
         self.hprof_enable_check.toggled.connect(self._on_hprof_toggle)
         hprof_ctrl_row.addWidget(self.hprof_enable_check)
 
         hprof_ctrl_row.addWidget(QLabel("间隔:"))
         self.hprof_interval_combo = QComboBox()
         self.hprof_interval_combo.addItems(
-            ["30 秒", "1 分钟", "2 分钟", "5 分钟", "10 分钟"]
+            ["1 分钟", "5 分钟", "10 分钟", "30 分钟", "60 分钟", "120 分钟"]
         )
-        self.hprof_interval_combo.setCurrentText("2 分钟")
+        self.hprof_interval_combo.setCurrentText("5 分钟")
         self.hprof_interval_combo.setFixedWidth(100)
         self.hprof_interval_combo.setEnabled(False)
         self.hprof_interval_combo.currentTextChanged.connect(
@@ -697,10 +699,10 @@ class PerfView(QWidget):
         """返回堆转储循环间隔（秒）"""
         text = self.hprof_interval_combo.currentText()
         mapping = {
-            "30 秒": 30.0, "1 分钟": 60.0, "2 分钟": 120.0,
-            "5 分钟": 300.0, "10 分钟": 600.0,
+            "1 分钟": 60.0, "5 分钟": 300.0, "10 分钟": 600.0,
+            "30 分钟": 1800.0, "60 分钟": 3600.0, "120 分钟": 7200.0,
         }
-        return mapping.get(text, 120.0)
+        return mapping.get(text, 300.0)
 
     def get_selected_package(self) -> str:
         """返回性能检测页左上角下拉框选中的应用包名"""
@@ -1145,6 +1147,15 @@ class PerfView(QWidget):
                     border-radius: 4px;
                     padding: 3px 8px;
                     min-height: 22px;
+                }}
+                #PerfToolCard QCheckBox {{
+                    background: transparent;
+                }}
+                #PerfToolCard QCheckBox:enabled {{
+                    color: {text};
+                }}
+                #PerfToolCard QCheckBox:disabled {{
+                    color: {disabled_text};
                 }}
             """)
             title_widget.setStyleSheet(

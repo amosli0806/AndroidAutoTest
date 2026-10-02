@@ -278,6 +278,10 @@ class PerfController(QObject):
         # 启动统计定时器
         self._stats_timer.start()
 
+        # 堆转储自动循环：勾选了「自动循环」则随监控一起启动（第一次转储在一个完整间隔后）
+        if self.view.hprof_enable_check.isChecked():
+            self._start_hprof_loop()
+
         # 根据模式更新视图状态
         if mode == 'scenario':
             # 场景化：同时启动用例执行线程
@@ -355,6 +359,8 @@ class PerfController(QObject):
             self.scenario_worker = None
 
         self._stats_timer.stop()
+        # 堆转储自动循环随监控结束而停止（勾选状态保留，作为下次监控的预设）
+        self._stop_hprof_loop()
 
         # 结束会话
         if self.current_session:
@@ -432,11 +438,14 @@ class PerfController(QObject):
     # 堆转储 / 抓包（性能检测页工具卡片）
     # ------------------------------------------------------------------
     def _on_hprof_toggle(self, enabled: bool):
-        """堆转储自动循环开关"""
-        if enabled:
-            self._start_hprof_loop()
-        else:
+        """堆转储自动循环开关。
+
+        勾选只是「预设」：监控未开始时不启动循环；监控进行中切换勾选则实时生效。
+        """
+        if not enabled:
             self._stop_hprof_loop()
+        elif self.perf_worker is not None:
+            self._start_hprof_loop()
 
     def _on_hprof_interval_changed(self):
         """间隔变更：若循环正在跑，重启定时器以套用新间隔"""
@@ -459,10 +468,9 @@ class PerfController(QObject):
         if self._hprof_loop_timer is None:
             self._hprof_loop_timer = QTimer(self)
             self._hprof_loop_timer.timeout.connect(self._dump_hprof_now)
+        # 不立即执行：等一个完整间隔后触发第一次转储
         self._hprof_loop_timer.start(
             int(self.view.get_hprof_interval() * 1000))
-        # 立即执行一次，避免用户等一个完整间隔
-        self._dump_hprof_now()
 
     def _stop_hprof_loop(self):
         if self._hprof_loop_timer is not None:
