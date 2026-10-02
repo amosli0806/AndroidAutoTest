@@ -43,9 +43,9 @@ class PerfService:
 
         if 'mem' in metrics:
             try:
-                pss_mb, avail_mb = self._collect_mem(package)
+                pss_mb, breakdown = self._collect_mem(package)
                 sample.mem_pss_mb = pss_mb
-                sample.mem_avail_mb = avail_mb
+                sample.mem_breakdown = breakdown
             except Exception as e:
                 sample.errors.append(f"mem:{e}")
 
@@ -136,24 +136,85 @@ class PerfService:
     # ============================================================
     def _collect_mem(self, package: str) -> tuple:
         """
-        一次 shell 调用同时采集应用与系统内存（单位 MB）：
-          - 应用 TOTAL PSS：dumpsys meminfo <pkg> 输出中找 TOTAL 行
-          - 系统可用内存：/proc/meminfo 的 MemAvailable
-        返回 (pss_mb, avail_mb)。
+        采集应用内存，返回 (pss_mb, breakdown)：
+          - pss_mb：应用 TOTAL PSS（MB）
+          - breakdown：Android Studio 风格分类拆解 dict，如
+            {'Java': 61.8, 'Native': 12.3, 'Graphics': 5.0, ...}（单位 MB）
         """
-        out = shell_text(
-            self.device,
-            f"dumpsys meminfo {package}; echo ===MEMINFO===; cat /proc/meminfo",
-        )
-        pss_mb, avail_mb = 0.0, 0.0
+        out = shell_text(self.device, f"dumpsys meminfo {package}")
+        pss_mb = 0.0
+        breakdown = {}
         if out:
-            m = re.search(r"TOTAL\s+(\d+)", out)
+            # TOTAL PSS 优先取 App Summary，回退到进程明细表 TOTAL 行
+            m = re.search(r"TOTAL PSS:\s*(\d+)", out)
+            if not m:
+                m = re.search(r"TOTAL\s+(\d+)", out)
             if m:
                 pss_mb = int(m.group(1)) / 1024.0  # KB -> MB
-            ma = re.search(r"MemAvailable:\s+(\d+)\s*kB", out)
-            if ma:
-                avail_mb = int(ma.group(1)) / 1024.0
-        return pss_mb, avail_mb
+            breakdown = self._parse_mem_breakdown(out)
+        return pss_mb, breakdown
+
+    def _parse_mem_breakdown(self, out: str) -> dict:
+        """把 dumpsys meminfo 输出拆成 Android Studio 风格分类（单位 MB）。
+
+        优先解析 App Summary（Android 8.0+，分类与 Android Studio 一一对应）：
+          Java Heap / Native Heap / Code / Stack / Graphics / Private Other / System
+        无 App Summary 时回退到进程明细表，按行归类。
+        """
+        cats: dict = {}
+        # Private Other 与 System 都归入 Others，累加合并
+        for label, key in [
+            ("Java Heap", "Java"),
+            ("Native Heap", "Native"),
+            ("Code", "Code"),
+            ("Stack", "Stack"),
+            ("Graphics", "Graphics"),
+            ("Private Other", "Others"),
+            ("System", "Others"),
+        ]:
+            m = re.search(rf"{label}:\s*(\d+)", out)
+            if m:
+                cats[key] = round(cats.get(key, 0.0) + int(m.group(1)) / 1024.0, 2)
+        if cats:
+            return cats
+        return self._parse_mem_table(out)
+
+    def _parse_mem_table(self, out: str) -> dict:
+        """回退路径：无 App Summary 的旧版本，解析进程明细表并按行归类。"""
+        row_map = {
+            "Native Heap": "Native",
+            "Dalvik Heap": "Java",
+            "Gfx dev": "Graphics",
+            "GL mtrack": "Graphics",
+            "EGL mtrack": "Graphics",
+            "Stack": "Stack",
+            ".so mmap": "Code",
+            ".jar mmap": "Code",
+            ".apk mmap": "Code",
+            ".ttf mmap": "Code",
+            ".dex mmap": "Code",
+            ".oat mmap": "Code",
+            ".art mmap": "Java",
+        }
+        skip_prefix = (
+            "Pss", "------", "TOTAL", "** MEMINFO", "Objects", "SQL",
+            "DATABASES", "App Summary", "Java Heap:", "Native Heap:",
+            "Code:", "Stack:", "Graphics:", "Private Other:", "System:",
+            "TOTAL PSS", "TOTAL RSS",
+        )
+        cats = {"Java": 0.0, "Native": 0.0, "Graphics": 0.0,
+                "Stack": 0.0, "Code": 0.0, "Others": 0.0}
+        for line in out.splitlines():
+            s = line.strip()
+            if not s or s.startswith(skip_prefix):
+                continue
+            m = re.match(r"^([A-Za-z.\s]+?)\s+(\d+)", s)
+            if not m:
+                continue
+            name = m.group(1).strip()
+            val = int(m.group(2)) / 1024.0  # KB -> MB
+            cats[row_map.get(name, "Others")] += val
+        return {k: round(v, 2) for k, v in cats.items() if v > 0}
 
     # ============================================================
     # FPS
