@@ -206,7 +206,9 @@ def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.
 
     b, c = base_metrics.get('cpu'), cur_stats.get('cpu')
     if _is_stats(b) and _is_stats(c):
+        _row('cpu_avg', 'CPU 均值 (%)', b.get('avg'), c.get('avg'))
         _row('cpu', 'CPU 峰值 (%)', b.get('max'), c.get('max'))
+        _row('cpu_min', 'CPU 最低 (%)', b.get('min'), c.get('min'))
     b, c = base_metrics.get('mem'), cur_stats.get('mem')
     if _is_stats(b) and _is_stats(c):
         _row('mem_avg', 'Total均值 (MB)', b.get('avg'), c.get('avg'))
@@ -227,7 +229,10 @@ def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.
                      bcat.get('min'), ccat.get('min'))
     b, c = base_metrics.get('fps'), cur_stats.get('fps')
     if _is_stats(b) and _is_stats(c):
-        _row('fps', 'FPS 均值', b.get('avg'), c.get('avg'), lower_is_worse=True)
+        # FPS 越低越差（帧率掉了才是劣化），与 CPU 方向相反
+        _row('fps_avg', 'FPS 均值', b.get('avg'), c.get('avg'), lower_is_worse=True)
+        _row('fps', 'FPS 峰值', b.get('max'), c.get('max'), lower_is_worse=True)
+        _row('fps_min', 'FPS 最低', b.get('min'), c.get('min'), lower_is_worse=True)
     b, c = base_metrics.get('traffic'), cur_stats.get('traffic')
     if _is_stats(b) and _is_stats(c):
         base_total = b.get('rx_mb', 0) + b.get('tx_mb', 0)

@@ -611,12 +611,13 @@ class PerfCompareDialog(QDialog):
             arrow = "↑" if delta > 0 else ("↓" if delta < 0 else "—")
             return f"{arrow} {pct:+.1f}%", worse
 
-        # CPU
+        # CPU（均值/峰值/最低，越高越差）
         b = self.baseline.metrics.get('cpu', {})
         c = self.current_stats.get('cpu', {})
         if b and c:
-            change, worse = calc_change(b.get('max', 0), c.get('max', 0))
-            rows.append(('CPU 峰值(%)', fmt(b.get('max', 0)), fmt(c.get('max', 0)), change, worse))
+            for lbl, key in (('CPU 均值(%)', 'avg'), ('CPU 峰值(%)', 'max'), ('CPU 最低(%)', 'min')):
+                change, worse = calc_change(b.get(key, 0), c.get(key, 0))
+                rows.append((lbl, fmt(b.get(key, 0)), fmt(c.get(key, 0)), change, worse))
 
         # 内存
         b = self.baseline.metrics.get('mem', {})
@@ -655,12 +656,13 @@ class PerfCompareDialog(QDialog):
                      fmt(ccat.get('min', 0)), change, worse)
                 )
 
-        # FPS
+        # FPS（均值/峰值/最低，越低越差）
         b = self.baseline.metrics.get('fps', {})
         c = self.current_stats.get('fps', {})
         if b and c:
-            change, worse = calc_change(b.get('avg', 0), c.get('avg', 0), is_reverse=True)
-            rows.append(('FPS 均值', fmt(b.get('avg', 0)), fmt(c.get('avg', 0)), change, worse))
+            for lbl, key in (('FPS 均值', 'avg'), ('FPS 峰值', 'max'), ('FPS 最低', 'min')):
+                change, worse = calc_change(b.get(key, 0), c.get(key, 0), is_reverse=True)
+                rows.append((lbl, fmt(b.get(key, 0)), fmt(c.get(key, 0)), change, worse))
 
         self.table.setRowCount(len(rows))
         for i, row in enumerate(rows):
