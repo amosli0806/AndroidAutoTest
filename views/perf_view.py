@@ -474,14 +474,12 @@ class PerfView(QWidget):
             cb.toggled.connect(self._on_card_visibility_changed)
             row2.addWidget(cb)
 
-        # 卡片显隐开关：勾选才显示下方对应工具卡片（不参与采样指标）
+        # 卡片显隐开关：勾选才显示下方对应工具卡片（不参与采样指标，默认不勾选）
         self.hprof_visible_check = BorderedCheckBox("堆转储")
-        self.hprof_visible_check.setChecked(True)
         self.hprof_visible_check.toggled.connect(self._on_card_visibility_changed)
         row2.addWidget(self.hprof_visible_check)
 
         self.packet_visible_check = BorderedCheckBox("抓包")
-        self.packet_visible_check.setChecked(True)
         self.packet_visible_check.toggled.connect(self._on_card_visibility_changed)
         row2.addWidget(self.packet_visible_check)
 
@@ -793,8 +791,8 @@ class PerfView(QWidget):
                 self.cards_grid.addWidget(shown_tools[1], next_row, 1)
                 used_rows = next_row + 1
             elif len(shown_tools) == 1:
-                # 只显示一张工具卡时占满一行
-                self.cards_grid.addWidget(shown_tools[0], next_row, 0, 1, 2)
+                # 只显示一张工具卡时也只占半行宽，与上方指标卡对齐
+                self.cards_grid.addWidget(shown_tools[0], next_row, 0)
                 used_rows = next_row + 1
             else:
                 used_rows = next_row
