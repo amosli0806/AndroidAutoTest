@@ -1310,13 +1310,16 @@ class SettingsDialog(QDialog):
             btn_primary_bg = "#1976d2"
             btn_primary_fg = "#ffffff"
             btn_primary_hover = "#1565c0"
+            btn_primary_pressed = "#0d47a1"
             btn_secondary_bg = "#3c3c3c"
             btn_secondary_fg = "#eeeeee"
             btn_secondary_hover = "#4a4a4a"
+            btn_secondary_pressed = "#3a3a3a"
             btn_secondary_border = "#555555"
             danger_bg = "#c0392b"
             danger_fg = "#ffffff"
             danger_hover = "#e74c3c"
+            danger_pressed = "#96281b"
             bottom_border = "#393b40"
             scroll_track = "rgba(58, 58, 58, 0.5)"
             scroll_handle = "#666666"
@@ -1339,13 +1342,16 @@ class SettingsDialog(QDialog):
             btn_primary_bg = "#1976d2"
             btn_primary_fg = "#ffffff"
             btn_primary_hover = "#1565c0"
+            btn_primary_pressed = "#0d47a1"
             btn_secondary_bg = "#f0f0f0"
             btn_secondary_fg = "#333333"
             btn_secondary_hover = "#e0e0e0"
+            btn_secondary_pressed = "#d0d0d0"
             btn_secondary_border = "#d0d0d0"
             danger_bg = "#e74c3c"
             danger_fg = "#ffffff"
             danger_hover = "#c0392b"
+            danger_pressed = "#96281b"
             bottom_border = "#e0e0e0"
             scroll_track = "#e0e0e0"
             scroll_handle = "#c0c0c0"
@@ -1555,6 +1561,9 @@ class SettingsDialog(QDialog):
             #SettingsDialog QPushButton:hover {{
                 background-color: {btn_secondary_hover};
             }}
+            #SettingsDialog QPushButton:pressed {{
+                background-color: {btn_secondary_pressed};
+            }}
 
             /* ---------- 设备维护：恢复输入法 ---------- */
             #SettingsDialog QPushButton#restoreImeBtn {{
@@ -1566,6 +1575,10 @@ class SettingsDialog(QDialog):
             #SettingsDialog QPushButton#restoreImeBtn:hover {{
                 background-color: #5dade2;
                 border-color: #5dade2;
+            }}
+            #SettingsDialog QPushButton#restoreImeBtn:pressed {{
+                background-color: #216692;
+                border-color: #216692;
             }}
 
             /* ---------- 数据维护：清理无用数据 ----------
@@ -1581,6 +1594,10 @@ class SettingsDialog(QDialog):
                 background-color: #5dade2;
                 border-color: #5dade2;
             }}
+            #SettingsDialog QPushButton#cleanupDataBtn:pressed {{
+                background-color: #216692;
+                border-color: #216692;
+            }}
 
             /* ---------- 危险操作按钮（移除壁纸） ---------- */
             #SettingsDialog QPushButton#dangerBtn {{
@@ -1591,6 +1608,10 @@ class SettingsDialog(QDialog):
             #SettingsDialog QPushButton#dangerBtn:hover {{
                 background-color: {danger_hover};
                 border-color: {danger_hover};
+            }}
+            #SettingsDialog QPushButton#dangerBtn:pressed {{
+                background-color: {danger_pressed};
+                border-color: {danger_pressed};
             }}
 
             /* ---------- 壁纸预设缩略图 ---------- */
@@ -1657,6 +1678,11 @@ class SettingsDialog(QDialog):
             #SettingsDialog QPushButton#applyBtn:hover {{
                 background-color: {btn_primary_hover};
                 border-color: {btn_primary_hover};
+            }}
+            #SettingsDialog QPushButton#okBtn:pressed,
+            #SettingsDialog QPushButton#applyBtn:pressed {{
+                background-color: {btn_primary_pressed};
+                border-color: {btn_primary_pressed};
             }}
 
             /* ---------- 底部分隔线 ---------- */
