@@ -337,16 +337,13 @@ class PerfView(QWidget):
                   self.stop_on_fail_check):
             w.setEnabled(scenario_on and idle)
 
-        # 指标单选按钮：运行中禁用；空闲/暂停时按设备兼容性恢复
+        # 指标单选按钮：非空闲一律禁用（暂停也是监控中，指标已在开始时锁定）
         for key, cb in self.metric_radios.items():
-            if idle or paused:
-                cb.setEnabled(self._metric_available.get(key, True))
-            else:
-                cb.setEnabled(False)
+            cb.setEnabled(idle and self._metric_available.get(key, True))
 
-        # 堆转储/抓包的「卡片显隐」复选框：与指标复选框一致，运行中禁用（暂停时开放）
-        self.hprof_visible_check.setEnabled(idle or paused)
-        self.packet_visible_check.setEnabled(idle or paused)
+        # 堆转储/抓包的「卡片显隐」复选框：同口径，非空闲禁用
+        self.hprof_visible_check.setEnabled(idle)
+        self.packet_visible_check.setEnabled(idle)
 
         # 堆转储设置：监控中锁定（自动循环勾选与间隔不可改）；空闲时按勾选状态开放间隔
         self.hprof_enable_check.setEnabled(idle)
@@ -466,6 +463,7 @@ class PerfView(QWidget):
         self.resume_btn = QPushButton("继续")
         self.resume_btn.clicked.connect(self.resume_requested.emit)
         self.stop_btn = QPushButton("停止")
+        self.stop_btn.setObjectName("dangerBtn")   # 危险语义：可用时红色
         self.stop_btn.clicked.connect(self.stop_requested.emit)
         # 记录图标名，置灰时清空图标
         self._btn_icon_map = {
@@ -1145,6 +1143,10 @@ class PerfView(QWidget):
                     }}
                     QPushButton:pressed {{
                         background-color: {'#c62828' if is_dark else '#96281b'};
+                    }}
+                    QPushButton:disabled {{
+                        background-color: {'#555' if is_dark else '#b0b0b0'};
+                        color: {'#888' if is_dark else '#e0e0e0'};
                     }}
                 """)
             else:
