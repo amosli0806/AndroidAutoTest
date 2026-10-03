@@ -10,7 +10,7 @@ from models.perf_model import PerfSession, compare_stats, MEM_CATEGORIES
 CHART_JS_CPU = """new Chart(document.getElementById('cpuChart'), {
     type: 'line',
     data: {
-        labels: timestamps,
+        labels: axisLabels,
         datasets: [{
             label: 'CPU (%)',
             data: cpuData,
@@ -26,7 +26,7 @@ CHART_JS_CPU = """new Chart(document.getElementById('cpuChart'), {
         maintainAspectRatio: false,
         plugins: { legend: { display: false }, title: { display: true, text: 'CPU 使用率 (%)' } },
         scales: {
-            x: { display: true, title: { display: true, text: '时间 (秒)' } },
+            x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
             y: { beginAtZero: true }
         },
         elements: { point: { radius: 0 } }
@@ -36,7 +36,7 @@ CHART_JS_CPU = """new Chart(document.getElementById('cpuChart'), {
 CHART_JS_MEM = """new Chart(document.getElementById('memChart'), {
     type: 'line',
     data: {
-        labels: timestamps,
+        labels: axisLabels,
         datasets: [{
             label: '内存 (MB)',
             data: memData,
@@ -52,7 +52,7 @@ CHART_JS_MEM = """new Chart(document.getElementById('memChart'), {
         maintainAspectRatio: false,
         plugins: { legend: { display: false }, title: { display: true, text: '内存占用 (MB)' } },
         scales: {
-            x: { display: true, title: { display: true, text: '时间 (秒)' } },
+            x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
             y: { beginAtZero: true }
         },
         elements: { point: { radius: 0 } }
@@ -62,7 +62,7 @@ CHART_JS_MEM = """new Chart(document.getElementById('memChart'), {
 CHART_JS_MEM_BREAKDOWN = """new Chart(document.getElementById('memChart'), {
     type: 'line',
     data: {
-        labels: timestamps,
+        labels: axisLabels,
         datasets: [
             { label: 'Total', data: memData, borderColor: '#27ae60', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Java', data: javaData, borderColor: '#f39c12', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
@@ -78,7 +78,7 @@ CHART_JS_MEM_BREAKDOWN = """new Chart(document.getElementById('memChart'), {
         maintainAspectRatio: false,
         plugins: { legend: { display: true, position: 'top' }, title: { display: true, text: '内存占用 (分类拆解, MB)' } },
         scales: {
-            x: { display: true, title: { display: true, text: '时间 (秒)' } },
+            x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
             y: { beginAtZero: true, title: { display: true, text: 'MB' } }
         },
         elements: { point: { radius: 0 } }
@@ -88,7 +88,7 @@ CHART_JS_MEM_BREAKDOWN = """new Chart(document.getElementById('memChart'), {
 CHART_JS_FPS = """new Chart(document.getElementById('fpsChart'), {
     type: 'line',
     data: {
-        labels: timestamps,
+        labels: axisLabels,
         datasets: [{
             label: 'FPS',
             data: fpsData,
@@ -104,7 +104,7 @@ CHART_JS_FPS = """new Chart(document.getElementById('fpsChart'), {
         maintainAspectRatio: false,
         plugins: { legend: { display: false }, title: { display: true, text: 'FPS 帧率' } },
         scales: {
-            x: { display: true, title: { display: true, text: '时间 (秒)' } },
+            x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
             y: { beginAtZero: true }
         },
         elements: { point: { radius: 0 } }
@@ -114,7 +114,7 @@ CHART_JS_FPS = """new Chart(document.getElementById('fpsChart'), {
 CHART_JS_TRAFFIC = """new Chart(document.getElementById('trafficChart'), {
     type: 'line',
     data: {
-        labels: timestamps,
+        labels: axisLabels,
         datasets: [
             {
                 label: '接收 (KB/s)',
@@ -141,7 +141,7 @@ CHART_JS_TRAFFIC = """new Chart(document.getElementById('trafficChart'), {
         maintainAspectRatio: false,
         plugins: { legend: { display: true }, title: { display: true, text: '流量速率 (KB/s)' } },
         scales: {
-            x: { display: true, title: { display: true, text: '时间 (秒)' } },
+            x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
             y: { beginAtZero: true }
         },
         elements: { point: { radius: 0 } }
@@ -189,6 +189,27 @@ class PerfReportGenerator:
                     rx_rate_series.append("0")
                     tx_rate_series.append("0")
                 prev_rx, prev_tx, prev_ts = s.rx_bytes, s.tx_bytes, t
+
+            # 根据总时长选横轴单位，长会话（如 12 小时）显示「时:分」而非几万秒
+            total_secs = samples[-1].timestamp - samples[0].timestamp
+            if total_secs >= 3600:
+                axis_unit = "时:分"
+                axis_labels = [
+                    f"{int(ts // 3600)}:{int(ts % 3600 // 60):02d}"
+                    for ts in (s.timestamp - t0 for s in samples)
+                ]
+            elif total_secs >= 60:
+                axis_unit = "分:秒"
+                axis_labels = [
+                    f"{int(ts // 60)}:{int(ts % 60):02d}"
+                    for ts in (s.timestamp - t0 for s in samples)
+                ]
+            else:
+                axis_unit = "秒"
+                axis_labels = timestamps
+        else:
+            axis_unit = "秒"
+            axis_labels = timestamps
 
         # 汇总信息
         app_pkg = session.app_package
@@ -532,6 +553,8 @@ class PerfReportGenerator:
 
     <script>
         const timestamps = [{','.join(timestamps)}];
+        const axisLabels = [{','.join(f"'{l}'" for l in axis_labels)}];
+        const axisUnit = '{axis_unit}';
         const cpuData = [{','.join(cpu_series)}];
         const memData = [{','.join(mem_series)}];
         const javaData = [{','.join(mem_cat_series['Java'])}];
