@@ -622,6 +622,13 @@ class PerfView(QWidget):
         # 性能工具卡片：堆转储 / 抓包（原来挂在 ADB 工具箱，移到性能检测页）
         self._build_tool_cards()
 
+        # 创建即按默认勾选状态隐藏（FPS/流量/堆转储/抓包默认未勾选），
+        # 避免首次打开页面时这些卡片在 _relayout_cards 之前闪现一帧
+        self._cards['fps'].setVisible(False)
+        self._cards['traffic'].setVisible(False)
+        self._hprof_card.setVisible(False)
+        self._packet_card.setVisible(False)
+
         # 初始布局
         self._relayout_cards()
 
