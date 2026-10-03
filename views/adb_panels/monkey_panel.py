@@ -67,7 +67,7 @@ class MonkeyPanel(QWidget):
         # 标题行
         header_row = panel_header(
             "Monkey 测试",
-            "随机事件压测；留空包名表示全设备。受限车机对 -p 参数不生效时，"
+            "随机事件压测。受限车机不生效时，"
             "可把「启动方式」切换为白名单文件"
         )
 
@@ -751,6 +751,9 @@ class MonkeyPanel(QWidget):
             #MonkeyPanel QPushButton#selectBtn:hover {{
                 background-color: {select_hover};
             }}
+            #MonkeyPanel QPushButton#selectBtn:pressed {{
+                background-color: #216692;
+            }}
             #MonkeyPanel QPushButton#startBtn {{
                 background-color: {start_bg};
                 color: white;
@@ -761,6 +764,9 @@ class MonkeyPanel(QWidget):
             }}
             #MonkeyPanel QPushButton#startBtn:hover {{
                 background-color: {start_hover};
+            }}
+            #MonkeyPanel QPushButton#startBtn:pressed {{
+                background-color: #1f8b4c;
             }}
             #MonkeyPanel QPushButton#startBtn:disabled {{
                 background-color: {disabled_bg};
@@ -777,6 +783,9 @@ class MonkeyPanel(QWidget):
             #MonkeyPanel QPushButton#stopBtn:hover {{
                 background-color: {stop_hover};
             }}
+            #MonkeyPanel QPushButton#stopBtn:pressed {{
+                background-color: #96281b;
+            }}
             #MonkeyPanel QPushButton#stopBtn:disabled {{
                 background-color: {disabled_bg};
                 color: {disabled_fg};
@@ -790,5 +799,8 @@ class MonkeyPanel(QWidget):
             }}
             #MonkeyPanel QPushButton#okBtn:hover {{
                 background-color: #2ecc71;
+            }}
+            #MonkeyPanel QPushButton#okBtn:pressed {{
+                background-color: #1f8b4c;
             }}
         """)

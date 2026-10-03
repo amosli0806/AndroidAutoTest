@@ -542,6 +542,9 @@ class WeakNetworkPanel(QWidget):
             #WeakNetworkPanel QPushButton#helpBtn:hover {{
                 background-color: {help_hover};
             }}
+            #WeakNetworkPanel QPushButton#helpBtn:pressed {{
+                background-color: #216692;
+            }}
             #WeakNetworkPanel QPushButton#applyBtn {{
                 background-color: {apply_bg};
                 color: white;
@@ -552,6 +555,9 @@ class WeakNetworkPanel(QWidget):
             }}
             #WeakNetworkPanel QPushButton#applyBtn:hover {{
                 background-color: {apply_hover};
+            }}
+            #WeakNetworkPanel QPushButton#applyBtn:pressed {{
+                background-color: #1f8b4c;
             }}
             #WeakNetworkPanel QPushButton#applyBtn:disabled {{
                 background-color: {disabled_bg};
@@ -567,6 +573,9 @@ class WeakNetworkPanel(QWidget):
             }}
             #WeakNetworkPanel QPushButton#clearBtn:hover {{
                 background-color: {clear_hover};
+            }}
+            #WeakNetworkPanel QPushButton#clearBtn:pressed {{
+                background-color: #b9770e;
             }}
             #WeakNetworkPanel QPushButton#clearBtn:disabled {{
                 background-color: {disabled_bg};

@@ -749,6 +749,9 @@ class AdbToolboxView(QWidget):
             #AdbToolboxView QPushButton#ExecuteSelBtn:hover {{
                 background-color: #2ecc71;
             }}
+            #AdbToolboxView QPushButton#ExecuteSelBtn:pressed {{
+                background-color: #1f8b4c;
+            }}
             #AdbToolboxView QPushButton#ExecuteSelBtn:disabled {{
                 background-color: #f39c12;
                 color: white;
@@ -770,6 +773,9 @@ class AdbToolboxView(QWidget):
             }}
             #AdbToolboxView QPushButton#SearchBtn:hover {{
                 background-color: {search_hover};
+            }}
+            #AdbToolboxView QPushButton#SearchBtn:pressed {{
+                background-color: #216692;
             }}
             #AdbToolboxView QLineEdit {{
                 background-color: {input_bg};

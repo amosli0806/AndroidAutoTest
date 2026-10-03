@@ -740,6 +740,7 @@ class MainWindow(QMainWindow):
                 max-height: 26px;
             }
             QToolBar QPushButton:hover { background: #1565c0; border-color: #1565c0; }
+            QToolBar QPushButton:pressed { background: #0d47a1; border-color: #0d47a1; }
             QToolBar QPushButton#menuBtn {
                 background: transparent;
                 border: none;
@@ -1671,6 +1672,7 @@ class MainWindow(QMainWindow):
                     max-height: 26px;
                 }}
                 QToolBar QPushButton:hover {{ background: rgba(21, 101, 192, 0.95); border-color: rgba(21, 101, 192, 0.95); }}
+                QToolBar QPushButton:pressed {{ background: rgba(13, 71, 161, 0.95); border-color: rgba(13, 71, 161, 0.95); }}
                 QToolBar QPushButton#menuBtn {{
                     background: transparent;
                     border: none;
@@ -1949,6 +1951,7 @@ class MainWindow(QMainWindow):
                 max-height: 26px;
             }}
             QToolBar QPushButton:hover {{ background: rgba(21, 101, 192, 0.95); border-color: rgba(21, 101, 192, 0.95); }}
+            QToolBar QPushButton:pressed {{ background: rgba(13, 71, 161, 0.95); border-color: rgba(13, 71, 161, 0.95); }}
             QToolBar QPushButton#menuBtn {{
                 background: transparent;
                 border: none;
