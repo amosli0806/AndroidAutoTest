@@ -25,7 +25,7 @@ PRESET_COMMANDS = [
     },
     {
         "id": 3,
-        "name": "录屏",
+        "name": "录屏三分钟",
         # 使用 screenrecord 命令录制 3 分钟视频，文件名包含时间戳
         "command_text": "shell screenrecord --time-limit 180 /sdcard/video_{timestamp}.mp4",
         "description": "录制3分钟视频",
