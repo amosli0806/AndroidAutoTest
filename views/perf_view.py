@@ -525,9 +525,10 @@ class PerfView(QWidget):
         self.loop_spin.setValue(1)
         self.loop_spin.setFixedWidth(70)
         self.stop_on_fail_check = BorderedCheckBox("失败停止")
+        # 组内控件已带「套件:/循环:/失败停止」标签，组名省去避免「场景 套件:」语义重复
         self.scenario_group = _make_group(
-            "场景", [self.suite_label, self.suite_combo,
-                     self.loop_label, self.loop_spin, self.stop_on_fail_check])
+            None, [self.suite_label, self.suite_combo,
+                   self.loop_label, self.loop_spin, self.stop_on_fail_check])
         flow2.addWidget(self.scenario_group)
 
         c_layout.addWidget(flow_host2)
