@@ -9,6 +9,8 @@ import sys
 import threading
 import re
 import time
+import os
+import tempfile
 
 import qtawesome as qta
 from PyQt6.QtWidgets import (
@@ -43,6 +45,7 @@ class MonkeyPanel(QWidget):
         self.monkey_pid = None
         self.monkey_running = False
         self.monitor_thread = None
+        self._whitelist_remote = None  # 白名单文件方式时设备侧的文件路径
 
         self.setObjectName("MonkeyPanel")
 
@@ -64,7 +67,8 @@ class MonkeyPanel(QWidget):
         # 标题行
         header_row = panel_header(
             "Monkey 测试",
-            "随机事件压测；留空包名表示全设备，事件比例可在「高级选项」里调整"
+            "随机事件压测；留空包名表示全设备。受限车机对 -p 参数不生效时，"
+            "可把「启动方式」切换为白名单文件"
         )
 
         # 开始 / 停止按钮放在标题行右侧
@@ -123,6 +127,20 @@ class MonkeyPanel(QWidget):
         pkg_row.addWidget(self.select_pkg_btn)
         grid.addWidget(form_label("包名:"), 1, 0)
         grid.addWidget(pkg_cell, 1, 1, 1, 3)
+
+        # 启动方式：部分受限车机 ROM 对 -p 参数不生效（点开始后设备没动作），
+        # 白名单文件方式（--pkg-whitelist-file）在这类系统上通常可用
+        grid.addWidget(form_label("启动方式:"), 2, 0)
+        self.start_mode = QComboBox()
+        self.start_mode.addItem("-p 参数（默认）", "param")
+        self.start_mode.addItem("白名单文件（兼容受限系统）", "whitelist")
+        self.start_mode.setToolTip(
+            "白名单文件方式：把上面选择（可多选）的包名写入白名单文件推送到设备，\n"
+            "以 --pkg-whitelist-file 启动 Monkey。\n"
+            "若使用默认 -p 参数点「开始」后设备没动作，可切换此方式试试。")
+        idx = self.start_mode.findData(Settings.get_monkey_start_mode())
+        self.start_mode.setCurrentIndex(idx if idx >= 0 else 0)
+        grid.addWidget(self.start_mode, 2, 1, 1, 3)
 
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(3, 1)
@@ -261,6 +279,25 @@ class MonkeyPanel(QWidget):
         except Exception:
             return ""
 
+    def _remove_whitelist_file(self, remote_path):
+        """删除设备侧 Monkey 白名单文件（尽力而为，失败忽略）。
+
+        纯 subprocess 调用、不碰 UI，后台线程可直接调用。
+        """
+        if not remote_path:
+            return
+        serial = self._get_serial()
+        if not serial:
+            return
+        try:
+            subprocess.run(
+                [get_adb_path(), "-s", serial, "shell", "rm", "-f", remote_path],
+                capture_output=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
+            )
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------
     def _check_running_monkey(self):
         out = self._run_adb_cmd(["shell", "pgrep", "monkey"], timeout=5)
@@ -297,6 +334,10 @@ class MonkeyPanel(QWidget):
                     ["shell", "ps", "-p", str(self.monkey_pid)], timeout=5
                 )
                 if not re.search(rf'\b{self.monkey_pid}\b', out):
+                    # Monkey 结束：顺手清理设备侧白名单文件（后台线程，无 UI 操作）
+                    if self._whitelist_remote:
+                        self._remove_whitelist_file(self._whitelist_remote)
+                        self._whitelist_remote = None
                     self.monkey_running = False
                     self.monkey_pid = None
                     # 回主线程更新 UI
@@ -389,10 +430,18 @@ class MonkeyPanel(QWidget):
         event_count = self.event_count.value()
         seed = self.seed.value()
         pkg_str = self.pkg.text().strip()
-        # 记住这次用的包名，下次打开面板直接带出来（存在本机 data/config.json）
+        # 记住这次用的包名和启动方式，下次打开面板直接带出来（存在本机 data/config.json）
         Settings.set_monkey_package(pkg_str)
+        start_mode = self.start_mode.currentData() or 'param'
+        Settings.set_monkey_start_mode(start_mode)
 
         pkgs = [p.strip() for p in pkg_str.split(',') if p.strip()] if pkg_str else []
+
+        # 白名单文件方式：文件里必须有包（空白名单 monkey 没有可跑的包，会直接退出）
+        if start_mode == 'whitelist' and not pkgs:
+            WarningDialog.show_warning(
+                self, "提示", "白名单文件方式需要至少选择一个包名")
+            return
 
         for p in pkgs:
             if not re.match(r'^[a-zA-Z0-9_.]+$', p):
@@ -406,10 +455,18 @@ class MonkeyPanel(QWidget):
                 WarningDialog.show_warning(self, "错误", f"包名 {p} 不存在于设备上")
                 return
 
-        # 组装 monkey 命令
+        # 组装 monkey 命令。
+        # 白名单文件方式：把多选的包名写进白名单文件推到设备，以
+        # --pkg-whitelist-file 启动 —— 部分受限车机 ROM 对 -p 参数不生效
+        # （点开始后设备没动作），这种方式在这类系统上通常可用。
+        whitelist_remote = None
         cmd = ["shell", "monkey"]
-        for p in pkgs:
-            cmd.extend(["-p", p])
+        if start_mode == 'whitelist':
+            whitelist_remote = "/data/local/tmp/chongshi_monkey_whitelist.txt"
+            cmd.extend(["--pkg-whitelist-file", whitelist_remote])
+        else:
+            for p in pkgs:
+                cmd.extend(["-p", p])
         cmd.extend(["-s", str(seed)])
 
         if self.advanced_group.isChecked():
@@ -453,13 +510,35 @@ class MonkeyPanel(QWidget):
         self.start_btn.setEnabled(False)
         self.start_btn.setText("启动中...")
         self.stop_btn.setEnabled(True)
-        self._log("正在启动 Monkey...")
+        self._whitelist_remote = whitelist_remote
+        if start_mode == 'whitelist':
+            self._log(f"白名单文件方式：{len(pkgs)} 个包名，正在推送到设备...")
+        else:
+            self._log("正在启动 Monkey...")
 
         full_cmd = [get_adb_path(), "-s", serial] + cmd
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
         def run():
             try:
+                if whitelist_remote:
+                    # 白名单文件：每行一个包名，写到系统临时目录后推到设备
+                    local_txt = os.path.join(
+                        tempfile.gettempdir(), "chongshi_monkey_whitelist.txt")
+                    with open(local_txt, 'w', encoding='utf-8') as f:
+                        f.write('\n'.join(pkgs) + '\n')
+                    push = subprocess.run(
+                        [get_adb_path(), "-s", serial, "push",
+                         local_txt, whitelist_remote],
+                        capture_output=True, text=True, timeout=15,
+                        creationflags=creationflags,
+                        encoding='utf-8', errors='replace',
+                    )
+                    if push.returncode != 0:
+                        raise RuntimeError(
+                            "白名单文件推送失败: "
+                            f"{(push.stderr or push.stdout or '').strip()}")
+
                 self.process = subprocess.Popen(
                     full_cmd,
                     stdout=subprocess.DEVNULL,
@@ -483,10 +562,14 @@ class MonkeyPanel(QWidget):
                 self._start_monitor_thread()
                 if self.process:
                     self.process.wait()
+                # Monkey 自然结束：清理设备侧白名单文件
+                self._remove_whitelist_file(whitelist_remote)
             except Exception as e:
+                self._remove_whitelist_file(whitelist_remote)
                 QTimer.singleShot(0, lambda: self._log(f"启动失败: {e}"))
                 self.monkey_running = False
                 self.monkey_pid = None
+                self._whitelist_remote = None
                 QTimer.singleShot(0, self._on_monkey_stopped)
 
         threading.Thread(target=run, daemon=True).start()
@@ -500,6 +583,11 @@ class MonkeyPanel(QWidget):
             self._run_adb_cmd(["shell", "kill", "-9", str(self.monkey_pid)], timeout=5)
         else:
             self._run_adb_cmd(["shell", "pkill", "monkey"], timeout=5)
+
+        # 白名单方式启动时，顺手删掉设备侧的白名单文件
+        if self._whitelist_remote:
+            self._remove_whitelist_file(self._whitelist_remote)
+            self._whitelist_remote = None
 
         self.monkey_running = False
         self.monkey_pid = None

@@ -366,3 +366,20 @@ class Settings:
         settings = cls.load()
         settings['monkey_package'] = str(package or '').strip()
         cls.save(settings)
+
+    @classmethod
+    def get_monkey_start_mode(cls) -> str:
+        """Monkey 启动方式：'param'（-p 参数，默认）或 'whitelist'（白名单文件）。
+
+        部分受限车机 ROM 对 -p 参数不生效（点了开始设备没动作），
+        白名单文件方式（--pkg-whitelist-file）通常可用。
+        """
+        settings = cls.load()
+        mode = str(settings.get('monkey_start_mode', '') or '').strip()
+        return mode if mode in ('param', 'whitelist') else 'param'
+
+    @classmethod
+    def set_monkey_start_mode(cls, mode: str):
+        settings = cls.load()
+        settings['monkey_start_mode'] = str(mode or '').strip()
+        cls.save(settings)
