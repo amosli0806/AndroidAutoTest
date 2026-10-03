@@ -317,6 +317,7 @@ class PerfBaselineDialog(QDialog):
 
         self.compare_btn = QPushButton("与当前会话对比")
         self.compare_btn.setIcon(qta.icon('fa6s.code-compare', color='white'))
+        self.compare_btn.setFixedHeight(34)  # 与左列「删除」按钮等高
         self.compare_btn.setEnabled(False)
         self.compare_btn.clicked.connect(self._on_compare)
         right.addWidget(self.compare_btn)
