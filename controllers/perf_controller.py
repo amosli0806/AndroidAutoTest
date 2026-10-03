@@ -25,12 +25,15 @@ class PerfWorker(QThread):
     error_occurred = pyqtSignal(str)
     finished_all = pyqtSignal()
 
-    def __init__(self, device_service, package, metrics, interval, parent=None):
+    def __init__(self, device_service, package, metrics, interval,
+                 duration_minutes=None, parent=None):
         super().__init__(parent)
         self.device_service = device_service
         self.package = package
         self.metrics = metrics
         self.interval = max(0.1, interval)
+        # 监控时长上限（分钟）：None = 不限时；到点后线程自然退出并 emit finished_all
+        self.duration_minutes = duration_minutes
         self._running = True
         self._paused = False
 
@@ -54,7 +57,15 @@ class PerfWorker(QThread):
         except Exception:
             pass
 
+        # 监控时长上限：按墙钟计算（含暂停期间），到点自动停
+        deadline = (time.time() + self.duration_minutes * 60
+                    if self.duration_minutes else None)
+
         while self._running:
+            if deadline is not None and time.time() >= deadline:
+                self._running = False
+                break
+
             if self._paused:
                 time.sleep(0.2)
                 continue
@@ -277,10 +288,14 @@ class PerfController(QObject):
 
         # 启动采集线程
         self.perf_worker = PerfWorker(
-            self.device_service, package, metrics, interval
+            self.device_service, package, metrics, interval,
+            duration_minutes=payload.get('duration_minutes'),
         )
         self.perf_worker.sample_ready.connect(self._on_sample)
         self.perf_worker.error_occurred.connect(self._on_worker_error)
+        # 线程自然结束（达到预设监控时长）→ 自动走完整停止收尾；
+        # 用户手动停止时 worker 已被置 None，晚到的信号会被 _on_worker_finished 幂等拦截
+        self.perf_worker.finished_all.connect(self._on_worker_finished)
         self.perf_worker.start()
 
         # 启动统计定时器
@@ -441,6 +456,23 @@ class PerfController(QObject):
 
     def _on_worker_error(self, msg):
         logger.warning(f"[PerfController] 采集错误: {msg}")
+
+    def _on_worker_finished(self):
+        """采集线程自然结束（达到预设监控时长）→ 走完整停止收尾。
+
+        手动停止路径：_on_stop 先把 perf_worker 置 None，线程退出后晚到的
+        finished_all 信号在这里被幂等拦截，不会重复收尾。
+        """
+        if self.perf_worker is None:
+            return
+        minutes = self.view.duration_spin.value()
+        if self.logs_view:
+            self.logs_view.add_log(
+                f"[性能] 已达到预设监控时长（{minutes} 分钟），自动停止采集",
+                "info",
+            )
+        show_toast(self.view, f"已达到监控时长（{minutes} 分钟），自动停止")
+        self._on_stop()
 
     # ------------------------------------------------------------------
     # 堆转储 / 抓包（性能检测页工具卡片）

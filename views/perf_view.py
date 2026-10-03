@@ -322,6 +322,8 @@ class PerfView(QWidget):
         self.app_combo.setEnabled(idle)
         self.interval_combo.setEnabled(idle)
         self.mode_combo.setEnabled(idle)
+        self.duration_label.setEnabled(idle)
+        self.duration_spin.setEnabled(idle)
         self.launch_test_btn.setEnabled(idle)
 
         # 场景化相关控件：只要模式是「场景化测试」就保持显示（运行中仅置灰不隐藏，
@@ -509,6 +511,19 @@ class PerfView(QWidget):
 
         self.stop_on_fail_check = BorderedCheckBox("失败停止")
         sc_layout.addWidget(self.stop_on_fail_check)
+
+        # 监控时长：到点自动停止（典型场景：车机跑 12 小时 Monkey 检测内存泄露）
+        self.duration_label = QLabel("监控时长:")
+        row2.addWidget(self.duration_label)
+        self.duration_spin = QSpinBox()
+        self.duration_spin.setRange(1, 10080)   # 1 分钟 ~ 7 天
+        self.duration_spin.setValue(720)        # 默认 12 小时
+        self.duration_spin.setSuffix(" 分钟")
+        self.duration_spin.setFixedWidth(110)
+        self.duration_spin.setToolTip(
+            "达到设定时长后自动停止采集并收尾（保存会话、基线对比等）。\n"
+            "典型用法：默认 720 分钟 = 12 小时，配合车机长时间 Monkey 检测内存泄露。")
+        row2.addWidget(self.duration_spin)
 
         row2.addWidget(self.scenario_row)
         row2.addStretch()
@@ -872,6 +887,7 @@ class PerfView(QWidget):
             'interval': interval,
             'metrics': metrics,
             'mode': 'scenario' if scenario else 'monitor',
+            'duration_minutes': self.duration_spin.value(),
             'suite': self.suite_combo.currentText() if scenario else "",
             'loop': self.loop_spin.value() if scenario else 1,
             'stop_on_fail': self.stop_on_fail_check.isChecked() if scenario else False,
