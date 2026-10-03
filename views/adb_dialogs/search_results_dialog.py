@@ -267,6 +267,9 @@ class SearchResultsDialog(QDialog):
             QWidget#resultItem QPushButton#itemExecBtn:hover {{
                 background-color: {exec_hover};
             }}
+            QWidget#resultItem QPushButton#itemExecBtn:pressed {{
+                background-color: #1f8b4c;
+            }}
             QWidget#resultItem QPushButton#itemCopyBtn {{
                 background-color: {copy_bg};
                 color: white;
@@ -277,5 +280,8 @@ class SearchResultsDialog(QDialog):
             }}
             QWidget#resultItem QPushButton#itemCopyBtn:hover {{
                 background-color: {copy_hover};
+            }}
+            QWidget#resultItem QPushButton#itemCopyBtn:pressed {{
+                background-color: #216692;
             }}
         """)
