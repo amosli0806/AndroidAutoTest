@@ -24,7 +24,10 @@ CHART_JS_CPU = """new Chart(document.getElementById('cpuChart'), {
     options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false }, title: { display: true, text: 'CPU 使用率 (%)' } },
+        plugins: {
+            legend: { display: false }, title: { display: true, text: 'CPU 使用率 (%)' },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
+        },
         scales: {
             x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
             y: { beginAtZero: true }
@@ -50,7 +53,10 @@ CHART_JS_MEM = """new Chart(document.getElementById('memChart'), {
     options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false }, title: { display: true, text: '内存占用 (MB)' } },
+        plugins: {
+            legend: { display: false }, title: { display: true, text: '内存占用 (MB)' },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
+        },
         scales: {
             x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
             y: { beginAtZero: true }
@@ -76,7 +82,10 @@ CHART_JS_MEM_BREAKDOWN = """new Chart(document.getElementById('memChart'), {
     options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: true, position: 'top' }, title: { display: true, text: '内存占用 (分类拆解, MB)' } },
+        plugins: {
+            legend: { display: true, position: 'top' }, title: { display: true, text: '内存占用 (分类拆解, MB)' },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
+        },
         scales: {
             x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
             y: { beginAtZero: true, title: { display: true, text: 'MB' } }
@@ -102,7 +111,10 @@ CHART_JS_FPS = """new Chart(document.getElementById('fpsChart'), {
     options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false }, title: { display: true, text: 'FPS 帧率' } },
+        plugins: {
+            legend: { display: false }, title: { display: true, text: 'FPS 帧率' },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
+        },
         scales: {
             x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
             y: { beginAtZero: true }
@@ -139,7 +151,10 @@ CHART_JS_TRAFFIC = """new Chart(document.getElementById('trafficChart'), {
     options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: true }, title: { display: true, text: '流量速率 (KB/s)' } },
+        plugins: {
+            legend: { display: true }, title: { display: true, text: '流量速率 (KB/s)' },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
+        },
         scales: {
             x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
             y: { beginAtZero: true }
@@ -334,32 +349,31 @@ class PerfReportGenerator:
         # 曲线区域与图表脚本：只渲染本次勾选采集的指标
         charts_section = ""
         chart_scripts = []
-        if 'cpu' in metrics:
-            charts_section += """
+
+        def _wrap(canvas_id):
+            """图表容器 + 重置缩放按钮（拖拽平移/滚轮缩放后一键回到全量视图）"""
+            return f"""
         <div class="chart-wrap">
-            <canvas id="cpuChart"></canvas>
+            <canvas id="{canvas_id}"></canvas>
+        </div>
+        <div class="chart-toolbar">
+            <button class="zoom-reset" data-chart="{canvas_id}">↺ 重置缩放</button>
         </div>"""
+
+        if 'cpu' in metrics:
+            charts_section += _wrap('cpuChart')
             chart_scripts.append(CHART_JS_CPU)
         if 'mem' in metrics:
-            charts_section += """
-        <div class="chart-wrap">
-            <canvas id="memChart"></canvas>
-        </div>"""
+            charts_section += _wrap('memChart')
             # 采集到了分类拆解时画 Android Studio 风格堆叠面积图，否则保持单线 PSS
             chart_scripts.append(
                 CHART_JS_MEM_BREAKDOWN if has_mem_breakdown else CHART_JS_MEM
             )
         if 'fps' in metrics:
-            charts_section += """
-        <div class="chart-wrap">
-            <canvas id="fpsChart"></canvas>
-        </div>"""
+            charts_section += _wrap('fpsChart')
             chart_scripts.append(CHART_JS_FPS)
         if has_traffic:
-            charts_section += """
-        <div class="chart-wrap">
-            <canvas id="trafficChart"></canvas>
-        </div>"""
+            charts_section += _wrap('trafficChart')
             chart_scripts.append(CHART_JS_TRAFFIC)
         if charts_section:
             charts_section = '<h2>📈 实时曲线</h2>' + charts_section
@@ -371,6 +385,8 @@ class PerfReportGenerator:
     <meta charset="UTF-8">
     <title>性能报告 - {session.name}</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <style>
         * {{ box-sizing: border-box; }}
         body {{
@@ -451,8 +467,25 @@ class PerfReportGenerator:
             border: 1px solid #e8e8e8;
             border-radius: 8px;
             padding: 16px;
-            margin: 12px 0;
+            margin: 12px 0 4px;
             height: 280px;
+        }}
+        .chart-toolbar {{
+            text-align: right;
+            margin: 0 0 12px;
+        }}
+        .zoom-reset {{
+            padding: 3px 12px;
+            font-size: 12px;
+            color: #666;
+            background: #fff;
+            border: 1px solid #d0d0d0;
+            border-radius: 6px;
+            cursor: pointer;
+        }}
+        .zoom-reset:hover {{
+            color: #1976d2;
+            border-color: #1976d2;
         }}
         .footer {{
             text-align: center;
@@ -568,6 +601,15 @@ class PerfReportGenerator:
         const txRateData = [{','.join(tx_rate_series)}];
 
         {charts_js}
+
+        // 「重置缩放」：回到全量视图（拖拽平移/滚轮缩放后用）
+        document.querySelectorAll('.zoom-reset').forEach(function (btn) {{
+            btn.addEventListener('click', function () {{
+                var canvas = document.getElementById(btn.dataset.chart);
+                var chart = canvas && Chart.getChart(canvas);
+                if (chart) chart.resetZoom();
+            }});
+        }});
     </script>
 </body>
 </html>"""
