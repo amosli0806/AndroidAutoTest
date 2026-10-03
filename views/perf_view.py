@@ -18,6 +18,7 @@ import qtawesome as qta
 from utils.toast import show_toast
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
+from utils.flow_layout import FlowLayout
 from views.perf_widgets import MetricCard
 from models.perf_model import MEM_CATEGORIES
 from PyQt6.QtWidgets import QStyleOptionButton, QStyle
@@ -329,11 +330,11 @@ class PerfView(QWidget):
         # 场景化相关控件：只要模式是「场景化测试」就保持显示（运行中仅置灰不隐藏，
         # 隐藏会导致开始监控后参数区突然空一块、结束后又弹回）
         scenario_on = (self.mode_combo.currentIndex() == 1)
-        # 只切换子控件可见性，scenario_row 本身保持固定高度占位
+        # 整组显隐：FlowLayout 会跳过隐藏项，其余组自动补位不留空洞
+        self.scenario_group.setVisible(scenario_on)
         for w in (self.suite_label, self.suite_combo,
                   self.loop_label, self.loop_spin,
                   self.stop_on_fail_check):
-            w.setVisible(scenario_on)
             w.setEnabled(scenario_on and idle)
 
         # 指标单选按钮：运行中禁用；空闲/暂停时按设备兼容性恢复
@@ -381,144 +382,68 @@ class PerfView(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(4)
 
-        # ---------- 顶部控制区 ----------
+        # ---------- 顶部控制区（语义分组 + 流式布局）----------
+        # 结构：行1 = [应用组][采集组]（流式，窄窗口整组换行） | [执行组]（吸右）
+        #       行2 = [指标组][场景组]（流式）
+        # 以后新增能力：按语义建新组塞进对应 FlowLayout 即可，放不下自动换行。
         control = QFrame()
         control.setObjectName("PerfControlPanel")
         control.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         c_layout = QVBoxLayout(control)
-        c_layout.setContentsMargins(16, 12, 16, 12)
-        c_layout.setSpacing(10)
+        c_layout.setContentsMargins(12, 10, 12, 10)
+        c_layout.setSpacing(8)
 
-        # ---------- 第 1 行：应用 + 采样参数 + 操作按钮 ----------
+        def _make_group(title, widgets):
+            """语义分组容器：组名 + 控件横排，作为一个整体参与流式换行"""
+            g = QFrame()
+            g.setObjectName("PerfGroup")
+            g.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            gl = QHBoxLayout(g)
+            gl.setContentsMargins(10, 6, 10, 6)
+            gl.setSpacing(8)
+            if title:
+                t = QLabel(title)
+                t.setObjectName("PerfGroupTitle")
+                gl.addWidget(t)
+                gl.addSpacing(2)
+            for w in widgets:
+                gl.addWidget(w)
+            # 统一组高：各控件 sizeHint 高低不一（复选框 17、输入框 28），
+            # 统一最小高度让同一行的组框视觉对齐
+            g.setMinimumHeight(42)
+            return g
+
+        # ---------- 行 1：应用 + 采集参数（流式） | 执行按钮（吸右）----------
         row1 = QHBoxLayout()
         row1.setSpacing(8)
 
-        # 应用
-        row1.addWidget(QLabel("应用:"))
+        flow_host = QWidget()
+        flow1 = FlowLayout(flow_host, margin=0, spacing=8)
+
+        # 应用组
         self.app_combo = QComboBox()
         self.app_combo.setEditable(True)
         self.app_combo.setMinimumWidth(260)
         self.app_combo.addItem("未检测到应用")
         self.app_combo.currentTextChanged.connect(lambda _: self._check_state())
-        row1.addWidget(self.app_combo)
-
         self.app_refresh_btn = QPushButton("刷新应用")
         self.app_refresh_btn.setIcon(qta.icon('fa6s.rotate', color='white'))
         self.app_refresh_btn.clicked.connect(self.app_list_refresh_requested.emit)
-        row1.addWidget(self.app_refresh_btn)
+        flow1.addWidget(_make_group("应用", [self.app_combo, self.app_refresh_btn]))
 
-        row1.addSpacing(20)
-
-        # 采样间隔
-        row1.addWidget(QLabel("采样间隔:"))
+        # 采集组
+        self.interval_label = QLabel("采样间隔:")
         self.interval_combo = QComboBox()
         self.interval_combo.addItems(["100 毫秒", "500 毫秒", "1 秒", "2 秒", "5 秒", "10 秒"])
         self.interval_combo.setCurrentText("5 秒")
         self.interval_combo.setFixedWidth(110)
-        row1.addWidget(self.interval_combo)
-
-        row1.addSpacing(16)
-
-        # 模式
-        row1.addWidget(QLabel("模式:"))
+        self.mode_label = QLabel("模式:")
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["独立监控", "场景化测试"])
         self.mode_combo.setFixedWidth(130)
         self.mode_combo.currentIndexChanged.connect(lambda _: self._apply_state())
-        row1.addWidget(self.mode_combo)
-
-        # 中间弹性空间
-        row1.addStretch()
-
-        # 操作按钮组
-        self.start_btn = QPushButton("开始监控")
-        self.start_btn.clicked.connect(self._on_start_clicked)
-
-        self.pause_btn = QPushButton("暂停")
-        self.pause_btn.clicked.connect(self.pause_requested.emit)
-
-        self.resume_btn = QPushButton("继续")
-        self.resume_btn.clicked.connect(self.resume_requested.emit)
-
-        self.stop_btn = QPushButton("停止")
-        self.stop_btn.clicked.connect(self.stop_requested.emit)
-
-        # 记录图标名，置灰时清空图标
-        self._btn_icon_map = {
-            self.start_btn: 'fa6s.play',
-            self.pause_btn: 'fa6s.pause',
-            self.resume_btn: 'fa6s.play',
-            self.stop_btn: 'fa6s.stop',
-        }
-
-        # 统一固定宽度：保证置灰隐藏图标后按钮尺寸不变
-        for b in (self.start_btn, self.pause_btn, self.resume_btn, self.stop_btn):
-            b.setFixedWidth(100)
-            row1.addWidget(b)
-
-        c_layout.addLayout(row1)
-
-        # ---------- 第 2 行：监控指标 + 场景化参数 ----------
-        row2 = QHBoxLayout()
-        row2.setSpacing(12)
-
-        row2.addWidget(QLabel("监控指标:"))
-        # CPU 与内存互斥单选（二者都走 top 采样，同采会互相干扰、数据失真）；
-        # FPS、流量是独立采样通道，可在 CPU/内存基础上自由多选
-        self.metric_group = QButtonGroup(self)
-        self.metric_group.setExclusive(True)
-        self.metric_radios = {}
-        for key, label in [('cpu', 'CPU'), ('mem', '内存')]:
-            rb = BorderedRadioButton(label)
-            self.metric_group.addButton(rb)
-            self.metric_radios[key] = rb
-            row2.addWidget(rb)
-        self.metric_radios['cpu'].setChecked(True)
-        for key, label in [('fps', 'FPS'), ('traffic', '流量')]:
-            cb = BorderedCheckBox(label)
-            self.metric_radios[key] = cb
-            # 勾选状态联动下方卡片显隐
-            cb.toggled.connect(self._on_card_visibility_changed)
-            row2.addWidget(cb)
-
-        # 卡片显隐开关：勾选才显示下方对应工具卡片（不参与采样指标，默认不勾选）
-        self.hprof_visible_check = BorderedCheckBox("堆转储")
-        self.hprof_visible_check.toggled.connect(self._on_card_visibility_changed)
-        row2.addWidget(self.hprof_visible_check)
-
-        self.packet_visible_check = BorderedCheckBox("抓包")
-        self.packet_visible_check.toggled.connect(self._on_card_visibility_changed)
-        row2.addWidget(self.packet_visible_check)
-
-        row2.addSpacing(24)
-
-        # 场景化专用控件（用固定高度容器包裹，避免模式切换时行高变化）
-        self.scenario_row = QWidget()
-        self.scenario_row.setFixedHeight(30)
-        sc_layout = QHBoxLayout(self.scenario_row)
-        sc_layout.setContentsMargins(0, 0, 0, 0)
-        sc_layout.setSpacing(12)
-
-        self.suite_label = QLabel("套件:")
-        sc_layout.addWidget(self.suite_label)
-        self.suite_combo = QComboBox()
-        self.suite_combo.setMinimumWidth(200)
-        sc_layout.addWidget(self.suite_combo)
-
-        self.loop_label = QLabel("循环:")
-        sc_layout.addWidget(self.loop_label)
-        self.loop_spin = QSpinBox()
-        self.loop_spin.setRange(1, 999)
-        self.loop_spin.setValue(1)
-        self.loop_spin.setFixedWidth(70)
-        sc_layout.addWidget(self.loop_spin)
-
-        self.stop_on_fail_check = BorderedCheckBox("失败停止")
-        sc_layout.addWidget(self.stop_on_fail_check)
-
         # 监控时长：到点自动停止（典型场景：车机跑 12 小时 Monkey 检测内存泄露）
         self.duration_label = QLabel("监控时长:")
-        row2.addWidget(self.duration_label)
         self.duration_spin = QSpinBox()
         self.duration_spin.setRange(1, 10080)   # 1 分钟 ~ 7 天
         self.duration_spin.setValue(720)        # 默认 12 小时
@@ -527,12 +452,89 @@ class PerfView(QWidget):
         self.duration_spin.setToolTip(
             "达到设定时长后自动停止采集并收尾（保存会话、基线对比等）。\n"
             "典型用法：默认 720 分钟 = 12 小时，配合车机长时间 Monkey 检测内存泄露。")
-        row2.addWidget(self.duration_spin)
+        flow1.addWidget(_make_group(
+            "采集", [self.interval_label, self.interval_combo,
+                     self.mode_label, self.mode_combo,
+                     self.duration_label, self.duration_spin]))
+        row1.addWidget(flow_host, 1)
 
-        row2.addWidget(self.scenario_row)
-        row2.addStretch()
-        c_layout.addLayout(row2)
+        # 执行组（吸右，不参与换行）
+        self.start_btn = QPushButton("开始监控")
+        self.start_btn.clicked.connect(self._on_start_clicked)
+        self.pause_btn = QPushButton("暂停")
+        self.pause_btn.clicked.connect(self.pause_requested.emit)
+        self.resume_btn = QPushButton("继续")
+        self.resume_btn.clicked.connect(self.resume_requested.emit)
+        self.stop_btn = QPushButton("停止")
+        self.stop_btn.clicked.connect(self.stop_requested.emit)
+        # 记录图标名，置灰时清空图标
+        self._btn_icon_map = {
+            self.start_btn: 'fa6s.play',
+            self.pause_btn: 'fa6s.pause',
+            self.resume_btn: 'fa6s.play',
+            self.stop_btn: 'fa6s.stop',
+        }
+        # 统一固定宽度：保证置灰隐藏图标后按钮尺寸不变
+        for b in (self.start_btn, self.pause_btn, self.resume_btn, self.stop_btn):
+            b.setFixedWidth(100)
+        # 吸右 + 垂直居中：行 1 的流式区换行变高时，执行组保持自然高度不被拉伸
+        self.exec_group = _make_group(None, [
+            self.start_btn, self.pause_btn, self.resume_btn, self.stop_btn])
+        row1.addWidget(self.exec_group, 0,
+                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        c_layout.addLayout(row1)
 
+        # ---------- 行 2：指标 + 场景化参数（流式）----------
+        flow_host2 = QWidget()
+        flow2 = FlowLayout(flow_host2, margin=0, spacing=8)
+
+        # 指标组：CPU 与内存互斥单选（二者都走 top 采样，同采会互相干扰、数据失真）；
+        # FPS、流量是独立采样通道，可在 CPU/内存基础上自由多选；
+        # 堆转储/抓包是卡片显隐开关（不参与采样指标，默认不勾选）
+        self.metric_group = QButtonGroup(self)
+        self.metric_group.setExclusive(True)
+        self.metric_radios = {}
+        metric_widgets = []
+        for key, label in [('cpu', 'CPU'), ('mem', '内存')]:
+            rb = BorderedRadioButton(label)
+            self.metric_group.addButton(rb)
+            self.metric_radios[key] = rb
+            metric_widgets.append(rb)
+        self.metric_radios['cpu'].setChecked(True)
+        for key, label in [('fps', 'FPS'), ('traffic', '流量')]:
+            cb = BorderedCheckBox(label)
+            self.metric_radios[key] = cb
+            # 勾选状态联动下方卡片显隐
+            cb.toggled.connect(self._on_card_visibility_changed)
+            metric_widgets.append(cb)
+
+        self.hprof_visible_check = BorderedCheckBox("堆转储")
+        self.hprof_visible_check.toggled.connect(self._on_card_visibility_changed)
+        metric_widgets.append(self.hprof_visible_check)
+
+        self.packet_visible_check = BorderedCheckBox("抓包")
+        self.packet_visible_check.toggled.connect(self._on_card_visibility_changed)
+        metric_widgets.append(self.packet_visible_check)
+        flow2.addWidget(_make_group("指标", metric_widgets))
+
+        # 场景化参数组：仅「场景化测试」模式下显示（显隐由 _apply_state 控制）
+        self.suite_label = QLabel("套件:")
+        self.suite_combo = QComboBox()
+        self.suite_combo.setMinimumWidth(200)
+        self.loop_label = QLabel("循环:")
+        self.loop_spin = QSpinBox()
+        self.loop_spin.setRange(1, 999)
+        self.loop_spin.setValue(1)
+        self.loop_spin.setFixedWidth(70)
+        self.stop_on_fail_check = BorderedCheckBox("失败停止")
+        self.scenario_group = _make_group(
+            "场景", [self.suite_label, self.suite_combo,
+                     self.loop_label, self.loop_spin, self.stop_on_fail_check])
+        flow2.addWidget(self.scenario_group)
+
+        c_layout.addWidget(flow_host2)
+
+        root.addWidget(control)
         root.addWidget(control)
 
         # ---------- 卡片区 ----------
@@ -1073,6 +1075,18 @@ class PerfView(QWidget):
                 #PerfControlPanel QRadioButton:enabled:checked {{
                     color: {primary_bg};
                     font-weight: 600;
+                }}
+                /* 语义分组容器：组内紧凑，组间由 FlowLayout 换行留白 */
+                #PerfGroup {{
+                    background-color: {input_bg};
+                    border: 1px solid {panel_border};
+                    border-radius: 6px;
+                }}
+                #PerfControlPanel QLabel#PerfGroupTitle {{
+                    color: {'#9aa0a6' if is_dark else '#8a8f98'};
+                    font-size: 11px;
+                    background: transparent;
+                    border: none;
                 }}
             """)
 
