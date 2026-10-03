@@ -189,6 +189,10 @@ class Theme:
             background-color: #4a4a4a;
             color: #ffffff;
         }
+        QListView::item:pressed {
+            background-color: #3a3a3a;
+            color: #ffffff;
+        }
         QListView::item:selected {
             background-color: #1976d2;
             color: #ffffff;
@@ -381,6 +385,9 @@ class Theme:
         QWidget#StepCard QPushButton:hover {
             background-color: #f0f0f0;
         }
+        QWidget#StepCard QPushButton:pressed {
+            background-color: #e0e0e0;
+        }
     """
     STEP_CARD_DARK = """
         QWidget#StepCard {
@@ -399,6 +406,9 @@ class Theme:
         }
         QWidget#StepCard QPushButton:hover {
             background-color: #4a4a4a;
+        }
+        QWidget#StepCard QPushButton:pressed {
+            background-color: #3a3a3a;
         }
     """
 
@@ -911,6 +921,10 @@ class Theme:
             background-color: #1565c0;
             color: white;
         }
+        #ElementManagerView QComboBox QAbstractItemView::item:pressed {
+            background-color: #0d47a1;
+            color: white;
+        }
         #ElementManagerView QComboBox QAbstractItemView::item:selected {
             background-color: #1976d2;
             color: white;
@@ -1031,6 +1045,10 @@ class Theme:
         }
         #ElementManagerView QComboBox QAbstractItemView::item:hover {
             background-color: #64b5f6;
+            color: #1e1e1e;
+        }
+        #ElementManagerView QComboBox QAbstractItemView::item:pressed {
+            background-color: #42a5f5;
             color: #1e1e1e;
         }
         #ElementManagerView QComboBox QAbstractItemView::item:selected {
@@ -1267,12 +1285,18 @@ class Theme:
         #ConfirmDeleteDialog QPushButton#cancelBtn:hover {
             background-color: #e0e0e0;
         }
+        #ConfirmDeleteDialog QPushButton#cancelBtn:pressed {
+            background-color: #d0d0d0;
+        }
         #ConfirmDeleteDialog QPushButton#confirmBtn {
             background-color: #e74c3c;
             color: white;
         }
         #ConfirmDeleteDialog QPushButton#confirmBtn:hover {
             background-color: #c0392b;
+        }
+        #ConfirmDeleteDialog QPushButton#confirmBtn:pressed {
+            background-color: #96281b;
         }
     """
     CONFIRM_DELETE_DARK = """
@@ -1297,12 +1321,18 @@ class Theme:
         #ConfirmDeleteDialog QPushButton#cancelBtn:hover {
             background-color: #666;
         }
+        #ConfirmDeleteDialog QPushButton#cancelBtn:pressed {
+            background-color: #555;
+        }
         #ConfirmDeleteDialog QPushButton#confirmBtn {
             background-color: #e74c3c;
             color: white;
         }
         #ConfirmDeleteDialog QPushButton#confirmBtn:hover {
             background-color: #c0392b;
+        }
+        #ConfirmDeleteDialog QPushButton#confirmBtn:pressed {
+            background-color: #96281b;
         }
     """
 
@@ -1341,12 +1371,18 @@ class Theme:
         #InputDialog QPushButton#cancelBtn:hover {
             background-color: #e0e0e0;
         }
+        #InputDialog QPushButton#cancelBtn:pressed {
+            background-color: #d0d0d0;
+        }
         #InputDialog QPushButton#confirmBtn {
             background-color: #1976d2;
             color: white;
         }
         #InputDialog QPushButton#confirmBtn:hover {
             background-color: #1565c0;
+        }
+        #InputDialog QPushButton#confirmBtn:pressed {
+            background-color: #0d47a1;
         }
     """
     INPUT_DIALOG_DARK = """
@@ -1383,12 +1419,18 @@ class Theme:
         #InputDialog QPushButton#cancelBtn:hover {
             background-color: #666;
         }
+        #InputDialog QPushButton#cancelBtn:pressed {
+            background-color: #555;
+        }
         #InputDialog QPushButton#confirmBtn {
             background-color: #1976d2;
             color: white;
         }
         #InputDialog QPushButton#confirmBtn:hover {
             background-color: #64b5f6;
+        }
+        #InputDialog QPushButton#confirmBtn:pressed {
+            background-color: #42a5f5;
         }
     """
 
@@ -1415,6 +1457,9 @@ class Theme:
         #WarningDialog QPushButton#okBtn:hover {
             background-color: #1565c0;
         }
+        #WarningDialog QPushButton#okBtn:pressed {
+            background-color: #0d47a1;
+        }
     """
     WARNING_DIALOG_DARK = """
         #WarningDialog QFrame#container {
@@ -1437,6 +1482,9 @@ class Theme:
         }
         #WarningDialog QPushButton#okBtn:hover {
             background-color: #64b5f6;
+        }
+        #WarningDialog QPushButton#okBtn:pressed {
+            background-color: #42a5f5;
         }
     """
 
@@ -1463,6 +1511,9 @@ class Theme:
         #ErrorDialog QPushButton#okBtn:hover {
             background-color: #1565c0;
         }
+        #ErrorDialog QPushButton#okBtn:pressed {
+            background-color: #0d47a1;
+        }
     """
     ERROR_DIALOG_DARK = """
         #ErrorDialog QFrame#container {
@@ -1485,6 +1536,9 @@ class Theme:
         }
         #ErrorDialog QPushButton#okBtn:hover {
             background-color: #64b5f6;
+        }
+        #ErrorDialog QPushButton#okBtn:pressed {
+            background-color: #42a5f5;
         }
     """
 
@@ -1512,12 +1566,18 @@ class Theme:
         #QuestionDialog QPushButton#cancelBtn:hover {
             background-color: #e0e0e0;
         }
+        #QuestionDialog QPushButton#cancelBtn:pressed {
+            background-color: #d0d0d0;
+        }
         #QuestionDialog QPushButton#confirmBtn {
             background-color: #1976d2;
             color: white;
         }
         #QuestionDialog QPushButton#confirmBtn:hover {
             background-color: #1565c0;
+        }
+        #QuestionDialog QPushButton#confirmBtn:pressed {
+            background-color: #0d47a1;
         }
     """
     QUESTION_DIALOG_DARK = """
@@ -1542,12 +1602,18 @@ class Theme:
         #QuestionDialog QPushButton#cancelBtn:hover {
             background-color: #666;
         }
+        #QuestionDialog QPushButton#cancelBtn:pressed {
+            background-color: #555;
+        }
         #QuestionDialog QPushButton#confirmBtn {
             background-color: #1976d2;
             color: white;
         }
         #QuestionDialog QPushButton#confirmBtn:hover {
             background-color: #64b5f6;
+        }
+        #QuestionDialog QPushButton#confirmBtn:pressed {
+            background-color: #42a5f5;
         }
     """
     # ---------- 设置对话框 (SettingsDialog) ----------
@@ -1578,6 +1644,9 @@ class Theme:
         #SettingsDialog QPushButton#browseBtn:hover {
             background-color: #5dade2;
         }
+        #SettingsDialog QPushButton#browseBtn:pressed {
+            background-color: #3498db;
+        }
         #SettingsDialog QPushButton#okBtn {
             background-color: #27ae60;
             color: white;
@@ -1585,12 +1654,18 @@ class Theme:
         #SettingsDialog QPushButton#okBtn:hover {
             background-color: #2ecc71;
         }
+        #SettingsDialog QPushButton#okBtn:pressed {
+            background-color: #1f8b4c;
+        }
         #SettingsDialog QPushButton#cancelBtn {
             background-color: #f0f0f0;
             color: #333;
         }
         #SettingsDialog QPushButton#cancelBtn:hover {
             background-color: #e0e0e0;
+        }
+        #SettingsDialog QPushButton#cancelBtn:pressed {
+            background-color: #d0d0d0;
         }
     """
     SETTINGS_DIALOG_DARK = """
@@ -1620,6 +1695,9 @@ class Theme:
         #SettingsDialog QPushButton#browseBtn:hover {
             background-color: #5dade2;
         }
+        #SettingsDialog QPushButton#browseBtn:pressed {
+            background-color: #3498db;
+        }
         #SettingsDialog QPushButton#okBtn {
             background-color: #27ae60;
             color: white;
@@ -1627,12 +1705,18 @@ class Theme:
         #SettingsDialog QPushButton#okBtn:hover {
             background-color: #81c784;
         }
+        #SettingsDialog QPushButton#okBtn:pressed {
+            background-color: #66bb6a;
+        }
         #SettingsDialog QPushButton#cancelBtn {
             background-color: #555;
             color: #eee;
         }
         #SettingsDialog QPushButton#cancelBtn:hover {
             background-color: #666;
+        }
+        #SettingsDialog QPushButton#cancelBtn:pressed {
+            background-color: #555;
         }
     """
 
@@ -1674,12 +1758,18 @@ class Theme:
         #ElementSelectorDialog QPushButton#selectBtn:hover {
             background-color: #1565c0;
         }
+        #ElementSelectorDialog QPushButton#selectBtn:pressed {
+            background-color: #0d47a1;
+        }
         #ElementSelectorDialog QPushButton#cancelBtn {
             background-color: #f0f0f0;
             color: #333;
         }
         #ElementSelectorDialog QPushButton#cancelBtn:hover {
             background-color: #e0e0e0;
+        }
+        #ElementSelectorDialog QPushButton#cancelBtn:pressed {
+            background-color: #d0d0d0;
         }
     """
     ELEMENT_SELECTOR_DARK = """
@@ -1719,12 +1809,18 @@ class Theme:
         #ElementSelectorDialog QPushButton#selectBtn:hover {
             background-color: #64b5f6;
         }
+        #ElementSelectorDialog QPushButton#selectBtn:pressed {
+            background-color: #42a5f5;
+        }
         #ElementSelectorDialog QPushButton#cancelBtn {
             background-color: #555;
             color: #eee;
         }
         #ElementSelectorDialog QPushButton#cancelBtn:hover {
             background-color: #666;
+        }
+        #ElementSelectorDialog QPushButton#cancelBtn:pressed {
+            background-color: #555;
         }
     """
 
@@ -1801,12 +1897,18 @@ class Theme:
         #TaskEditDialog QPushButton#cancelBtn:hover {
             background-color: #e0e0e0;
         }
+        #TaskEditDialog QPushButton#cancelBtn:pressed {
+            background-color: #d0d0d0;
+        }
         #TaskEditDialog QPushButton#saveBtn {
             background-color: #1976d2;
             color: white;
         }
         #TaskEditDialog QPushButton#saveBtn:hover {
             background-color: #1565c0;
+        }
+        #TaskEditDialog QPushButton#saveBtn:pressed {
+            background-color: #0d47a1;
         }
     """
     TASK_EDIT_DIALOG_DARK = """
@@ -1864,6 +1966,10 @@ class Theme:
             background-color: #64b5f6;
             color: #1e1e1e;
         }
+        #TaskEditDialog QComboBox QAbstractItemView::item:pressed {
+            background-color: #42a5f5;
+            color: #1e1e1e;
+        }
         #TaskEditDialog QComboBox QAbstractItemView::item:selected {
             background-color: #90caf9;
             color: #1e1e1e;
@@ -1881,12 +1987,18 @@ class Theme:
         #TaskEditDialog QPushButton#cancelBtn:hover {
             background-color: #666;
         }
+        #TaskEditDialog QPushButton#cancelBtn:pressed {
+            background-color: #555;
+        }
         #TaskEditDialog QPushButton#saveBtn {
             background-color: #1976d2;
             color: white;
         }
         #TaskEditDialog QPushButton#saveBtn:hover {
             background-color: #64b5f6;
+        }
+        #TaskEditDialog QPushButton#saveBtn:pressed {
+            background-color: #42a5f5;
         }
     """
 
@@ -1943,12 +2055,18 @@ class Theme:
         #ElementEditDialog QPushButton#cancelBtn:hover {
             background-color: #e0e0e0;
         }
+        #ElementEditDialog QPushButton#cancelBtn:pressed {
+            background-color: #d0d0d0;
+        }
         #ElementEditDialog QPushButton#okBtn {
             background-color: #1976d2;
             color: white;
         }
         #ElementEditDialog QPushButton#okBtn:hover {
             background-color: #1565c0;
+        }
+        #ElementEditDialog QPushButton#okBtn:pressed {
+            background-color: #0d47a1;
         }
     """
     ELEMENT_EDIT_DARK = """
@@ -2002,12 +2120,18 @@ class Theme:
         #ElementEditDialog QPushButton#cancelBtn:hover {
             background-color: #666;
         }
+        #ElementEditDialog QPushButton#cancelBtn:pressed {
+            background-color: #555;
+        }
         #ElementEditDialog QPushButton#okBtn {
             background-color: #1976d2;
             color: white;
         }
         #ElementEditDialog QPushButton#okBtn:hover {
             background-color: #64b5f6;
+        }
+        #ElementEditDialog QPushButton#okBtn:pressed {
+            background-color: #42a5f5;
         }
     """
 
