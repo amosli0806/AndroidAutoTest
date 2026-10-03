@@ -343,6 +343,10 @@ class PerfView(QWidget):
             else:
                 cb.setEnabled(False)
 
+        # 堆转储/抓包的「卡片显隐」复选框：与指标复选框一致，运行中禁用（暂停时开放）
+        self.hprof_visible_check.setEnabled(idle or paused)
+        self.packet_visible_check.setEnabled(idle or paused)
+
         # 堆转储设置：监控中锁定（自动循环勾选与间隔不可改）；空闲时按勾选状态开放间隔
         self.hprof_enable_check.setEnabled(idle)
         self.hprof_interval_combo.setEnabled(idle and self.hprof_enable_check.isChecked())
