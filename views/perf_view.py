@@ -1086,6 +1086,9 @@ class PerfView(QWidget):
             QPushButton:hover {{
                 background-color: {'#1565c0' if not is_dark else '#64b5f6'};
             }}
+            QPushButton:pressed {{
+                background-color: {'#0d47a1' if not is_dark else '#42a5f5'};
+            }}
             QPushButton:disabled {{
                 background-color: {'#b0b0b0' if not is_dark else '#555'};
                 color: {'#e0e0e0' if not is_dark else '#888'};
@@ -1105,6 +1108,9 @@ class PerfView(QWidget):
                     }}
                     QPushButton:hover {{
                         background-color: {'#ef5350' if is_dark else '#c0392b'};
+                    }}
+                    QPushButton:pressed {{
+                        background-color: {'#c62828' if is_dark else '#96281b'};
                     }}
                 """)
             else:
