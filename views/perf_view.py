@@ -135,6 +135,7 @@ class PerfView(QWidget):
         self._state = self.STATE_IDLE
         self._suite_model = None
         self._project_model = None
+        self._shown_once = False  # 是否已显示过（视口宽度显示前不可信）
         self._cards = {}
         self._hprof_card = None
         self._packet_card = None
@@ -766,6 +767,10 @@ class PerfView(QWidget):
                 item.widget().setParent(None)
 
         width = self.scroll.viewport().width() if self.scroll else 900
+        # 页面在堆里隐藏时不跟随主窗口布局，视口宽度还是构建期默认值（不可信）；
+        # 叠加视图自身宽度兜底（首次 showEvent 时自身宽度已是真实值）
+        if not self._shown_once:
+            width = max(width, self.width())
         two_cols = width >= 900
 
         # 可见指标卡片：CPU/内存常驻；FPS/流量按勾选显示
@@ -818,6 +823,16 @@ class PerfView(QWidget):
         self.cards_grid.setRowStretch(used_rows, 1)
 
         self.cards_container.updateGeometry()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._shown_once:
+            # 页面隐藏时不跟随主窗口布局，构建期的卡片布局是按默认宽度
+            # （单列）算的。首次显示时宽度已就位、还没画第一帧，这里同步
+            # 重排一次，避免用户看到单列→两列的"加载"跳变。
+            # 先重排再置标志：此刻视口布局可能还没激活，宽度判定仍需回退
+            self._relayout_cards()
+            self._shown_once = True
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
