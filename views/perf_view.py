@@ -408,9 +408,9 @@ class PerfView(QWidget):
                 gl.addSpacing(2)
             for w in widgets:
                 gl.addWidget(w)
-            # 统一组高：各控件 sizeHint 高低不一（复选框 17、输入框 28），
-            # 统一最小高度让同一行的组框视觉对齐
-            g.setMinimumHeight(42)
+            # 统一组高：组内控件高低不一（复选框 17、下拉框 30），
+            # 固定高度保证同一行（以及两行之间）的组框严格等高，内容垂直居中
+            g.setFixedHeight(44)
             return g
 
         # ---------- 行 1：应用 + 采集参数（流式） | 执行按钮（吸右）----------
