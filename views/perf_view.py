@@ -423,16 +423,16 @@ class PerfView(QWidget):
         # 应用组
         self.app_combo = QComboBox()
         self.app_combo.setEditable(True)
-        self.app_combo.setMinimumWidth(260)
+        self.app_combo.setMinimumWidth(180)
         self.app_combo.addItem("未检测到应用")
         self.app_combo.currentTextChanged.connect(lambda _: self._check_state())
-        self.app_refresh_btn = QPushButton("刷新应用")
+        self.app_refresh_btn = QPushButton("刷新")
         self.app_refresh_btn.setIcon(qta.icon('fa6s.rotate', color='white'))
         self.app_refresh_btn.clicked.connect(self.app_list_refresh_requested.emit)
-        flow1.addWidget(_make_group("应用", [self.app_combo, self.app_refresh_btn]))
+        flow1.addWidget(_make_group(None, [self.app_combo, self.app_refresh_btn]))
 
         # 采集组
-        self.interval_label = QLabel("采样间隔:")
+        self.interval_label = QLabel("间隔:")
         self.interval_combo = QComboBox()
         self.interval_combo.addItems(["100 毫秒", "500 毫秒", "1 秒", "2 秒", "5 秒", "10 秒"])
         self.interval_combo.setCurrentText("5 秒")
@@ -443,7 +443,7 @@ class PerfView(QWidget):
         self.mode_combo.setFixedWidth(130)
         self.mode_combo.currentIndexChanged.connect(lambda _: self._apply_state())
         # 监控时长：到点自动停止（典型场景：车机跑 12 小时 Monkey 检测内存泄露）
-        self.duration_label = QLabel("监控时长:")
+        self.duration_label = QLabel("时长:")
         self.duration_spin = QSpinBox()
         self.duration_spin.setRange(1, 10080)   # 1 分钟 ~ 7 天
         self.duration_spin.setValue(720)        # 默认 12 小时
