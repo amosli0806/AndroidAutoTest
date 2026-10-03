@@ -1113,7 +1113,7 @@ class PerfView(QWidget):
                 color: {primary_fg};
                 border: none;
                 border-radius: 4px;
-                padding: 6px 14px;
+                padding: 4px 14px;
                 font-weight: 500;
                 min-height: 22px;
             }}
@@ -1136,7 +1136,7 @@ class PerfView(QWidget):
                         color: {danger_fg};
                         border: none;
                         border-radius: 4px;
-                        padding: 6px 14px;
+                        padding: 4px 14px;
                         font-weight: 500;
                         min-height: 22px;
                     }}
