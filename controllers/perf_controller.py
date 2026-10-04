@@ -873,6 +873,25 @@ class PerfController(QObject):
     # ------------------------------------------------------------------
     # 导入导出
     # ------------------------------------------------------------------
+    def _device_export_dir(self) -> str:
+        """导出落盘目录：设置输出目录 / 设备序列号（冒号转下划线）。
+
+        性能报告/CSV/JSON 都按设备归档，避免多台设备的数据混在一起。
+        设备序列号取不到（如无设备历史会话）时回退到输出目录根下。
+        """
+        from utils.settings import Settings
+        base = Settings.get_output_dir()
+        serial = None
+        try:
+            if self.device_service is not None:
+                serial = self.device_service.serial
+        except Exception:
+            serial = None
+        if serial:
+            base = os.path.join(base, serial.replace(':', '_'))
+        os.makedirs(base, exist_ok=True)
+        return base
+
     def _on_export_csv(self):
         if not self.current_session or not self.current_session.samples:
             # 尝试用最后一个会话
@@ -888,7 +907,7 @@ class PerfController(QObject):
         from utils.settings import Settings
         path, _ = QFileDialog.getSaveFileName(
             self.view, "导出 CSV",
-            os.path.join(Settings.get_output_dir(), f"perf_{session.name}.csv"),
+            os.path.join(self._device_export_dir(), f"perf_{session.name}.csv"),
             "CSV Files (*.csv)"
         )
         if not path:
@@ -931,7 +950,8 @@ class PerfController(QObject):
         import json
         path, _ = QFileDialog.getSaveFileName(
             self.view, "导出 JSON",
-            f"perf_{session.name}.json", "JSON Files (*.json)"
+            os.path.join(self._device_export_dir(), f"perf_{session.name}.json"),
+            "JSON Files (*.json)"
         )
         if not path:
             return
@@ -954,11 +974,9 @@ class PerfController(QObject):
         from PyQt6.QtWidgets import QFileDialog
         import os
 
-        # 默认存到「设置 → 输出目录」，与其他报告/导出一致
-        reports_dir = Settings.get_output_dir()
-        os.makedirs(reports_dir, exist_ok=True)
+        # 默认存到「设置 → 输出目录 / 设备号」，与其他报告/导出一致、按设备归档
         default_path = os.path.join(
-            reports_dir,
+            self._device_export_dir(),
             f"perf_report_{session.name}.html"
         )
         path, _ = QFileDialog.getSaveFileName(
