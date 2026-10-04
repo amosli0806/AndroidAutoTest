@@ -667,36 +667,35 @@ class PerfView(QWidget):
         self._relayout_cards()
 
     def _build_tool_cards(self):
-        """构建两个工具卡片：堆转储（可自动循环）、抓包（手动开始/停止）"""
+        """构建三个工具卡片：堆转储（可自动循环）、抓包（手动开始/停止）、截图（可自动循环）。
+        统一单行紧凑结构：圆点 + 标题 + 控件一行排开，高度 44 与控制面板分组一致。"""
+
+        def _card(dot_color, title):
+            card = QFrame()
+            card.setObjectName("PerfToolCard")
+            row = QHBoxLayout(card)
+            row.setContentsMargins(12, 6, 12, 6)
+            row.setSpacing(10)
+            dot = QLabel("●")
+            dot.setStyleSheet(
+                f"color: {dot_color}; font-size: 14px; background: transparent;")
+            row.addWidget(dot)
+            title_label = QLabel(title)
+            title_label.setStyleSheet(
+                "font-weight: 600; font-size: 13px; background: transparent;")
+            row.addWidget(title_label)
+            return card, row
+
         # ---- 堆转储卡片 ----
-        self._hprof_card = QFrame()
-        self._hprof_card.setObjectName("PerfToolCard")
-
-        hprof_layout = QVBoxLayout(self._hprof_card)
-        hprof_layout.setContentsMargins(12, 10, 12, 10)
-        hprof_layout.setSpacing(8)
-
-        hprof_title_row = QHBoxLayout()
-        hprof_title_row.setSpacing(8)
-        self._hprof_dot = QLabel("●")
-        self._hprof_dot.setStyleSheet("color: #e67e22; font-size: 14px; background: transparent;")
-        hprof_title_row.addWidget(self._hprof_dot)
-        self._hprof_title = QLabel("堆转储")
-        self._hprof_title.setStyleSheet("font-weight: 600; font-size: 13px; background: transparent;")
-        hprof_title_row.addWidget(self._hprof_title)
-        hprof_title_row.addStretch()
-        hprof_layout.addLayout(hprof_title_row)
-
-        hprof_ctrl_row = QHBoxLayout()
-        hprof_ctrl_row.setSpacing(10)
+        self._hprof_card, hprof_row = _card("#e67e22", "堆转储")
         self.hprof_enable_check = BorderedCheckBox("自动循环")
         self.hprof_enable_check.setToolTip(
             "开启后，点击「开始监控」即按右侧间隔自动对所选应用执行堆转储\n"
             "（第一次转储在一个完整间隔后执行）")
         self.hprof_enable_check.toggled.connect(self._on_hprof_toggle)
-        hprof_ctrl_row.addWidget(self.hprof_enable_check)
+        hprof_row.addWidget(self.hprof_enable_check)
 
-        hprof_ctrl_row.addWidget(QLabel("间隔:"))
+        hprof_row.addWidget(QLabel("间隔:"))
         self.hprof_interval_combo = QComboBox()
         self.hprof_interval_combo.addItems(
             ["1 分钟", "5 分钟", "10 分钟", "30 分钟", "60 分钟", "120 分钟"]
@@ -707,76 +706,38 @@ class PerfView(QWidget):
         self.hprof_interval_combo.currentTextChanged.connect(
             lambda _: self.hprof_interval_changed.emit()
         )
-        hprof_ctrl_row.addWidget(self.hprof_interval_combo)
+        hprof_row.addWidget(self.hprof_interval_combo)
 
         self.hprof_once_btn = QPushButton("立即转储一次")
         self.hprof_once_btn.setIcon(qta.icon('fa6s.database', color='white'))
         self.hprof_once_btn.clicked.connect(self.hprof_once_requested.emit)
-        hprof_ctrl_row.addWidget(self.hprof_once_btn)
-        hprof_ctrl_row.addStretch()
-        hprof_layout.addLayout(hprof_ctrl_row)
+        hprof_row.addWidget(self.hprof_once_btn)
+        hprof_row.addStretch()
+        self._hprof_card.setFixedHeight(44)
 
         # ---- 抓包卡片 ----
-        self._packet_card = QFrame()
-        self._packet_card.setObjectName("PerfToolCard")
-
-        packet_layout = QVBoxLayout(self._packet_card)
-        packet_layout.setContentsMargins(12, 10, 12, 10)
-        packet_layout.setSpacing(8)
-
-        packet_title_row = QHBoxLayout()
-        packet_title_row.setSpacing(8)
-        self._packet_dot = QLabel("●")
-        self._packet_dot.setStyleSheet("color: #9b59b6; font-size: 14px; background: transparent;")
-        packet_title_row.addWidget(self._packet_dot)
-        self._packet_title = QLabel("网络抓包")
-        self._packet_title.setStyleSheet("font-weight: 600; font-size: 13px; background: transparent;")
-        packet_title_row.addWidget(self._packet_title)
-        packet_title_row.addStretch()
-        packet_layout.addLayout(packet_title_row)
-
-        packet_ctrl_row = QHBoxLayout()
-        packet_ctrl_row.setSpacing(10)
+        self._packet_card, packet_row = _card("#9b59b6", "网络抓包")
         self.packet_toggle_btn = QPushButton("开始抓包")
         self.packet_toggle_btn.setIcon(qta.icon('fa6s.network-wired', color='white'))
         self.packet_toggle_btn.setCheckable(True)
         self.packet_toggle_btn.toggled.connect(self.packet_toggle_requested.emit)
-        packet_ctrl_row.addWidget(self.packet_toggle_btn)
+        packet_row.addWidget(self.packet_toggle_btn)
         self.packet_status_label = QLabel("未开始")
         self.packet_status_label.setStyleSheet("font-size: 12px; color: #999999; background: transparent;")
-        packet_ctrl_row.addWidget(self.packet_status_label)
-        packet_ctrl_row.addStretch()
-        packet_layout.addLayout(packet_ctrl_row)
+        packet_row.addWidget(self.packet_status_label)
+        packet_row.addStretch()
+        self._packet_card.setFixedHeight(44)
 
         # ---- 截图卡片 ----
-        self._screenshot_card = QFrame()
-        self._screenshot_card.setObjectName("PerfToolCard")
-
-        screenshot_layout = QVBoxLayout(self._screenshot_card)
-        screenshot_layout.setContentsMargins(12, 10, 12, 10)
-        screenshot_layout.setSpacing(8)
-
-        screenshot_title_row = QHBoxLayout()
-        screenshot_title_row.setSpacing(8)
-        self._screenshot_dot = QLabel("●")
-        self._screenshot_dot.setStyleSheet("color: #16a085; font-size: 14px; background: transparent;")
-        screenshot_title_row.addWidget(self._screenshot_dot)
-        self._screenshot_title = QLabel("截图")
-        self._screenshot_title.setStyleSheet("font-weight: 600; font-size: 13px; background: transparent;")
-        screenshot_title_row.addWidget(self._screenshot_title)
-        screenshot_title_row.addStretch()
-        screenshot_layout.addLayout(screenshot_title_row)
-
-        screenshot_ctrl_row = QHBoxLayout()
-        screenshot_ctrl_row.setSpacing(10)
+        self._screenshot_card, screenshot_row = _card("#16a085", "截图")
         self.screenshot_enable_check = BorderedCheckBox("自动循环")
         self.screenshot_enable_check.setToolTip(
             "开启后，点击「开始监控」即按右侧间隔自动截取设备屏幕\n"
             "（第一次截图在一个完整间隔后执行）")
         self.screenshot_enable_check.toggled.connect(self._on_screenshot_toggle)
-        screenshot_ctrl_row.addWidget(self.screenshot_enable_check)
+        screenshot_row.addWidget(self.screenshot_enable_check)
 
-        screenshot_ctrl_row.addWidget(QLabel("间隔:"))
+        screenshot_row.addWidget(QLabel("间隔:"))
         self.screenshot_interval_combo = QComboBox()
         self.screenshot_interval_combo.addItems(
             ["30 秒", "1 分钟", "5 分钟", "10 分钟", "30 分钟", "60 分钟"]
@@ -787,18 +748,18 @@ class PerfView(QWidget):
         self.screenshot_interval_combo.currentTextChanged.connect(
             lambda _: self.screenshot_interval_changed.emit()
         )
-        screenshot_ctrl_row.addWidget(self.screenshot_interval_combo)
+        screenshot_row.addWidget(self.screenshot_interval_combo)
 
         self.screenshot_once_btn = QPushButton("立即截图一次")
         self.screenshot_once_btn.setIcon(qta.icon('fa6s.camera', color='white'))
         self.screenshot_once_btn.clicked.connect(self.screenshot_once_requested.emit)
-        screenshot_ctrl_row.addWidget(self.screenshot_once_btn)
+        screenshot_row.addWidget(self.screenshot_once_btn)
 
-        self.screenshot_status_label = QLabel("未开启")
+        self.screenshot_status_label = QLabel("")
         self.screenshot_status_label.setStyleSheet("font-size: 12px; color: #999999; background: transparent;")
-        screenshot_ctrl_row.addWidget(self.screenshot_status_label)
-        screenshot_ctrl_row.addStretch()
-        screenshot_layout.addLayout(screenshot_ctrl_row)
+        screenshot_row.addWidget(self.screenshot_status_label)
+        screenshot_row.addStretch()
+        self._screenshot_card.setFixedHeight(44)
 
     def get_hprof_interval(self) -> float:
         """返回堆转储循环间隔（秒）"""
