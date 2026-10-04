@@ -646,8 +646,8 @@ class ApiView(QWidget):
             method_item = QTableWidgetItem(case.method)
             method_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignCenter)
-            method_item.setForeground(self._method_color(case.method))
-            method_item.setBackground(self._method_bg(case.method))
+            method_item.setForeground(QColor(self._method_color(case.method)))
+            method_item.setBackground(QColor(self._method_bg(case.method)))
             self.table.setItem(row, _C_METHOD, method_item)
             self.table.setItem(row, _C_URL, QTableWidgetItem(case.url))
             self.table.setItem(row, _C_RESULT,
