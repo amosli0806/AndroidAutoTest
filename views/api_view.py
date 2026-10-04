@@ -16,6 +16,7 @@ import os
 
 import qtawesome as qta
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton,
@@ -281,6 +282,14 @@ class ApiView(QWidget):
                 background: transparent; color: {fg}; border: 1px solid {border};
             }}
             QPushButton#ApiGhostBtn:hover {{ background: {hover}; }}
+            QPushButton#ApiGhostBtn:disabled {{ background: transparent; color: #9a9a9a; }}
+            QPushButton#ApiPrimaryBtn {{
+                background: #1976d2; color: #fff; border: none;
+                border-radius: 6px; padding: 5px 14px; font-weight: 600;
+            }}
+            QPushButton#ApiPrimaryBtn:hover {{ background: #1565c0; }}
+            QPushButton#ApiPrimaryBtn:pressed {{ background: #0d47a1; }}
+            QPushButton#ApiPrimaryBtn:disabled {{ background: #9e9e9e; }}
             QPlainTextEdit {{ padding: 6px; }}
         """)
         # 响应体只读但要能选中复制
@@ -317,6 +326,11 @@ class ApiView(QWidget):
         title.setObjectName("ApiPaneTitle")
         title_row.addWidget(title)
         title_row.addStretch()
+        self.add_case_btn = QPushButton("+ 新建接口")
+        self.add_case_btn.setObjectName("ApiGhostBtn")
+        self.add_case_btn.setToolTip("在当前选中的分组下新建一个接口")
+        self.add_case_btn.clicked.connect(self._on_add_case_from_btn)
+        title_row.addWidget(self.add_case_btn)
         self.add_group_btn = QPushButton("新建分组")
         self.add_group_btn.setObjectName("ApiGhostBtn")
         self.add_group_btn.clicked.connect(self._on_add_group)
@@ -368,8 +382,6 @@ class ApiView(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
-        self.send_btn = QPushButton("发送")
-        self.send_btn.clicked.connect(self._on_send)
         self.run_btn = QPushButton("执行选中")
         self.run_btn.clicked.connect(self._on_run_selected)
         self.stop_btn = QPushButton("停止")
@@ -378,8 +390,10 @@ class ApiView(QWidget):
         self.stop_btn.clicked.connect(self.stop_requested.emit)
         self.report_btn = QPushButton("生成报告")
         self.report_btn.setObjectName("ApiGhostBtn")
+        self.report_btn.setEnabled(False)
+        self.report_btn.setToolTip("至少执行过一次接口后才可生成报告")
         self.report_btn.clicked.connect(self.report_requested.emit)
-        for b in (self.send_btn, self.run_btn, self.stop_btn, self.report_btn):
+        for b in (self.run_btn, self.stop_btn, self.report_btn):
             btn_row.addWidget(b)
         layout.addLayout(btn_row)
 
@@ -452,6 +466,12 @@ class ApiView(QWidget):
         self.url_edit.setPlaceholderText("{{base_url}}/api/user 或 http://完整地址")
         self.url_edit.textChanged.connect(self._mark_dirty)
         url_row.addWidget(self.url_edit, 1)
+        # 「发送」紧跟 URL（Postman 经典布局）：编辑完直接发，语义一目了然
+        self.send_btn = QPushButton("发送")
+        self.send_btn.setObjectName("ApiPrimaryBtn")
+        self.send_btn.setFixedWidth(80)
+        self.send_btn.clicked.connect(self._on_send)
+        url_row.addWidget(self.send_btn)
         form.addLayout(url_row)
 
         form.addWidget(QLabel("请求头（一行一个，格式 名称: 值）:"))
@@ -467,6 +487,9 @@ class ApiView(QWidget):
         self.body_combo = QComboBox()
         self.body_combo.addItems(BODY_TYPES)
         self.body_combo.setFixedWidth(110)
+        self.body_combo.setToolTip(
+            "GET 等无参数请求选「无」；POST/PUT 选「JSON」等类型并填写请求体。\n"
+            "选「无」时请求体编辑器会置灰禁用。")
         self.body_combo.currentIndexChanged.connect(self._on_body_type_changed)
         body_row.addWidget(self.body_combo)
         body_row.addStretch()
@@ -512,6 +535,14 @@ class ApiView(QWidget):
         self.assert_hint.setObjectName("ApiHint")
         self.assert_hint.setWordWrap(True)
         form.addWidget(self.assert_hint)
+
+        # 空状态引导：断言为空时显示，提示用户这是接口测试的核心价值
+        self.assert_empty_hint = QLabel(
+            "💡 尚无断言 —— 点「+ 添加」校验响应，如「状态码 = 200」。"
+            "断言是接口测试区别于“单纯发请求”的关键，执行后会自动判定通过 / 失败。")
+        self.assert_empty_hint.setObjectName("ApiHint")
+        self.assert_empty_hint.setWordWrap(True)
+        form.addWidget(self.assert_empty_hint)
 
         scroll.setWidget(form_host)
         req_outer.addWidget(scroll, 1)
@@ -612,7 +643,12 @@ class ApiView(QWidget):
             name_item = QTableWidgetItem(case.name)
             name_item.setData(Qt.ItemDataRole.UserRole, case.id)
             self.table.setItem(row, _C_NAME, name_item)
-            self.table.setItem(row, _C_METHOD, QTableWidgetItem(case.method))
+            method_item = QTableWidgetItem(case.method)
+            method_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignCenter)
+            method_item.setForeground(self._method_color(case.method))
+            method_item.setBackground(self._method_bg(case.method))
+            self.table.setItem(row, _C_METHOD, method_item)
             self.table.setItem(row, _C_URL, QTableWidgetItem(case.url))
             self.table.setItem(row, _C_RESULT,
                                QTableWidgetItem(self._result_text(case.id)))
@@ -624,6 +660,22 @@ class ApiView(QWidget):
                         == self._current_case_id:
                     self.table.selectRow(row)
                     break
+
+    @staticmethod
+    def _method_color(method: str):
+        """方法徽章前景色（深色文字配浅底，深/浅主题都清晰）"""
+        return {
+            "GET": "#1a7f37", "POST": "#b45309", "PUT": "#1d4ed8",
+            "DELETE": "#b91c1c", "PATCH": "#6b21a8", "HEAD": "#475569",
+        }.get(method, "#475569")
+
+    @staticmethod
+    def _method_bg(method: str):
+        """方法徽章底色（同色系浅色）"""
+        return {
+            "GET": "#e6f4ea", "POST": "#fef3e2", "PUT": "#e8f0fe",
+            "DELETE": "#fde8e8", "PATCH": "#f3e8ff", "HEAD": "#f0f1f3",
+        }.get(method, "#f0f1f3")
 
     def _result_text(self, case_id: str) -> str:
         result = self._results.get(case_id)
@@ -654,6 +706,7 @@ class ApiView(QWidget):
         self.assert_table.setRowCount(0)
         self._dirty = False
         self._show_result(None)
+        self._sync_assert_hint()
 
     def _load_case(self, case):
         self._loading = True
@@ -697,6 +750,7 @@ class ApiView(QWidget):
 
             self.assert_table.setItem(row, _A_EXPECT, QTableWidgetItem(item.expect))
         self.assert_table.blockSignals(False)
+        self._sync_assert_hint()
 
     def _collect_asserts(self):
         asserts = []
@@ -838,6 +892,14 @@ class ApiView(QWidget):
             self._current_case_id = ""
         self.refresh_all()
 
+    def _on_add_case_from_btn(self):
+        """左栏「+ 新建接口」按钮入口：无分组时先引导建分组"""
+        if not self.model.groups:
+            ErrorDialog.show_error(
+                self, "无法新建接口", "请先点击「新建分组」创建一个分组。")
+            return
+        self._on_add_case()
+
     def _on_add_case(self, group_id=""):
         if not group_id:
             kind, ident = self._selected_tree_node()
@@ -950,6 +1012,11 @@ class ApiView(QWidget):
         self._mark_dirty()
 
     # ---------- 断言表 ----------
+    def _sync_assert_hint(self):
+        """断言为空时显示空状态引导，否则隐藏（跟随增删与表单切换）"""
+        if hasattr(self, "assert_empty_hint"):
+            self.assert_empty_hint.setVisible(self.assert_table.rowCount() == 0)
+
     def _on_add_assert(self):
         row = self.assert_table.rowCount()
         self.assert_table.blockSignals(True)
@@ -971,6 +1038,7 @@ class ApiView(QWidget):
         self.assert_table.setItem(row, _A_EXPECT, QTableWidgetItem(""))
         self.assert_table.blockSignals(False)
         self._mark_dirty()
+        self._sync_assert_hint()
 
     def _on_remove_assert(self):
         rows = sorted({i.row() for i in self.assert_table.selectedIndexes()},
@@ -979,6 +1047,7 @@ class ApiView(QWidget):
             self.assert_table.removeRow(row)
         if rows:
             self._mark_dirty()
+        self._sync_assert_hint()
 
     # ==================================================================
     # 执行入口
@@ -1021,6 +1090,9 @@ class ApiView(QWidget):
         self._results[result.case_id] = result
         if refresh_table:
             self._reload_table()
+        # 有结果后「生成报告」才可用
+        if not self._running:
+            self.report_btn.setEnabled(bool(self._results))
         if result.case_id == self._current_case_id:
             self._show_result(result)
 
