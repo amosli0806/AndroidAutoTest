@@ -677,6 +677,8 @@ class PerfView(QWidget):
             row.setContentsMargins(12, 6, 12, 6)
             row.setSpacing(10)
             dot = QLabel("●")
+            # 圆点颜色存进动态属性，apply_theme 刷新时从属性读回，避免 if/else 逐卡硬编码
+            dot.setProperty("dotColor", dot_color)
             dot.setStyleSheet(
                 f"color: {dot_color}; font-size: 14px; background: transparent;")
             row.addWidget(dot)
@@ -684,10 +686,11 @@ class PerfView(QWidget):
             title_label.setStyleSheet(
                 "font-weight: 600; font-size: 13px; background: transparent;")
             row.addWidget(title_label)
-            return card, row
+            return card, row, dot, title_label
 
         # ---- 堆转储卡片 ----
-        self._hprof_card, hprof_row = _card("#e67e22", "堆转储")
+        (self._hprof_card, hprof_row,
+         self._hprof_dot, self._hprof_title) = _card("#e67e22", "堆转储")
         self.hprof_enable_check = BorderedCheckBox("自动循环")
         self.hprof_enable_check.setToolTip(
             "开启后，点击「开始监控」即按右侧间隔自动对所选应用执行堆转储\n"
@@ -716,7 +719,8 @@ class PerfView(QWidget):
         self._hprof_card.setFixedHeight(44)
 
         # ---- 抓包卡片 ----
-        self._packet_card, packet_row = _card("#9b59b6", "网络抓包")
+        (self._packet_card, packet_row,
+         self._packet_dot, self._packet_title) = _card("#9b59b6", "网络抓包")
         self.packet_toggle_btn = QPushButton("开始抓包")
         self.packet_toggle_btn.setIcon(qta.icon('fa6s.network-wired', color='white'))
         self.packet_toggle_btn.setCheckable(True)
@@ -729,7 +733,8 @@ class PerfView(QWidget):
         self._packet_card.setFixedHeight(44)
 
         # ---- 截图卡片 ----
-        self._screenshot_card, screenshot_row = _card("#16a085", "截图")
+        (self._screenshot_card, screenshot_row,
+         self._screenshot_dot, self._screenshot_title) = _card("#16a085", "截图")
         self.screenshot_enable_check = BorderedCheckBox("自动循环")
         self.screenshot_enable_check.setToolTip(
             "开启后，点击「开始监控」即按右侧间隔自动截取设备屏幕\n"
@@ -1257,10 +1262,11 @@ class PerfView(QWidget):
             if hasattr(card, 'apply_theme'):
                 card.apply_theme(theme_mode, has_wallpaper)
 
-        # 性能工具卡片（堆转储 / 抓包）：与指标卡片保持同一套配色
+        # 性能工具卡片（堆转储 / 抓包 / 截图）：与指标卡片保持同一套配色
         for tool_card, title_widget, dot_widget in (
             (self._hprof_card, self._hprof_title, self._hprof_dot),
             (self._packet_card, self._packet_title, self._packet_dot),
+            (self._screenshot_card, self._screenshot_title, self._screenshot_dot),
         ):
             if tool_card is None:
                 continue
@@ -1303,12 +1309,9 @@ class PerfView(QWidget):
             title_widget.setStyleSheet(
                 f"font-weight: 600; font-size: 13px; color: {tool_title}; background: transparent;"
             )
-            # 圆点颜色不随主题变（品牌色固定）
-            if dot_widget is self._hprof_dot:
-                dot_widget.setStyleSheet(
-                    "color: #e67e22; font-size: 14px; background: transparent;")
-            else:
-                dot_widget.setStyleSheet(
-                    "color: #9b59b6; font-size: 14px; background: transparent;")
+            # 圆点为品牌区分色，不随主题变；按卡片逐一指定
+            dot_widget.setStyleSheet(
+                f"color: {dot_widget.property('dotColor')}; "
+                f"font-size: 14px; background: transparent;")
 
         # 复选框颜色由父级 QSS 的 :enabled / :disabled 分支控制，无需额外刷新
