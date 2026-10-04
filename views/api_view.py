@@ -15,13 +15,14 @@
 import os
 
 import qtawesome as qta
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtCore import Qt, pyqtSignal, QRect
+from PyQt6.QtGui import QBrush, QColor, QFontMetrics, QPainter
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton,
-    QScrollArea, QSplitter, QTableWidget, QTableWidgetItem,
-    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+    QAbstractItemView, QApplication, QComboBox, QDialog, QFileDialog, QFrame,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QPlainTextEdit,
+    QPushButton, QScrollArea, QSplitter, QStyle, QStyledItemDelegate,
+    QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem,
+    QVBoxLayout, QWidget)
 
 from models.api_model import (
     ASSERT_LABELS, ASSERT_TYPES, BODY_NONE, BODY_TYPES, DEFAULT_BASE_URL,
@@ -36,6 +37,52 @@ from utils.theme import ThemeMode
 _A_ENABLED, _A_TYPE, _A_EXPR, _A_OP, _A_EXPECT = range(5)
 # 中栏接口列表列
 _C_NAME, _C_METHOD, _C_URL, _C_RESULT = range(4)
+
+# HTTP 方法徽章配色：前景（深色文字）/ 背景（同色系浅底），选中行上依然可读
+METHOD_BADGE = {
+    "GET": ("#1a7f37", "#e6f4ea"),
+    "POST": ("#b45309", "#fef3e2"),
+    "PUT": ("#1d4ed8", "#e8f0fe"),
+    "DELETE": ("#b91c1c", "#fde8e8"),
+    "PATCH": ("#6b21a8", "#f3e8ff"),
+    "HEAD": ("#475569", "#f0f1f3"),
+}
+
+
+class MethodBadgeDelegate(QStyledItemDelegate):
+    """接口列表「方法」列的圆角徽章绘制。
+
+    不能用 item 的 setForeground/setBackground 实现：自定义前景色会覆盖
+    选中态的默认高亮文字，蓝色选中底上浅橙文字几乎不可见。delegate 先画
+    默认背景（含选中蓝底 / hover），再叠加圆角徽章（浅底深字，任何底上都清晰）。
+    """
+
+    def paint(self, painter, option, index):
+        painter.save()
+        opt = option
+        self.initStyleOption(opt, index)
+        opt.text = ""  # 只画背景（选中蓝底 / hover / 交替色）
+        style = opt.widget.style() if opt.widget else QApplication.style()
+        style.drawControl(QStyle.ControlLabel.CE_ItemViewItem, opt, painter, opt.widget)
+
+        method = index.data() or ""
+        colors = METHOD_BADGE.get(method)
+        if colors:
+            fg, bg = colors
+            rect = option.rect
+            fm = QFontMetrics(opt.font)
+            text_w = fm.horizontalAdvance(method) + 16
+            badge_w = min(text_w, rect.width() - 8)
+            badge = QRect(
+                rect.center().x() - badge_w // 2,
+                rect.center().y() - 11, badge_w, 22)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(bg))
+            painter.drawRoundedRect(badge, 6, 6)
+            painter.setPen(QColor(fg))
+            painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, method)
+        painter.restore()
 
 
 class ApiEnvDialog(QDialog):
@@ -412,6 +459,8 @@ class ApiView(QWidget):
         header.setSectionResizeMode(_C_URL, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(_C_RESULT, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setColumnWidth(_C_NAME, 130)
+        # 「方法」列圆角徽章（含选中态的正确配色）
+        self.table.setItemDelegateForColumn(_C_METHOD, MethodBadgeDelegate(self.table))
         layout.addWidget(self.table, 1)
         return box
 
@@ -644,10 +693,7 @@ class ApiView(QWidget):
             name_item.setData(Qt.ItemDataRole.UserRole, case.id)
             self.table.setItem(row, _C_NAME, name_item)
             method_item = QTableWidgetItem(case.method)
-            method_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignCenter)
-            method_item.setForeground(QColor(self._method_color(case.method)))
-            method_item.setBackground(QColor(self._method_bg(case.method)))
+            method_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, _C_METHOD, method_item)
             self.table.setItem(row, _C_URL, QTableWidgetItem(case.url))
             self.table.setItem(row, _C_RESULT,
@@ -660,22 +706,6 @@ class ApiView(QWidget):
                         == self._current_case_id:
                     self.table.selectRow(row)
                     break
-
-    @staticmethod
-    def _method_color(method: str):
-        """方法徽章前景色（深色文字配浅底，深/浅主题都清晰）"""
-        return {
-            "GET": "#1a7f37", "POST": "#b45309", "PUT": "#1d4ed8",
-            "DELETE": "#b91c1c", "PATCH": "#6b21a8", "HEAD": "#475569",
-        }.get(method, "#475569")
-
-    @staticmethod
-    def _method_bg(method: str):
-        """方法徽章底色（同色系浅色）"""
-        return {
-            "GET": "#e6f4ea", "POST": "#fef3e2", "PUT": "#e8f0fe",
-            "DELETE": "#fde8e8", "PATCH": "#f3e8ff", "HEAD": "#f0f1f3",
-        }.get(method, "#f0f1f3")
 
     def _result_text(self, case_id: str) -> str:
         result = self._results.get(case_id)
