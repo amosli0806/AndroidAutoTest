@@ -63,7 +63,7 @@ class MethodBadgeDelegate(QStyledItemDelegate):
         self.initStyleOption(opt, index)
         opt.text = ""  # 只画背景（选中蓝底 / hover / 交替色）
         style = opt.widget.style() if opt.widget else QApplication.style()
-        style.drawControl(QStyle.ControlLabel.CE_ItemViewItem, opt, painter, opt.widget)
+        style.drawControl(QStyle.Control.CE_ItemViewItem, opt, painter, opt.widget)
 
         method = index.data() or ""
         colors = METHOD_BADGE.get(method)
