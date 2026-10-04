@@ -62,7 +62,10 @@ class FlowLayout(QLayout):
         spacing = self._spacing if self._spacing >= 0 else self._get_spacing()
         for item in self._item_list:
             widget = item.widget()
-            if widget and not widget.isVisible():
+            # 用 isHidden()（自身显式隐藏）而非 isVisible()（连带祖先隐藏）：
+            # 页面整体切走时祖先不可见会让所有项被跳过、布局被清空，
+            # 切回后若几何未变化就不会重排，出现整行控件"消失"。
+            if widget and widget.isHidden():
                 continue
             hint = item.sizeHint()
             if x + hint.width() > rect.right() - self._margin:
