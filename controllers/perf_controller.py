@@ -137,6 +137,8 @@ class PerfController(QObject):
 
     # 堆转储结果回投主线程（worker 线程不直接碰 GUI，避免跨线程操作导致界面未响应）
     hprof_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
+    # 截图结果回投主线程（状态文字 / 失败 toast）
+    screenshot_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
     # 启动测试等结果 -> 底部「虫师日志」（main.py 里连 append_bottom_log）
     log_emitted = pyqtSignal(str)
 
@@ -160,6 +162,9 @@ class PerfController(QObject):
         # 堆转储自动循环状态
         self._hprof_loop_timer = None
         self._hprof_dumping = False
+        # 截图自动循环状态
+        self._screenshot_loop_timer = None
+        self._screenshot_busy = False
         # 抓包状态
         self._capture_worker = None
 
@@ -168,8 +173,9 @@ class PerfController(QObject):
         self._stats_timer.setInterval(1000)
         self._stats_timer.timeout.connect(self._refresh_stats)
 
-        # 堆转储结果回主线程处理（toast / 日志）
+        # 堆转储 / 截图结果回主线程处理（toast / 状态文字）
         self.hprof_finished.connect(self._on_hprof_finished)
+        self.screenshot_finished.connect(self._on_screenshot_finished)
 
         self._connect_signals()
         self._check_compat_on_startup()
@@ -189,11 +195,15 @@ class PerfController(QObject):
         self.view.clear_requested.connect(self._on_clear_requested)
         self.view.threshold_config_requested.connect(self._on_threshold_config)
         self.view.report_requested.connect(self._on_generate_report)
-        # 堆转储 / 抓包（性能检测页工具卡片）
+        # 堆转储 / 抓包 / 截图（性能检测页工具卡片）
         self.view.hprof_toggle_requested.connect(self._on_hprof_toggle)
         self.view.hprof_once_requested.connect(self._on_hprof_once)
         self.view.hprof_interval_changed.connect(self._on_hprof_interval_changed)
         self.view.packet_toggle_requested.connect(self._on_packet_toggle)
+        self.view.screenshot_toggle_requested.connect(self._on_screenshot_toggle)
+        self.view.screenshot_once_requested.connect(self._take_screenshot_now)
+        self.view.screenshot_interval_changed.connect(
+            self._on_screenshot_interval_changed)
 
     # ------------------------------------------------------------------
     def _check_compat_on_startup(self):
@@ -305,6 +315,10 @@ class PerfController(QObject):
         if self.view.hprof_enable_check.isChecked():
             self._start_hprof_loop()
 
+        # 截图自动循环：同堆转储口径
+        if self.view.screenshot_enable_check.isChecked():
+            self._start_screenshot_loop()
+
         # 根据模式更新视图状态
         if mode == 'scenario':
             # 场景化：同时启动用例执行线程
@@ -382,8 +396,9 @@ class PerfController(QObject):
             self.scenario_worker = None
 
         self._stats_timer.stop()
-        # 堆转储自动循环随监控结束而停止（勾选状态保留，作为下次监控的预设）
+        # 堆转储/截图自动循环随监控结束而停止（勾选状态保留，作为下次监控的预设）
         self._stop_hprof_loop()
+        self._stop_screenshot_loop()
 
         # 结束会话
         if self.current_session:
@@ -632,6 +647,98 @@ class PerfController(QObject):
             show_toast(self.view, "堆转储完成")
         else:
             show_toast(self.view, "堆转储失败", duration=4000)
+
+    # ------------------------------------------------------------------
+    # 截图卡片（自动循环 + 立即截图）
+    # ------------------------------------------------------------------
+    def _on_screenshot_toggle(self, checked: bool):
+        """截图自动循环勾选状态变化"""
+        if not checked:
+            self._stop_screenshot_loop()
+        elif self.perf_worker is not None:
+            self._start_screenshot_loop()
+
+    def _on_screenshot_interval_changed(self):
+        """间隔变更：若循环正在跑，重启定时器以套用新间隔"""
+        if self._screenshot_loop_timer is not None:
+            self._screenshot_loop_timer.setInterval(
+                int(self.view.get_screenshot_interval() * 1000))
+
+    def _start_screenshot_loop(self):
+        if not self.view.get_selected_package():
+            show_toast(self.view, "请先在左上角选择要监控的应用")
+            self.view.screenshot_enable_check.blockSignals(True)
+            self.view.screenshot_enable_check.setChecked(False)
+            self.view.screenshot_enable_check.blockSignals(False)
+            return
+        if self._screenshot_loop_timer is None:
+            self._screenshot_loop_timer = QTimer(self)
+            self._screenshot_loop_timer.timeout.connect(self._take_screenshot_now)
+        # 不立即执行：等一个完整间隔后触发第一次截图
+        self._screenshot_loop_timer.start(
+            int(self.view.get_screenshot_interval() * 1000))
+
+    def _stop_screenshot_loop(self):
+        if self._screenshot_loop_timer is not None:
+            self._screenshot_loop_timer.stop()
+
+    def _take_screenshot_now(self):
+        """截一次设备屏幕（后台线程，防重入）"""
+        if self._screenshot_busy:
+            return
+        device = getattr(self.device_service, 'device', None) if self.device_service else None
+        if not device:
+            show_toast(self.view, "设备未连接")
+            return
+        self._screenshot_busy = True
+
+        serial = self.device_service.serial or "device"
+        serial_safe = serial.replace(':', '_')
+        from utils.settings import Settings as _Settings
+        screenshot_dir = os.path.join(
+            _Settings.get_output_dir(), serial_safe, "screenshots")
+        os.makedirs(screenshot_dir, exist_ok=True)
+
+        import subprocess
+        import sys as _sys
+        import threading
+        from utils.adb_path import get_adb_path
+
+        def worker():
+            creationflags = subprocess.CREATE_NO_WINDOW if _sys.platform == 'win32' else 0
+            try:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                local_path = os.path.join(
+                    screenshot_dir, f"screenshot_{timestamp}.png")
+                # exec-out screencap -p：PNG 字节流直写本地文件，
+                # 不经过设备端临时文件（对比堆转储少一步 pull/rm）
+                with open(local_path, 'wb') as f:
+                    subprocess.run(
+                        [get_adb_path(), "-s", serial, "exec-out", "screencap", "-p"],
+                        stdout=f, check=True, timeout=20,
+                        creationflags=creationflags,
+                    )
+                if os.path.getsize(local_path) == 0:
+                    os.remove(local_path)
+                    raise RuntimeError("截图数据为空")
+                self.screenshot_finished.emit("success", local_path)
+            except Exception as e:
+                self.screenshot_finished.emit("error", str(e))
+            finally:
+                self._screenshot_busy = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_screenshot_finished(self, status: str, message: str):
+        """截图结果回投到主线程：状态文字常驻卡片，失败另弹 toast。
+
+        循环截图间隔可能很短，成功时不弹 toast，避免打扰。
+        """
+        if status == "success":
+            self.view.set_screenshot_status(f"最近：{os.path.basename(message)}")
+        else:
+            self.view.set_screenshot_status(f"❌ {message}", error=True)
+            show_toast(self.view, "截图失败", duration=4000)
 
     def _on_packet_toggle(self, capturing: bool):
         """抓包开始/停止"""

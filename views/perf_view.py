@@ -121,6 +121,9 @@ class PerfView(QWidget):
     hprof_once_requested = pyqtSignal()            # 手动触发一次堆转储
     hprof_interval_changed = pyqtSignal()          # 堆转储间隔变更
     packet_toggle_requested = pyqtSignal(bool)     # 抓包开始/停止
+    screenshot_toggle_requested = pyqtSignal(bool)  # 截图自动循环开关（性能工具卡片）
+    screenshot_once_requested = pyqtSignal()        # 手动触发一次截图
+    screenshot_interval_changed = pyqtSignal()      # 截图间隔变更
 
     # 状态枚举
     STATE_IDLE = 'idle'
@@ -341,13 +344,18 @@ class PerfView(QWidget):
         for key, cb in self.metric_radios.items():
             cb.setEnabled(idle and self._metric_available.get(key, True))
 
-        # 堆转储/抓包的「卡片显隐」复选框：同口径，非空闲禁用
+        # 堆转储/抓包/截图的「卡片显隐」复选框：同口径，非空闲禁用
         self.hprof_visible_check.setEnabled(idle)
         self.packet_visible_check.setEnabled(idle)
+        self.screenshot_visible_check.setEnabled(idle)
 
         # 堆转储设置：监控中锁定（自动循环勾选与间隔不可改）；空闲时按勾选状态开放间隔
         self.hprof_enable_check.setEnabled(idle)
         self.hprof_interval_combo.setEnabled(idle and self.hprof_enable_check.isChecked())
+        # 截图设置：同堆转储口径
+        self.screenshot_enable_check.setEnabled(idle)
+        self.screenshot_interval_combo.setEnabled(
+            idle and self.screenshot_enable_check.isChecked())
         # 置灰时只显示文案，不显示图标
         for btn, icon_name in self._btn_icon_map.items():
             if btn.isEnabled():
@@ -513,6 +521,10 @@ class PerfView(QWidget):
         self.packet_visible_check = BorderedCheckBox("抓包")
         self.packet_visible_check.toggled.connect(self._on_card_visibility_changed)
         metric_widgets.append(self.packet_visible_check)
+
+        self.screenshot_visible_check = BorderedCheckBox("截图")
+        self.screenshot_visible_check.toggled.connect(self._on_card_visibility_changed)
+        metric_widgets.append(self.screenshot_visible_check)
         flow2.addWidget(_make_group("指标", metric_widgets))
 
         # 场景化参数组：仅「场景化测试」模式下显示（显隐由 _apply_state 控制）
@@ -649,6 +661,7 @@ class PerfView(QWidget):
         self._cards['traffic'].setVisible(False)
         self._hprof_card.setVisible(False)
         self._packet_card.setVisible(False)
+        self._screenshot_card.setVisible(False)
 
         # 初始布局
         self._relayout_cards()
@@ -735,12 +748,73 @@ class PerfView(QWidget):
         packet_ctrl_row.addStretch()
         packet_layout.addLayout(packet_ctrl_row)
 
+        # ---- 截图卡片 ----
+        self._screenshot_card = QFrame()
+        self._screenshot_card.setObjectName("PerfToolCard")
+
+        screenshot_layout = QVBoxLayout(self._screenshot_card)
+        screenshot_layout.setContentsMargins(12, 10, 12, 10)
+        screenshot_layout.setSpacing(8)
+
+        screenshot_title_row = QHBoxLayout()
+        screenshot_title_row.setSpacing(8)
+        self._screenshot_dot = QLabel("●")
+        self._screenshot_dot.setStyleSheet("color: #16a085; font-size: 14px; background: transparent;")
+        screenshot_title_row.addWidget(self._screenshot_dot)
+        self._screenshot_title = QLabel("截图")
+        self._screenshot_title.setStyleSheet("font-weight: 600; font-size: 13px; background: transparent;")
+        screenshot_title_row.addWidget(self._screenshot_title)
+        screenshot_title_row.addStretch()
+        screenshot_layout.addLayout(screenshot_title_row)
+
+        screenshot_ctrl_row = QHBoxLayout()
+        screenshot_ctrl_row.setSpacing(10)
+        self.screenshot_enable_check = BorderedCheckBox("自动循环")
+        self.screenshot_enable_check.setToolTip(
+            "开启后，点击「开始监控」即按右侧间隔自动截取设备屏幕\n"
+            "（第一次截图在一个完整间隔后执行）")
+        self.screenshot_enable_check.toggled.connect(self._on_screenshot_toggle)
+        screenshot_ctrl_row.addWidget(self.screenshot_enable_check)
+
+        screenshot_ctrl_row.addWidget(QLabel("间隔:"))
+        self.screenshot_interval_combo = QComboBox()
+        self.screenshot_interval_combo.addItems(
+            ["30 秒", "1 分钟", "5 分钟", "10 分钟", "30 分钟", "60 分钟"]
+        )
+        self.screenshot_interval_combo.setCurrentText("5 分钟")
+        self.screenshot_interval_combo.setFixedWidth(100)
+        self.screenshot_interval_combo.setEnabled(False)
+        self.screenshot_interval_combo.currentTextChanged.connect(
+            lambda _: self.screenshot_interval_changed.emit()
+        )
+        screenshot_ctrl_row.addWidget(self.screenshot_interval_combo)
+
+        self.screenshot_once_btn = QPushButton("立即截图一次")
+        self.screenshot_once_btn.setIcon(qta.icon('fa6s.camera', color='white'))
+        self.screenshot_once_btn.clicked.connect(self.screenshot_once_requested.emit)
+        screenshot_ctrl_row.addWidget(self.screenshot_once_btn)
+
+        self.screenshot_status_label = QLabel("未开启")
+        self.screenshot_status_label.setStyleSheet("font-size: 12px; color: #999999; background: transparent;")
+        screenshot_ctrl_row.addWidget(self.screenshot_status_label)
+        screenshot_ctrl_row.addStretch()
+        screenshot_layout.addLayout(screenshot_ctrl_row)
+
     def get_hprof_interval(self) -> float:
         """返回堆转储循环间隔（秒）"""
         text = self.hprof_interval_combo.currentText()
         mapping = {
             "1 分钟": 60.0, "5 分钟": 300.0, "10 分钟": 600.0,
             "30 分钟": 1800.0, "60 分钟": 3600.0, "120 分钟": 7200.0,
+        }
+        return mapping.get(text, 300.0)
+
+    def get_screenshot_interval(self) -> float:
+        """返回截图循环间隔（秒）"""
+        text = self.screenshot_interval_combo.currentText()
+        mapping = {
+            "30 秒": 30.0, "1 分钟": 60.0, "5 分钟": 300.0,
+            "10 分钟": 600.0, "30 分钟": 1800.0, "60 分钟": 3600.0,
         }
         return mapping.get(text, 300.0)
 
@@ -753,6 +827,18 @@ class PerfView(QWidget):
         """自动循环勾选状态变化：刷新间隔控件可用性并通知控制器"""
         self.hprof_interval_combo.setEnabled(checked)
         self.hprof_toggle_requested.emit(checked)
+
+    def _on_screenshot_toggle(self, checked: bool):
+        """截图自动循环勾选状态变化：刷新间隔控件可用性并通知控制器"""
+        self.screenshot_interval_combo.setEnabled(checked)
+        self.screenshot_toggle_requested.emit(checked)
+
+    def set_screenshot_status(self, text: str, error: bool = False):
+        """更新截图卡片状态文字（最近截图文件名 / 失败原因）"""
+        self.screenshot_status_label.setText(text)
+        self.screenshot_status_label.setStyleSheet(
+            f"font-size: 12px; color: {'#e74c3c' if error else '#999999'}; "
+            f"background: transparent;")
 
     def set_packet_capturing(self, capturing: bool):
         """更新抓包按钮外观与文案（由控制器回写，避免按钮/状态不同步）"""
@@ -805,9 +891,11 @@ class PerfView(QWidget):
 
         # 可见工具卡片：按勾选显示
         tool_checks = {
-            'hprof': self.hprof_visible_check, 'packet': self.packet_visible_check}
-        tool_cards = {'hprof': self._hprof_card, 'packet': self._packet_card}
-        shown_tools = [tool_cards[k] for k in ('hprof', 'packet')
+            'hprof': self.hprof_visible_check, 'packet': self.packet_visible_check,
+            'screenshot': self.screenshot_visible_check}
+        tool_cards = {'hprof': self._hprof_card, 'packet': self._packet_card,
+                      'screenshot': self._screenshot_card}
+        shown_tools = [tool_cards[k] for k in ('hprof', 'packet', 'screenshot')
                        if tool_checks[k].isChecked()]
         for tc in tool_cards.values():
             tc.setParent(self.cards_container)
@@ -817,17 +905,16 @@ class PerfView(QWidget):
             # 指标卡片 2 列排布
             for i, key in enumerate(visible_metrics):
                 self.cards_grid.addWidget(self._cards[key], i // 2, i % 2)
+            # 工具卡片紧跟其后，每行最多 2 张
             next_row = (len(visible_metrics) + 1) // 2
-            if len(shown_tools) == 2:
-                self.cards_grid.addWidget(shown_tools[0], next_row, 0)
-                self.cards_grid.addWidget(shown_tools[1], next_row, 1)
-                used_rows = next_row + 1
-            elif len(shown_tools) == 1:
-                # 只显示一张工具卡时也只占半行宽，与上方指标卡对齐
-                self.cards_grid.addWidget(shown_tools[0], next_row, 0)
-                used_rows = next_row + 1
-            else:
-                used_rows = next_row
+            row, col = next_row, 0
+            for tc in shown_tools:
+                self.cards_grid.addWidget(tc, row, col)
+                col += 1
+                if col >= 2:
+                    col = 0
+                    row += 1
+            used_rows = row + (1 if col > 0 else 0)
         else:
             for i, key in enumerate(visible_metrics):
                 self.cards_grid.addWidget(self._cards[key], i, 0)
