@@ -573,7 +573,15 @@ class ElementManagerView(QWidget):
             imported = dialog.selected_elements()
             if not imported:
                 return
+            # 重复检测：以「应用+模块+定位方式+定位值」为唯一键，跳过已存在的
+            existing = self.element_model.get_elements()
+            seen = {(e.app, e.module, e.loc_type, e.loc_value) for e in existing}
+            added, skipped = 0, 0
             for it in imported:
+                key = (it['app'], it['module'], it['loc_type'], it['loc_value'])
+                if key in seen:
+                    skipped += 1
+                    continue
                 elem = Element(
                     id=self.element_model._generate_id(),
                     name=it['name'],
@@ -584,9 +592,16 @@ class ElementManagerView(QWidget):
                     remark=it.get('remark', ''),
                 )
                 self.element_model.add_element(elem)
+                seen.add(key)
+                added += 1
             self.refresh()
             self.element_changed.emit()
-            show_toast(parent=self, message=f"已导入 {len(imported)} 个元素")
+            if skipped:
+                show_toast(
+                    parent=self,
+                    message=f"已导入 {added} 个元素，跳过 {skipped} 个重复项")
+            else:
+                show_toast(parent=self, message=f"已导入 {added} 个元素")
 
 
 class ElementEditDialog(QDialog):
