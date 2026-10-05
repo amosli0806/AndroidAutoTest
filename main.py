@@ -560,6 +560,7 @@ def main():
 
     # 3. 应用元素库
     main_window.set_element_manager_view(element_manager)
+    element_manager.set_device_service(device_svc)  # 抓取界面功能用
 
     # 元素库快捷键注入
     def _elem_add():

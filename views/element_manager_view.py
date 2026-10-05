@@ -18,15 +18,22 @@ from utils.settings import Settings, THEME_MODE_DARK
 class ElementManagerView(QWidget):
     element_changed = pyqtSignal()
     verify_element_signal = pyqtSignal(str)
+    _scrape_result = pyqtSignal(list, str)  # (elements, error)
 
     def __init__(self, element_model: ElementModel, parent=None):
         super().__init__(parent)
         self.setObjectName("ElementManagerView")
         self.element_model = element_model
+        self.device_service = None  # 由 main.py 注入，抓取界面用
+        self._scrape_result.connect(self._on_scrape_result)
         self.setup_ui()
         self.load_data()
         # 应用主题（由主窗口调用，但这里确保初始化时也应用）
         self.apply_theme()
+
+    def set_device_service(self, service):
+        """注入设备服务（抓取当前界面需要 uiautomator2 的 device）"""
+        self.device_service = service
 
     def apply_theme(self, theme_mode: ThemeMode = None):
         """应用主题到视图"""
@@ -158,6 +165,15 @@ class ElementManagerView(QWidget):
 
         toolbar_layout.addWidget(self.search_input)
         toolbar_layout.addWidget(self.app_combo)
+
+        # 抓取当前界面：一键 dump 设备 UI 树，勾选批量入库（省去手敲定位值）
+        self.scrape_btn = QPushButton("抓取界面")
+        self.scrape_btn.setIcon(qta.icon('fa6s.magnifying-glass-chart', color='white'))
+        self.scrape_btn.setToolTip(
+            "连接设备后，抓取当前屏幕的界面元素，勾选需要的批量入库，"
+            "自动填好定位方式和定位值")
+        self.scrape_btn.clicked.connect(self._on_scrape)
+        toolbar_layout.addWidget(self.scrape_btn)
 
         self.add_btn = QPushButton("新增")
         self.add_btn.setIcon(qta.icon('fa6s.plus', color='white'))
@@ -514,6 +530,59 @@ class ElementManagerView(QWidget):
         self._update_app_combo()
         self.filter_table()
 
+    # ------------------------------------------------------------------
+    # 抓取当前界面（方案 A 可用版）
+    # ------------------------------------------------------------------
+    def _on_scrape(self):
+        """抓取当前屏幕 UI 树 → 解析出可定位元素 → 勾选批量入库"""
+        if not self.device_service or not self.device_service.device:
+            show_toast(parent=self, message="⚠️ 请先连接设备")
+            return
+        show_toast(parent=self, message="正在抓取界面…", duration=2000)
+        device = self.device_service.device
+
+        from PyQt6.QtCore import QThread
+        import threading
+
+        def worker():
+            try:
+                xml = device.dump_hierarchy()
+                elements = parse_hierarchy(xml)
+                self._scrape_result.emit(elements, "")
+            except Exception as e:
+                self._scrape_result.emit([], str(e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_scrape_result(self, elements, error):
+        if error:
+            ErrorDialog.show_error(
+                self, "抓取失败",
+                f"无法抓取当前界面：\n{error}\n\n请确认设备已连接且屏幕处于要测试的界面。")
+            return
+        if not elements:
+            show_toast(parent=self, message="当前界面没有可定位的元素")
+            return
+        dialog = ScrapeImportDialog(elements, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            imported = dialog.selected_elements()
+            if not imported:
+                return
+            for it in imported:
+                elem = Element(
+                    id=self.element_model._generate_id(),
+                    name=it['name'],
+                    app=it['app'],
+                    module=it['module'],
+                    loc_type=it['loc_type'],
+                    loc_value=it['loc_value'],
+                    remark=it.get('remark', ''),
+                )
+                self.element_model.add_element(elem)
+            self.refresh()
+            self.element_changed.emit()
+            show_toast(parent=self, message=f"已导入 {len(imported)} 个元素")
+
 
 class ElementEditDialog(QDialog):
     """美观的新增/编辑元素对话框"""
@@ -651,3 +720,167 @@ class ElementEditDialog(QDialog):
             'loc_value': self.loc_value_edit.text().strip(),
             'remark': self.remark_edit.text().strip()
         }
+
+
+# ==================================================================
+# 抓取界面：UI 树解析 + 勾选导入对话框
+# ==================================================================
+def parse_hierarchy(xml: str):
+    """把 uiautomator2 的 dump 结果（XML）解析成可入库的元素列表。
+
+    优先取 resource-id（稳定、唯一性最好），其次 text，再次 content-desc。
+    过滤掉无定位信息的节点（如纯布局容器）。
+    """
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(xml)
+    except Exception:
+        return []
+
+    results = []
+    for node in root.iter('node'):
+        rid = node.get('resource-id') or ''
+        text = node.get('text') or ''
+        desc = node.get('content-desc') or ''
+        cls = node.get('class') or ''
+
+        # 过滤：完全没有可定位信息的（纯容器/装饰节点）
+        if not rid and not text and not desc:
+            continue
+
+        # 定位方式优先级：资源ID > 文本 > 描述
+        if rid:
+            loc_type, loc_value = '资源ID', rid
+            # 名称：取 resource-id 末尾段（去掉包名和 :id/ 前缀）
+            name = rid.split('/')[-1] or rid.split(':id/')[-1] or rid
+        elif text:
+            loc_type, loc_value = '文本', text
+            name = text
+        else:
+            loc_type, loc_value = '描述', desc
+            name = desc
+
+        name = name.strip()[:50] or cls
+        results.append({
+            'name': name,
+            'app': '',          # 由用户在导入对话框统一填（或默认空）
+            'module': '',
+            'loc_type': loc_type,
+            'loc_value': loc_value,
+            'remark': f"自动抓取 · {cls}" if cls else "自动抓取",
+        })
+
+    # 去重（同定位值只留一条）
+    seen = set()
+    dedup = []
+    for r in results:
+        key = (r['loc_type'], r['loc_value'])
+        if key not in seen:
+            seen.add(key)
+            dedup.append(r)
+    return dedup
+
+
+class ScrapeImportDialog(QDialog):
+    """抓取结果勾选导入：表格展示可定位元素，勾选后统一填「所属应用/模块」批量入库。"""
+
+    def __init__(self, elements, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("导入界面元素")
+        self.resize(760, 560)
+        self._elements = elements
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        tip = QLabel(
+            f"共抓取到 {len(elements)} 个可定位元素，勾选需要导入的（默认全选）。\n"
+            "定位方式和定位值已自动填好，只需统一指定所属应用和模块。")
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
+
+        # 统一填 应用 / 模块
+        form_row = QHBoxLayout()
+        form_row.setSpacing(8)
+        form_row.addWidget(QLabel("所属应用:"))
+        self.app_edit = QLineEdit()
+        self.app_edit.setPlaceholderText("如：百度地图")
+        form_row.addWidget(self.app_edit, 1)
+        form_row.addWidget(QLabel("所属模块:"))
+        self.module_edit = QLineEdit()
+        self.module_edit.setPlaceholderText("如：底图（可选）")
+        form_row.addWidget(self.module_edit, 1)
+        layout.addLayout(form_row)
+
+        # 元素表格
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["名称", "定位方式", "定位值", "备注"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        layout.addWidget(self.table, 1)
+
+        # 全选/全不选
+        ctrl = QHBoxLayout()
+        self.select_all_btn = QPushButton("全选")
+        self.select_all_btn.clicked.connect(lambda: self._set_all(True))
+        self.select_none_btn = QPushButton("全不选")
+        self.select_none_btn.clicked.connect(lambda: self._set_all(False))
+        ctrl.addWidget(self.select_all_btn)
+        ctrl.addWidget(self.select_none_btn)
+        ctrl.addStretch()
+        layout.addLayout(ctrl)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("导入所选")
+        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        btn_box.accepted.connect(self._on_accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+        self._fill_table()
+
+    def _fill_table(self):
+        self.table.setRowCount(len(self._elements))
+        for row, el in enumerate(self._elements):
+            check = QTableWidgetItem()
+            check.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            check.setCheckState(Qt.CheckState.Checked)
+            self.table.setItem(row, 0, check)
+            self.table.setItem(row, 1, QTableWidgetItem(el['loc_type']))
+            self.table.setItem(row, 2, QTableWidgetItem(el['loc_value']))
+            self.table.setItem(row, 3, QTableWidgetItem(el['remark']))
+            # 名称也放第一列 check 旁边展示
+            self.table.item(row, 0).setText(el['name'])
+
+    def _set_all(self, checked):
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for row in range(self.table.rowCount()):
+            self.table.item(row, 0).setCheckState(state)
+
+    def _on_accept(self):
+        if not self.app_edit.text().strip():
+            show_toast(parent=self, message="请填写「所属应用」", duration=2500)
+            return
+        self.accept()
+
+    def selected_elements(self):
+        """返回勾选的元素 dict 列表，补上用户填的应用/模块"""
+        app = self.app_edit.text().strip()
+        module = self.module_edit.text().strip()
+        result = []
+        for row, el in enumerate(self._elements):
+            if self.table.item(row, 0).checkState() == Qt.CheckState.Checked:
+                it = dict(el)
+                it['app'] = app
+                it['module'] = module
+                it['name'] = it['name'] or self.table.item(row, 0).text()
+                result.append(it)
+        return result
