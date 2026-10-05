@@ -833,7 +833,7 @@ class ScrapeImportDialog(QDialog):
         form_row.addWidget(self.app_edit, 1)
         form_row.addWidget(QLabel("所属模块:"))
         self.module_edit = QLineEdit()
-        self.module_edit.setPlaceholderText("如：底图（可选）")
+        self.module_edit.setPlaceholderText("如：底图")
         form_row.addWidget(self.module_edit, 1)
         layout.addLayout(form_row)
 
@@ -910,14 +910,22 @@ class ScrapeImportDialog(QDialog):
             self.table.item(row, 0).setCheckState(state)
 
     def _on_accept(self):
-        if not self.app_edit.text().strip():
-            # 应用为空：输入框标红并聚焦（提示留在对话框内，不会像 toast 一闪而过）
-            self.app_edit.setStyleSheet(
-                "QLineEdit { border: 1.5px solid #e74c3c; }")
-            self.app_edit.setFocus()
-            self.app_edit.setPlaceholderText("请填写所属应用（必填）")
+        # 应用/模块都必填：为空的输入框标红，第一个空的获得焦点
+        first_empty = None
+        for edit, ph in ((self.app_edit, "请填写所属应用（必填）"),
+                         (self.module_edit, "请填写所属模块（必填）")):
+            if edit.text().strip():
+                edit.setStyleSheet("")
+            else:
+                edit.setStyleSheet("QLineEdit { border: 1.5px solid #e74c3c; }")
+                edit.setPlaceholderText(ph)
+                if first_empty is None:
+                    first_empty = edit
+        if first_empty is not None:
+            first_empty.setFocus()
             return
         self.app_edit.setStyleSheet("")
+        self.module_edit.setStyleSheet("")
         self.accept()
 
     def selected_elements(self):
