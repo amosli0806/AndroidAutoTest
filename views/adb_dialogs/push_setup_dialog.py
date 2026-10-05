@@ -16,7 +16,7 @@ from PyQt6.QtCore import Qt
 from utils.theme import ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 
-DEFAULT_REMOTE = "/data/local/tmp/"
+DEFAULT_REMOTE = "/sdcard/naviTracker/"
 
 
 class PushSetupDialog(QDialog):
