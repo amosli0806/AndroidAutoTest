@@ -314,6 +314,10 @@ class ApiView(QWidget):
             QTreeWidget::item:hover:!selected, QTableWidget::item:hover:!selected {{
                 background: {hover};
             }}
+            /* 选中态只变背景，文字保持原色（避免浅蓝底上深色文字被换成白色看不清） */
+            QTreeWidget::item:selected, QTableWidget::item:selected {{
+                background: {sel_bg}; color: {fg};
+            }}
             QHeaderView::section {{
                 background: {head_bg}; color: {fg};
                 border: none; border-bottom: 1px solid {border};
