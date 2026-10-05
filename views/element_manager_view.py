@@ -830,6 +830,14 @@ class ScrapeImportDialog(QDialog):
         form_row.addWidget(self.module_edit, 1)
         layout.addLayout(form_row)
 
+        # 过滤搜索：元素多时快速缩小范围（名称/定位值模糊匹配）
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText(
+            "🔍 搜索过滤（匹配名称或定位值，如：按钮 / btn_）——全选/全不选只作用于过滤后的行")
+        self.filter_input.setClearButtonEnabled(True)
+        self.filter_input.textChanged.connect(lambda _: self._apply_filter())
+        layout.addWidget(self.filter_input)
+
         # 元素表格
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["名称", "定位方式", "定位值", "备注"])
@@ -880,9 +888,24 @@ class ScrapeImportDialog(QDialog):
             # 名称也放第一列 check 旁边展示
             self.table.item(row, 0).setText(el['name'])
 
+    def _apply_filter(self):
+        """按名称/定位值过滤表格行（隐藏不匹配行）；全选/全不选只作用于可见行"""
+        text = self.filter_input.text().strip().lower()
+        for row in range(self.table.rowCount()):
+            if not text:
+                self.table.setRowHidden(row, False)
+                continue
+            name = self.table.item(row, 0).text().lower()
+            loc = self.table.item(row, 2).text().lower()
+            match = text in name or text in loc
+            self.table.setRowHidden(row, not match)
+
     def _set_all(self, checked):
+        """全选/全不选：只作用于过滤后可见的行（配合搜索精准批量勾选）"""
         state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
         for row in range(self.table.rowCount()):
+            if self.table.isRowHidden(row):
+                continue
             self.table.item(row, 0).setCheckState(state)
 
     def _on_accept(self):
