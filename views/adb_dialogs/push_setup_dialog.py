@@ -16,7 +16,7 @@ from PyQt6.QtCore import Qt
 from utils.theme import ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 
-DEFAULT_REMOTE = "/sdcard/"
+DEFAULT_REMOTE = "/data/local/tmp/"
 
 
 class PushSetupDialog(QDialog):
@@ -78,8 +78,11 @@ class PushSetupDialog(QDialog):
         layout.addWidget(self.remote_edit)
 
         remote_hint = QLabel(
-            f"文件会推到设备的这个目录里。保持默认 {DEFAULT_REMOTE} 即推到手机/车机的"
-            "内部存储根目录，也可以自己改成如 /sdcard/APK/ 这类子目录（目录不存在会自动创建）"
+            f"文件会推到设备的这个目录（目录不存在会自动创建）。常用路径：\n"
+            f"· monkey 白名单：/data/local/tmp/\n"
+            f"· 轨迹文件：/sdcard/naviTracker/\n"
+            f"· 折线图配置文件：/sdcard/dumpmeminfo/\n"
+            f"· 车机数据回放文件：/sdcard/BaiduMapAuto/LLNRecordLog/playback/"
         )
         remote_hint.setObjectName("hintLabel")
         remote_hint.setWordWrap(True)
