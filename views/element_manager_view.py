@@ -728,8 +728,8 @@ class ElementEditDialog(QDialog):
 def parse_hierarchy(xml: str):
     """把 uiautomator2 的 dump 结果（XML）解析成可入库的元素列表。
 
-    优先取 resource-id（稳定、唯一性最好），其次 text，再次 content-desc。
-    过滤掉无定位信息的节点（如纯布局容器）。
+    名称用屏幕文案（text/描述）优先，用户一眼能对上界面上的字；
+    定位值按稳定性取（资源ID > 文本 > 描述）。过滤掉无定位信息的纯容器。
     """
     try:
         import xml.etree.ElementTree as ET
@@ -743,31 +743,48 @@ def parse_hierarchy(xml: str):
         text = node.get('text') or ''
         desc = node.get('content-desc') or ''
         cls = node.get('class') or ''
+        clickable = node.get('clickable') == 'true'
 
-        # 过滤：完全没有可定位信息的（纯容器/装饰节点）
+        # 过滤：完全没有可定位信息的（纯布局容器）
         if not rid and not text and not desc:
             continue
 
-        # 定位方式优先级：资源ID > 文本 > 描述
-        if rid:
-            loc_type, loc_value = '资源ID', rid
-            # 名称：取 resource-id 末尾段（去掉包名和 :id/ 前缀）
-            name = rid.split('/')[-1] or rid.split(':id/')[-1] or rid
-        elif text:
-            loc_type, loc_value = '文本', text
+        # 名称：屏幕上能看到的文案优先（好分辨），其次描述，最后 resource-id 末尾段
+        if text:
             name = text
-        else:
-            loc_type, loc_value = '描述', desc
+        elif desc:
             name = desc
+        elif rid:
+            name = rid.split('/')[-1] or rid.split(':id/')[-1] or rid
+        else:
+            name = cls
 
         name = name.strip()[:50] or cls
+
+        # 定位方式：资源ID 最稳定优先
+        if rid:
+            loc_type, loc_value = '资源ID', rid
+        elif text:
+            loc_type, loc_value = '文本', text
+        else:
+            loc_type, loc_value = '描述', desc
+
+        # 备注：可点击标记 + 简短控件类型（去掉冗长包名）
+        short_cls = cls.split('.')[-1] if cls else ''
+        parts = []
+        if clickable:
+            parts.append('可点击')
+        if short_cls:
+            parts.append(short_cls)
+        remark = ' · '.join(parts) if parts else '自动抓取'
+
         results.append({
             'name': name,
-            'app': '',          # 由用户在导入对话框统一填（或默认空）
+            'app': '',
             'module': '',
             'loc_type': loc_type,
             'loc_value': loc_value,
-            'remark': f"自动抓取 · {cls}" if cls else "自动抓取",
+            'remark': remark,
         })
 
     # 去重（同定位值只留一条）
@@ -826,24 +843,27 @@ class ScrapeImportDialog(QDialog):
         hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.table, 1)
 
-        # 全选/全不选
-        ctrl = QHBoxLayout()
+        # 底部一行：左 全选/全不选 | 右 导入所选/取消
+        bottom = QHBoxLayout()
         self.select_all_btn = QPushButton("全选")
         self.select_all_btn.clicked.connect(lambda: self._set_all(True))
         self.select_none_btn = QPushButton("全不选")
         self.select_none_btn.clicked.connect(lambda: self._set_all(False))
-        ctrl.addWidget(self.select_all_btn)
-        ctrl.addWidget(self.select_none_btn)
-        ctrl.addStretch()
-        layout.addLayout(ctrl)
+        bottom.addWidget(self.select_all_btn)
+        bottom.addWidget(self.select_none_btn)
+        bottom.addStretch()
 
         btn_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("导入所选")
-        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("取消")
+        ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
+        ok_btn.setText("导入所选")
+        cancel_btn = btn_box.button(QDialogButtonBox.StandardButton.Cancel)
+        cancel_btn.setText("取消")
         btn_box.accepted.connect(self._on_accept)
         btn_box.rejected.connect(self.reject)
-        layout.addWidget(btn_box)
+        bottom.addWidget(ok_btn)
+        bottom.addWidget(cancel_btn)
+        layout.addLayout(bottom)
 
         self._fill_table()
 
