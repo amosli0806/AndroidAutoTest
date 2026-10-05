@@ -533,7 +533,9 @@ class AdbToolboxController(QObject):
         remote = dlg.remote_path
 
         dlg = PushProgressDialog(self.device_service, path, remote, self.view)
-        dlg.log_message.connect(self.view.append_log)
+        # 日志走 _on_view_log -> 底部"虫师日志"（视图上没有 append_log 方法，
+        # 之前的错误连接会在推送线程第一次 emit 日志时抛 AttributeError）
+        dlg.log_message.connect(self._on_view_log)
         dlg.exec()
 
     def _action_device_info(self):
