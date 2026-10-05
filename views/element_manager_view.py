@@ -18,7 +18,7 @@ from utils.settings import Settings, THEME_MODE_DARK
 class ElementManagerView(QWidget):
     element_changed = pyqtSignal()
     verify_element_signal = pyqtSignal(str)
-    _scrape_result = pyqtSignal(list, str)  # (elements, error)
+    _scrape_result = pyqtSignal(list, str, str)  # (elements, error, current_app)
 
     def __init__(self, element_model: ElementModel, parent=None):
         super().__init__(parent)
@@ -541,20 +541,25 @@ class ElementManagerView(QWidget):
         show_toast(parent=self, message="正在抓取界面…", duration=2000)
         device = self.device_service.device
 
-        from PyQt6.QtCore import QThread
         import threading
 
         def worker():
             try:
                 xml = device.dump_hierarchy()
                 elements = parse_hierarchy(xml)
-                self._scrape_result.emit(elements, "")
+                # 顺带取当前前台应用包名，预填「所属应用」省得手填
+                current_app = ''
+                try:
+                    current_app = (device.app_current() or {}).get('package', '')
+                except Exception:
+                    current_app = ''
+                self._scrape_result.emit(elements, "", current_app)
             except Exception as e:
-                self._scrape_result.emit([], str(e))
+                self._scrape_result.emit([], str(e), "")
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_scrape_result(self, elements, error):
+    def _on_scrape_result(self, elements, error, current_app=""):
         if error:
             ErrorDialog.show_error(
                 self, "抓取失败",
@@ -563,7 +568,7 @@ class ElementManagerView(QWidget):
         if not elements:
             show_toast(parent=self, message="当前界面没有可定位的元素")
             return
-        dialog = ScrapeImportDialog(elements, self)
+        dialog = ScrapeImportDialog(elements, self, current_app=current_app)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             imported = dialog.selected_elements()
             if not imported:
@@ -801,7 +806,7 @@ def parse_hierarchy(xml: str):
 class ScrapeImportDialog(QDialog):
     """抓取结果勾选导入：表格展示可定位元素，勾选后统一填「所属应用/模块」批量入库。"""
 
-    def __init__(self, elements, parent=None):
+    def __init__(self, elements, parent=None, current_app: str = ''):
         super().__init__(parent)
         self.setWindowTitle("导入界面元素")
         self.resize(760, 560)
@@ -817,12 +822,14 @@ class ScrapeImportDialog(QDialog):
         tip.setWordWrap(True)
         layout.addWidget(tip)
 
-        # 统一填 应用 / 模块
+        # 统一填 应用 / 模块（应用自动预填设备前台包名，一般不用改）
         form_row = QHBoxLayout()
         form_row.setSpacing(8)
         form_row.addWidget(QLabel("所属应用:"))
         self.app_edit = QLineEdit()
         self.app_edit.setPlaceholderText("如：百度地图")
+        if current_app:
+            self.app_edit.setText(current_app)
         form_row.addWidget(self.app_edit, 1)
         form_row.addWidget(QLabel("所属模块:"))
         self.module_edit = QLineEdit()
@@ -851,7 +858,7 @@ class ScrapeImportDialog(QDialog):
         hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.table, 1)
 
-        # 底部一行：左 全选/全不选 | 右 导入所选/取消
+        # 底部一行：左 全选/全不选 | 右 导入（取消用右上角 × 或 Esc）
         bottom = QHBoxLayout()
         self.select_all_btn = QPushButton("全选")
         self.select_all_btn.clicked.connect(lambda: self._set_all(True))
@@ -861,16 +868,10 @@ class ScrapeImportDialog(QDialog):
         bottom.addWidget(self.select_none_btn)
         bottom.addStretch()
 
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        ok_btn = btn_box.button(QDialogButtonBox.StandardButton.Ok)
-        ok_btn.setText("导入所选")
-        cancel_btn = btn_box.button(QDialogButtonBox.StandardButton.Cancel)
-        cancel_btn.setText("取消")
-        btn_box.accepted.connect(self._on_accept)
-        btn_box.rejected.connect(self.reject)
-        bottom.addWidget(ok_btn)
-        bottom.addWidget(cancel_btn)
+        self.import_btn = QPushButton("导入")
+        self.import_btn.setDefault(True)
+        self.import_btn.clicked.connect(self._on_accept)
+        bottom.addWidget(self.import_btn)
         layout.addLayout(bottom)
 
         self._fill_table()
@@ -910,8 +911,13 @@ class ScrapeImportDialog(QDialog):
 
     def _on_accept(self):
         if not self.app_edit.text().strip():
-            show_toast(parent=self, message="请填写「所属应用」", duration=2500)
+            # 应用为空：输入框标红并聚焦（提示留在对话框内，不会像 toast 一闪而过）
+            self.app_edit.setStyleSheet(
+                "QLineEdit { border: 1.5px solid #e74c3c; }")
+            self.app_edit.setFocus()
+            self.app_edit.setPlaceholderText("请填写所属应用（必填）")
             return
+        self.app_edit.setStyleSheet("")
         self.accept()
 
     def selected_elements(self):
