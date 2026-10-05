@@ -2789,13 +2789,13 @@ class MainWindow(QMainWindow):
 
         self.step_search_input = QLineEdit()
         self.step_search_input.setPlaceholderText("搜索具体步骤或文案描述一键生成步骤...")
-        self.step_search_input.setFixedHeight(20)
+        self.step_search_input.setFixedHeight(24)
         self.step_search_input.setStyleSheet("""
             QLineEdit {
                 background: white;
                 border: 1px solid #d0d0d0;
                 border-radius: 4px;
-                padding: 2px 8px;
+                padding: 0px 10px;
                 color: #333;
             }
         """)
@@ -2803,7 +2803,7 @@ class MainWindow(QMainWindow):
         title_layout.addWidget(self.step_search_input)
 
         self.step_generate_btn = QPushButton("生成")
-        self.step_generate_btn.setFixedHeight(20)
+        self.step_generate_btn.setFixedHeight(24)
         self.step_generate_btn.setEnabled(False)
         self.step_generate_btn.setStyleSheet("""
             QPushButton {
@@ -2821,7 +2821,7 @@ class MainWindow(QMainWindow):
         title_layout.addWidget(self.step_generate_btn)
 
         self.record_btn = QPushButton()
-        self.record_btn.setFixedSize(20, 20)
+        self.record_btn.setFixedSize(24, 24)
         self.record_btn.setEnabled(False)
         self.record_btn.setIcon(qta.icon('fa6s.circle', color='#888888'))
         self.record_btn.setStyleSheet("""

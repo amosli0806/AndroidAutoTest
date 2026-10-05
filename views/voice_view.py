@@ -27,10 +27,10 @@ import time
 from PyQt6.QtCore import QRectF, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QApplication, QDoubleSpinBox, QFileDialog, QFrame,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-    QMenu, QPushButton, QScrollArea, QSpinBox, QSplitter, QStyle,
-    QStyledItemDelegate, QStyleOptionViewItem, QToolButton,
+    QAbstractItemView, QApplication, QDialog, QDoubleSpinBox, QFileDialog,
+    QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QMenu, QPushButton, QScrollArea, QSpinBox, QSplitter,
+    QStyle, QStyledItemDelegate, QStyleOptionViewItem, QToolButton,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 import qtawesome as qta
@@ -601,6 +601,8 @@ class VoiceView(QWidget):
         self._worker = None
         self._rows = []
         self._current_case_id = None
+        # 语音回应录制（方向二）：None=未录制 / VoiceFeedbackService=录制中
+        self._record_feedback = None
         # 记录当前主题，_reload_steps 里新建的 _PhraseRow 需要用它上图标颜色
         self._current_theme = ThemeMode.LIGHT
 
@@ -734,6 +736,23 @@ class VoiceView(QWidget):
         self.recalc_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.recalc_btn.clicked.connect(self._on_recalc_delays)
         title_row.addWidget(self.recalc_btn)
+        # 录制：抓车机真实语音回应，反向生成检测步骤（方向二）
+        # 状态：未选用例置灰 / 选中绿点 / 录制中红点（样式对齐自动化编辑页录制按钮）
+        self.record_btn = QPushButton()
+        self.record_btn.setFixedSize(24, 24)
+        self.record_btn.setEnabled(False)
+        self.record_btn.setIcon(qta.icon('fa6s.circle', color='#888888'))
+        self.record_btn.setToolTip(
+            "录制车机真实语音回应，自动生成检测步骤：\n"
+            "点 ● 开始 → 对车机说语音（车机播报回应）→ 再点 ● 停止，\n"
+            "从捕获的日志里挑回执文案，一键生成预期结果")
+        self.record_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.record_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.record_btn.setStyleSheet("""
+            QPushButton { background: transparent; border: none; padding: 0px; }
+        """)
+        self.record_btn.clicked.connect(self._on_record_toggle)
+        title_row.addWidget(self.record_btn)
         v.addLayout(title_row)
 
         self.scroll = QScrollArea()
@@ -933,6 +952,102 @@ class VoiceView(QWidget):
         self._current_case_id = (
             items[0].data(0, self.ROLE_ID) if items and kind == "case" else None)
         self._reload_steps()
+        self._sync_record_button()
+
+    def _sync_record_button(self):
+        """录制圆点状态：未选用例置灰 / 选中绿点 / 录制中红点"""
+        if not hasattr(self, 'record_btn'):
+            return
+        if self._record_feedback is not None:
+            self.record_btn.setIcon(qta.icon('fa6s.circle', color='#ff0000'))
+            self.record_btn.setToolTip("录制中…对车机说语音，再点一次 ● 停止并生成检测步骤")
+            return
+        if self._current_case_id:
+            self.record_btn.setEnabled(True)
+            self.record_btn.setIcon(qta.icon('fa6s.circle', color='#00cc00'))
+            self.record_btn.setToolTip(
+                "录制车机真实语音回应，自动生成检测步骤：\n"
+                "点 ● 开始 → 对车机说语音（车机播报回应）→ 再点 ● 停止，\n"
+                "从捕获的日志里挑回执文案，一键生成预期结果")
+        else:
+            self.record_btn.setEnabled(False)
+            self.record_btn.setIcon(qta.icon('fa6s.circle', color='#888888'))
+            self.record_btn.setToolTip("先在左侧选中一个用例，再开始录制")
+
+    def _feedback_service_for_record(self):
+        """录制专用：构建回执抓取服务（不要求「回执验证」总开关开着——录制是建库工具）。
+
+        返回 (服务, 不可用原因)；log tag 复用设置页的规则。
+        """
+        from models.voice_model import get_verify_config
+        from services.voice_feedback_service import VoiceFeedbackService
+        tag = get_verify_config().get("log_tag", "")
+        ds = getattr(self, "_device_service", None)
+        if ds is None:
+            return None, "设备服务未就绪", tag
+        try:
+            devices = ds.get_devices()
+        except Exception:
+            devices = []
+        if not devices:
+            return None, "未连接设备", tag
+        serial = getattr(ds, "serial", None) or devices[0]
+        return VoiceFeedbackService(serial), "", tag
+
+    def _on_record_toggle(self):
+        """录制圆点：开始（清 logcat 基线）/ 停止（抓日志 → 勾选回执 → 生成检测步骤）"""
+        from utils.toast import show_toast
+        if self._record_feedback is not None:
+            self._stop_recording()
+            return
+        # 开始录制：需要选中用例 + 设备
+        if not self._current_case_id:
+            show_toast(self, "先在左侧选中一个用例")
+            return
+        feedback, reason, tag = self._feedback_service_for_record()
+        if feedback is None:
+            show_toast(self, f"⚠️ 无法开始录制：{reason}")
+            return
+        try:
+            feedback.clear()   # logcat -c 建立时间基线
+        except Exception as e:
+            ErrorDialog.show_error(self, "无法开始录制", f"清理车机日志失败：\n{e}")
+            return
+        self._record_feedback = feedback
+        self._record_tag = tag
+        self._sync_record_button()
+        self.status_label.setText(
+            "录制中…对车机说语音，车机播报回应后点 ● 停止")
+
+    def _stop_recording(self):
+        from utils.toast import show_toast
+        feedback = self._record_feedback
+        self._record_feedback = None
+        self._sync_record_button()
+        if feedback is None:
+            return
+        try:
+            lines = feedback.capture(self._record_tag)
+        except Exception as e:
+            ErrorDialog.show_error(self, "停止录制失败", f"抓取录制期间日志失败：\n{e}")
+            self.status_label.setText("录制失败")
+            return
+        self.status_label.setText(
+            f"录制结束，捕获 {len(lines)} 行日志" if lines else "录制结束，没有捕获到日志")
+        if not lines:
+            show_toast(self, "没有捕获到日志（检查「设置 → 语音播报」的日志标签）")
+            return
+        dlg = VoiceRecordCaptureDialog(lines, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        keywords = dlg.keywords()
+        if not keywords:
+            return
+        step = self.model.add_verify(self._current_case_id, keywords)
+        if step is not None:
+            self._reload_steps()
+            self.status_label.setText(
+                f"已生成检测步骤（{len(keywords)} 个关键词），追加在用例末尾")
 
     def _find_case_item(self, case_id):
         """在左树里按用例 id 找节点（找不到返回 None）。"""
@@ -2167,3 +2282,83 @@ class VoiceView(QWidget):
         if getattr(self, "wake_btn", None) is not None:
             self._sync_action_button_widths()
 
+
+
+class VoiceRecordCaptureDialog(QDialog):
+    """语音回应录制结果：展示捕获的车机日志行，勾选回执文案 → 生成检测步骤。
+
+    交互：双击某行把该行文本填入关键词框（可再删减）；也可以手动输入
+    多个关键词（空格/逗号分隔）。点「生成检测步骤」返回给调用方追加。
+    """
+
+    def __init__(self, lines, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("录制结果 · 生成检测步骤")
+        self.resize(720, 520)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        tip = QLabel(
+            f"录制期间共捕获 {len(lines)} 行车机日志。双击某行可把该行文案填入"
+            "关键词框；整理出这句语音的「预期回执关键词」（多个用空格/逗号分隔）。")
+        tip.setWordWrap(True)
+        layout.addWidget(tip)
+
+        from PyQt6.QtWidgets import QListWidget, QAbstractItemView
+        self.line_list = QListWidget()
+        self.line_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.line_list.itemDoubleClicked.connect(self._on_line_double_clicked)
+        for ln in lines:
+            self.line_list.addItem(ln)
+        layout.addWidget(self.line_list, 1)
+
+        kw_row = QHBoxLayout()
+        kw_row.setSpacing(8)
+        kw_row.addWidget(QLabel("成功关键词:"))
+        self.kw_edit = QLineEdit()
+        self.kw_edit.setPlaceholderText("如：已为您 导航到（多个用空格/逗号分隔）")
+        kw_row.addWidget(self.kw_edit, 1)
+        layout.addLayout(kw_row)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        gen_btn = QPushButton("生成检测步骤")
+        gen_btn.setDefault(True)
+        gen_btn.clicked.connect(self._on_generate)
+        btn_row.addWidget(gen_btn)
+        layout.addLayout(btn_row)
+
+    def _on_line_double_clicked(self, item):
+        """双击日志行：把该行去掉时间戳前缀后填入关键词框（追加，可删减）"""
+        import re
+        text = item.text()
+        # logcat -v time 行前缀形如 "10-05 19:00:00.123 Tag( pid): "，去掉到 ") " 为止
+        cleaned = re.sub(r"^\S+\s+\S+\s+\S+\([^)]*\):\s*", "", text).strip()
+        if not cleaned:
+            cleaned = text.strip()
+        cur = self.kw_edit.text().strip()
+        self.kw_edit.setText((cur + " " + cleaned).strip())
+
+    def _on_generate(self):
+        if not self.kw_edit.text().strip():
+            self.kw_edit.setFocus()
+            self.kw_edit.setPlaceholderText("请先填入至少一个关键词（双击日志行可快速填入）")
+            return
+        self.accept()
+
+    def keywords(self):
+        """把关键词框的内容按空格/逗号拆成列表（去空去重）"""
+        import re
+        raw = self.kw_edit.text()
+        seen = set()
+        result = []
+        for k in re.split(r"[,，\s]+", raw.strip()):
+            if k and k not in seen:
+                seen.add(k)
+                result.append(k)
+        return result
