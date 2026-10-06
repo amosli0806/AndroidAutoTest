@@ -1098,8 +1098,24 @@ class SettingsDialog(QDialog):
         return page
 
     def _build_notify_page(self):
-        """通知页：微信推送（webhook）+ 系统托盘 + 最小化到托盘。"""
+        """通知页：微信推送（webhook）+ 系统托盘 + 最小化到托盘。
+
+        内容较多，整体包进 QScrollArea 支持上下翻动（细滚动条，见 apply_theme）。
+        """
+        outer = QWidget()
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("NotifyScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        outer_layout.addWidget(scroll, 1)
+
         page = QWidget()
+        scroll.setWidget(page)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
@@ -1200,8 +1216,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(tray_hint)
 
         layout.addStretch()
-        return page
-
+        return outer
     def _on_notify_type_changed(self):
         """切换推送方式时，更新密钥/地址的提示与必填关系。"""
         kind = self.notify_type_combo.currentData()
@@ -1816,6 +1831,56 @@ class SettingsDialog(QDialog):
             #SettingsDialog QScrollArea#WallpaperScroll QScrollBar::add-page:vertical,
             #SettingsDialog QScrollArea#WallpaperScroll QScrollBar::sub-page:vertical {{
                 background: transparent;
+            }}
+
+            /* ---------- 设置框内全局细滚动条（覆盖所有未单独定制的滚动条） ---------- */
+            #SettingsDialog QScrollBar:vertical {{
+                width: 6px;
+                background: {scroll_track};
+                border-radius: 3px;
+                margin: 0px;
+            }}
+            #SettingsDialog QScrollBar::handle:vertical {{
+                background: {scroll_handle};
+                border-radius: 3px;
+                min-height: 20px;
+            }}
+            #SettingsDialog QScrollBar::handle:vertical:hover {{
+                background: {scroll_handle_hover};
+            }}
+            #SettingsDialog QScrollBar::add-line:vertical,
+            #SettingsDialog QScrollBar::sub-line:vertical,
+            #SettingsDialog QScrollBar::up-arrow:vertical,
+            #SettingsDialog QScrollBar::down-arrow:vertical {{
+                width: 0px;
+                height: 0px;
+                background: transparent;
+                border: none;
+            }}
+            #SettingsDialog QScrollBar::add-page:vertical,
+            #SettingsDialog QScrollBar::sub-page:vertical {{
+                background: transparent;
+            }}
+            #SettingsDialog QScrollBar:horizontal {{
+                height: 6px;
+                background: {scroll_track};
+                border-radius: 3px;
+                margin: 0px;
+            }}
+            #SettingsDialog QScrollBar::handle:horizontal {{
+                background: {scroll_handle};
+                border-radius: 3px;
+                min-width: 20px;
+            }}
+            #SettingsDialog QScrollBar::handle:horizontal:hover {{
+                background: {scroll_handle_hover};
+            }}
+
+            /* ---------- 通知页滚动区（跟随主题背景） ---------- */
+            #NotifyScroll,
+            #NotifyScroll > QWidget#qt_scrollarea_viewport {{
+                background-color: {content_bg};
+                border: none;
             }}
 
             /* ---------- 主按钮（确定、应用） ---------- */
