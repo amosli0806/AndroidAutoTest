@@ -289,6 +289,17 @@ class SettingsDialog(QDialog):
         self.content_stack.addWidget(self._build_data_page())
         idx += 1
 
+        # ========== 分类：通知 ==========
+        notify_root = QTreeWidgetItem(["通知"])
+        notify_root.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.nav_tree.addTopLevelItem(notify_root)
+
+        notify_item = QTreeWidgetItem(["消息推送"])
+        notify_item.setData(0, Qt.ItemDataRole.UserRole, idx)
+        notify_root.addChild(notify_item)
+        self.content_stack.addWidget(self._build_notify_page())
+        idx += 1
+
 
         # 展开状态持久化：默认全折叠，记住用户上次展开的分类（存 data/config.json）。
         # 导航项没有业务 id（只有子项带内容下标），用"从根到自己的文字路径"当 id
@@ -1086,6 +1097,123 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         return page
 
+    def _build_notify_page(self):
+        """通知页：微信推送（webhook）+ 系统托盘 + 最小化到托盘。"""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(16)
+
+        title = QLabel("消息推送与托盘")
+        title.setObjectName("SettingsPageTitle")
+        layout.addWidget(title)
+
+        subtitle = QLabel(
+            "定时任务 / 性能检测跑完后，把结果推到微信；设备断连、任务完成时弹系统托盘通知。"
+        )
+        subtitle.setObjectName("SettingsPageSubtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        # ============ 微信推送 ============
+        push_title = QLabel("微信推送")
+        push_title.setStyleSheet("font-weight: 600; font-size: 14px;")
+        layout.addWidget(push_title)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.notify_webhook_check = QCheckBox("开启微信推送（定时任务 / 性能检测结果）")
+        form.addRow("开关:", self.notify_webhook_check)
+
+        self.notify_type_combo = QComboBox()
+        self.notify_type_combo.addItem("Server酱（推荐，个人最省事）", "serverchan")
+        self.notify_type_combo.addItem("PushPlus", "pushplus")
+        self.notify_type_combo.addItem("企业微信群机器人", "wecom")
+        self.notify_type_combo.addItem("钉钉群机器人", "dingtalk")
+        self.notify_type_combo.addItem("自定义 Webhook", "custom")
+        self.notify_type_combo.currentIndexChanged.connect(self._on_notify_type_changed)
+        form.addRow("推送方式:", self.notify_type_combo)
+
+        self.notify_key_edit = QLineEdit()
+        self.notify_key_edit.setMinimumWidth(340)
+        self.notify_key_edit.setPlaceholderText("SendKey / Token（Server酱、PushPlus 需要）")
+        form.addRow("密钥:", self.notify_key_edit)
+
+        self.notify_url_edit = QLineEdit()
+        self.notify_url_edit.setMinimumWidth(340)
+        self.notify_url_edit.setPlaceholderText("Webhook 地址（企业微信 / 钉钉 / 自定义需要；留空用官方地址）")
+        form.addRow("推送地址:", self.notify_url_edit)
+
+        layout.addLayout(form)
+
+        self.notify_type_hint = QLabel("")
+        self.notify_type_hint.setObjectName("SettingsPageSubtitle")
+        self.notify_type_hint.setWordWrap(True)
+        layout.addWidget(self.notify_type_hint)
+
+        # 通用引导文案（教用户怎么拿 key）
+        guide = QLabel(
+            "微信本身不开放个人消息推送接口，需要借助第三方中转（任选其一，都是一次配置）：\n"
+            "· Server酱：微信扫码关注「方糖」服务号 → 登录 sct.ftqq.com → 复制 SendKey 填到上方「密钥」。\n"
+            "· PushPlus：微信关注「pushplus 推送加」公众号 → 登录 www.pushplus.plus → 复制 token 填到「密钥」。\n"
+            "· 企业微信：在群里 → 群设置 → 群机器人 → 添加机器人 → 复制 Webhook 地址填到「推送地址」。\n"
+            "· 钉钉：群里 → 智能群助手 → 添加机器人（自定义）→ 复制 Webhook 地址填到「推送地址」。"
+        )
+        guide.setObjectName("SettingsPageSubtitle")
+        guide.setWordWrap(True)
+        layout.addWidget(guide)
+
+        # 分隔线
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFixedHeight(1)
+        layout.addWidget(sep)
+
+        # ============ 系统托盘 ============
+        tray_title = QLabel("系统托盘")
+        tray_title.setStyleSheet("font-weight: 600; font-size: 14px;")
+        layout.addWidget(tray_title)
+
+        tray_form = QFormLayout()
+        tray_form.setSpacing(12)
+        tray_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.notify_tray_check = QCheckBox("设备断连 / 任务完成时弹系统托盘通知")
+        self.notify_tray_check.setChecked(True)
+        tray_form.addRow("托盘通知:", self.notify_tray_check)
+
+        self.notify_tray_minimize_check = QCheckBox("关闭窗口时最小化到托盘（不退出程序）")
+        self.notify_tray_minimize_check.setChecked(True)
+        tray_form.addRow("最小化到托盘:", self.notify_tray_minimize_check)
+
+        layout.addLayout(tray_form)
+
+        tray_hint = QLabel(
+            "开启「最小化到托盘」后，点窗口右上角 × 不会退出程序，而是隐藏到托盘继续后台运行"
+            "（双击托盘图标恢复；右键托盘图标可真正退出）。\n"
+            "这样定时任务 / 性能检测在后台跑时，即使关了窗口也不会中断。"
+        )
+        tray_hint.setObjectName("SettingsPageSubtitle")
+        tray_hint.setWordWrap(True)
+        layout.addWidget(tray_hint)
+
+        layout.addStretch()
+        return page
+
+    def _on_notify_type_changed(self):
+        """切换推送方式时，更新密钥/地址的提示与必填关系。"""
+        kind = self.notify_type_combo.currentData()
+        hints = {
+            "serverchan": "Server酱：填「密钥」= SendKey，推送地址留空即可（自动用官方地址）。",
+            "pushplus": "PushPlus：填「密钥」= token，推送地址留空即可（自动用官方地址）。",
+            "wecom": "企业微信：填「推送地址」= 群机器人的 Webhook 地址，密钥留空。",
+            "dingtalk": "钉钉：填「推送地址」= 群机器人的 Webhook 地址，密钥留空。",
+            "custom": "自定义：填「推送地址」= 完整地址，按 {title, content} POST 提交。",
+        }
+        self.notify_type_hint.setText(hints.get(kind, ""))
+
     def _on_cleanup_data(self):
         main_win = self.parent()
         handler = getattr(main_win, 'data_cleanup_handler', None) if main_win else None
@@ -1165,6 +1293,19 @@ class SettingsDialog(QDialog):
         if hasattr(self, "voice_tone_combo"):
             self._load_voice_config()
 
+        # 通知配置
+        if hasattr(self, "notify_webhook_check"):
+            cfg = Settings.get_notify_config()
+            self.notify_webhook_check.setChecked(cfg["webhook_enabled"])
+            ti = self.notify_type_combo.findData(cfg["webhook_type"])
+            if ti >= 0:
+                self.notify_type_combo.setCurrentIndex(ti)
+            self.notify_key_edit.setText(cfg["webhook_key"])
+            self.notify_url_edit.setText(cfg["webhook_url"])
+            self.notify_tray_check.setChecked(cfg["tray_enabled"])
+            self.notify_tray_minimize_check.setChecked(cfg["tray_minimize"])
+            self._on_notify_type_changed()
+
     def _save_settings(self):
         Settings.set_output_dir(self.dir_edit.text())
         Settings.set_wallpaper_path(self.wallpaper_edit.text().strip())
@@ -1193,6 +1334,17 @@ class SettingsDialog(QDialog):
 
         # 保存语音播报配置
         self._save_voice_config()
+
+        # 保存通知配置
+        if hasattr(self, "notify_webhook_check"):
+            Settings.set_notify_config(
+                webhook_enabled=self.notify_webhook_check.isChecked(),
+                webhook_type=self.notify_type_combo.currentData(),
+                webhook_key=self.notify_key_edit.text().strip(),
+                webhook_url=self.notify_url_edit.text().strip(),
+                tray_enabled=self.notify_tray_check.isChecked(),
+                tray_minimize=self.notify_tray_minimize_check.isChecked(),
+            )
 
     # ------------------------------------------------------------------
     # 按钮行为

@@ -383,3 +383,31 @@ class Settings:
         settings = cls.load()
         settings['monkey_start_mode'] = str(mode or '').strip()
         cls.save(settings)
+
+    # ---------- 通知（微信推送 / 系统托盘） ----------
+    @classmethod
+    def get_notify_config(cls) -> dict:
+        """通知配置。返回 dict，缺省字段带默认值。
+
+        键：webhook_enabled(bool) / webhook_type(str) / webhook_url(str)
+           / webhook_key(str) / tray_enabled(bool) / tray_minimize(bool)
+        """
+        settings = cls.load()
+        cfg = settings.get('notify') or {}
+        return {
+            'webhook_enabled': bool(cfg.get('webhook_enabled', False)),
+            'webhook_type': str(cfg.get('webhook_type') or 'serverchan'),
+            'webhook_url': str(cfg.get('webhook_url') or ''),
+            'webhook_key': str(cfg.get('webhook_key') or ''),
+            'tray_enabled': bool(cfg.get('tray_enabled', True)),
+            # 最小化到托盘默认开启（用户 2026-10-06 明确）
+            'tray_minimize': bool(cfg.get('tray_minimize', True)),
+        }
+
+    @classmethod
+    def set_notify_config(cls, **kwargs):
+        settings = cls.load()
+        notify = dict(settings.get('notify') or {})
+        notify.update(kwargs)
+        settings['notify'] = notify
+        cls.save(settings)

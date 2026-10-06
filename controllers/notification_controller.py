@@ -109,6 +109,9 @@ class NotificationController(QObject):
             actions=[{"label": "查看", "action": "open_page",
                       "payload": {"index": PAGE_EXECUTE}}],
         )
+        self._push_webhook(
+            f"定时任务「{task_name}」执行{'成功' if failed == 0 else '失败'}",
+            f"通过 {passed} / 失败 {failed}")
 
     def on_task_skipped(self, task_name, reason):
         """定时任务没能跑起来（设备离线 / 套件不存在 / 套件无用例）"""
@@ -147,6 +150,21 @@ class NotificationController(QObject):
             actions=[{"label": "查看", "action": "open_page",
                       "payload": {"index": PAGE_PERF}}],
         )
+        self._push_webhook("性能采集完成", f"{sample_count} 个采样点")
+
+    def _push_webhook(self, title, detail=""):
+        """把「长时间任务的结果」推到用户微信（第三方中转，尽力而为）。
+
+        只在用户开了 webhook 开关时发；推送本身异步、失败静默，不影响主流程。
+        """
+        try:
+            from utils.settings import Settings
+            from services.webhook_notify import push
+            cfg = Settings.get_notify_config()
+            if cfg.get("webhook_enabled"):
+                push(cfg, title, detail)
+        except Exception as e:
+            print(f"[webhook] 分发异常: {type(e).__name__}: {e}")
 
     def on_perf_alert(self, message):
         """性能阈值异常 —— PerfController._check_threshold 已做单次去重"""

@@ -153,6 +153,9 @@ class MainWindow(QMainWindow):
         self._notification_service = None
         self._notification_view = None
         self._bottom_stack = None
+        # 系统托盘（None=未注入）；「允许退出」标志：真正退出（托盘退出/更新接管）时为 True
+        self._tray_controller = None
+        self._allow_quit = False
         self.device_action = None
         self.crash_action = None
         self.anr_action = None
@@ -2507,6 +2510,40 @@ class MainWindow(QMainWindow):
         self._notification_service = service
         service.unread_changed.connect(self._refresh_bell_badge)
         self._refresh_bell_badge()
+
+    # ---------- 系统托盘 / 最小化到托盘 ----------
+    def set_tray_controller(self, controller):
+        self._tray_controller = controller
+
+    def quit_for_real(self):
+        """真正退出（托盘菜单「退出」调用）：设标志后 quit，绕开 closeEvent 拦截。"""
+        self._allow_quit = True
+        from PyQt6.QtWidgets import QApplication
+        QApplication.instance().quit()
+
+    def closeEvent(self, event):
+        """点窗口 × 时：开关开启且托盘可用 → 隐藏到托盘；否则正常退出。
+
+        真正退出（托盘「退出」/ 更新器接管前的 app.quit）会先设 _allow_quit
+        （托盘退出走 quit_for_real；app.quit 触发 aboutToQuit 在 main.py 里设标志），
+        此时直接放行，不拦截——否则更新流程会因关不掉窗口而卡死。
+        """
+        if self._allow_quit:
+            event.accept()
+            return
+        # 最小化到托盘：需要开关开启 + 托盘控制器存在且可用
+        try:
+            from utils.settings import Settings
+            minimize = Settings.get_notify_config().get('tray_minimize', True)
+        except Exception:
+            minimize = False
+        tc = self._tray_controller
+        if minimize and tc is not None and getattr(tc, 'available', False):
+            event.ignore()
+            self.hide()
+            tc.notify_minimized()
+            return
+        event.accept()
 
     def _has_message_panel_open(self):
         return (self._bottom_panel_kind == "message"

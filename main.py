@@ -704,6 +704,16 @@ def main():
     main_window.set_bottom_panel_stack(bottom_stack, notification_view)
     main_window.set_notification_service(notification_service)
 
+    # ---------- 系统托盘 + 最小化到托盘 ----------
+    # 托盘图标/菜单/气泡 + 点 × 最小化到托盘（closeEvent 拦截）。
+    # 托盘不可用时控制器退化为空操作，closeEvent 走正常退出。
+    from views.tray_controller import TrayController
+    tray_controller = TrayController(main_window, notification_service)
+    main_window.set_tray_controller(tray_controller)
+    # app.quit()（更新器接管 / 其他退出路径）先触发 aboutToQuit，这里设标志，
+    # closeEvent 据此放行真正退出、不拦截（否则更新流程会关不掉窗口卡死）。
+    app.aboutToQuit.connect(lambda: setattr(main_window, "_allow_quit", True))
+
     # ---------- 消息中心接线 ----------
     # 纯新增：上方所有既有信号、弹窗与 toast 行为一律不动，消息中心只做留痕
     from controllers.notification_controller import NotificationController
