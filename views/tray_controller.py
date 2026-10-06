@@ -57,7 +57,7 @@ class TrayController(QObject):
                 pass
 
         self.tray = QSystemTrayIcon(icon, self)
-        self.tray.setToolTip("虫师 · Android 自动化测试工具")
+        self.tray.setToolTip("虫师")
 
         menu = QMenu()
         show_action = menu.addAction("显示主窗口")
