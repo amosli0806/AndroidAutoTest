@@ -51,12 +51,15 @@ def _do_send(corpid: str, agentid: str, secret: str, content: str) -> None:
             params={"corpid": corpid, "corpsecret": secret},
             timeout=5,
         )
-        token = r.json().get("access_token")
+        d = r.json()
+        token = d.get("access_token")
         if not token:
-            print(f"[wecom] 获取 access_token 失败: {r.text[:200]}")
+            # 业务失败（HTTP 仍是 200，错误码在 body 里）：写日志供用户排查
+            print(f"[wecom] 获取 access_token 失败: "
+                  f"errcode={d.get('errcode')} {d.get('errmsg', '')[:200]}")
             return
         # 2) 发应用消息（touser=@all：个人注册的企业就自己一个成员）
-        requests.post(
+        r2 = requests.post(
             f"{_SEND_URL}?access_token={token}",
             json={
                 "touser": "@all",
@@ -66,5 +69,12 @@ def _do_send(corpid: str, agentid: str, secret: str, content: str) -> None:
             },
             timeout=5,
         )
+        body = r2.json()
+        if body.get("errcode") == 0:
+            print("[wecom] 推送成功")
+        else:
+            # 常见：60020 = 来源 IP 不在企业可信 IP 白名单（去应用详情页配置）
+            print(f"[wecom] 推送失败 errcode={body.get('errcode')}: "
+                  f"{body.get('errmsg', '')[:200]}")
     except Exception as e:  # 网络/超时/证书等一律吞掉，只留日志
         print(f"[wecom] 推送失败: {type(e).__name__}: {str(e)[:120]}")
