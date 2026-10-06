@@ -75,17 +75,23 @@ def _cleanup(widget: QWidget):
         # 同步清空导致 graphicsEffect() 短暂仍返回旧指针。
 
 
-def scale_in(dialog: QWidget, duration: int = 250, from_scale: float = 0.96,
+def scale_in(dialog: QWidget, duration: int = 250, from_scale: float = 0.90,
              on_done=None) -> QPropertyAnimation:
     """对话框出现：缩放 + 淡入（from_scale → 1.0）。
 
+    淡入用 **windowOpacity**（顶层窗口原生属性）而不是 QGraphicsOpacityEffect——
+    后者对 WA_TranslucentBackground 的透明顶层窗口不生效（Qt 已知行为），
+    项目里的自定义弹窗（无边框+透明背景+自绘圆角卡片）正是这种结构。
     缩放通过修改窗口 geometry（等比向中心收缩），只动 geometry 不改布局。
-    结束恢复原始 geometry 并摘掉透明度效果。
     """
-    eff = _ensure_effect(dialog)
-    eff.setOpacity(0.0)
+    # 淡入：windowOpacity 0 → 1（动画结束停在 1，无需清理）
+    op_anim = QPropertyAnimation(dialog, b"windowOpacity", dialog)
+    op_anim.setDuration(duration)
+    op_anim.setStartValue(0.0)
+    op_anim.setEndValue(1.0)
+    op_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-    # 记录目标几何，算出收缩后的起始几何（向中心收缩）
+    # 缩放：向中心收缩 from_scale，恢复到目标几何
     target = dialog.geometry()
     dw = int(target.width() * (1.0 - from_scale))
     dh = int(target.height() * (1.0 - from_scale))
@@ -93,24 +99,15 @@ def scale_in(dialog: QWidget, duration: int = 250, from_scale: float = 0.96,
         target.x() + dw // 2, target.y() + dh // 2,
         target.width() - dw, target.height() - dh,
     )
-
-    anim = QPropertyAnimation(eff, b"opacity", dialog)
-    anim.setDuration(duration)
-    anim.setStartValue(0.0)
-    anim.setEndValue(1.0)
-    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-    dialog.setGeometry(start)
     geo_anim = QPropertyAnimation(dialog, b"geometry", dialog)
     geo_anim.setDuration(duration)
     geo_anim.setStartValue(start)
     geo_anim.setEndValue(target)
     geo_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-    anim.finished.connect(lambda: _cleanup(dialog))
+    op_anim.start()
     geo_anim.start()
-    anim.start()
-    return anim
+    return op_anim
 
 
 def pulse(effect: QGraphicsOpacityEffect, duration: int = 2100,
