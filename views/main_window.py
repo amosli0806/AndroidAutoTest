@@ -2184,6 +2184,14 @@ class MainWindow(QMainWindow):
             return
 
         self.stacked_widget.setCurrentIndex(index)
+        # 切页淡入：内容轻微浮入，消除硬切换的生硬感（只动 opacity + pos，不触发布局重排）
+        try:
+            from utils.fx import fade_in
+            page = self.stacked_widget.currentWidget()
+            if page is not None:
+                fade_in(page, offset_y=6)
+        except Exception:
+            pass
         # 换页后重算快捷键的启用状态：同一键位在不同页归属不同动作（如 Ctrl+F 在
         # ADB 工具箱是"指令搜索"、在自动化编辑是"步骤搜索"），必须跟着页走
         self._update_shortcut_enabled()

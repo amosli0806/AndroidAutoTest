@@ -122,6 +122,15 @@ class ConfirmDeleteDialog(QDialog):
             theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
         Theme.apply_theme_to_widget(self, theme_mode)
 
+    def showEvent(self, event):
+        """出现时缩放淡入（只动 opacity + geometry，不触发布局）"""
+        super().showEvent(event)
+        try:
+            from utils.fx import scale_in
+            scale_in(self)
+        except Exception:
+            pass
+
     @staticmethod
     def ask(parent, title="确认删除", message="确定要删除吗？", detail=None):
         dialog = ConfirmDeleteDialog(parent, title, message, detail)
@@ -199,6 +208,14 @@ class InputDialog(QDialog):
         if theme_mode is None:
             theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
         Theme.apply_theme_to_widget(self, theme_mode)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            from utils.fx import scale_in
+            scale_in(self)
+        except Exception:
+            pass
 
     @staticmethod
     def get_text(parent, title="输入", label="请输入名称:", default_text="", placeholder=""):
@@ -314,6 +331,14 @@ class WarningDialog(QDialog):
             theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
         Theme.apply_theme_to_widget(self, theme_mode)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            from utils.fx import scale_in
+            scale_in(self)
+        except Exception:
+            pass
+
     @staticmethod
     def show_warning(parent, title="提示", message="", detail=None):
         dialog = WarningDialog(parent, title, message, detail)
@@ -425,6 +450,14 @@ class ErrorDialog(QDialog):
         if theme_mode is None:
             theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
         Theme.apply_theme_to_widget(self, theme_mode)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            from utils.fx import scale_in
+            scale_in(self)
+        except Exception:
+            pass
 
     @staticmethod
     def show_error(parent, title="错误", message="", detail=None):
@@ -553,6 +586,14 @@ class QuestionDialog(QDialog):
         if theme_mode is None:
             theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
         Theme.apply_theme_to_widget(self, theme_mode)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        try:
+            from utils.fx import scale_in
+            scale_in(self)
+        except Exception:
+            pass
 
     @staticmethod
     def ask(parent, title="请选择", message="", detail=None,
