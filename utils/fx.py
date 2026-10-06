@@ -17,7 +17,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtWidgets import QGraphicsOpacityEffect, QWidget
 
-_DURATION = 300  # 默认过渡时长（ms），切页/弹窗统一（原 200 偏快）
+_DURATION = 230  # 默认过渡时长（ms），页面切换淡入
 
 
 def _ensure_effect(widget: QWidget) -> QGraphicsOpacityEffect:
@@ -75,7 +75,7 @@ def _cleanup(widget: QWidget):
         # 同步清空导致 graphicsEffect() 短暂仍返回旧指针。
 
 
-def scale_in(dialog: QWidget, duration: int = 340, from_scale: float = 0.96,
+def scale_in(dialog: QWidget, duration: int = 250, from_scale: float = 0.96,
              on_done=None) -> QPropertyAnimation:
     """对话框出现：缩放 + 淡入（from_scale → 1.0）。
 

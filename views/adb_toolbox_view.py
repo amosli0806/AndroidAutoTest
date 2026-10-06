@@ -150,6 +150,12 @@ class AdbCommandItemWidget(QWidget):
             self.exec_btn.setText("停止中")
             self.exec_btn.setEnabled(False)
         self._apply_style()
+        # 执行中（启动中/运行/停止中）给执行按钮呼吸闪烁，idle 停止
+        try:
+            from utils.fx import pulse_widget
+            pulse_widget(self.exec_btn, state in ('starting', 'running', 'stopping'))
+        except Exception:
+            pass
 
     def _apply_style(self):
         """按钮样式 + 图标（每次状态变化重新应用）"""
@@ -578,9 +584,19 @@ class AdbToolboxView(QWidget):
         if self._executing_selected_ids:
             self.execute_selected_btn.setText("执行中...")
             self.execute_selected_btn.setEnabled(False)
+            try:
+                from utils.fx import pulse_widget
+                pulse_widget(self.execute_selected_btn, True)
+            except Exception:
+                pass
         else:
             self.execute_selected_btn.setText("执行选中")
             self.execute_selected_btn.setEnabled(True)
+            try:
+                from utils.fx import pulse_widget
+                pulse_widget(self.execute_selected_btn, False)
+            except Exception:
+                pass
 
     def reset_execute_selected_state(self):
         """Controller 因故拒绝执行时，清除"执行中..."状态并恢复按钮"""
