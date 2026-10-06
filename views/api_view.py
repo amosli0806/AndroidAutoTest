@@ -1118,6 +1118,12 @@ class ApiView(QWidget):
             btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
         self.send_btn.setText("发送中…" if running else "发送")
+        # 执行中「发送」按钮呼吸闪烁，一眼可见正在请求
+        try:
+            from utils.fx import pulse_widget
+            pulse_widget(self.send_btn, running)
+        except Exception:
+            pass
 
     def show_result(self, result, refresh_table: bool = True):
         """落一条执行结果：更新中栏结果列 + 若正是当前接口则刷新右下详情。"""

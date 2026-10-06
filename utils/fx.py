@@ -17,7 +17,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtWidgets import QGraphicsOpacityEffect, QWidget
 
-_DURATION = 200  # 默认过渡时长（ms）
+_DURATION = 300  # 默认过渡时长（ms），切页/弹窗统一（原 200 偏快）
 
 
 def _ensure_effect(widget: QWidget) -> QGraphicsOpacityEffect:
@@ -75,7 +75,7 @@ def _cleanup(widget: QWidget):
         # 同步清空导致 graphicsEffect() 短暂仍返回旧指针。
 
 
-def scale_in(dialog: QWidget, duration: int = 220, from_scale: float = 0.96,
+def scale_in(dialog: QWidget, duration: int = 340, from_scale: float = 0.96,
              on_done=None) -> QPropertyAnimation:
     """对话框出现：缩放 + 淡入（from_scale → 1.0）。
 
@@ -128,3 +128,27 @@ def pulse(effect: QGraphicsOpacityEffect, duration: int = 700,
     anim.setEasingCurve(QEasingCurve.Type.InOutSine)
     anim.start()
     return anim
+
+
+def pulse_widget(widget: QWidget, on: bool, duration: int = 700,
+                 low: float = 0.4) -> None:
+    """开关式呼吸闪烁：给整个 widget 挂/摘呼吸效果。
+
+    on=True 时启动无限呼吸（并把动画对象缓存到 widget 属性，防止被 GC 回收）；
+    on=False 时停止并摘掉 opacity 效果，恢复纯净。重复调用 on=True 幂等。
+    """
+    if on:
+        # 已在呼吸中就不重复起动画
+        existing = getattr(widget, '_pulse_anim', None)
+        if existing is not None:
+            return
+        eff = _ensure_effect(widget)
+        eff.setOpacity(1.0)
+        anim = pulse(eff, duration=duration, low=low)
+        widget._pulse_anim = anim
+    else:
+        anim = getattr(widget, '_pulse_anim', None)
+        if anim is not None:
+            anim.stop()
+        widget._pulse_anim = None
+        _cleanup(widget)

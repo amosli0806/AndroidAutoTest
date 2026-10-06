@@ -955,13 +955,16 @@ class VoiceView(QWidget):
         self._sync_record_button()
 
     def _sync_record_button(self):
-        """录制圆点状态：未选用例置灰 / 选中绿点 / 录制中红点"""
+        """录制圆点状态：未选用例置灰 / 选中绿点 / 录制中红点（红点呼吸闪烁）"""
         if not hasattr(self, 'record_btn'):
             return
+        from utils.fx import pulse_widget
         if self._record_feedback is not None:
             self.record_btn.setIcon(qta.icon('fa6s.circle', color='#ff0000'))
             self.record_btn.setToolTip("录制中…对车机说语音，再点一次 ● 停止并生成检测步骤")
+            pulse_widget(self.record_btn, True)
             return
+        pulse_widget(self.record_btn, False)
         if self._current_case_id:
             self.record_btn.setEnabled(True)
             self.record_btn.setIcon(qta.icon('fa6s.circle', color='#00cc00'))

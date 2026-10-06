@@ -682,13 +682,28 @@ class MainWindow(QMainWindow):
                 self.step_generate_btn.setEnabled(True)
             if getattr(self.step_controller, '_recording', False):
                 self.record_btn.setIcon(qta.icon('fa6s.circle', color='#ff0000'))
+                try:
+                    from utils.fx import pulse_widget
+                    pulse_widget(self.record_btn, True)
+                except Exception:
+                    pass
             else:
                 self.record_btn.setIcon(qta.icon('fa6s.circle', color='#00cc00'))
+                try:
+                    from utils.fx import pulse_widget
+                    pulse_widget(self.record_btn, False)
+                except Exception:
+                    pass
         else:
             self.record_btn.setEnabled(False)
             if self.step_generate_btn:
                 self.step_generate_btn.setEnabled(False)
             self.record_btn.setIcon(qta.icon('fa6s.circle', color='#888888'))
+            try:
+                from utils.fx import pulse_widget
+                pulse_widget(self.record_btn, False)
+            except Exception:
+                pass
 
     def setup_ui(self):
         # 主窗口本身透明（为了壁纸透出）
