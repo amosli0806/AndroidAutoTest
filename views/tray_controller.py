@@ -33,16 +33,28 @@ class TrayController(QObject):
             return
 
         icon = QIcon()
-        # 复用应用图标；拿不到就空图标（托盘仍可点菜单）
+        # 复用主窗口已设置的应用图标（main.py 启动时 setWindowIcon 过，
+        # 开发/打包两套环境的资源定位都在那边处理好了，这里不重复造轮子）
         try:
-            from utils.app_paths import resource_path
-            p = resource_path("resources/icons/app_icon.png")
-            from PyQt6.QtGui import QPixmap
-            pix = QPixmap(p)
-            if not pix.isNull():
-                icon = QIcon(pix)
+            from PyQt6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is not None:
+                icon = app.windowIcon()
         except Exception:
             pass
+        # 兜底：拿不到就按 main.py 同一套逻辑自己加载（打包 _MEIPASS / 开发项目根目录）
+        if icon.isNull():
+            try:
+                import os
+                import sys
+                base = (sys._MEIPASS if getattr(sys, "frozen", False)
+                        else os.path.dirname(os.path.abspath(__file__)))
+                base = os.path.dirname(base)  # views/ -> 项目根
+                p = os.path.join(base, "resources", "icons", "app_icon.ico")
+                if os.path.exists(p):
+                    icon = QIcon(p)
+            except Exception:
+                pass
 
         self.tray = QSystemTrayIcon(icon, self)
         self.tray.setToolTip("虫师 · Android 自动化测试工具")
