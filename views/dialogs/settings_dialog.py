@@ -294,7 +294,7 @@ class SettingsDialog(QDialog):
         notify_root.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.nav_tree.addTopLevelItem(notify_root)
 
-        notify_item = QTreeWidgetItem(["消息推送"])
+        notify_item = QTreeWidgetItem(["系统托盘"])
         notify_item.setData(0, Qt.ItemDataRole.UserRole, idx)
         notify_root.addChild(notify_item)
         self.content_stack.addWidget(self._build_notify_page())
@@ -1098,10 +1098,7 @@ class SettingsDialog(QDialog):
         return page
 
     def _build_notify_page(self):
-        """通知页：微信推送（webhook）+ 系统托盘 + 最小化到托盘。
-
-        内容较多，整体包进 QScrollArea 支持上下翻动（细滚动条，见 apply_theme）。
-        """
+        """系统托盘页：托盘通知 + 最小化到托盘。"""
         outer = QWidget()
         outer_layout = QVBoxLayout(outer)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -1120,71 +1117,16 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
 
-        title = QLabel("消息推送与托盘")
+        title = QLabel("系统托盘")
         title.setObjectName("SettingsPageTitle")
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "定时任务 / 性能检测跑完后，把结果推到微信。"
+            "设备断连、任务完成时弹系统托盘通知；关闭窗口时最小化到托盘，后台继续运行。"
         )
         subtitle.setObjectName("SettingsPageSubtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
-
-        # ============ 微信推送 ============
-        push_title = QLabel("微信推送")
-        push_title.setStyleSheet("font-weight: 600; font-size: 14px;")
-        layout.addWidget(push_title)
-
-        form = QFormLayout()
-        form.setSpacing(12)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        self.notify_push_check = QCheckBox("开启微信推送（定时任务 / 性能检测结果）")
-        form.addRow("开关:", self.notify_push_check)
-
-        self.notify_corpid_edit = QLineEdit()
-        self.notify_corpid_edit.setMinimumWidth(340)
-        self.notify_corpid_edit.setPlaceholderText("企业微信「我的企业」页面最下方的企业ID")
-        form.addRow("企业ID:", self.notify_corpid_edit)
-
-        self.notify_agentid_edit = QLineEdit()
-        self.notify_agentid_edit.setMinimumWidth(340)
-        self.notify_agentid_edit.setPlaceholderText("应用管理 → 自建应用 → 应用详情页里的应用ID（纯数字）")
-        form.addRow("应用ID:", self.notify_agentid_edit)
-
-        self.notify_secret_edit = QLineEdit()
-        self.notify_secret_edit.setMinimumWidth(340)
-        self.notify_secret_edit.setPlaceholderText("应用详情页里的应用Secret")
-        form.addRow("应用Secret:", self.notify_secret_edit)
-
-        layout.addLayout(form)
-
-        # 企业微信自建应用配置引导（四步，个人免费注册）
-        guide = QLabel(
-            "采用企业微信自建应用推送：个人用手机号即可免费注册，无需营业执照、无需认证，"
-            "推送直接到个人微信（不依赖任何第三方服务号）。四步配置：\n"
-            "1. 注册企业微信并创建应用：电脑打开 work.weixin.qq.com 注册一个企业 → "
-            "「应用管理」→「自建」→「创建应用」，记下应用ID和应用Secret。\n"
-            "2. 拿企业ID：后台「我的企业」页面拉到最下方，复制企业ID。\n"
-            "3. 绑定微信：后台「我的企业」→「微信插件」→ 用微信扫码关注，之后推送消息都会出现在微信里。\n"
-            "4. 配置可信IP（必做，否则推送会被拒绝）：在应用详情页最下方的「企业可信IP」→ 配置，"
-            "填上推送来源的公网 IP。IP 变了（如换了网络）需要回来更新。"
-        )
-        guide.setObjectName("SettingsPageSubtitle")
-        guide.setWordWrap(True)
-        layout.addWidget(guide)
-
-        # 分隔线
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFixedHeight(1)
-        layout.addWidget(sep)
-
-        # ============ 系统托盘 ============
-        tray_title = QLabel("系统托盘")
-        tray_title.setStyleSheet("font-weight: 600; font-size: 14px;")
-        layout.addWidget(tray_title)
 
         tray_form = QFormLayout()
         tray_form.setSpacing(12)
@@ -1281,13 +1223,9 @@ class SettingsDialog(QDialog):
         if hasattr(self, "voice_tone_combo"):
             self._load_voice_config()
 
-        # 通知配置
-        if hasattr(self, "notify_push_check"):
+        # 通知配置（系统托盘）
+        if hasattr(self, "notify_tray_check"):
             cfg = Settings.get_notify_config()
-            self.notify_push_check.setChecked(cfg["push_enabled"])
-            self.notify_corpid_edit.setText(cfg["wecom_corpid"])
-            self.notify_agentid_edit.setText(cfg["wecom_agentid"])
-            self.notify_secret_edit.setText(cfg["wecom_secret"])
             self.notify_tray_check.setChecked(cfg["tray_enabled"])
             self.notify_tray_minimize_check.setChecked(cfg["tray_minimize"])
 
@@ -1320,13 +1258,9 @@ class SettingsDialog(QDialog):
         # 保存语音播报配置
         self._save_voice_config()
 
-        # 保存通知配置
-        if hasattr(self, "notify_push_check"):
+        # 保存通知配置（系统托盘）
+        if hasattr(self, "notify_tray_check"):
             Settings.set_notify_config(
-                push_enabled=self.notify_push_check.isChecked(),
-                wecom_corpid=self.notify_corpid_edit.text().strip(),
-                wecom_agentid=self.notify_agentid_edit.text().strip(),
-                wecom_secret=self.notify_secret_edit.text().strip(),
                 tray_enabled=self.notify_tray_check.isChecked(),
                 tray_minimize=self.notify_tray_minimize_check.isChecked(),
             )

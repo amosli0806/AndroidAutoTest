@@ -384,21 +384,16 @@ class Settings:
         settings['monkey_start_mode'] = str(mode or '').strip()
         cls.save(settings)
 
-    # ---------- 通知（企业微信推送 / 系统托盘） ----------
+    # ---------- 通知（系统托盘） ----------
     @classmethod
     def get_notify_config(cls) -> dict:
         """通知配置。返回 dict，缺省字段带默认值。
 
-        键：push_enabled(bool) / wecom_corpid(str) / wecom_agentid(str)
-           / wecom_secret(str) / tray_enabled(bool) / tray_minimize(bool)
+        键：tray_enabled(bool) / tray_minimize(bool)
         """
         settings = cls.load()
         cfg = settings.get('notify') or {}
         return {
-            'push_enabled': bool(cfg.get('push_enabled', False)),
-            'wecom_corpid': str(cfg.get('wecom_corpid') or ''),
-            'wecom_agentid': str(cfg.get('wecom_agentid') or ''),
-            'wecom_secret': str(cfg.get('wecom_secret') or ''),
             'tray_enabled': bool(cfg.get('tray_enabled', True)),
             # 最小化到托盘默认开启（用户 2026-10-06 明确）
             'tray_minimize': bool(cfg.get('tray_minimize', True)),
