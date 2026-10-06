@@ -82,7 +82,9 @@ class TrayController(QObject):
 
     def _show_main(self):
         w = self.main_window
-        w.showNormal()
+        # 用 show() 而非 showNormal()：showNormal 会强制还原最大化/全屏状态，
+        # 全屏时最小化到托盘、再从托盘恢复，应保持原来的全屏/最大化。
+        w.show()
         w.raise_()
         w.activateWindow()
 
