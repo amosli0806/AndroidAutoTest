@@ -61,8 +61,16 @@ class TrayController(QObject):
 
         menu = QMenu()
         show_action = menu.addAction("显示主窗口")
-        quit_action = menu.addAction("退出")
         show_action.triggered.connect(self._show_main)
+        menu.addSeparator()
+        open_dir_action = menu.addAction("打开输出目录")
+        open_dir_action.triggered.connect(self._open_output_dir)
+        mini_action = menu.addAction("迷你模式")
+        mini_action.triggered.connect(self._toggle_mini)
+        update_action = menu.addAction("检查更新")
+        update_action.triggered.connect(self._check_update)
+        menu.addSeparator()
+        quit_action = menu.addAction("退出")
         quit_action.triggered.connect(self._quit)
         self.tray.setContextMenu(menu)
         # 双击托盘图标 = 显示主窗口
@@ -95,6 +103,26 @@ class TrayController(QObject):
         else:
             from PyQt6.QtWidgets import QApplication
             QApplication.instance().quit()
+
+    def _open_output_dir(self):
+        """一键打开输出目录（报告/截图/logcat 所在文件夹）。"""
+        import os
+        from utils.settings import Settings
+        p = Settings.get_output_dir()
+        if p and os.path.isdir(p):
+            os.startfile(p)
+
+    def _toggle_mini(self):
+        """切换迷你模式（复用主窗口已有开关）。"""
+        act = getattr(self.main_window, "mini_mode_action", None)
+        if act is not None:
+            act.trigger()
+
+    def _check_update(self):
+        """手动触发检查更新（入口由 main.py 挂在主窗口上）。"""
+        fn = getattr(self.main_window, "_check_update_manual", None)
+        if fn is not None:
+            fn()
 
     def notify_minimized(self):
         """主窗口因「最小化到托盘」被隐藏时，弹一条气泡提示去向。"""

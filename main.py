@@ -1023,6 +1023,9 @@ def main():
 
         threading.Thread(target=_work, name="update-check", daemon=True).start()
 
+    # 托盘菜单「检查更新」入口：把手动检查挂到主窗口上，供 TrayController 调用
+    main_window._check_update_manual = lambda: _check_update(manual=True)
+
     def _on_update_checked(payload):
         result, manual = payload
         main_window.set_update_action_enabled(True)
