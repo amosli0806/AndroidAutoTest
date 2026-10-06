@@ -1125,7 +1125,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "定时任务 / 性能检测跑完后，把结果推到微信；设备断连、任务完成时弹系统托盘通知。"
+            "定时任务 / 性能检测跑完后，把结果推到微信。"
         )
         subtitle.setObjectName("SettingsPageSubtitle")
         subtitle.setWordWrap(True)
@@ -1205,15 +1205,6 @@ class SettingsDialog(QDialog):
         tray_form.addRow("最小化到托盘:", self.notify_tray_minimize_check)
 
         layout.addLayout(tray_form)
-
-        tray_hint = QLabel(
-            "开启「最小化到托盘」后，点窗口右上角 × 不会退出程序，而是隐藏到托盘继续后台运行"
-            "（双击托盘图标恢复；右键托盘图标可真正退出）。\n"
-            "这样定时任务 / 性能检测在后台跑时，即使关了窗口也不会中断。"
-        )
-        tray_hint.setObjectName("SettingsPageSubtitle")
-        tray_hint.setWordWrap(True)
-        layout.addWidget(tray_hint)
 
         layout.addStretch()
         return outer
