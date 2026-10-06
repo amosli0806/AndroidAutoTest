@@ -31,38 +31,38 @@ def _ensure_effect(widget: QWidget) -> QGraphicsOpacityEffect:
 
 
 def fade_in(widget: QWidget, duration: int = _DURATION, offset_y: int = 6,
-            on_done=None) -> QPropertyAnimation:
-    """淡入 + 轻微上移（页面/分组切换用）。
+            use_opacity: bool = True, on_done=None) -> QPropertyAnimation:
+    """淡入 + 轻微上移。
 
-    offset_y：从下往上浮入的像素距离（0 = 纯淡入）。结束后恢复原位并释放效果，
-    避免残留 opacity 效果干扰后续绘制（尤其带阴影/透明背景的控件）。
+    use_opacity=True：透明度 0→1 + 上移（适合实底子控件）。
+    use_opacity=False：纯上移浮入（适合壁纸半透明风格的整页——整页透明化
+    会透出底层黑色，出现「黑背景闪变」，页面级切换务必用 False）。
     """
-    eff = _ensure_effect(widget)
-    eff.setOpacity(0.0)
-    anim = QPropertyAnimation(eff, b"opacity", widget)
-    anim.setDuration(duration)
-    anim.setStartValue(0.0)
-    anim.setEndValue(1.0)
-    anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+    has_effect = False
+    if use_opacity:
+        eff = _ensure_effect(widget)
+        eff.setOpacity(0.0)
+        has_effect = True
 
-    if offset_y > 0:
-        orig_pos = widget.pos()
-        start_pos = QPoint(orig_pos.x(), orig_pos.y() + offset_y)
-        widget.move(start_pos)
-        pos_anim = QPropertyAnimation(widget, b"pos", widget)
-        pos_anim.setDuration(duration)
-        pos_anim.setStartValue(start_pos)
-        pos_anim.setEndValue(orig_pos)
-        pos_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        # 两个动画并行：pos_anim 由 Qt 管理生命周期，结束时随 widget 回收
+    orig_pos = widget.pos()
+    start_pos = QPoint(orig_pos.x(), orig_pos.y() + offset_y)
+    widget.move(start_pos)
+    pos_anim = QPropertyAnimation(widget, b"pos", widget)
+    pos_anim.setDuration(duration)
+    pos_anim.setStartValue(start_pos)
+    pos_anim.setEndValue(orig_pos)
+    pos_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    if has_effect:
+        anim = QPropertyAnimation(_ensure_effect(widget), b"opacity", widget)
+        anim.setDuration(duration)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         anim.finished.connect(lambda: _cleanup(widget))
-        pos_anim.start()
         anim.start()
-        return anim
-
-    anim.finished.connect(lambda: _cleanup(widget))
-    anim.start()
-    return anim
+    pos_anim.start()
+    return pos_anim
 
 
 def _cleanup(widget: QWidget):
