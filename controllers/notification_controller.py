@@ -159,12 +159,12 @@ class NotificationController(QObject):
         """
         try:
             from utils.settings import Settings
-            from services.webhook_notify import push
+            from services.wecom_notify import push
             cfg = Settings.get_notify_config()
-            if cfg.get("webhook_enabled"):
+            if cfg.get("push_enabled"):
                 push(cfg, title, detail)
         except Exception as e:
-            print(f"[webhook] 分发异常: {type(e).__name__}: {e}")
+            print(f"[wecom] 分发异常: {type(e).__name__}: {e}")
 
     def on_perf_alert(self, message):
         """性能阈值异常 —— PerfController._check_threshold 已做单次去重"""

@@ -1140,42 +1140,35 @@ class SettingsDialog(QDialog):
         form.setSpacing(12)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.notify_webhook_check = QCheckBox("开启微信推送（定时任务 / 性能检测结果）")
-        form.addRow("开关:", self.notify_webhook_check)
+        self.notify_push_check = QCheckBox("开启微信推送（定时任务 / 性能检测结果）")
+        form.addRow("开关:", self.notify_push_check)
 
-        self.notify_type_combo = QComboBox()
-        self.notify_type_combo.addItem("Server酱（推荐，个人最省事）", "serverchan")
-        self.notify_type_combo.addItem("PushPlus", "pushplus")
-        self.notify_type_combo.addItem("企业微信群机器人", "wecom")
-        self.notify_type_combo.addItem("钉钉群机器人", "dingtalk")
-        self.notify_type_combo.addItem("自定义 Webhook", "custom")
-        self.notify_type_combo.currentIndexChanged.connect(self._on_notify_type_changed)
-        form.addRow("推送方式:", self.notify_type_combo)
+        self.notify_corpid_edit = QLineEdit()
+        self.notify_corpid_edit.setMinimumWidth(340)
+        self.notify_corpid_edit.setPlaceholderText("企业微信「我的企业」页面最下方的企业ID")
+        form.addRow("企业ID:", self.notify_corpid_edit)
 
-        self.notify_key_edit = QLineEdit()
-        self.notify_key_edit.setMinimumWidth(340)
-        self.notify_key_edit.setPlaceholderText("SendKey / Token（Server酱、PushPlus 需要）")
-        form.addRow("密钥:", self.notify_key_edit)
+        self.notify_agentid_edit = QLineEdit()
+        self.notify_agentid_edit.setMinimumWidth(340)
+        self.notify_agentid_edit.setPlaceholderText("应用管理 → 自建应用 → 应用详情页里的应用ID（纯数字）")
+        form.addRow("应用ID:", self.notify_agentid_edit)
 
-        self.notify_url_edit = QLineEdit()
-        self.notify_url_edit.setMinimumWidth(340)
-        self.notify_url_edit.setPlaceholderText("Webhook 地址（企业微信 / 钉钉 / 自定义需要；留空用官方地址）")
-        form.addRow("推送地址:", self.notify_url_edit)
+        self.notify_secret_edit = QLineEdit()
+        self.notify_secret_edit.setMinimumWidth(340)
+        self.notify_secret_edit.setPlaceholderText("应用详情页里的应用Secret")
+        form.addRow("应用Secret:", self.notify_secret_edit)
 
         layout.addLayout(form)
 
-        self.notify_type_hint = QLabel("")
-        self.notify_type_hint.setObjectName("SettingsPageSubtitle")
-        self.notify_type_hint.setWordWrap(True)
-        layout.addWidget(self.notify_type_hint)
-
-        # 通用引导文案（教用户怎么拿 key）
+        # 企业微信自建应用配置引导（三步，个人免费注册）
         guide = QLabel(
-            "微信本身不开放个人消息推送接口，需要借助第三方中转（任选其一，都是一次配置）：\n"
-            "· Server酱：微信扫码关注「方糖」服务号 → 登录 sct.ftqq.com → 复制 SendKey 填到上方「密钥」。\n"
-            "· PushPlus：微信关注「pushplus 推送加」公众号 → 登录 www.pushplus.plus → 复制 token 填到「密钥」。\n"
-            "· 企业微信：在群里 → 群设置 → 群机器人 → 添加机器人 → 复制 Webhook 地址填到「推送地址」。\n"
-            "· 钉钉：群里 → 智能群助手 → 添加机器人（自定义）→ 复制 Webhook 地址填到「推送地址」。"
+            "采用企业微信自建应用推送：个人用手机号即可免费注册，无需营业执照、无需认证，"
+            "推送直接到个人微信（不依赖任何第三方服务号）。三步配置：\n"
+            "1. 注册企业微信并创建应用：电脑打开 work.weixin.qq.com 注册一个企业 → "
+            "「应用管理」→「自建」→「创建应用」，记下应用ID和应用Secret。\n"
+            "2. 拿企业ID：后台「我的企业」页面拉到最下方，复制企业ID。\n"
+            "3. 绑定微信：后台「我的企业」→「微信插件」→ 用微信扫码关注，之后推送消息都会出现在微信里。\n"
+            "（如推送报错，请在应用详情页最下方的「企业可信IP」里填上推送来源的公网 IP。）"
         )
         guide.setObjectName("SettingsPageSubtitle")
         guide.setWordWrap(True)
@@ -1208,18 +1201,6 @@ class SettingsDialog(QDialog):
 
         layout.addStretch()
         return outer
-    def _on_notify_type_changed(self):
-        """切换推送方式时，更新密钥/地址的提示与必填关系。"""
-        kind = self.notify_type_combo.currentData()
-        hints = {
-            "serverchan": "Server酱：填「密钥」= SendKey，推送地址留空即可（自动用官方地址）。",
-            "pushplus": "PushPlus：填「密钥」= token，推送地址留空即可（自动用官方地址）。",
-            "wecom": "企业微信：填「推送地址」= 群机器人的 Webhook 地址，密钥留空。",
-            "dingtalk": "钉钉：填「推送地址」= 群机器人的 Webhook 地址，密钥留空。",
-            "custom": "自定义：填「推送地址」= 完整地址，按 {title, content} POST 提交。",
-        }
-        self.notify_type_hint.setText(hints.get(kind, ""))
-
     def _on_cleanup_data(self):
         main_win = self.parent()
         handler = getattr(main_win, 'data_cleanup_handler', None) if main_win else None
@@ -1300,17 +1281,14 @@ class SettingsDialog(QDialog):
             self._load_voice_config()
 
         # 通知配置
-        if hasattr(self, "notify_webhook_check"):
+        if hasattr(self, "notify_push_check"):
             cfg = Settings.get_notify_config()
-            self.notify_webhook_check.setChecked(cfg["webhook_enabled"])
-            ti = self.notify_type_combo.findData(cfg["webhook_type"])
-            if ti >= 0:
-                self.notify_type_combo.setCurrentIndex(ti)
-            self.notify_key_edit.setText(cfg["webhook_key"])
-            self.notify_url_edit.setText(cfg["webhook_url"])
+            self.notify_push_check.setChecked(cfg["push_enabled"])
+            self.notify_corpid_edit.setText(cfg["wecom_corpid"])
+            self.notify_agentid_edit.setText(cfg["wecom_agentid"])
+            self.notify_secret_edit.setText(cfg["wecom_secret"])
             self.notify_tray_check.setChecked(cfg["tray_enabled"])
             self.notify_tray_minimize_check.setChecked(cfg["tray_minimize"])
-            self._on_notify_type_changed()
 
     def _save_settings(self):
         Settings.set_output_dir(self.dir_edit.text())
@@ -1342,12 +1320,12 @@ class SettingsDialog(QDialog):
         self._save_voice_config()
 
         # 保存通知配置
-        if hasattr(self, "notify_webhook_check"):
+        if hasattr(self, "notify_push_check"):
             Settings.set_notify_config(
-                webhook_enabled=self.notify_webhook_check.isChecked(),
-                webhook_type=self.notify_type_combo.currentData(),
-                webhook_key=self.notify_key_edit.text().strip(),
-                webhook_url=self.notify_url_edit.text().strip(),
+                push_enabled=self.notify_push_check.isChecked(),
+                wecom_corpid=self.notify_corpid_edit.text().strip(),
+                wecom_agentid=self.notify_agentid_edit.text().strip(),
+                wecom_secret=self.notify_secret_edit.text().strip(),
                 tray_enabled=self.notify_tray_check.isChecked(),
                 tray_minimize=self.notify_tray_minimize_check.isChecked(),
             )
