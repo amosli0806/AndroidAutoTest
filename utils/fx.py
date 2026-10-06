@@ -113,7 +113,7 @@ def scale_in(dialog: QWidget, duration: int = 250, from_scale: float = 0.96,
     return anim
 
 
-def pulse(effect: QGraphicsOpacityEffect, duration: int = 700,
+def pulse(effect: QGraphicsOpacityEffect, duration: int = 1100,
           low: float = 0.35, high: float = 1.0) -> QPropertyAnimation:
     """呼吸闪烁（进行态红点/执行中指示用）：opacity 在 low~high 间往复。
 
@@ -130,7 +130,7 @@ def pulse(effect: QGraphicsOpacityEffect, duration: int = 700,
     return anim
 
 
-def pulse_widget(widget: QWidget, on: bool, duration: int = 700,
+def pulse_widget(widget: QWidget, on: bool, duration: int = 1100,
                  low: float = 0.4) -> None:
     """开关式呼吸闪烁：给整个 widget 挂/摘呼吸效果。
 
