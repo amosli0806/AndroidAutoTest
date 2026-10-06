@@ -2199,15 +2199,6 @@ class MainWindow(QMainWindow):
             return
 
         self.stacked_widget.setCurrentIndex(index)
-        # 切页浮入：轻微上移（不用透明度——页面是壁纸半透明风格，整页透明化
-        # 会透出底层黑色，出现「黑背景闪变」）
-        try:
-            from utils.fx import fade_in
-            page = self.stacked_widget.currentWidget()
-            if page is not None:
-                fade_in(page, offset_y=10, use_opacity=False)
-        except Exception:
-            pass
         # 换页后重算快捷键的启用状态：同一键位在不同页归属不同动作（如 Ctrl+F 在
         # ADB 工具箱是"指令搜索"、在自动化编辑是"步骤搜索"），必须跟着页走
         self._update_shortcut_enabled()
