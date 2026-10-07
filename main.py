@@ -64,28 +64,76 @@ _verify_lock = threading.Lock()
 
 
 # ---------- 启动封面 ----------
-# 打包后（main.spec 里的 Splash）bootloader 会在 Python 解释器启动之前就弹出封面，
-# 盖住导入模块 / 建界面 / 拉起 adb / 连设备这段时间；这里只负责把进度文字刷成
-# 人话，并在主界面出来时把它关掉。
-#
-# 为什么必须 try/except 包起来：开发环境直接 `python main.py` 跑时根本没有
-# pyi_splash 这个模块（它是打包运行时才注入的），不该因此报错。
-def splash_update(text: str) -> None:
-    """更新启动封面上的进度文字；非打包运行时是空操作。"""
+# 分两层，各盖住一段启动时间：
+#   1) main.spec 里的 PyInstaller Splash（Tcl/Tk）—— 盖住模块导入 / 解释器启动，
+#      这一段用户什么都还没法控制，只能靠 bootloader 的静态封面；
+#   2) views/splash_window.py 的自绘 SplashWindow —— QApplication 建好之后接管，
+#      提供细进度条 + 分阶段文案 + 淡出过渡（这些东西 Tcl/Tk 那层做不了）。
+#   _splash_win 为 None 时（开发环境 / 没打到封面图）所有调用都是安全空操作。
+_splash_win = None
+
+
+def splash_show(image_path: str) -> None:
+    """在 QApplication 建好之后接管启动封面（自绘版）。失败则静默降级。"""
+    global _splash_win
+    if _splash_win is not None:
+        return
+    try:
+        from views.splash_window import SplashWindow
+        _splash_win = SplashWindow(image_path)
+        _splash_win.show()
+    except Exception as e:
+        logger.warning("自绘启动封面创建失败（%s: %s），继续无封面启动", type(e).__name__, e)
+        _splash_win = None
+
+
+def splash_update(text: str, progress: float | None = None) -> None:
+    """更新启动封面的阶段文案/进度。
+
+    同时刷 Tcl/Tk 那层（如果它有出来）和自绘层；两层都不存在时是空操作。
+    """
     try:
         import pyi_splash
         pyi_splash.update_text(text)
     except Exception:
         pass
+    if _splash_win is not None:
+        try:
+            _splash_win.set_stage(text, progress)
+        except Exception:
+            pass
 
 
-def splash_close() -> None:
-    """关掉启动封面（幂等；非打包运行时是空操作）。"""
+def splash_close(on_done=None) -> None:
+    """淡出并关掉启动封面（幂等）。
+
+    自绘层存在时走淡出过渡，动画结束后回调 on_done（用于接主窗口显示）；
+    Tcl/Tk 层则直接关掉。on_done 为空时等价于立即关。
+    """
+    global _splash_win
     try:
         import pyi_splash
         pyi_splash.close()
     except Exception:
         pass
+    win = _splash_win
+    if win is None:
+        if on_done:
+            on_done()
+        return
+    _splash_win = None
+    try:
+        if on_done:
+            win.fade_out(260, on_done)
+        else:
+            win.fade_out(260)
+    except Exception:
+        try:
+            win.close()
+        except Exception:
+            pass
+        if on_done:
+            on_done()
 
 
 def ensure_adb_server(timeout: float = 20.0) -> bool:
@@ -335,9 +383,9 @@ def main():
 
         _subprocess.Popen = _PopenNoConsole
 
-    # 封面上的第一句人话（在它之前显示的是 spec 里的 text_default「正在启动…」，
-    # 因为模块导入阶段 main() 还没开始跑）
-    splash_update("正在加载数据…")
+    # 封面上的第一句人话（早于 QApplication 建立、只有 Tcl/Tk 那层在的时候；
+    # 自绘层此刻还没建，splash_update 会安全地只刷 Tcl/Tk）
+    splash_update("正在加载数据…", 0.10)
 
     # ---------- 统一 adb 二进制 ----------
     # uiautomator2 的设备操作最终都走 adbutils，而 adbutils 解析 adb 的优先级是：
@@ -384,7 +432,7 @@ def main():
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
     app = QApplication(sys.argv)
-    splash_update("正在初始化界面…")
+    splash_update("正在初始化界面…", 0.35)
     # ---------- 让所有 QDialog 的标题栏自动跟随主题 ----------
     from PyQt6.QtWidgets import QDialog
     from utils.win_dark_title import set_dark_title_bar
@@ -449,7 +497,13 @@ def main():
         }
     """)
 
+    # ---------- 自绘启动封面：接管 Tcl/Tk 那层 ----------
+    # 底图与打包时的 Splash 是同一张（resources/images/splash.png，带版本号那张在
+    # 构建目录里，这里用的是原始底图；版本号自绘层不画，避免两处维护）。
+    splash_show(os.path.join(_base_dir, "resources", "images", "splash.png"))
+
     # ---------- 初始化所有模型 ----------
+    splash_update("正在加载数据…", 0.10)
     project_model = ProjectModel()
     step_model = StepModel()
     exec_model = ExecutionModel()
@@ -864,6 +918,7 @@ def main():
 
     def _start_device_link():
         """在后台线程里完成 adb server / 设备列表 / u2 连接（主界面显示后由定时器触发）。"""
+        splash_update("正在连接设备…", 0.88)
 
         def _scan():
             try:
@@ -1114,14 +1169,17 @@ def main():
     main_window.check_update_requested.connect(lambda: _check_update(manual=True))
 
     # ---------- 启动 ----------
-    splash_update("正在准备主界面…")
-    main_window.showMaximized()
-    # 主界面已经出来，封面使命完成。延 150ms 再关：让 Qt 先把首帧画出来，
-    # 否则会先露出一瞬间的白屏（封面是 always_on_top，压在主窗口上面直到这里关掉）。
-    QTimer.singleShot(150, splash_close)
-    # 设备链路（adb server / 设备列表 / u2 连接）等界面先显示出来再在后台线程里做，
-    # 别让它堵在进入主界面的路上 —— 详见 _start_device_link 上方的注释
-    QTimer.singleShot(250, _start_device_link)
+    splash_update("正在准备主界面…", 0.62)
+    # 主界面已经建好，封面使命完成 —— 但不用「先显示再关封面」那种会露白屏的写法：
+    # 先淡出封面，淡出结束的回调里再把主窗口显示出来（见 splash_close 的 on_done），
+    # 视觉上是封面渐隐到主界面，不会闪一下白。
+    def _reveal_main_window():
+        main_window.showMaximized()
+        # 设备链路（adb server / 设备列表 / u2 连接）等界面显示后再在后台线程里做，
+        # 别让它堵在进入主界面的路上 —— 详见 _start_device_link 上方的注释
+        QTimer.singleShot(60, _start_device_link)
+
+    splash_close(on_done=_reveal_main_window)
     # 检查更新排在最晚：既不阻塞启动，也不跟设备初始化抢网络/CPU
     QTimer.singleShot(4000, lambda: _check_update(manual=False))
     # 清掉上次更新留下的暂存残留（正在等重启生效的那一份要保留）；
