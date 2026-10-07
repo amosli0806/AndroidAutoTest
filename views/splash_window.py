@@ -69,6 +69,10 @@ class SplashWindow(QWidget):
         self._target = 0.0          # 目标值，主程序只调 set_stage，这里平滑追上去
         self._label = _STAGES[0][1]
         self._closing = False
+        # finish() 用：完成回调 + 已等待毫秒（见 _poll_finish）
+        self._finish_cb = None
+        self._finish_waited_ms = 0
+        self._finish_timer = None
 
         # 进度平滑推进：主程序给的是离散的阶段值，这里补间成连续动画
         self._tick = QTimer(self)
@@ -116,11 +120,38 @@ class SplashWindow(QWidget):
         self._fade.start()
 
     def finish(self, on_done=None) -> None:
-        """立刻补齐到 100%，短暂停顿后淡出（主界面构建完成时调用）。"""
+        """把进度补到 100%，**等它真正走完**再淡出。
+
+        不能只等固定时长：进度是用 _on_tick 平滑追赶的（每次靠近 12%），
+        从 60% 爬到 100% 需要十几帧。固定等 220ms 的话进度条才走到七八成就切走了，
+        用户看到的是「进度条没到头，首页已经打开」。这里改成轮询，
+        每一帧检查是否到顶，到顶后再留一小段停顿才淡出。
+        """
         self._target = 1.0
         self._label = _STAGES[-1][1]
+        self._finish_cb = on_done
+        self._finish_waited_ms = 0
+        # 立即强制推到 100%（跳过平滑补间）：否则用户会看到进度条慢慢爬，
+        # 而首页其实早就建好了，反而显得拖沓。这里给一个「瞬间补满 + 短暂停留」的观感。
+        self._progress = 1.0
         self.update()
-        QTimer.singleShot(220, lambda: self.fade_out(260, on_done))
+
+        self._finish_timer = QTimer(self)
+        self._finish_timer.setInterval(30)
+        self._finish_timer.timeout.connect(self._poll_finish)
+        self._finish_timer.start()
+
+    def _poll_finish(self) -> None:
+        """留一小段停顿让用户看清「100% + 即将就绪」，然后淡出。
+
+        注：这个定时器要等 main() 跑到 app.exec() 才真正开始走（之前是同步代码），
+        所以实际停留时间会比这里设的略长一点 —— 观感上正好，不必刻意补偿。
+        """
+        self._finish_waited_ms += 30
+        if self._finish_waited_ms < 200:
+            return
+        self._finish_timer.stop()
+        self.fade_out(260, getattr(self, '_finish_cb', None))
 
     # ---------- 内部 ----------
     def _center_on_screen(self) -> None:

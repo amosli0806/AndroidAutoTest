@@ -123,10 +123,12 @@ def _flush_splash() -> None:
 
 
 def splash_close(on_done=None) -> None:
-    """淡出并关掉启动封面（幂等）。
+    """收尾启动封面：把进度补满、走完、再淡出关掉（幂等）。
 
-    自绘层存在时走淡出过渡，动画结束后回调 on_done（用于接主窗口显示）；
-    Tcl/Tk 层则直接关掉。on_done 为空时等价于立即关。
+    走 win.finish() 而不是直接 fade_out()：finish 会把进度推到 100% 并等进度条
+    真正走完（留一小段停顿让用户看清）才淡出。直接 fade_out 的话，调用点通常
+    还停在 60% 左右，用户会看到「进度条没到头，首页已经打开」。
+    Tcl/Tk 层则直接关掉。on_done 为空时只关不回调。
     """
     global _splash_win
     try:
@@ -141,10 +143,8 @@ def splash_close(on_done=None) -> None:
         return
     _splash_win = None
     try:
-        if on_done:
-            win.fade_out(260, on_done)
-        else:
-            win.fade_out(260)
+        # 无论进度到没到，都走 finish()（它内部会补满 + 等走完 + 淡出）
+        win.finish(on_done)
     except Exception:
         try:
             win.close()
@@ -955,9 +955,12 @@ def main():
     scan_signal.devices_ready.connect(_on_startup_scan, Qt.ConnectionType.QueuedConnection)
 
     def _start_device_link():
-        """在后台线程里完成 adb server / 设备列表 / u2 连接（主界面显示后由定时器触发）。"""
-        splash_update("正在连接设备…", 0.88)
+        """在后台线程里完成 adb server / 设备列表 / u2 连接（主界面显示后由定时器触发）。
 
+        注意：这里不再刷启动封面进度。设备连接发生在主界面已经显示之后，
+        而封面此刻已补满 100% 并在淡出，再去改它只会造成「进度条回退」的错觉
+        （splash_update 对已关闭的封面是空操作，这里干脆不调）。
+        """
         def _scan():
             try:
                 # 先把 adb server 拉稳再查设备：强杀过 adb 之后第一次调用可能要十几秒，
@@ -1211,12 +1214,12 @@ def main():
     main_window.check_update_requested.connect(lambda: _check_update(manual=True))
 
     # ---------- 启动 ----------
-    splash_update("正在准备主界面…", 0.62)
-    # 先把主窗口显示出来，再让封面在上面淡出。
-    # 这样安排的原因：淡出是 QPropertyAnimation，要靠事件循环推动；若等它结束
-    # 才显示主窗口，那这段等待时间（进 app.exec() 之前的各种收尾 + 动画帧）
-    # 就成了纯粹的拖延，实测有 1 秒多。反过来先 show 主窗口、封面仍在最上层
-    # （WindowStaysOnTopHint）盖着它，用户看到的仍是封面 → 渐隐 → 主界面，观感一致。
+    # 最后一步：把进度补到 100%，等进度条真正走完（见 SplashWindow.finish），
+    # 再让封面淡出。之前是「更新到 62% 就 showMaximized + 立刻淡出」，
+    # 用户看到的是「进度条没到头，首页已经打开」——所以这里必须走 finish()。
+    splash_update("即将就绪…", 1.0)
+    # 主窗口先显示出来（封面是置顶的，会盖在它上面直到淡出结束），
+    # 这样淡出动画期间主界面已经渲染好，不会有白光/白屏。
     main_window.showMaximized()
     splash_close()
     # 设备链路（adb server / 设备列表 / u2 连接）等界面显示后再在后台线程里做，
