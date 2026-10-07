@@ -167,11 +167,8 @@ class _TrayPanel(QWidget):
 
     @staticmethod
     def _subtitle():
-        try:
-            from utils.version import APP_VERSION
-            return f"Android 自动化测试工具 v{APP_VERSION}"
-        except Exception:
-            return "Android 自动化测试工具"
+        # 头部副标题（用户 2026-10-07 定稿）：问候语，短文案保证不截断
+        return "祝您使用愉快！"
 
     # ---------------- 主题 ----------------
     def apply_theme(self):
