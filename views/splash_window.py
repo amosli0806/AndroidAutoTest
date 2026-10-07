@@ -1,21 +1,19 @@
 # views/splash_window.py
 """启动封面窗口。
 
-为什么要自己画（而不是用 PyInstaller 的 Splash / Tcl-Tk）：
-  PyInstaller 的启动封面由 bootloader 用 Tcl/Tk 渲染，只能在固定的一个位置
-  画**一行文字**（text_pos），做不了细进度条、做不了分阶段文案的淡入淡出、
-  也做不了淡出过渡。所以这里改成：底图仍在打包时由 main.spec 画好版本号，
-  界面则交给这个 Qt 窗口自己绘制 —— 进度条、阶段文案、淡出都能自由控制。
+为什么自绘（而不是用 PyInstaller 的 Splash / Tcl-Tk）：
+  PyInstaller 的启动封面由 bootloader 用 Tcl/Tk 渲染，只能在一个固定位置画
+  **一行文字**，做不了细进度条、做不了分阶段文案、也做不了淡出过渡。
+  所以封面、进度条、阶段文案、版本号、淡出全部在这里自绘。
 
-代价：封面不再是「解释器启动前」就出现，而是 QApplication 建好之后才显示，
-  真正被盖住的是模型初始化 + 主界面构建这一段（大约几秒）。模块导入那几秒
-  由 main.spec 里的 Splash 兜底（见 main.spec 的说明），两者可以并存。
+  打包版唯一入口：main.py 的 splash_show()（QApplication 建好后接管），
+  不再有 Tcl/Tk 那层（2026-10-07 起已从 main.spec 彻底移除，避免新旧两个封面）。
 
 设计要点：
   * 无边框 + 置顶 + 不进任务栏，避免抢焦点、避免在任务栏多出一个按钮；
   * 用 windowOpacity 做淡出 —— QGraphicsOpacityEffect 对顶层窗口不生效
     （见 utils/fx.py 里 scale_in 的同类问题）；
-  * 进度条在底图左下留白处自绘，不依赖任何外部素材。
+  * 进度条在底图左下留白处自绘，版本号在右上角自绘，都不依赖外部素材。
 """
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QPainter, QColor, QFont, QPixmap, QLinearGradient
@@ -51,6 +49,20 @@ _STAGES = [
     (0.85, '正在整理界面…'),
     (1.00, '即将就绪…'),
 ]
+
+# 版本号（右上角，与旧 Tcl/Tk 封面同一位置/颜色/字号比例）
+_VERSION_ANCHOR = (0.94, 0.11)   # 右边缘 / 上边缘（相对底图宽/高）
+_VERSION_COLOR = QColor('#98A2B3')
+_VERSION_SIZE_RATIO = 0.035      # 字号占底图高的比例（400*0.035=14px）
+
+
+def _app_version() -> str:
+    """读版本号（单点来源 utils/version.py）。失败返回空串（封面就不画版本号）。"""
+    try:
+        from utils.version import APP_VERSION
+        return str(APP_VERSION).strip()
+    except Exception:
+        return ''
 
 
 class SplashWindow(QWidget):
@@ -258,6 +270,20 @@ class SplashWindow(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         p.drawPixmap(0, 0, self._pixmap)
+
+        # ---- 版本号（右上角，与旧 Tcl/Tk 封面同位置） ----
+        ver = _app_version()
+        if ver:
+            font = QFont('Microsoft YaHei')
+            font.setPixelSize(max(10, round(self._h * _VERSION_SIZE_RATIO)))
+            p.setFont(font)
+            p.setPen(_VERSION_COLOR)
+            fm = p.fontMetrics()
+            text = f'V{ver}'
+            ax, ay = _VERSION_ANCHOR
+            # 右边缘对齐 w*ax，上边缘对齐 h*ay（drawText 的 y 是基线，需 +ascent）
+            p.drawText(int(self._w * ax - fm.horizontalAdvance(text)),
+                       int(self._h * ay + fm.ascent()), text)
 
         # ---- 进度条 ----
         bar_x = self._w * _BAR_MARGIN_X

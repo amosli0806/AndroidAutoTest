@@ -64,16 +64,15 @@ _verify_lock = threading.Lock()
 
 
 # ---------- 启动封面 ----------
-# 分两层，各盖住一段启动时间：
-#   1) main.spec 里的 PyInstaller Splash（Tcl/Tk）—— 盖住模块导入 / 解释器启动，
-#      这一段用户什么都还没法控制，只能靠 bootloader 的静态封面；
-#   2) views/splash_window.py 的自绘 SplashWindow —— QApplication 建好之后接管，
-#      提供细进度条 + 分阶段文案 + 淡出过渡（这些东西 Tcl/Tk 那层做不了）。
-#   _splash_win 为 None 时（开发环境 / 没打到封面图）所有调用都是安全空操作。
+# 只有一层：views/splash_window.py 的自绘 SplashWindow —— 进度条 + 分阶段文案 +
+# 版本号 + 淡出过渡都在里面。QApplication 建好后由 splash_show() 接管。
+# 不再有 PyInstaller 的 Tcl/Tk Splash（2026-10-07 起从 main.spec 彻底移除，
+# 之前「两层并存」会让打包版先后出现新旧两个封面）。
+#   _splash_win 为 None 时（没建起来 / 没打到封面图）所有调用都是安全空操作。
 _splash_win = None
 # 由 __main__ 入口提前建好的 QApplication（见文件末尾）。提前建的原因：
 # 顶层 import 在开发环境要 1 秒多，而 main() 是 import 之后才跑的 ——
-# 把 QApplication + 启动封面提到 import 之前，才能「一启动就见到封面」。
+# 把 QApplication + 启动封面提到 import 之后、但 main() 重活之前，尽量早见到封面。
 _APP = None
 
 
@@ -92,15 +91,7 @@ def splash_show(image_path: str) -> None:
 
 
 def splash_update(text: str, progress: float | None = None) -> None:
-    """更新启动封面的阶段文案/进度。
-
-    同时刷 Tcl/Tk 那层（如果它有出来）和自绘层；两层都不存在时是空操作。
-    """
-    try:
-        import pyi_splash
-        pyi_splash.update_text(text)
-    except Exception:
-        pass
+    """更新启动封面的阶段文案/进度；封面没建起来时是空操作。"""
     if _splash_win is not None:
         try:
             _splash_win.set_stage(text, progress)
@@ -128,14 +119,9 @@ def splash_close(on_done=None) -> None:
     走 win.finish() 而不是直接 fade_out()：finish 会把进度推到 100% 并等进度条
     真正走完（留一小段停顿让用户看清）才淡出。直接 fade_out 的话，调用点通常
     还停在 60% 左右，用户会看到「进度条没到头，首页已经打开」。
-    Tcl/Tk 层则直接关掉。on_done 为空时只关不回调。
+    on_done 为空时只关不回调。
     """
     global _splash_win
-    try:
-        import pyi_splash
-        pyi_splash.close()
-    except Exception:
-        pass
     win = _splash_win
     if win is None:
         if on_done:
@@ -401,11 +387,6 @@ def main():
 
         _subprocess.Popen = _PopenNoConsole
 
-    # 这一句是给 Tcl/Tk 那层封面用的（打包版在解释器启动前就弹出来了）；
-    # 开发环境的自绘封面此刻还没建，splash_update 会安全地只刷 Tcl/Tk。
-    # 自绘封面的第一句在下面 splash_show 之后才设（那时封面才真的可见）。
-    splash_update("正在加载数据…", 0.15)
-
     # ---------- 统一 adb 二进制 ----------
     # uiautomator2 的设备操作最终都走 adbutils，而 adbutils 解析 adb 的优先级是：
     # ---------- adb：统一用系统 PATH 里的一份（2026-09-25 起不再内置）----------
@@ -454,10 +435,9 @@ def main():
     app = _APP or QApplication(sys.argv)
 
     # ---------- 启动封面：必须在做任何耗时的事之前 ----------
-    # 开发环境（python main.py）没有 Tcl/Tk 那层封面，这里就是用户能看到的第一个东西，
-    # 所以它得在 QApplication 一建好就出现 —— 放到后面（模型初始化 / MainWindow 之后）
-    # 会有肉眼可感的「点了没反应」。
-    # 底图与打包时的 Splash 是同一张；版本号自绘层不画，避免两处维护。
+    # 自绘封面是启动时用户看到的第一个东西，得在 QApplication 一建好就出现 ——
+    # 放到后面（模型初始化 / MainWindow 之后）会有肉眼可感的「点了没反应」。
+    # 底图 + 版本号 + 进度条都在 views/splash_window.py 里自绘。
     _base_dir = (sys._MEIPASS if getattr(sys, "frozen", False)
                  else os.path.dirname(os.path.abspath(__file__)))
     splash_show(os.path.join(_base_dir, "resources", "images", "splash.png"))
@@ -1254,11 +1234,11 @@ def main():
 
 if __name__ == "__main__":
     # ---------- 先弹启动封面，再让后面那些重活开始 ----------
-    # 顶层 import（PyQt6、uiautomator2、views.* …）在开发环境要 1 秒多；打包版这段
-    # 有 main.spec 的 Tcl/Tk 封面兜着，开发环境啥都没有。所以在最前面就把
-    # QApplication 建好、把自绘封面画出来（此时 views.splash_window 是首次被导入的
-    # 轻量模块，几乎不耗时），之后无论 import 多慢，屏幕上已经有画面了。
-    # import 完成后 main() 复用这个 app，不会重复建。
+    # 说明：main.py 顶层的 import（PyQt6、uiautomator2、views.* …）在进入这个块
+    # 之前就已经执行完了，所以这里做不到「封面早于顶层 import」。
+    # 这里能做的是：QApplication 一建好就立刻把自绘封面画出来，让封面尽早出现；
+    # 之后 main() 里的模型初始化 / 主窗口构建（几秒）由封面盖住。
+    # main() 复用这里的 app（_APP），封面也靠 splash_show 的幂等保护不会重复建。
     try:
         from PyQt6.QtCore import Qt as _Qt
         from PyQt6.QtWidgets import QApplication as _QApplication
