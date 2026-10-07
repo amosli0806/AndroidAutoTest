@@ -71,6 +71,10 @@ _verify_lock = threading.Lock()
 #      提供细进度条 + 分阶段文案 + 淡出过渡（这些东西 Tcl/Tk 那层做不了）。
 #   _splash_win 为 None 时（开发环境 / 没打到封面图）所有调用都是安全空操作。
 _splash_win = None
+# 由 __main__ 入口提前建好的 QApplication（见文件末尾）。提前建的原因：
+# 顶层 import 在开发环境要 1 秒多，而 main() 是 import 之后才跑的 ——
+# 把 QApplication + 启动封面提到 import 之前，才能「一启动就见到封面」。
+_APP = None
 
 
 def splash_show(image_path: str) -> None:
@@ -102,6 +106,20 @@ def splash_update(text: str, progress: float | None = None) -> None:
             _splash_win.set_stage(text, progress)
         except Exception:
             pass
+
+
+def _flush_splash() -> None:
+    """让启动封面立刻绘制一帧。
+
+    窗口 show() 只是把它排进事件循环；后面若同步跑一长串初始化（模型加载、
+    构建主窗口），封面会「已创建但还没画」地僵在那儿，看起来像没弹出来。
+    这里主动把事件循环抽一下，确保封面先落到屏幕上。
+    """
+    try:
+        from PyQt6.QtWidgets import QApplication
+        QApplication.processEvents()
+    except Exception:
+        pass
 
 
 def splash_close(on_done=None) -> None:
@@ -358,8 +376,8 @@ def cleanup_unused_data(project_model, step_model, suite_model):
 
 
 def main():
-    # ---------- 子进程无黑窗补丁（必须在任何 adb 调用之前）----------
-    # 虫师打包为无控制台 GUI 后，第三方库（adbutils/u2 等）内部 spawn 的控制台
+    global _APP
+    # ---------- 子进程无黑窗补丁（必须在任何 adb 调用之前）----------    # 虫师打包为无控制台 GUI 后，第三方库（adbutils/u2 等）内部 spawn 的控制台
     # 子进程（adb/…）没带 CREATE_NO_WINDOW，Windows 会给每个子进程新开一个黑色
     # 控制台窗 —— 设备插拔/重连时一次冒好几个（用户实测反馈）。
     # 统一兜底：调用方没显式传 creationflags 的一律补上。输出经管道捕获不受影响；
@@ -410,8 +428,9 @@ def main():
 
     sys.excepthook = global_exception_hook
 
-    # 数据文件统一收进「程序目录/data/」，必须在读取任何数据之前迁移完成
-    migrate_legacy_data_files()
+    # 注：migrate_legacy_data_files() 本来在这里（读数据之前），但它会碰磁盘。
+    # 为了让启动封面尽早在屏幕上出现，它被挪到封面显示之后再执行（见下方
+    # 「数据迁移」一段）—— 它本身不依赖 QApplication，只是纯文件操作，放后面无副作用。
 
 
     # ---------- Windows：不要设置显式 AppUserModelID（实测结论，别再加回来）----------
@@ -431,8 +450,25 @@ def main():
     # 否则 QWebEngineView 首次创建时会触发窗口重建（看起来像应用重启）
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
-    app = QApplication(sys.argv)
+    app = _APP or QApplication(sys.argv)
+
+    # ---------- 启动封面：必须在做任何耗时的事之前 ----------
+    # 开发环境（python main.py）没有 Tcl/Tk 那层封面，这里就是用户能看到的第一个东西，
+    # 所以它得在 QApplication 一建好就出现 —— 放到后面（模型初始化 / MainWindow 之后）
+    # 会有肉眼可感的「点了没反应」。
+    # 底图与打包时的 Splash 是同一张；版本号自绘层不画，避免两处维护。
+    _base_dir = (sys._MEIPASS if getattr(sys, "frozen", False)
+                 else os.path.dirname(os.path.abspath(__file__)))
+    splash_show(os.path.join(_base_dir, "resources", "images", "splash.png"))
     splash_update("正在初始化界面…", 0.35)
+    # 强制立刻绘制一帧：show() 只是把窗口排进事件循环，不 processEvents() 的话
+    # 后面同步跑的模型初始化会把窗口「占住但白着」，看起来像没弹出来。
+    _flush_splash()
+
+    # ---------- 数据迁移（读任何数据之前） ----------
+    migrate_legacy_data_files()
+    splash_update("正在加载数据…", 0.45)
+
     # ---------- 让所有 QDialog 的标题栏自动跟随主题 ----------
     from PyQt6.QtWidgets import QDialog
     from utils.win_dark_title import set_dark_title_bar
@@ -460,8 +496,7 @@ def main():
     # 与 help_view 取图片用的是同一套判断。**别再退回 os.path.dirname(__file__)**：
     # 开发环境 __file__ 可能是相对路径（'main.py'），拼出来的路径依赖当前工作目录，
     # 换个目录启动就静默找不到图标（任务栏/标题栏变成通用图标）。
-    _base_dir = (sys._MEIPASS if getattr(sys, "frozen", False)
-                 else os.path.dirname(os.path.abspath(__file__)))
+    # 注：_base_dir 已在启动封面那段算好并复用。
     icon_path = os.path.join(_base_dir, "resources", "icons", "app_icon.ico")
     if os.path.exists(icon_path):
         app_icon = QIcon(icon_path)
@@ -497,13 +532,8 @@ def main():
         }
     """)
 
-    # ---------- 自绘启动封面：接管 Tcl/Tk 那层 ----------
-    # 底图与打包时的 Splash 是同一张（resources/images/splash.png，带版本号那张在
-    # 构建目录里，这里用的是原始底图；版本号自绘层不画，避免两处维护）。
-    splash_show(os.path.join(_base_dir, "resources", "images", "splash.png"))
-
     # ---------- 初始化所有模型 ----------
-    splash_update("正在加载数据…", 0.10)
+    splash_update("正在加载数据…", 0.55)
     project_model = ProjectModel()
     step_model = StepModel()
     exec_model = ExecutionModel()
@@ -542,6 +572,14 @@ def main():
     # 设置页「数据维护 → 清理无用数据」的入口，与启动自愈同一套逻辑
     main_window.set_data_cleanup_handler(
         lambda: cleanup_unused_data(project_model, step_model, suite_model))
+
+    # ---------- 装配期：批量模式 ----------
+    # 下面会连着 set_edit_views / set_element_manager_view / set_help_view /
+    # set_adb_toolbox_view / set_perf_view / set_api_view / set_voice_view …
+    # 十来个视图，每个尾部都会调一次 main_window.apply_theme()。全量主题刷新会遍历
+    # 重排所有控件（实测单次 0.3~1.5s、随控件数增长），十几次叠加就是十几秒的启动卡顿。
+    # 装配期先跳过，全部装完后由 end_batch_assembly() 统一刷一次。
+    main_window.begin_batch_assembly()
 
     # ---------- 视图 ----------
     project_tree = ProjectTreeView()
@@ -1049,6 +1087,10 @@ def main():
                            device_service=device_svc)
     main_window.set_voice_view(voice_view)
 
+    # ---------- 装配完成：统一刷一次主题 ----------
+    # 到这里所有视图都装好了，把装配期跳过的那些 apply_theme 合并成这一次。
+    main_window.end_batch_assembly()
+
     # ---------- 检查更新（启动后台探测 + 菜单手动触发） ----------
     # 三条硬约束：
     # 1. 绝不拖慢启动：延后 4 秒、且在后台 daemon 线程里跑（启动路径刚从 13.7s 优化到 6.3s，
@@ -1170,16 +1212,16 @@ def main():
 
     # ---------- 启动 ----------
     splash_update("正在准备主界面…", 0.62)
-    # 主界面已经建好，封面使命完成 —— 但不用「先显示再关封面」那种会露白屏的写法：
-    # 先淡出封面，淡出结束的回调里再把主窗口显示出来（见 splash_close 的 on_done），
-    # 视觉上是封面渐隐到主界面，不会闪一下白。
-    def _reveal_main_window():
-        main_window.showMaximized()
-        # 设备链路（adb server / 设备列表 / u2 连接）等界面显示后再在后台线程里做，
-        # 别让它堵在进入主界面的路上 —— 详见 _start_device_link 上方的注释
-        QTimer.singleShot(60, _start_device_link)
-
-    splash_close(on_done=_reveal_main_window)
+    # 先把主窗口显示出来，再让封面在上面淡出。
+    # 这样安排的原因：淡出是 QPropertyAnimation，要靠事件循环推动；若等它结束
+    # 才显示主窗口，那这段等待时间（进 app.exec() 之前的各种收尾 + 动画帧）
+    # 就成了纯粹的拖延，实测有 1 秒多。反过来先 show 主窗口、封面仍在最上层
+    # （WindowStaysOnTopHint）盖着它，用户看到的仍是封面 → 渐隐 → 主界面，观感一致。
+    main_window.showMaximized()
+    splash_close()
+    # 设备链路（adb server / 设备列表 / u2 连接）等界面显示后再在后台线程里做，
+    # 别让它堵在进入主界面的路上 —— 详见 _start_device_link 上方的注释
+    QTimer.singleShot(60, _start_device_link)
     # 检查更新排在最晚：既不阻塞启动，也不跟设备初始化抢网络/CPU
     QTimer.singleShot(4000, lambda: _check_update(manual=False))
     # 清掉上次更新留下的暂存残留（正在等重启生效的那一份要保留）；
@@ -1205,4 +1247,24 @@ def main():
 
 
 if __name__ == "__main__":
+    # ---------- 先弹启动封面，再让后面那些重活开始 ----------
+    # 顶层 import（PyQt6、uiautomator2、views.* …）在开发环境要 1 秒多；打包版这段
+    # 有 main.spec 的 Tcl/Tk 封面兜着，开发环境啥都没有。所以在最前面就把
+    # QApplication 建好、把自绘封面画出来（此时 views.splash_window 是首次被导入的
+    # 轻量模块，几乎不耗时），之后无论 import 多慢，屏幕上已经有画面了。
+    # import 完成后 main() 复用这个 app，不会重复建。
+    try:
+        from PyQt6.QtCore import Qt as _Qt
+        from PyQt6.QtWidgets import QApplication as _QApplication
+        _QApplication.setAttribute(_Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+        _APP = _QApplication(sys.argv)
+        _boot_base = (sys._MEIPASS if getattr(sys, "frozen", False)
+                      else os.path.dirname(os.path.abspath(__file__)))
+        splash_show(os.path.join(_boot_base, "resources", "images", "splash.png"))
+        splash_update("正在加载数据…", 0.10)
+        _flush_splash()
+    except Exception as _e:
+        # 封面失败绝不能挡住应用启动，交给 main() 里的兜底逻辑正常往下走
+        print(f"[splash] 提前创建启动封面失败：{type(_e).__name__}: {_e}")
+
     main()

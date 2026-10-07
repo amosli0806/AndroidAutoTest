@@ -117,6 +117,11 @@ class RoundedDockWidget(QDockWidget):
         except Exception as e:
             print(f"[RoundedDockWidget] mask 应用失败: {e}")
 
+# 上一次设给 QApplication 的 QToolTip 样式表（_apply_tooltip_theme 的缓存）。
+# app.setStyleSheet() 会触发全树 re-polish，内容没变就别重复设 —— 启动期尤为关键。
+_last_tooltip_qss = None
+
+
 class MainWindow(QMainWindow):
     refresh_devices_signal = pyqtSignal()
     # 菜单里点了「检查更新」（含启动时的自动检查由 main.py 触发）。
@@ -193,6 +198,10 @@ class MainWindow(QMainWindow):
         self._sub_views = []
         self.left_toolbar_buttons = []
         self.right_toolbar_buttons = []
+        # 批量装配标志：为 True 时 apply_theme() 直接返回（见 apply_theme 里的说明）。
+        # 只该在 main() 装配视图那段用，set_*_view 内部自己的 apply_theme 调用不受影响
+        # 之外的人（比如用户改主题）走的仍是正常路径。
+        self._batch_assembling = False
         self.setup_ui()
         self.setup_wallpaper()
         self.load_wallpaper()
@@ -1622,6 +1631,12 @@ class MainWindow(QMainWindow):
 
     # ---------- 主题应用 ----------
     def apply_theme(self, theme_mode=None):
+        # 装配期静默：main() 里会连着 set_edit_views / set_help_view / set_voice_view …
+        # 十来个视图，每个尾部都调一次 apply_theme()。全量主题刷新会重排所有控件
+        # （实测单次 0.3~1.5s，随控件数增长），十几次叠起来就是十几秒。装配期先跳过，
+        # 最后一个视图装完后由 end_batch_assembly() 统一刷一次。
+        if self._batch_assembling:
+            return
         if theme_mode is None:
             theme_mode = Settings.get_theme_mode()
 
@@ -2170,6 +2185,18 @@ class MainWindow(QMainWindow):
     def register_sub_view(self, view):
         if view and view not in self._sub_views:
             self._sub_views.append(view)
+
+    # ---------- 装配期批量模式 ----------
+    def begin_batch_assembly(self):
+        """进入装配期：期间 apply_theme() 变成空操作，避免每个视图装一次就全量刷一遍。"""
+        self._batch_assembling = True
+
+    def end_batch_assembly(self):
+        """退出装配期并统一刷一次主题（幂等）。"""
+        if not self._batch_assembling:
+            return
+        self._batch_assembling = False
+        self.apply_theme()
 
     # ---------- 视图切换 ----------
     # 主区域"欢迎页"在 stacked_widget 里的位置（setup_ui 里 insertWidget(6, ...)）
@@ -3365,12 +3392,17 @@ class MainWindow(QMainWindow):
 
         app 级样式表原本只有这一条 QToolTip 规则，所以整体覆盖是安全的；
         各对话框 / 视图的样式都是各自 setStyleSheet，不受影响。
+
+        **性能**：app.setStyleSheet() 会让 Qt 对**整棵控件树**重新 polish
+        （实测启动装配期一次约 1.5s，栈里全是 sizeHint）。内容没变就别调 ——
+        用模块级缓存记住上一次设的 QSS，相同则直接返回。启动期主题要刷好几次，
+        这一条能省下大部分时间。
         """
         app = QApplication.instance()
         if app is None:
             return
         if is_dark:
-            app.setStyleSheet("""
+            qss = """
                 QToolTip {
                     background-color: #3c3c3c;
                     color: #eeeeee;
@@ -3378,9 +3410,9 @@ class MainWindow(QMainWindow):
                     padding: 4px;
                     font-size: 11px;
                 }
-            """)
+            """
         else:
-            app.setStyleSheet("""
+            qss = """
                 QToolTip {
                     background-color: #ffffff;
                     color: #000000;
@@ -3388,7 +3420,12 @@ class MainWindow(QMainWindow):
                     padding: 4px;
                     font-size: 11px;
                 }
-            """)
+            """
+        global _last_tooltip_qss
+        if qss == _last_tooltip_qss:
+            return
+        _last_tooltip_qss = qss
+        app.setStyleSheet(qss)
 
     def set_element_manager_view(self, element_manager):
         element_manager.setObjectName("ElementManagerView")
