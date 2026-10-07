@@ -401,9 +401,10 @@ def main():
 
         _subprocess.Popen = _PopenNoConsole
 
-    # 封面上的第一句人话（早于 QApplication 建立、只有 Tcl/Tk 那层在的时候；
-    # 自绘层此刻还没建，splash_update 会安全地只刷 Tcl/Tk）
-    splash_update("正在加载数据…", 0.10)
+    # 这一句是给 Tcl/Tk 那层封面用的（打包版在解释器启动前就弹出来了）；
+    # 开发环境的自绘封面此刻还没建，splash_update 会安全地只刷 Tcl/Tk。
+    # 自绘封面的第一句在下面 splash_show 之后才设（那时封面才真的可见）。
+    splash_update("正在加载数据…", 0.15)
 
     # ---------- 统一 adb 二进制 ----------
     # uiautomator2 的设备操作最终都走 adbutils，而 adbutils 解析 adb 的优先级是：
@@ -460,14 +461,14 @@ def main():
     _base_dir = (sys._MEIPASS if getattr(sys, "frozen", False)
                  else os.path.dirname(os.path.abspath(__file__)))
     splash_show(os.path.join(_base_dir, "resources", "images", "splash.png"))
-    splash_update("正在初始化界面…", 0.35)
+    splash_update("正在加载数据…", 0.15)
     # 强制立刻绘制一帧：show() 只是把窗口排进事件循环，不 processEvents() 的话
     # 后面同步跑的模型初始化会把窗口「占住但白着」，看起来像没弹出来。
     _flush_splash()
 
     # ---------- 数据迁移（读任何数据之前） ----------
     migrate_legacy_data_files()
-    splash_update("正在加载数据…", 0.45)
+    splash_update("正在初始化界面…", 0.40)
 
     # ---------- 让所有 QDialog 的标题栏自动跟随主题 ----------
     from PyQt6.QtWidgets import QDialog
@@ -533,7 +534,7 @@ def main():
     """)
 
     # ---------- 初始化所有模型 ----------
-    splash_update("正在加载数据…", 0.55)
+    splash_update("正在准备主界面…", 0.65)
     project_model = ProjectModel()
     step_model = StepModel()
     exec_model = ExecutionModel()
@@ -1092,6 +1093,8 @@ def main():
 
     # ---------- 装配完成：统一刷一次主题 ----------
     # 到这里所有视图都装好了，把装配期跳过的那些 apply_theme 合并成这一次。
+    # 这一步是启动里最重的收尾（遍历整棵控件树，约 0.9s），单独给一句文案。
+    splash_update("正在整理界面…", 0.85)
     main_window.end_batch_assembly()
 
     # ---------- 检查更新（启动后台探测 + 菜单手动触发） ----------
@@ -1264,7 +1267,7 @@ if __name__ == "__main__":
         _boot_base = (sys._MEIPASS if getattr(sys, "frozen", False)
                       else os.path.dirname(os.path.abspath(__file__)))
         splash_show(os.path.join(_boot_base, "resources", "images", "splash.png"))
-        splash_update("正在加载数据…", 0.10)
+        splash_update("正在加载数据…", 0.15)
         _flush_splash()
     except Exception as _e:
         # 封面失败绝不能挡住应用启动，交给 main() 里的兜底逻辑正常往下走
