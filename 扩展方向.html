@@ -192,6 +192,8 @@
       <a href="#s4">四、优先级建议</a>
       <a href="#s5">五、阶段规划</a>
       <a href="#s6">六、速查表</a>
+      <a href="#s7">七、堆转储与抓包整合</a>
+      <a href="#s8">八、设备中断健壮性缺陷</a>
     </div>
   </nav>
 
@@ -629,6 +631,61 @@
         <li><b>P2</b>：E 阈值自动转储、抓包分段与空间告警增强。</li>
       </ul>
       <div class="example">💡 <b>关键收益：</b>堆转储 / 抓包从「孤立的手动工具」变成「监控会话的诊断动作」——报告里既有曲线，又有曲线关键时刻的堆和包，内存问题才查得下去。</div>
+    </div>
+  </section>
+
+  <!-- ============ 八、性能检测：设备连接中断的健壮性缺陷 ============ -->
+  <section class="chapter" id="s8">
+    <h2><span class="num">8</span>性能检测页 · 设备连接中断的健壮性缺陷 <span class="tag plan">📐 2026-10-08 诊断稿 · 未修复</span></h2>
+    <div class="card">
+      <h3>现象（两个症状，同一根因）</h3>
+      <ul>
+        <li><b>监控中途「当前 0MB」</b>：内存卡片「当前」掉到 0，但「峰值 / 均值」仍正常（实测 峰值 547MB / 均值 515MB），曲线不报错、界面无任何提示。</li>
+        <li><b>点「开始监控」卡死 + 误报「应用未运行」</b>：窗口标题变成「虫师（未响应）」，卡一段时间后弹出「应用 xxx 未在运行，请先启动应用再开始采集」，而车机上该应用一直在跑。</li>
+        <li><b>触发条件</b>：外部工具（如 Android Studio）启动时重启了 adb server，设备通道短暂失效。</li>
+      </ul>
+
+      <h3>根因：<code>shell_text</code> 的两个缺陷</h3>
+      <p class="small" style="margin-top:0"><code>services/perf_compat.py</code> 的 <code>shell_text()</code> 是所有性能采集 shell 调用的统一入口，它有两个问题：</p>
+      <ul>
+        <li><b>吞异常返回空串</b>：<code>except Exception: return ""</code> —— 调用方无法区分「命令执行失败」与「命令真的没有输出」。</li>
+        <li><b>不传 timeout</b>：走 uiautomator2 默认值（本机 u2 3.7 为 <code>Device.shell(cmdargs, timeout=60)</code>，底层 adbutils 默认更长）。设备通道失效时这个 socket 读会一直等到超时，<b>最长 60 秒</b>。</li>
+      </ul>
+
+      <h3>症状一：当前 0MB 的成因链</h3>
+      <ul>
+        <li><code>services/perf_service.py</code> 的 <code>_collect_mem()</code>：<code>dumpsys meminfo</code> 拿不到输出时，<code>pss_mb</code> 保持 <code>0.0</code> 并<b>静默返回、不抛异常</b>。</li>
+        <li>→ <code>collect_sample()</code> 正常返回、<code>sample.errors</code> 为空、<code>error_occurred</code> 不发 → 采样照常入库，界面零提示。</li>
+        <li><code>models/perf_model.py</code> 的 <code>get_stats()</code>：峰值 / 均值用 <code>if v &gt; 0</code> <b>过滤掉了 0</b>，而「当前」取 <code>samples[-1]</code> <b>不过滤</b> —— 所以只有「当前」显示 0，峰值 / 均值看着一切正常。</li>
+        <li><b>已落地的采集自愈修复拦不住它</b>：那次修复只在 <code>device is None</code> 时生效，而这里 <code>device</code> 是「非 None 但已失效」的旧对象。</li>
+      </ul>
+
+      <h3>症状二：卡死 + 误报「未运行」的成因链</h3>
+      <ul>
+        <li><code>controllers/perf_controller.py</code> 的 <code>_on_start()</code> 在 <b>GUI 线程</b>同步调用 <code>AndroidCompat(device).is_package_running(pkg)</code>。</li>
+        <li>→ 内部走 <code>shell_text(device, "pidof ...")</code>，<b>无超时</b> → 最长阻塞 60 秒 → 窗口「未响应」。</li>
+        <li>→ 超时后 <code>shell_text</code> 吞掉异常返回空串 → <code>is_package_running</code> 返回 False → 把「查询失败」误判成「应用没运行」，弹出误导性提示。</li>
+        <li>同类隐患：<code>_maybe_refresh_apps()</code>（2 秒定时器，同样在 GUI 线程）里的 <code>list_all_packages()</code> 也没有超时，设备异常时会冻界面。</li>
+      </ul>
+
+      <h3>为什么 <code>device</code> 会「非 None 却失效」</h3>
+      <ul>
+        <li><code>main.py</code> 的 <code>apply_device_list()</code> 只在设备列表<b>发生变化</b>时才 <code>connect()</code> 重连。</li>
+        <li>adb server 被外部重启时：<code>adb devices</code> 要么返回非 0（不触发刷新），要么新 server 起来后列表与上次相同（提前 return）→ <b>从不触发重连</b> → 启动时那个旧对象一直留着。</li>
+      </ul>
+
+      <h3>修复方案（五项，均限于性能检测 + 一个共享小函数）</h3>
+      <ul>
+        <li><b>① <code>shell_text</code> 增加可选 timeout（纯新增参数，默认行为不变）</b>：<code>device.shell(cmd, timeout=...)</code>，并对不支持该参数的旧版 u2 回退。</li>
+        <li><b>② 性能检测的 shell 调用全部传短超时</b>：GUI 线程上的（<code>is_package_running</code> / <code>list_all_packages</code>）用 3~5 秒；采集线程里的 <code>PerfService</code> 用 10 秒。最坏是轻微卡顿，而非「未响应」。</li>
+        <li><b>③ 不再「静默 0」</b>：<code>_collect_mem()</code> 等拿不到输出时抛异常（写入 <code>sample.errors</code>）；<b>整轮所有启用指标全部失败时，该采样不入库、不发射</b>，避免 0 污染曲线与统计。</li>
+        <li><b>④ 失联判定 + 主动重连（采集自愈的增强）</b>：判定条件从 <code>device is None</code> 扩展到「连续 N 轮全指标失败」；失联时先用 <code>check_device_online()</code>（内置 adb，2 秒超时）探活，在线就 <code>connect(serial)</code> 重建对象、刷新通道，自动恢复采集。</li>
+        <li><b>⑤ <code>_on_start()</code> 不再误报</b>：<code>pidof</code> 拿不到结果时，用 <code>check_device_online()</code> 区分「设备连接异常」与「应用确实没运行」——前者提示重连，后者才提示启动应用。</li>
+      </ul>
+
+      <div class="tip">⚠ <b>影响面</b>：①② 只改 <code>services/perf_compat.py</code>（新增可选参数）+ 性能检测的调用点；③④ 在 <code>services/perf_service.py</code> 与 <code>controllers/perf_controller.py</code>；⑤ 在 <code>_on_start()</code>。不改动 <code>device_service</code> 的既有方法，不涉及 ADB 工具箱与自动化执行。</div>
+
+      <div class="example">💡 <b>打个比方：</b>现在的采集像「打不通电话就当作对方不在家」——电话线被邻居（Android Studio）拔了重接，这边拨号一直等到自动挂断（60 秒），挂断后还记下一句「他不在家」，其实人家好好待着。要做的是：给拨号加个「响 5 秒没人接就挂」的短超时，并把「没接通」和「真不在家」分开报，而不是一律记成「不在家」。</div>
     </div>
   </section>
 
