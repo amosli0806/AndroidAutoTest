@@ -19,10 +19,10 @@
 面板构建/弹出失败时，回退到原生右键菜单。
 """
 from PyQt6.QtCore import QObject, Qt, QTimer, QPoint, QSize
-from PyQt6.QtGui import QIcon, QCursor, QPixmap, QColor
+from PyQt6.QtGui import QIcon, QCursor, QPixmap
 from PyQt6.QtWidgets import (
     QMenu, QSystemTrayIcon, QWidget, QFrame, QVBoxLayout, QHBoxLayout,
-    QGridLayout, QLabel, QPushButton, QToolButton, QGraphicsDropShadowEffect,
+    QGridLayout, QLabel, QPushButton, QToolButton,
     QApplication,
 )
 
@@ -62,10 +62,19 @@ def _icon(name: str, color: str) -> QIcon:
 class _TrayPanel(QWidget):
     """托盘右键快捷面板：无边框圆角卡片，点击面板外自动关闭。"""
 
-    WIDTH = 310  # 含四周阴影留白
+    # 面板宽度的**下限**（真实宽度在 apply_theme 里按卡片建议宽度动态定）。
+    # 别再写死成实际宽度：QSS 的 1px 边框会额外占 2px，写小了卡片右侧会被裁掉
+    # —— 表现就是右侧两个圆角变直角、还多出一条"边框"（2026-10-08 实测踩到：
+    #   写 286 时卡片实际需要 288）。
+    WIDTH = 286
 
     def __init__(self, controller):
-        super().__init__(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        # NoDropShadowWindowHint：**必须加**。Windows 会给无边框窗口自动加一层原生
+        # 窗口阴影（DWM 画的，在窗口边界**之外**，Qt 的 QGraphicsDropShadowEffect 影响不到它），
+        # 表现就是面板右、下多出一圈渐变黑边 —— 亮色主题下尤其明显，右下角还带直角。
+        # 实测剖面：面板外 1~6px 是从 (140,141,136) 渐到 (251,253,252) 的阴影。
+        super().__init__(None, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint
+                         | Qt.WindowType.NoDropShadowWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._ctl = controller
         self._tiles = []  # [(QToolButton, 图标名), ...]
@@ -74,14 +83,13 @@ class _TrayPanel(QWidget):
     # ---------------- UI ----------------
     def _build_ui(self):
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(12, 12, 12, 16)  # 给投影留出空隙
+        # 不留外边距：窗口就是卡片本身（原先留 12/12/12/16 是为了给投影腾地方）
+        outer.setContentsMargins(0, 0, 0, 0)
         card = QFrame()
         card.setObjectName("TrayPanelCard")
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(24)
-        shadow.setOffset(0, 4)
-        shadow.setColor(QColor(0, 0, 0, 70))
-        card.setGraphicsEffect(shadow)
+        # 不做投影：窗口是无边框半透明圆角卡片，投影会在**右、下**各留一圈黑色晕影
+        # （offset 是 (0,4)，所以左右不对称、上边几乎没有），看着像多出来的两条边框。
+        # 2026-10-08 用户反馈去掉，这里就不再挂 QGraphicsDropShadowEffect。
         outer.addWidget(card)
         self._card = card
 
@@ -214,6 +222,9 @@ class _TrayPanel(QWidget):
         """)
         for btn, icon_name in self._tiles:
             btn.setIcon(_icon(icon_name, c['icon']))
+        # 宽度按卡片自己的建议宽度定（在**样式表下发之后**读才准，因为 1px 边框算在里面）。
+        # 写死常量会差那 2px —— 卡片被挤窄后右侧被裁，圆角变直角、还多出一条边。
+        self.setFixedWidth(max(self.WIDTH, self._card.sizeHint().width()))
 
     def _set_logo(self):
         pm = QPixmap()
@@ -270,7 +281,9 @@ class TrayController(QObject):
                 pass
 
         self.tray = QSystemTrayIcon(icon, self)
-        self.tray.setToolTip("虫师  ·  右键打开快捷面板")
+        # 悬浮提示只显示应用名：右键能开快捷面板是常识，写进提示反而啰嗦
+        # （这处之前修过一次又被人加回来，别再往提示里塞操作说明了）
+        self.tray.setToolTip("虫师")
 
         # 不挂原生 contextMenu：右键弹自绘快捷面板（见 _on_activated）
         self.tray.activated.connect(self._on_activated)
