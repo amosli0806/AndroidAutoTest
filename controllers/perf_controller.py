@@ -24,6 +24,10 @@ class PerfWorker(QThread):
     sample_ready = pyqtSignal(object)       # PerfSample
     error_occurred = pyqtSignal(str)
     finished_all = pyqtSignal()
+    # 设备连接中断 / 恢复。采集线程本身会自愈（等主窗口重连后继续采），
+    # 这两个信号只负责让界面「看得见」发生了什么。
+    link_lost = pyqtSignal()
+    link_restored = pyqtSignal()
 
     def __init__(self, device_service, package, metrics, interval,
                  duration_minutes=None, parent=None):
@@ -36,6 +40,12 @@ class PerfWorker(QThread):
         self.duration_minutes = duration_minutes
         self._running = True
         self._paused = False
+        # 当前采集 Service 绑定的设备对象。掉线后 device_service.device 会变成
+        # None（disconnect）或换一个新对象（重连），据此判断是否需要重建，
+        # 避免拿失效的旧对象一直空采（见 _ensure_service）。
+        self._service = None
+        self._device_obj = None
+        self._link_down = False
 
     def pause(self):
         self._paused = True
@@ -46,18 +56,34 @@ class PerfWorker(QThread):
     def stop(self):
         self._running = False
 
+    def _ensure_service(self) -> bool:
+        """按当前设备对象解析/重建采集 Service。
+
+        返回 True 表示设备就绪、可以采样；False 表示设备缺失（调用方应等待重连）。
+
+        为什么要每轮重取：采集线程原先只在启动时解析一次 device 并缓存，
+        掉线后（如 Android Studio 启动会重启 adb server，设备短暂从 adb devices
+        消失 → 主窗口判定掉线 → device_svc.disconnect()）手里还是失效的旧对象，
+        每次采样都抛异常，且不会自愈。改成惰性重取后：设备缺失就等待，
+        主窗口重连拿到新对象后自动重建 Service 继续采集。
+        （与 DeviceService.perform 里的惰性重连是同一套思路。）
+        """
+        current = self.device_service.device
+        if current is None:
+            return False
+        if self._service is None or current is not self._device_obj:
+            self._device_obj = current
+            compat = AndroidCompat(current)
+            self._service = PerfService(current, compat)
+            # 首次采样有些指标（FPS）需要预热
+            try:
+                self._service.collect_sample(self.package, self.metrics)
+            except Exception:
+                pass
+        return True
+
     def run(self):
-        # 每次线程开始前，重置 Service 的内部状态
-        compat = AndroidCompat(self.device_service.device)
-        service = PerfService(self.device_service.device, compat)
-
-        # 首次采样有些指标（FPS）需要预热
-        try:
-            service.collect_sample(self.package, self.metrics)
-        except Exception:
-            pass
-
-        # 监控时长上限：按墙钟计算（含暂停期间），到点自动停
+        # 监控时长上限：按墙钟计算（含暂停/掉线等待期间），到点自动停
         deadline = (time.time() + self.duration_minutes * 60
                     if self.duration_minutes else None)
 
@@ -70,10 +96,21 @@ class PerfWorker(QThread):
                 time.sleep(0.2)
                 continue
 
+            # 设备掉线：不采样，等主窗口重连（自愈）。掉线/恢复各提示一次。
+            if not self._ensure_service():
+                if not self._link_down:
+                    self._link_down = True
+                    self.link_lost.emit()
+                time.sleep(0.2)
+                continue
+            if self._link_down:
+                self._link_down = False
+                self.link_restored.emit()
+
             start = time.time()
 
             try:
-                sample = service.collect_sample(self.package, self.metrics)
+                sample = self._service.collect_sample(self.package, self.metrics)
                 self.sample_ready.emit(sample)
             except Exception as e:
                 logger.exception("采样失败")
@@ -158,6 +195,7 @@ class PerfController(QObject):
         self.perf_worker = None
         self.scenario_worker = None
         self._alert_cache = {}  # {metric: bool}
+        self._last_worker_error = None  # 采样异常去重（同一条只提示一次）
 
         # 堆转储自动循环状态
         self._hprof_loop_timer = None
@@ -288,6 +326,7 @@ class PerfController(QObject):
         )
         self.current_session = session
         self._alert_cache = {k: False for k in metrics}
+        self._last_worker_error = None
 
         # 清空视图数据
         for card in self.view._cards.values():
@@ -303,6 +342,9 @@ class PerfController(QObject):
         )
         self.perf_worker.sample_ready.connect(self._on_sample)
         self.perf_worker.error_occurred.connect(self._on_worker_error)
+        # 设备掉线/恢复：只做提示，采集线程自己会等重连后继续
+        self.perf_worker.link_lost.connect(self._on_link_lost)
+        self.perf_worker.link_restored.connect(self._on_link_restored)
         # 线程自然结束（达到预设监控时长）→ 自动走完整停止收尾；
         # 用户手动停止时 worker 已被置 None，晚到的信号会被 _on_worker_finished 幂等拦截
         self.perf_worker.finished_all.connect(self._on_worker_finished)
@@ -469,8 +511,47 @@ class PerfController(QObject):
         stats = self.current_session.get_stats()
         self.view.update_stats(stats)
 
+    def _on_link_lost(self):
+        """设备连接中断：采集已暂停，等主窗口重连后线程自动继续。"""
+        logger.warning("[PerfController] 设备连接中断，采集暂停等待重连")
+        from utils import log_colors
+        self.log_emitted.emit(
+            f"<span style='color:{log_colors.log_color(log_colors.WARNING)};'>"
+            f"[性能] ⚠ 设备连接中断，采集已暂停，等待重连…</span>"
+        )
+        if self.logs_view:
+            self.logs_view.add_log(
+                "[性能] 设备连接中断，采集已暂停，等待重连…", "warning")
+        try:
+            self.view.add_alert_log("⚠ 设备连接中断 · 采集已暂停")
+        except Exception:
+            pass
+
+    def _on_link_restored(self):
+        """设备已重连：采集自动恢复。"""
+        logger.info("[PerfController] 设备已重连，采集恢复")
+        self._last_worker_error = None
+        from utils import log_colors
+        self.log_emitted.emit(
+            f"<span style='color:{log_colors.log_color(log_colors.SUCCESS)};'>"
+            f"[性能] ✅ 设备已重连，采集已恢复</span>"
+        )
+        if self.logs_view:
+            self.logs_view.add_log("[性能] 设备已重连，采集已恢复", "success")
+
     def _on_worker_error(self, msg):
         logger.warning(f"[PerfController] 采集错误: {msg}")
+        # 同一条错误只提示一次，避免每轮采样刷屏
+        if msg == self._last_worker_error:
+            return
+        self._last_worker_error = msg
+        from utils import log_colors
+        self.log_emitted.emit(
+            f"<span style='color:{log_colors.log_color(log_colors.ERROR)};'>"
+            f"[性能] 采集异常：{msg}</span>"
+        )
+        if self.logs_view:
+            self.logs_view.add_log(f"[性能] 采集异常：{msg}", "warning")
 
     def _on_worker_finished(self):
         """采集线程自然结束（达到预设监控时长）→ 走完整停止收尾。

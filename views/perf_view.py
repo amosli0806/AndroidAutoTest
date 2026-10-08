@@ -994,6 +994,11 @@ class PerfView(QWidget):
                 self.suite_combo.addItem(s.name)
 
     def _update_status_bar(self):
+        # 空闲态：状态栏归位。显式写回（而不是直接 return）是为了清掉
+        # 掉线提示「⚠ 设备连接中断 · 采集已暂停」这类临时文案。
+        if self._state == self.STATE_IDLE:
+            self.status_info.setText("就绪 · 未开始采集")
+            return
         # 取当前会话勾选的、所有卡片中采样点最多的那个数
         total = 0
         for key in self._active_metrics:
@@ -1007,8 +1012,6 @@ class PerfView(QWidget):
             first = next(iter(curves.values()), None)
             if first is not None:
                 total = max(total, len(first.get('x', [])))
-        if self._state == self.STATE_IDLE:
-            return
         state_text = {
             self.STATE_RUNNING: "采集中",
             self.STATE_PAUSED: "已暂停",
