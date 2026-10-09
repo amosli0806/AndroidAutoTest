@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QFont, QAction, QColor
 from models.element_model import ElementModel, Element, LOC_TYPES
 from utils import element_table
+from utils.android_packages import SYSTEM_UI_PACKAGES
 from utils.toast import show_toast
 from utils.dialogs import ConfirmDeleteDialog, ErrorDialog, WarningDialog
 from utils.theme import Theme, ThemeMode
@@ -546,13 +547,20 @@ class ElementManagerView(QWidget):
         def worker():
             try:
                 xml = device.dump_hierarchy()
-                elements = parse_hierarchy(xml)
-                # 顺带取当前前台应用包名，预填「所属应用」省得手填
+                # 先取当前前台应用包名：既用于预填「所属应用」，也用于把 dump 里
+                # 混进来的其它窗口（状态栏 / 空调面板 / 桌面 / 小组件…）过滤掉。
+                # 车机是多窗口合成的，不按包名过滤会抓到一大半与页面无关的元素。
                 current_app = ''
                 try:
                     current_app = (device.app_current() or {}).get('package', '')
                 except Exception:
                     current_app = ''
+                # 屏幕尺寸：用来丢掉完全跑到屏幕外的节点（取不到就只做零尺寸过滤）
+                try:
+                    screen = device.window_size()
+                except Exception:
+                    screen = None
+                elements = parse_hierarchy(xml, current_app, screen)
                 self._scrape_result.emit(elements, "", current_app)
             except Exception as e:
                 self._scrape_result.emit([], str(e), "")
@@ -745,67 +753,139 @@ class ElementEditDialog(QDialog):
 # ==================================================================
 # 抓取界面：UI 树解析 + 勾选导入对话框
 # ==================================================================
-def parse_hierarchy(xml: str):
+# 系统窗口包名名单（状态栏、空调面板、系统组件）在 utils/android_packages.py，
+# 录制反查那边也要用同一份，所以抽成了公共模块。
+
+
+# 纯布局容器类名：不可点击又没有任何文案时，只是「碰巧带 resource-id」的空壳，
+# 导入弹窗里默认不勾选（仍留在列表里，需要当锚点时手动勾）。
+CONTAINER_CLASSES = frozenset({
+    'FrameLayout', 'RelativeLayout', 'LinearLayout', 'LinearLayoutCompat',
+    'ViewGroup', 'View', 'ConstraintLayout', 'GridLayout', 'TableLayout',
+    'AbsoluteLayout', 'CoordinatorLayout', 'CardView',
+    'ScrollView', 'NestedScrollView', 'RecyclerView', 'ViewPager',
+})
+
+
+def parse_hierarchy(xml: str, current_app: str = "", screen: tuple = None):
     """把 uiautomator2 的 dump 结果（XML）解析成可入库的元素列表。
 
     名称用屏幕文案（text/描述）优先，用户一眼能对上界面上的字；
     定位值按稳定性取（资源ID > 文本 > 描述）。过滤掉无定位信息的纯容器。
+
+    current_app：当前前台应用包名。非空时**只保留该应用的节点** —— 车机是
+    多窗口合成的，一次 dump 会把状态栏、空调面板、桌面、小组件等其它窗口
+    一起带出来（实测某车机 171 个节点里被测应用只占 34 个），不过滤的话
+    抓到的绝大多数不是被测页面的元素。传空串则退化为「只排除系统 UI」。
+
+    screen：(宽, 高)，用于判断节点是否完全跑到屏幕外；传 None 则只做零尺寸过滤。
     """
+    import re
     try:
         import xml.etree.ElementTree as ET
         root = ET.fromstring(xml)
     except Exception:
         return []
 
-    results = []
-    for node in root.iter('node'):
-        rid = node.get('resource-id') or ''
-        text = node.get('text') or ''
-        desc = node.get('content-desc') or ''
-        cls = node.get('class') or ''
-        clickable = node.get('clickable') == 'true'
+    sw, sh = screen if screen else (None, None)
 
-        # 过滤：完全没有可定位信息的（纯布局容器）
-        if not rid and not text and not desc:
-            continue
+    def usable(node) -> bool:
+        """零/负尺寸、或完全在屏幕外的节点没有定位价值，丢掉。
 
-        # 名称：屏幕上能看到的文案优先（好分辨），其次描述，最后 resource-id 末尾段
-        if text:
-            name = text
-        elif desc:
-            name = desc
-        elif rid:
-            name = rid.split('/')[-1] or rid.split(':id/')[-1] or rid
-        else:
-            name = cls
+        解析不出 bounds 的不拦 —— 宁可多留，也别误杀。
+        """
+        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]",
+                     node.get('bounds') or '')
+        if not m:
+            return True
+        x1, y1, x2, y2 = (int(v) for v in m.groups())
+        if x2 - x1 <= 0 or y2 - y1 <= 0:
+            return False
+        if sw and sh and (x2 <= 0 or y2 <= 0 or x1 >= sw or y1 >= sh):
+            return False
+        return True
 
-        name = name.strip()[:50] or cls
+    def collect(app_only: bool):
+        """app_only=True 只留 current_app；False 只排除系统 UI。"""
+        out = []
+        for node in root.iter('node'):
+            pkg = node.get('package') or ''
+            if app_only:
+                if pkg != current_app:
+                    continue
+            elif pkg in SYSTEM_UI_PACKAGES:
+                continue
+            if not usable(node):
+                continue
 
-        # 定位方式：资源ID 最稳定优先
-        if rid:
-            loc_type, loc_value = '资源ID', rid
-        elif text:
-            loc_type, loc_value = '文本', text
-        else:
-            loc_type, loc_value = '描述', desc
+            rid = node.get('resource-id') or ''
+            text = node.get('text') or ''
+            desc = node.get('content-desc') or ''
+            cls = node.get('class') or ''
+            clickable = node.get('clickable') == 'true'
 
-        # 备注：可点击标记 + 简短控件类型（去掉冗长包名）
-        short_cls = cls.split('.')[-1] if cls else ''
-        parts = []
-        if clickable:
-            parts.append('可点击')
-        if short_cls:
-            parts.append(short_cls)
-        remark = ' · '.join(parts) if parts else '自动抓取'
+            # 过滤：完全没有可定位信息的（纯布局容器）
+            if not rid and not text and not desc:
+                continue
 
-        results.append({
-            'name': name,
-            'app': '',
-            'module': '',
-            'loc_type': loc_type,
-            'loc_value': loc_value,
-            'remark': remark,
-        })
+            # 名称：屏幕上能看到的文案优先（好分辨），其次描述，最后 resource-id 末尾段
+            if text:
+                name = text
+            elif desc:
+                name = desc
+            elif rid:
+                name = rid.split('/')[-1] or rid.split(':id/')[-1] or rid
+            else:
+                name = cls
+
+            name = name.strip()[:50] or cls
+
+            # 定位方式：资源ID 最稳定优先
+            if rid:
+                loc_type, loc_value = '资源ID', rid
+            elif text:
+                loc_type, loc_value = '文本', text
+            else:
+                loc_type, loc_value = '描述', desc
+
+            # 备注：可点击标记 + 简短控件类型（去掉冗长包名）
+            short_cls = cls.split('.')[-1] if cls else ''
+            parts = []
+            if clickable:
+                parts.append('可点击')
+            if short_cls:
+                parts.append(short_cls)
+            remark = ' · '.join(parts) if parts else '自动抓取'
+
+            # 纯布局容器：不可点击、又没有任何文案，只是碰巧带 resource-id。
+            # 仍入库（有时要拿来当锚点），但导入弹窗里默认不勾选。
+            is_container = (
+                not clickable and not text and not desc
+                and short_cls in CONTAINER_CLASSES
+            )
+
+            out.append({
+                'name': name,
+                'app': '',
+                'module': '',
+                'loc_type': loc_type,
+                'loc_value': loc_value,
+                'remark': remark,
+                'container': is_container,
+            })
+        return out
+
+    # 前台本身就是系统 UI（比如弹着系统窗口）→ 当作「识别不出前台」处理
+    app_only = bool(current_app) and current_app not in SYSTEM_UI_PACKAGES
+    results = collect(app_only)
+    if app_only and not results:
+        # 前台应用识别不准（app_current 给的包在本次 dump 里压根不存在，
+        # 车机多窗口下可能返回桌面）→ 退回到「只排除系统 UI」，避免空手而归。
+        # 若该包确实存在、只是没有可定位元素，则如实返回空（界面会提示），
+        # 不拿别的窗口的元素来凑数。
+        if not any((n.get('package') or '') == current_app
+                   for n in root.iter('node')):
+            results = collect(False)
 
     # 去重（同定位值只留一条）
     seen = set()
@@ -832,7 +912,8 @@ class ScrapeImportDialog(QDialog):
         layout.setSpacing(10)
 
         tip = QLabel(
-            f"共抓取到 {len(elements)} 个可定位元素，勾选需要导入的（默认全选）。\n"
+            f"共抓取到 {len(elements)} 个可定位元素，勾选需要导入的。\n"
+            "默认已勾选「可点击 / 有文案」的；纯布局容器默认不勾（需要时可手动勾上）。\n"
             "定位方式和定位值已自动填好，只需统一指定所属应用和模块。")
         tip.setWordWrap(True)
         layout.addWidget(tip)
@@ -896,7 +977,9 @@ class ScrapeImportDialog(QDialog):
         for row, el in enumerate(self._elements):
             check = QTableWidgetItem()
             check.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            check.setCheckState(Qt.CheckState.Checked)
+            # 纯布局容器默认不勾（仍可手动勾上）
+            check.setCheckState(Qt.CheckState.Unchecked if el.get('container')
+                                else Qt.CheckState.Checked)
             self.table.setItem(row, 0, check)
             self.table.setItem(row, 1, QTableWidgetItem(el['loc_type']))
             self.table.setItem(row, 2, QTableWidgetItem(el['loc_value']))
