@@ -20,6 +20,7 @@ from views.action_card_view import ActionCardView
 from views.element_selector_dialog import ElementSelectorDialog
 from utils.toast import show_toast
 from utils.adb_path import get_adb_path
+from utils.android_packages import is_system_ui_package
 from utils.theme import ThemeMode
 import qtawesome as qta
 
@@ -1336,7 +1337,11 @@ class StepController(QObject):
 
         def make_loc_params(x, y, gesture=None):
             """优先语义定位（资源ID/文本/描述），坐标兜底。
-            所有分支都带上归一化坐标，回放时可按当前分辨率自适应。"""
+            所有分支都带上归一化坐标，回放时可按当前分辨率自适应。
+
+            返回 (params, source_package)：source_package 是定位到的那条元素
+            所属的包名，用于在录制预览里标出「这条步骤落在了系统 UI 上」。
+            """
             cur_w = self._screen_width or 1080
             cur_h = self._screen_height or 1920
             norm_x = round(int(x) / cur_w, 4)
@@ -1355,6 +1360,7 @@ class StepController(QObject):
                     rid = (elem.get('resourceId') or '').strip()
                     text = (elem.get('text') or '').strip()
                     desc = (elem.get('description') or '').strip()
+                    pkg = (elem.get('package') or '').strip()
 
                     # 优先级：资源ID > 文本 > 描述
                     if rid:
@@ -1366,15 +1372,15 @@ class StepController(QObject):
                         if text and len(text) <= 60:
                             params['fallbackType'] = '文本'
                             params['fallbackValue'] = text
-                        return params
+                        return params, pkg
                     if text and len(text) <= 60:
-                        return dict(base, locationType='文本', locationValue=text)
+                        return dict(base, locationType='文本', locationValue=text), pkg
                     if desc:
-                        return dict(base, locationType='描述', locationValue=desc)
+                        return dict(base, locationType='描述', locationValue=desc), pkg
 
             # 兜底：坐标
             return dict(base, locationType='坐标',
-                        locationValue=f"{int(x)},{int(y)}")
+                        locationValue=f"{int(x)},{int(y)}"), ''
 
         def make_name(action, params):
             lt = params.get('locationType', '')
@@ -1399,23 +1405,25 @@ class StepController(QObject):
                     and gestures[i + 1]['down_time'] - g['up_time'] < 0.4
                     and abs(g['start_x'] - gestures[i + 1]['start_x']) < 80
                     and abs(g['start_y'] - gestures[i + 1]['start_y']) < 80):
-                params = make_loc_params(g['start_x'], g['start_y'], g)
+                params, pkg = make_loc_params(g['start_x'], g['start_y'], g)
                 steps.append({
                     'type': 'double_click',
                     'params': params,
                     'name': make_name('双击', params),
+                    'sourcePackage': pkg,
                 })
                 i += 2
                 continue
 
             if g['type'] == 'tap':
                 if g['duration'] >= 0.8:
-                    params = make_loc_params(g['start_x'], g['start_y'], g)
+                    params, pkg = make_loc_params(g['start_x'], g['start_y'], g)
                     params['longPressMs'] = int(g['duration'] * 1000)
                     steps.append({
                         'type': 'long_press',
                         'params': params,
                         'name': make_name('长按', params),
+                        'sourcePackage': pkg,
                     })
                 else:
                     # 输入框识别：点击坐标若落在输入框上、且该框里已有文字，
@@ -1426,11 +1434,12 @@ class StepController(QObject):
                     if input_step:
                         steps.append(input_step)
                     else:
-                        params = make_loc_params(g['start_x'], g['start_y'], g)
+                        params, pkg = make_loc_params(g['start_x'], g['start_y'], g)
                         steps.append({
                             'type': 'click',
                             'params': params,
                             'name': make_name('点击', params),
+                            'sourcePackage': pkg,
                         })
             else:
                 dx = g['end_x'] - g['start_x']
@@ -1529,7 +1538,8 @@ class StepController(QObject):
             params['locationValue'] = text
 
         name = f"输入 {text[:20]}{'…' if len(text) > 20 else ''}"
-        return {'type': 'input', 'params': params, 'name': name}
+        return {'type': 'input', 'params': params, 'name': name,
+                'sourcePackage': ((final_elem or elem).get('package') or '').strip()}
 
     def _detect_gestures(self, events):
         gestures = []
@@ -1670,6 +1680,10 @@ class StepController(QObject):
             summary = f"第{i+1}步 {s.get('name', '')}"
             if lv:
                 summary += f"（{lt}：{lv[:28]}{'…' if len(lv) > 28 else ''}）"
+            # 落在系统栏 / 系统窗口上的步骤：回放依赖系统 UI、通常不该进用例，
+            # 这里只标记不替用户决定（不默认取消勾选）
+            if is_system_ui_package(s.get('sourcePackage', '')):
+                summary += "　⚠ 系统 UI"
 
             cb = BorderedCheckBox(summary)
             cb.setChecked(True)
@@ -1682,10 +1696,15 @@ class StepController(QObject):
         list_layout.addStretch()
         scroll.setWidget(list_widget)
 
+        sysui_count = sum(1 for s in steps
+                          if is_system_ui_package(s.get('sourcePackage', '')))
+
         def _update_count():
             n = sum(1 for c in checks if c.isChecked())
+            tip = (f"；其中 {sysui_count} 个落在系统 UI 上（标了 ⚠），一般不该加进用例"
+                   if sysui_count else "")
             sub.setText(f"共录制到 {len(steps)} 个步骤，已选择 {n} / {len(steps)}"
-                        f" —— 点击行即可勾选/取消")
+                        f" —— 点击行即可勾选/取消{tip}")
 
         for c in checks:
             c.toggled.connect(_update_count)
@@ -2249,55 +2268,76 @@ class StepController(QObject):
 
         策略：
         1. 递归收集所有 bounds 覆盖该坐标的节点
-        2. 优先从"有 resource-id / text / content-desc 的属性节点"里选面积最小的
-           （面积小 = 更靠近用户实际点击的那个控件）
-        3. 如果所有命中节点都没属性，选面积最小的那个作为兜底
+        2. 候选排序：**可点击优先 → 有文案 → 面积最小**
+           - 可点击优先：用户点的多半是可点击控件。原来看「面积最小的有属性节点」，
+             实测约 30% 会录到分隔线 / 文本 / 图标这类不可点击的子元素
+             （如点整块状态栏组，录成里面 2px 宽的分隔线）
+           - 有文案次之：text / content-desc 比裸 resource-id 更能说明「这是什么」
+           - 同档内面积最小 = 更靠近用户实际点击的那个控件
+        3. 如果所有命中节点都没属性，同样按上面的档位兜底
            （说明 App 是自绘 UI，这时反查失败是合理的）
         """
-        candidates = []  # [(area, info, has_attr), ...]
+        candidates = []  # [(area, info, has_attr, window_root), ...]
         self._collect_matching_nodes(node, x, y, candidates)
 
         if not candidates:
             return None
 
-        # 优先：有属性的节点里，面积最小的
+        def sort_key(c):
+            """(档位, 面积)：0=可点击, 1=有文案, 2=仅资源ID/无文案"""
+            area, info, _, _ = c
+            if info.get('clickable'):
+                tier = 0
+            elif info.get('text') or info.get('description'):
+                tier = 1
+            else:
+                tier = 2
+            return (tier, area)
+
+        # 优先：有属性的节点，按「可点击 → 有文案 → 面积最小」排
         with_attr = [c for c in candidates if c[2]]
         if with_attr:
-            with_attr.sort(key=lambda c: c[0])
-            area, info, _ = with_attr[0]
-            # 若选中了带 resourceId 的节点，统计全树同 rid 的节点数并计算序号，
-            # 解决「列表项共用同一 rid」导致回放点错行的问题。
+            with_attr.sort(key=sort_key)
+            area, info, _, window_root = with_attr[0]
+            # 若选中了带 resourceId 的节点，统计**同一窗口内**同 rid 的节点数并
+            # 计算序号，解决「列表项共用同一 rid」导致回放点错行的问题。
             if info.get('resourceId'):
                 count, instance = self._compute_instance(
-                    node, info['resourceId'], info.get('bounds'))
+                    window_root, info['resourceId'], info.get('bounds'))
                 info['resourceIdCount'] = count
                 info['instance'] = instance
             else:
                 info['resourceIdCount'] = 1
                 info['instance'] = 0
             print(f"[反查] ({x},{y}) 命中 {len(candidates)} 个节点，"
-                  f"其中 {len(with_attr)} 个有属性，选中面积最小的：")
-            print(f"          area={area}px², "
+                  f"其中 {len(with_attr)} 个有属性，按「可点击→有文案→面积最小」选中：")
+            print(f"          area={area}px², clickable={info.get('clickable')}, "
                   f"class={info['className']!r}, "
                   f"rid={info['resourceId']!r}, "
                   f"text={info['text']!r}, "
                   f"desc={info['description']!r}, "
+                  f"pkg={info.get('package')!r}, "
                   f"ridCount={info['resourceIdCount']}, instance={info['instance']}")
             return info
 
-        # 兜底：全都没属性，取面积最小的（自绘控件，反查注定失败）
-        candidates.sort(key=lambda c: c[0])
-        area, info, _ = candidates[0]
+        # 兜底：全都没属性，同样按档位排（自绘控件，反查注定失败）
+        candidates.sort(key=sort_key)
+        area, info, _, _ = candidates[0]
         print(f"[反查] ({x},{y}) 命中 {len(candidates)} 个节点，"
-              f"但都没有可用属性，选面积最小的作为兜底：")
-        print(f"          area={area}px², class={info['className']!r}")
+              f"但都没有可用属性，按档位兜底选：")
+        print(f"          area={area}px², clickable={info.get('clickable')}, "
+              f"class={info['className']!r}")
         return info
 
-    def _compute_instance(self, root, target_rid, target_bounds):
-        """统计整棵 UI 树里 resourceId == target_rid 的节点数，并计算
+    def _compute_instance(self, window_root, target_rid, target_bounds):
+        """统计**同一窗口内** resourceId == target_rid 的节点数，并计算
         target_bounds 对应节点在这些同类节点中的序号（按 top、left 排序）。
 
         返回 (count, instance)。instance 从 0 起；target_bounds 为空时返回 (count, 0)。
+
+        注意统计范围是 window_root（一个窗口），不是整棵层级树：不同窗口
+        可能用同一个 resource-id（实测 `android:id/content` 同时出现在桌面和
+        地图两个包里），跨窗口统计会把序号算歪、回放点错行。
         """
         siblings = []   # [(top, left, bounds)]
         def walk(node):
@@ -2312,7 +2352,7 @@ class StepController(QObject):
                         siblings.append((top, left, (left, top, right, bottom)))
             for child in node:
                 walk(child)
-        walk(root)
+        walk(window_root)
 
         count = len(siblings)
         if count == 0 or target_bounds is None:
@@ -2326,10 +2366,24 @@ class StepController(QObject):
                 break
         return count, instance
 
-    def _collect_matching_nodes(self, node, x, y, candidates):
+    def _collect_matching_nodes(self, node, x, y, candidates, window=None):
         """递归收集所有 bounds 覆盖坐标 (x, y) 的节点。
-        candidates 每个元素: (area, info_dict, has_attr_bool)"""
+        candidates 每个元素: (area, info_dict, has_attr_bool, window_root)
+
+        window_root 是该节点所属窗口的根 —— `<hierarchy>` 的直接子节点。
+        记下它是为了把「同类元素序号」的统计限定在同一窗口内（见
+        _compute_instance）。
+        """
         import re
+        if window is None and node.tag == 'hierarchy':
+            # <hierarchy> 的直接子节点就是各个窗口，逐个带上窗口身份再递归
+            for child in node:
+                self._collect_matching_nodes(child, x, y, candidates,
+                                             window=child)
+            return
+        if window is None:
+            window = node          # 调用方直接传了单个窗口节点
+
         bounds = node.get('bounds')
         if bounds:
             match = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
@@ -2349,10 +2403,16 @@ class StepController(QObject):
                         'text': text,
                         'description': desc,
                         'className': node.get('class'),
+                        # 来源包名：录制预览里据此标出「这条步骤落在系统 UI 上」
+                        'package': node.get('package') or '',
+                        # 可点击标记：候选排序用（用户点的多半是可点击控件，
+                        # 不该录到分隔线/文本/图标这类不可点击的子元素）
+                        'clickable': node.get('clickable') == 'true',
                         # 保留 bounds，供后续计算「同类元素序号」(instance) 用
                         'bounds': (left, top, right, bottom),
                     }
-                    candidates.append((area, info, has_attr))
+                    candidates.append((area, info, has_attr, window))
 
         for child in node:
-            self._collect_matching_nodes(child, x, y, candidates)
+            self._collect_matching_nodes(child, x, y, candidates,
+                                         window=window)
