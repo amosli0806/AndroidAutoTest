@@ -10,9 +10,11 @@
 """
 import os
 
+import uiautomator2
 import weditor
 
 _weditor_dir = os.path.dirname(weditor.__file__)
+_u2_dir = os.path.dirname(uiautomator2.__file__)
 
 # ---------- 打包前修复 weditor 0.7.3 的 version.py（幂等） ----------
 # 它引用 pkg_resources（setuptools，Python 3.13 / PyInstaller 环境没有），
@@ -46,6 +48,14 @@ a = Analysis(
         (os.path.join(_weditor_dir, "templates"), "weditor/templates"),
         (os.path.join(_weditor_dir, "static"), "weditor/static"),
         (os.path.join(_weditor_dir, "page.xml"), "weditor/page.xml"),
+        # uiautomator2 的资源（u2.jar / app-uiautomator.apk）：
+        # weditor 连设备时要把 u2.jar 推到手机，缺了会在 connect() 里直接抛
+        # "Resource assets/u2.jar not found in uiautomator2 package."
+        # —— 应用可视化一点设备就报错（2026-10-10 用户实测）。
+        # u2 的查找顺序是「包资源 → exe 同级目录 → cwd」，后两级对 onefile 的
+        # weditor.exe 都不成立，只能靠这一份。main.spec 给主包带了同样的数据，
+        # 但 weditor.exe 是**独立打包**的，必须自己带，别再漏掉。
+        (os.path.join(_u2_dir, "assets"), "uiautomator2/assets"),
     ],
     hiddenimports=[
         "weditor",

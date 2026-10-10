@@ -166,10 +166,14 @@ jobs:
           fi
           python -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$PREV_ZIP" prev_tree
           PATCH_OUT="patch-${PREV}-to-${VER}.dpatch"
+          # 注意：**不要**再给 _internal/tools/weditor.exe 加 --exclude。
+          # --exclude 的文件会被标成 reuse=True，客户端遇到哈希不一致时是「视为打包
+          # 抖动、复用本机旧文件」（services/update_service.py），**不会回退全量** ——
+          # 于是 weditor.exe 真更新了也送不到用户手里（应用可视化会一直是旧的）。
+          # 代价是 onefile 打包必抖，补丁每次多背约 44MB；这个代价值得。
           if ! python make_update_patch.py \
                  --old-tree prev_tree --new-tree "dist/虫师" \
                  --extra "updater.exe=dist_updater/updater.exe" \
-                 --exclude "_internal/tools/weditor.exe" \
                  --exclude "updater.exe" \
                  --from "$PREV" --to "$VER" --out "$PATCH_OUT"; then
             echo "补丁没生成（拿不到上一个包 / 补丁不够小），跳过 —— 不影响全量发版"
