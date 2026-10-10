@@ -823,6 +823,8 @@ class MainWindow(QMainWindow):
         # 注意：QToolBar.addWidget/addSeparator 都返回 QAction，控制可见性要
         # 调 QAction.setVisible，直接调 widget.setVisible 不生效。
         self._toolbar_hide_actions = []
+        # 例外：这几个在迷你模式下**保留显示**（常用的一键操作，见下方构建处）
+        self._mini_keep_actions = []
 
         _sep = toolbar.addSeparator()
         self._toolbar_hide_actions.append(_sep)
@@ -842,25 +844,36 @@ class MainWindow(QMainWindow):
             return btn
 
         # 分割线右侧：无线 / 投屏，左对齐
+        # 注意：投屏不受迷你模式隐藏影响（迷你模式下仍要能一键投屏），
+        # 所以不加入 _toolbar_hide_actions，改为单独记引用由 set_mini_mode 控制。
         for icon_name, action_key, shortcut_key, tip in [
             ('fa6s.wifi', "wireless", "adb_wireless", "无线联调"),
             ('fa6s.desktop', "scrcpy", "adb_scrcpy", "投屏"),
         ]:
             _btn = _quick_icon_btn(icon_name, action_key, shortcut_key, tip)
-            self._toolbar_hide_actions.append(toolbar.addWidget(_btn))
+            _act = toolbar.addWidget(_btn)
+            if action_key == "scrcpy":
+                self._mini_keep_actions.append(_act)
+            else:
+                self._toolbar_hide_actions.append(_act)
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._toolbar_hide_actions.append(toolbar.addWidget(spacer))
 
         # 顶栏右侧：安装 / 推送 / MD5，与菜单按钮一样右对齐
+        # 其中「安装 APK」「推送文件」在迷你模式下保留（常用操作），MD5 隐藏。
         for icon_name, action_key, shortcut_key, tip in [
             ('fa6s.box', "install", "adb_install", "安装 APK"),
             ('fa6s.upload', "push", "adb_push", "推送文件"),
             ('fa6s.key', "md5", "adb_md5", "MD5 查询"),
         ]:
             _btn = _quick_icon_btn(icon_name, action_key, shortcut_key, tip)
-            self._toolbar_hide_actions.append(toolbar.addWidget(_btn))
+            _act = toolbar.addWidget(_btn)
+            if action_key in ("install", "push"):
+                self._mini_keep_actions.append(_act)
+            else:
+                self._toolbar_hide_actions.append(_act)
 
         self.menu_btn = QPushButton()
         self.menu_btn.setObjectName("menuBtn")
@@ -2291,10 +2304,10 @@ class MainWindow(QMainWindow):
     def set_mini_mode(self, enabled: bool):
         """切换迷你窗口模式：全屏（最大化）↔ 只显示 ADB 指令管理区 + 左下按钮。
 
-        进入：顶部工具栏只留「设备下拉框 + 刷新」，隐藏左上功能导航，右侧工具栏
-        只留「消息」（隐藏帮助中心），底部状态栏保留；主区域只留 ADB 工具箱的
-        「指令管理」区（右侧搜索/弱网/Monkey 隐藏）；窗口缩成紧凑尺寸。
-        退出：恢复全部，回到欢迎页并重新最大化。
+        进入：顶部工具栏只留「设备下拉框 + 刷新 + 投屏 / 安装 APK / 推送文件」，
+        隐藏左上功能导航，右侧工具栏只留「消息」（隐藏帮助中心），底部状态栏保留；
+        主区域只留 ADB 工具箱的「指令管理」区（右侧搜索/弱网/Monkey 隐藏）；
+        窗口缩成紧凑尺寸。退出：恢复全部，回到欢迎页并重新最大化。
         """
         if self._mini_mode == enabled:
             return
@@ -2303,6 +2316,9 @@ class MainWindow(QMainWindow):
         # 顶部工具栏保留，只隐藏「设备下拉框 + 刷新」以外的元素
         for a in getattr(self, "_toolbar_hide_actions", []):
             a.setVisible(not enabled)
+        # 例外：投屏 / 安装 APK / 推送文件在两种模式下都显示（迷你模式也能一键操作）
+        for a in getattr(self, "_mini_keep_actions", []):
+            a.setVisible(True)
         # 右侧工具栏保留，只隐藏「帮助中心」（迷你模式留消息按钮）；
         # 底部状态栏保留（用户要求迷你模式下也展示）
         self.help_action.setVisible(not enabled)
