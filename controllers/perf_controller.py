@@ -146,6 +146,22 @@ class ScenarioWorker(QThread):
         self.loop_count = loop_count
         self.stop_on_fail = stop_on_fail
         self._abort = False
+        # 内部真正干活的 ExecutionWorker（run() 里创建）。必须存引用：
+        # 「停止」要把中止请求转发给它，否则车机端会一直跑到循环次数用尽。
+        self._worker = None
+
+    def stop(self):
+        """用户点「停止」：让内部执行线程在当前步骤跑完后收尾退出。
+
+        原来只设了 self._abort，而 run() 里的 ExecutionWorker 是个局部变量、
+        这个标志也从没被任何地方读过 —— 于是「停止」对场景化完全无效，
+        车机端的自动化会继续执行（2026-10-10 用户反馈）。
+        """
+        if self._abort:
+            return
+        self._abort = True
+        if self._worker is not None:
+            self._worker.request_abort()
 
     def run(self):
         from controllers.execution_controller import ExecutionWorker
@@ -159,9 +175,16 @@ class ScenarioWorker(QThread):
             loop_count=self.loop_count,
             stop_on_fail=self.stop_on_fail,
         )
+        self._worker = worker
+        if self._abort:
+            # stop() 比 run() 先到的竞态：补一次转发，别让本轮白跑完
+            worker.request_abort()
         # 重定向 progress 信号
         worker.progress.connect(lambda m, t: self.progress.emit(m, t))
-        worker.run()
+        try:
+            worker.run()
+        finally:
+            self._worker = None
         self.finished_all.emit()
 
 
@@ -431,9 +454,10 @@ class PerfController(QObject):
             self.perf_worker.wait(2000)
             self.perf_worker = None
 
-        # 停止场景化执行
+        # 停止场景化执行：必须把中止请求转发给内部真正干活的 ExecutionWorker
+        # （见 ScenarioWorker.stop 的说明），否则车机端会一直跑到循环次数用尽
         if self.scenario_worker:
-            self.scenario_worker._abort = True
+            self.scenario_worker.stop()
             self.scenario_worker.wait(2000)
             self.scenario_worker = None
 
