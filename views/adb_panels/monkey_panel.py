@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QCheckBox, QComboBox, QApplication,
     QScrollArea, QWidget, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 
 from utils.adb_path import get_adb_path
 from utils.theme import ThemeMode
@@ -72,6 +72,9 @@ class MonkeyPanel(QWidget):
         )
 
         # 开始 / 停止按钮放在标题行右侧
+        # 「开始」始终是绿色「开始」、**不切成「启动中...」也不置灰**：monkey 一跑
+        # 就是几十分钟，一直挂着「启动中...」看着像卡住了。运行中再点开始，
+        # 由 _start_monkey 里的探活 + 提示兜住（不会重复启动）。
         self.start_btn = QPushButton("开始")
         self.start_btn.setObjectName("startBtn")
         self.start_btn.setFixedHeight(30)
@@ -83,7 +86,9 @@ class MonkeyPanel(QWidget):
         self.stop_btn.setObjectName("stopBtn")
         self.stop_btn.setFixedHeight(30)
         self.stop_btn.setMinimumWidth(110)
-        self.stop_btn.setEnabled(False)
+        # 「停止」**始终可点**，不置灰：设备上可能跑着一个不是虫师启动的 monkey
+        # （连上来之前它就在跑 / 上一次会话残留），置灰的话用户就没法停了。
+        # 点击时再探测真实进程，没有就只提示一句（见 _stop_monkey）。
         self.stop_btn.clicked.connect(self._stop_monkey)
         header_row.addWidget(self.stop_btn)
 
@@ -305,28 +310,59 @@ class MonkeyPanel(QWidget):
             pid = out.strip().split('\n')[0]
             self.monkey_pid = pid
             self.monkey_running = True
-            self.start_btn.setEnabled(False)
-            self.start_btn.setText("启动中...")
-            self.stop_btn.setEnabled(True)
             self._log(f"Monkey 正在运行中 (PID: {pid})")
             self._start_monitor_thread()
         else:
             self.monkey_running = False
             self.monkey_pid = None
-            self.start_btn.setEnabled(True)
-            self.start_btn.setText("开始")
-            self.stop_btn.setEnabled(False)
+
+    # monitor 线程「连续探不到 monkey pid」的次数上限（10 × 0.5s = 5 秒）。
+    # 超过就认为 monkey 没跑起来 / 已秒退，收尾并清状态。
+    _PID_MISS_LIMIT = 10
+
+    # monkey 输出只保留开头这么多行（够看失败原因，长跑 + 高 verbose 也不会撑爆内存）
+    _MONKEY_HEAD_LINES = 80
+
+    # monkey 失败时的关键行，如 "** No activities found to run, monkey aborted."
+    _MONKEY_FAIL_RE = re.compile(r'^\s*\*\*\s*(.+?)\s*$', re.M)
+    # 设备侧日志系统会给每行尾巴挂个 "sLogQueue.size=N"，提炼原因时去掉
+    _MONKEY_NOISE_RE = re.compile(r'\s*sLogQueue\.size=\d+\s*$')
+
+    def _monkey_failure_reason(self, output: str, returncode) -> str:
+        """从 monkey 的输出里提炼失败原因；提不出来就退回最后一行 / 退出码。"""
+        def _clean(s: str) -> str:
+            return self._MONKEY_NOISE_RE.sub('', s).strip()
+
+        m = self._MONKEY_FAIL_RE.search(output or '')
+        if m:
+            return _clean(m.group(1))
+        lines = [ln for ln in (output or '').splitlines() if ln.strip()]
+        if lines:
+            return _clean(lines[-1])[:140]
+        return f"monkey 进程已退出（退出码 {returncode}）"
 
     def _start_monitor_thread(self):
         if self.monitor_thread and self.monitor_thread.is_alive():
             return
 
         def monitor():
+            pid_miss = 0
             while self.monkey_running:
                 if not self.monkey_pid:
                     out = self._run_adb_cmd(["shell", "pgrep", "monkey"], timeout=3)
                     if out.strip():
                         self.monkey_pid = out.strip().split('\n')[0]
+                        pid_miss = 0
+                    else:
+                        # 一直探不到 pid：monkey 多半没起来（例如目标包没有可启动的
+                        # Activity）或已秒退。**必须有上限**——原实现这里会无限循环，
+                        # monkey_running 永远停在 True，表现就是「点开始说在运行、
+                        # 点停止说没在运行」的鬼打墙。
+                        pid_miss += 1
+                        if pid_miss >= self._PID_MISS_LIMIT:
+                            self.monkey_running = False
+                            self._on_monkey_stopped()
+                            break
                     time.sleep(0.5)
                     continue
 
@@ -340,8 +376,7 @@ class MonkeyPanel(QWidget):
                         self._whitelist_remote = None
                     self.monkey_running = False
                     self.monkey_pid = None
-                    # 回主线程更新 UI
-                    QTimer.singleShot(0, self._on_monkey_stopped)
+                    self._on_monkey_stopped()
                     break
                 time.sleep(2)
 
@@ -349,9 +384,8 @@ class MonkeyPanel(QWidget):
         self.monitor_thread.start()
 
     def _on_monkey_stopped(self):
-        self.start_btn.setEnabled(True)
-        self.start_btn.setText("开始")
-        self.stop_btn.setEnabled(False)
+        """Monkey 收尾。**只记日志**，所以可以直接从后台线程调用
+        （_log 只是 emit 信号，Qt 会投递回 GUI 线程）。"""
         self._log("Monkey 已结束")
 
     # ------------------------------------------------------------------
@@ -423,6 +457,15 @@ class MonkeyPanel(QWidget):
             show_toast(self.window(), "⚠️ 设备未连接，请先连接设备", duration=2000)
             return
 
+        # 「开始」按钮不再置灰（运行中也能点），所以这里必须自己兜住重复启动：
+        # 本地 monkey_running 可能滞后（连上来之前设备上就在跑 monkey），
+        # 先探一次真实进程，免得在已运行的情况下又起一个。
+        if not self.monkey_running:
+            out = self._run_adb_cmd(["shell", "pgrep", "monkey"], timeout=5)
+            if out.strip():
+                self.monkey_running = True
+                self.monkey_pid = out.strip().split('\n')[0]
+
         if self.monkey_running:
             WarningDialog.show_warning(self, "提示", "Monkey 已在运行，请先停止后再启动")
             return
@@ -454,6 +497,10 @@ class MonkeyPanel(QWidget):
             if not out.strip():
                 WarningDialog.show_warning(self, "错误", f"包名 {p} 不存在于设备上")
                 return
+
+        # 这里**不做**「有没有可启动入口（CATEGORY_LAUNCHER）」的预检：白名单方式的
+        # 价值之一就是让这类包也能顺带跑 monkey，拦下来反而挡住了能用的场景。
+        # 真跑不起来的话，启动后会把 monkey 自己的失败原因如实报出来（见 run()）。
 
         # 组装 monkey 命令。
         # 白名单文件方式：把多选的包名写进白名单文件推到设备，以
@@ -507,9 +554,6 @@ class MonkeyPanel(QWidget):
 
         # 状态更新
         self.monkey_running = True
-        self.start_btn.setEnabled(False)
-        self.start_btn.setText("启动中...")
-        self.stop_btn.setEnabled(True)
         self._whitelist_remote = whitelist_remote
         if start_mode == 'whitelist':
             self._log(f"白名单文件方式：{len(pkgs)} 个包名，正在推送到设备...")
@@ -539,25 +583,60 @@ class MonkeyPanel(QWidget):
                             "白名单文件推送失败: "
                             f"{(push.stderr or push.stdout or '').strip()}")
 
+                # 捕获 monkey 的输出（只留开头一段，避免长跑 + 高 verbose 时
+                # 撑爆内存）：它起不来时会秒退并打印原因，实测这台车机上是
+                # 「** No activities found to run, monkey aborted.」，退出码 252、
+                # 0.6s 就退。以前 stdout/stderr 全丢进 DEVNULL，原因看不到，
+                # 虫师只能傻等 pid（1.5s + 最多 6×0.5s）——用户看到的就是「启动特别慢」。
+                self._monkey_head = []
                 self.process = subprocess.Popen(
                     full_cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True, encoding='utf-8', errors='replace',
                     creationflags=creationflags,
                 )
 
-                time.sleep(1.5)
-                # 找 monkey PID
-                for _ in range(6):
+                def _drain():
+                    try:
+                        for ln in self.process.stdout:
+                            if len(self._monkey_head) < self._MONKEY_HEAD_LINES:
+                                self._monkey_head.append(ln.rstrip())
+                    except Exception:
+                        pass
+
+                _drain_thread = threading.Thread(target=_drain, daemon=True)
+                _drain_thread.start()
+
+                # 起不来的话 monkey 通常 <1s 就退：先给它一点时间，再看是否还活着
+                time.sleep(0.8)
+                if self.process.poll() is not None:
+                    _drain_thread.join(timeout=2)      # 等输出读完
+                    reason = self._monkey_failure_reason(
+                        "\n".join(self._monkey_head), self.process.returncode)
+                    self._log(f"Monkey 启动失败：{reason}")
+                    self.monkey_running = False
+                    self.monkey_pid = None
+                    self._whitelist_remote = None
+                    self._on_monkey_stopped()
+                    return
+
+                # 还活着 → 找 monkey PID（轮询间隔 0.5s → 0.2s，早点确认）
+                for _ in range(15):
                     out = self._run_adb_cmd(["shell", "pgrep", "monkey"], timeout=3)
                     if out.strip():
                         self.monkey_pid = out.strip().split('\n')[0]
                         break
-                    time.sleep(0.5)
+                    if self.process.poll() is not None:
+                        break
+                    time.sleep(0.2)
 
-                QTimer.singleShot(0, lambda: self._log(
-                    f"Monkey 运行中 (PID: {self.monkey_pid or '未知'})"
-                ))
+                if self.monkey_pid:
+                    self._log(f"Monkey 运行中 (PID: {self.monkey_pid})")
+                else:
+                    # 探不到 pid：多半没起来。如实说，别写成「运行中」骗人
+                    # （monitor 线程会在 _PID_MISS_LIMIT 次后自动收尾）。
+                    self._log("未探测到 Monkey 进程，可能未成功启动")
 
                 self._start_monitor_thread()
                 if self.process:
@@ -566,23 +645,37 @@ class MonkeyPanel(QWidget):
                 self._remove_whitelist_file(whitelist_remote)
             except Exception as e:
                 self._remove_whitelist_file(whitelist_remote)
-                QTimer.singleShot(0, lambda: self._log(f"启动失败: {e}"))
+                self._log(f"启动失败: {e}")
                 self.monkey_running = False
                 self.monkey_pid = None
                 self._whitelist_remote = None
-                QTimer.singleShot(0, self._on_monkey_stopped)
+                self._on_monkey_stopped()
 
+        # 后台线程里**不要**用 QTimer.singleShot 来回主线程：普通 threading.Thread
+        # 没有事件分发器，那种定时器永远不会触发（实测：主线程能触发，普通线程不行）。
+        # _log 只是 emit 一个信号、_on_monkey_stopped 现在也只记日志，都能直接从
+        # 任意线程调用 —— Qt 会用队列连接把信号投递回 GUI 线程。
         threading.Thread(target=run, daemon=True).start()
 
     def _stop_monkey(self):
-        if not self.monkey_running:
+        # 不依赖本地 monkey_running / monkey_pid：设备上可能跑着一个**不是虫师
+        # 启动**的 monkey（连上来之前它就在跑、或上一次会话残留），本地状态是
+        # False 但它确实在。所以先探一次真实进程，探到就杀。
+        pid = self.monkey_pid
+        if not pid:
+            out = self._run_adb_cmd(["shell", "pgrep", "monkey"], timeout=5)
+            pid = out.strip().split('\n')[0] if out.strip() else None
+
+        if not pid:
+            # 设备上确实没有：顺手把本地状态一并归零。否则本地还留着
+            # monkey_running=True，就会出现「点开始说在运行、点停止说没在运行」
+            # 这种两边不一致的鬼打墙（2026-10-08 用户实测报过）。
+            self.monkey_running = False
+            self.monkey_pid = None
             show_toast(self.window(), "当前没有正在运行的 Monkey", duration=1500)
             return
 
-        if self.monkey_pid:
-            self._run_adb_cmd(["shell", "kill", "-9", str(self.monkey_pid)], timeout=5)
-        else:
-            self._run_adb_cmd(["shell", "pkill", "monkey"], timeout=5)
+        self._run_adb_cmd(["shell", "kill", "-9", str(pid)], timeout=5)
 
         # 白名单方式启动时，顺手删掉设备侧的白名单文件
         if self._whitelist_remote:
