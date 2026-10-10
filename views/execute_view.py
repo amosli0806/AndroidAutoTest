@@ -101,6 +101,9 @@ class ExecuteView(QWidget):
     generate_report_signal = pyqtSignal()
     # 执行中点「停止」：请求中止正在跑的这一轮
     stop_requested = pyqtSignal()
+    # 套件增删改名后发出：性能检测页的「场景化测试」套件下拉要跟着同步，
+    # 否则新套件要重启虫师才出现（2026-10-10 用户反馈）
+    suites_changed = pyqtSignal()
 
     # 执行中「执行」按钮变成红色的「停止」（配色与 ADB 工具箱行内按钮同一套）
     STOP_BTN_QSS = """
@@ -843,6 +846,7 @@ class ExecuteView(QWidget):
 
             if len(valid_ids) != len(suite.case_ids):
                 self.suite_model.update_suite(name, valid_ids)
+                self.suites_changed.emit()
                 if not valid_ids:
                     self._suppress_suite_signal = True
                     self.suite_combo.setCurrentText("(无套件)")
@@ -956,6 +960,7 @@ class ExecuteView(QWidget):
             self._refresh_suite_combo()
             self.suite_combo.setCurrentText(name)
             self._suppress_suite_signal = False
+            self.suites_changed.emit()
             show_toast(message="保存套件成功")
         except Exception as e:
             ErrorDialog.show_error(self, "保存失败", f"保存套件时出错：{str(e)}")
@@ -978,4 +983,5 @@ class ExecuteView(QWidget):
         self._suppress_suite_signal = True
         self.suite_combo.setCurrentText("(无套件)")
         self._suppress_suite_signal = False
+        self.suites_changed.emit()
         show_toast(message="删除套件成功")

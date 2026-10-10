@@ -1028,6 +1028,10 @@ def main():
     )
     perf_view.set_suite_model(suite_model)
     perf_view.set_project_model(project_model)
+    # 自动化执行页增删套件后，即时同步到性能检测页的「场景化测试」套件下拉。
+    # 两个页面共用一个 suite_model，但下拉框不会自动重读 —— 不接这条线就得重启虫师
+    # 才能看到新套件（2026-10-10 用户反馈）。
+    execute_view.suites_changed.connect(perf_view.refresh_suite_combo)
 
     # 挂到主窗口 index 8（替换原占位）
     main_window.set_perf_view(perf_view)

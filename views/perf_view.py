@@ -158,6 +158,15 @@ class PerfView(QWidget):
     # ------------------------------------------------------------------
     def set_suite_model(self, model):
         self._suite_model = model
+        self.refresh_suite_combo()
+
+    def refresh_suite_combo(self):
+        """重新拉取套件列表。
+
+        自动化执行页新建/删除套件后会发 suites_changed 调到这里（见 main.py 的接线）。
+        原来只在 set_suite_model 时填一次，所以新套件要重启虫师才出现在下拉里
+        —— 2026-10-10 用户反馈。
+        """
         self._refresh_suite_combo()
 
     def set_project_model(self, model):
@@ -987,11 +996,18 @@ class PerfView(QWidget):
 
     # ------------------------------------------------------------------
     def _refresh_suite_combo(self):
+        # 保留当前选择：这个方法现在会被频繁调用（自动化执行页增删套件后即时同步），
+        # 不能每次都把用户选好的套件重置回「(无套件)」
+        current = self.suite_combo.currentText()
         self.suite_combo.clear()
         self.suite_combo.addItem("(无套件)")
         if self._suite_model:
             for s in self._suite_model.get_all_suites():
                 self.suite_combo.addItem(s.name)
+        if current and current != "(无套件)" and self.suite_combo.findText(current) >= 0:
+            self.suite_combo.setCurrentText(current)
+        else:
+            self.suite_combo.setCurrentText("(无套件)")
 
     def _update_status_bar(self):
         # 空闲态：状态栏归位。显式写回（而不是直接 return）是为了清掉
