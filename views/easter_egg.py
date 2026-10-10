@@ -2,17 +2,23 @@
 """「关于 虫师」对话框里的一枚小彩蛋。
 
 触发方式：在关于对话框里**连续点击版本号 5 次**（相邻两次间隔不超过 1.5 秒）。
-兑现方式：对话框上浮出一层自绘画面 —— 「虫」化作微光粒子飘散、一只
-鲸鱼从右往左缓缓游过，同时浮现一句《虫师》的台词；约 3.7 秒后自动
-淡出，不留任何痕迹。
+兑现方式：对话框上浮出一层自绘画面 —— 幽微的「虫」（bug）化作光点飘散，
+一只鲸鱼从右往左缓缓游过；同时浮现一句「虫师」的自我介绍。
+约 3.7 秒后自动淡出，不留任何痕迹。
+
+关于「虫」：这里的虫是**程序里的 bug**（debug 的 bug），不是那部同名动画。
+「虫师」即「捉虫的人」—— 本工具做的正是把 bug 一只只捉出来这件事。
+因此彩蛋的立意也落在「捉虫」上，而不是借动漫的壳。
 
 设计原则（与项目其它 UI 一致）：
   * **完全独立**：不引用任何业务对象，只依赖 QDialog + QPainter + 动画。
     主窗口侧只需一行 `attach_about_easter_egg(dialog, sub_label, is_dark)`。
-  * **零外部素材**：鲸鱼与粒子全部 QPainter 自绘，不新增图片资源，
+  * **零外部素材**：鲸鱼与粒子全部 QPainter 自绘（形取自常见鲸鱼插画画法：
+    圆头 + 圆肚 + 上扬尾鳍 + 胸鳍 + 喷水），不新增图片资源，
     不受打包 spec 影响。
   * **不干扰**：覆盖层鼠标穿透（WA_TransparentForMouseEvents），
     彩蛋进行中点「关闭 / 复制并关闭」照常可用；随对话框一起销毁。
+  * **不剧透**：触发标签**不设 tooltip、不改光标** —— 彩蛋要留给用户自己发现。
 """
 import math
 
@@ -20,7 +26,9 @@ from PyQt6.QtCore import (
     QEasingCurve, QObject, QPointF, QPropertyAnimation, QRectF, Qt, QTimer,
     pyqtProperty,
 )
-from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PyQt6.QtGui import (
+    QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen,
+)
 from PyQt6.QtWidgets import QWidget
 
 # 触发判定
@@ -29,13 +37,14 @@ _CLICK_WINDOW_MS = 1500     # 相邻两次点击的最大间隔（超过则重�
 
 # 彩蛋节奏（ms）
 _INTRO_MS = 420            # 覆盖层整体淡入
-_HOLD_MS = 2600            # 鲸鱼游过 + 台词停留
+_HOLD_MS = 2600            # 鲸鱼游过 + 文案停留
 _OUTRO_MS = 700            # 覆盖层淡出
 _TOTAL_MS = _INTRO_MS + _HOLD_MS + _OUTRO_MS
 
-# 台词（《虫师》）
-_QUOTE = "虫并没有消失。\n它们只是回到了，原本该在的地方。"
-_QUOTE_SOURCE = "—— 银古"
+# 文案：「虫」= bug；「虫师」= 捉虫的人。正经、有力量。
+_QUOTE = "见虫即捉，见 BUG 即斩。"
+_QUOTE_SUB = "让每一只藏起来的虫，都无处可藏。"
+_QUOTE_SOURCE = "—— 虫师"
 
 
 class _EggOverlay(QWidget):
@@ -94,11 +103,11 @@ class _EggOverlay(QWidget):
         if t > 0.10:
             span = max(0.0, min(1.0, (t - 0.10) / 0.80))
             ease = -(math.cos(math.pi * span) - 1) / 2   # InOutSine
-            wx = w * 1.12 - ease * (w * 1.24)            # 右侧外 → 左侧外
-            wy = h * 0.30 + math.sin(span * math.pi) * 14
+            wx = w * 1.18 - ease * (w * 1.36)            # 右侧外 → 左侧外
+            wy = h * 0.30 + math.sin(span * math.pi) * 8
             self._draw_whale(p, wx, wy, fade)
 
-        # 台词：t 0.30 后淡入，退场前淡出
+        # 文案：t 0.30 后淡入，退场前淡出
         if t > 0.30:
             qa = min(1.0, (t - 0.30) / 0.20)
             if t > 0.86:
@@ -122,79 +131,148 @@ class _EggOverlay(QWidget):
             p.drawEllipse(QPointF(px, py), r, r)
 
     def _draw_whale(self, p: QPainter, cx: float, cy: float, fade: float):
-        """画一只朝左游的简约鲸鱼（品牌鲸鱼 logo 的简化版）。
+        """画一只自然可爱的鲸鱼（朝左游）。
 
-        坐标以 (cx, cy) 为身体中心；整体宽约 96、高约 48。
+        参照常见鲸鱼插画的画法：**大而圆的头**（占身体大部分）+ 圆肚子 +
+        上扬的小尾鳍（两叶、圆润）+ 小胸鳍 + 大眼高光 + 头顶喷水。
+        坐标以 (cx, cy) 为身体中心，整体约占 150×110 的方框。
         """
-        body_col = QColor(43, 127, 255)
-        body_col.setAlphaF(0.95 * fade)
+        a = max(0.0, min(1.0, fade))
+
+        top = QColor(110, 210, 255); top.setAlphaF(0.98 * a)
+        bot = QColor(24, 146, 246);  bot.setAlphaF(0.98 * a)
+        belly = QColor(214, 240, 255); belly.setAlphaF(0.92 * a)
+
+        # ---- 身体：大圆弧头 + 圆肚子，尾根收细 ----
+        body = QPainterPath()
+        body.moveTo(cx - 62, cy + 6)                                    # 吻端
+        body.cubicTo(cx - 62, cy - 40, cx - 10, cy - 52, cx + 26, cy - 34)  # 背部大弧
+        body.cubicTo(cx + 44, cy - 25, cx + 52, cy - 12, cx + 54, cy - 4)   # 收向尾根
+        body.cubicTo(cx + 52, cy + 6, cx + 42, cy + 16, cx + 22, cy + 24)   # 腹部
+        body.cubicTo(cx - 12, cy + 34, cx - 54, cy + 30, cx - 62, cy + 6)   # 回到吻端
+        body.closeSubpath()
+
+        grad = QLinearGradient(cx, cy - 52, cx, cy + 34)
+        grad.setColorAt(0.0, top)
+        grad.setColorAt(1.0, bot)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(body_col)
+        p.setBrush(grad)
+        p.drawPath(body)
 
-        # 身体：背部高拱、腹部平缓收拢，头部在左
-        path = QPainterPath()
-        path.moveTo(cx - 48, cy + 2)                                   # 吻端
-        path.cubicTo(cx - 46, cy - 20, cx - 20, cy - 30, cx + 8, cy - 26)  # 背
-        path.cubicTo(cx + 30, cy - 23, cx + 40, cy - 12, cx + 44, cy)      # 尾根
-        path.cubicTo(cx + 40, cy + 12, cx + 26, cy + 20, cx + 6, cy + 20)  # 腹
-        path.cubicTo(cx - 20, cy + 20, cx - 46, cy + 16, cx - 48, cy + 2)  # 回到吻端
-        path.closeSubpath()
-        p.drawPath(path)
+        # ---- 腹部浅色弧（鲸鱼特征）----
+        p.save()
+        p.setClipPath(body)
+        belly_path = QPainterPath()
+        belly_path.moveTo(cx - 62, cy + 10)
+        belly_path.cubicTo(cx - 30, cy + 52, cx + 20, cy + 50, cx + 54, cy + 10)
+        belly_path.cubicTo(cx + 34, cy + 40, cx - 26, cy + 44, cx - 62, cy + 10)
+        belly_path.closeSubpath()
+        p.setBrush(belly)
+        p.drawPath(belly_path)
+        p.restore()
 
-        # 尾鳍：尾根处向后上、后下各挑出一叶（鲸尾的经典分叉）
+        # ---- 尾鳍：尾根处向右上扬的两叶（圆润、翘起）----
         tail = QPainterPath()
-        tail.moveTo(cx + 42, cy - 2)
-        tail.cubicTo(cx + 56, cy - 22, cx + 70, cy - 24, cx + 68, cy - 8)
-        tail.cubicTo(cx + 66, cy - 2, cx + 58, cy + 2, cx + 42, cy + 4)
+        tail.moveTo(cx + 48, cy - 4)
+        # 上叶（向右上翘）
+        tail.cubicTo(cx + 62, cy - 22, cx + 82, cy - 34, cx + 90, cy - 28)
+        tail.cubicTo(cx + 84, cy - 10, cx + 68, cy - 2, cx + 56, cy + 2)
+        # 下叶（略向右下）
+        tail.cubicTo(cx + 70, cy + 4, cx + 84, cy + 2, cx + 90, cy + 10)
+        tail.cubicTo(cx + 76, cy + 22, cx + 58, cy + 16, cx + 48, cy + 4)
         tail.closeSubpath()
+        tgrad = QLinearGradient(cx + 48, cy - 30, cx + 90, cy + 16)
+        t1 = QColor(128, 218, 255); t1.setAlphaF(0.96 * a)
+        t2 = QColor(24, 146, 246);  t2.setAlphaF(0.96 * a)
+        tgrad.setColorAt(0.0, t1)
+        tgrad.setColorAt(1.0, t2)
+        p.setBrush(tgrad)
         p.drawPath(tail)
-        tail2 = QPainterPath()
-        tail2.moveTo(cx + 42, cy + 2)
-        tail2.cubicTo(cx + 56, cy + 20, cx + 68, cy + 22, cx + 66, cy + 8)
-        tail2.cubicTo(cx + 64, cy + 2, cx + 56, cy - 2, cx + 42, cy - 4)
-        tail2.closeSubpath()
-        p.drawPath(tail2)
 
-        # 眼睛
-        eye = QColor(255, 255, 255)
-        eye.setAlphaF(0.95 * fade)
-        p.setBrush(eye)
-        p.drawEllipse(QPointF(cx - 34, cy - 4), 2.6, 2.6)
+        # ---- 胸鳍：身体下方一片小小的船桨 ----
+        fin = QPainterPath()
+        fin.moveTo(cx - 30, cy + 18)
+        fin.cubicTo(cx - 42, cy + 32, cx - 58, cy + 40, cx - 66, cy + 36)
+        fin.cubicTo(cx - 60, cy + 22, cx - 46, cy + 12, cx - 34, cy + 10)
+        fin.closeSubpath()
+        fcol = QColor(24, 146, 246); fcol.setAlphaF(0.9 * a)
+        p.setBrush(fcol)
+        p.drawPath(fin)
 
-        # 喷水：吻端上方三颗水珠，从小渐大
-        spout = QColor(255, 255, 255)
-        spout.setAlphaF(0.6 * fade)
-        p.setBrush(spout)
-        for dx, dy, r in ((-30, -26, 2.6), (-24, -34, 2.0), (-17, -41, 1.4)):
+        # ---- 眼睛：大眼 + 白色高光（靠吻端一些，符合鲸鱼侧脸比例）----
+        eye_c = QPainterPath()
+        eye_c.addEllipse(QPointF(cx - 48, cy - 8), 5.6, 5.6)
+        p.setBrush(QColor(255, 255, 255, int(245 * a)))
+        p.drawPath(eye_c)
+        p.setBrush(QColor(20, 55, 100, int(245 * a)))
+        p.drawEllipse(QPointF(cx - 47, cy - 8), 3.1, 3.1)
+        p.setBrush(QColor(255, 255, 255, int(235 * a)))
+        p.drawEllipse(QPointF(cx - 48.6, cy - 9.4), 1.3, 1.3)
+
+        # ---- 喷水：头顶一道细细的水柱 + 顶端水花 ----
+        # 亮色背景下白色太淡，改用浅蓝白；暗色下用纯白。
+        sp_c = (QColor(255, 255, 255, int(190 * a)) if self._dark
+                else QColor(150, 205, 245, int(210 * a)))
+        pen = QPen(sp_c)
+        pen.setWidthF(2.2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        spout = QPainterPath()
+        spout.moveTo(cx - 16, cy - 44)
+        spout.cubicTo(cx - 20, cy - 58, cx - 14, cy - 68, cx - 8, cy - 74)
+        p.drawPath(spout)
+        p.setPen(Qt.PenStyle.NoPen)
+        droplet = (QColor(255, 255, 255, int(200 * a)) if self._dark
+                   else QColor(150, 205, 245, int(220 * a)))
+        p.setBrush(droplet)
+        for dx, dy, r in ((-14, -80, 2.6), (-7, -84, 2.0), (-1, -79, 1.6)):
             p.drawEllipse(QPointF(cx + dx, cy + dy), r, r)
 
     def _draw_quote(self, p: QPainter, w: int, h: int, alpha: float):
         alpha = max(0.0, min(1.0, alpha))
         if alpha <= 0.01:
             return
+        from PyQt6.QtGui import QFont as _QFont
 
-        col = QColor(235, 244, 255) if self._dark else QColor(38, 62, 96)
+        # 主文案（大字、加粗、有力量）
+        col = QColor(232, 243, 255) if self._dark else QColor(26, 48, 82)
         col.setAlphaF(alpha)
         p.setPen(QPen(col))
-        f = QFont()
-        f.setFamily("Microsoft YaHei")
-        f.setPointSize(12)
+        f = _QFont("Microsoft YaHei")
+        f.setPointSize(15)
+        f.setBold(True)
+        f.setLetterSpacing(_QFont.SpacingType.AbsoluteSpacing, 1.5)
         p.setFont(f)
         p.drawText(
-            QRectF(0, h * 0.58, w, h * 0.34),
+            QRectF(0, h * 0.62, w, 32),
             int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop),
             _QUOTE,
         )
 
-        col2 = QColor(120, 160, 210) if self._dark else QColor(120, 140, 170)
-        col2.setAlphaF(alpha * 0.9)
-        p.setPen(QPen(col2))
-        f2 = QFont()
-        f2.setFamily("Microsoft YaHei")
+        # 副文案（小字、柔和）
+        col_sub = QColor(150, 185, 225) if self._dark else QColor(120, 145, 180)
+        col_sub.setAlphaF(alpha * 0.92)
+        p.setPen(QPen(col_sub))
+        f2 = _QFont("Microsoft YaHei")
         f2.setPointSize(9)
         p.setFont(f2)
         p.drawText(
-            QRectF(0, h * 0.79, w, 24),
+            QRectF(0, h * 0.72, w, 24),
+            int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop),
+            _QUOTE_SUB,
+        )
+
+        # 落款
+        col3 = QColor(120, 160, 210) if self._dark else QColor(130, 150, 178)
+        col3.setAlphaF(alpha * 0.85)
+        p.setPen(QPen(col3))
+        f3 = _QFont("Microsoft YaHei")
+        f3.setPointSize(10)
+        f3.setBold(True)
+        p.setFont(f3)
+        p.drawText(
+            QRectF(0, h * 0.84, w, 24),
             int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop),
             _QUOTE_SOURCE,
         )
@@ -284,8 +362,8 @@ def attach_about_easter_egg(dialog, trigger_label, dark: bool = False):
     tracker = _ClickTracker(_play, parent=dialog)
     flt = _LabelClickFilter(tracker, parent=dialog)
     trigger_label.installEventFilter(flt)
-    trigger_label.setCursor(Qt.CursorShape.PointingHandCursor)
-    trigger_label.setToolTip("虫师 · 连点 5 次有惊喜")
+    # 注意：**不设 tooltip、不改光标** —— 彩蛋要留给用户自己发现，
+    # 任何提示都会变成剧透。（2026-10-10 用户明确要求）
 
     dialog._egg_tracker = tracker        # 防 GC
     dialog._egg_filter = flt
