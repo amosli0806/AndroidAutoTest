@@ -857,9 +857,12 @@ class MainWindow(QMainWindow):
             else:
                 self._toolbar_hide_actions.append(_act)
 
+        # 弹性占位：把后面的「安装 / 推送 / MD5 / 菜单」顶到右边缘。
+        # 它本身不可见，但**两种模式都必须保留** —— 迷你模式下若把它隐藏，
+        # 右侧那组按钮就会失去弹簧、贴到投屏后面去（实测踩过）。
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._toolbar_hide_actions.append(toolbar.addWidget(spacer))
+        toolbar.addWidget(spacer)
 
         # 顶栏右侧：安装 / 推送 / MD5，与菜单按钮一样右对齐
         # 其中「安装 APK」「推送文件」在迷你模式下保留（常用操作），MD5 隐藏。
