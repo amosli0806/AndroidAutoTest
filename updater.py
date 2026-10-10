@@ -44,7 +44,13 @@ _RETRY_WINERRORS = (5, 32)
 # 根目录下这些文件要一起换（_internal 单独按目录整体换）
 ROOT_FILES = (APP_EXE, "updater.exe")
 
+# 这次运行有没有真的动过安装目录里的文件。
+# 决定失败提示该不该说「已回滚」—— 失败可能发生在替换之前（比如 exe 被占用，
+# 那时一个文件都没碰），写成「已回滚到原版本」会让人以为动过又还原了。
+_TOUCHED = False
+
 log = logging.getLogger("updater")
+
 
 
 # ---------- 等到主程序退出 ----------
@@ -228,6 +234,7 @@ def swap(src: str, dst: str):
     顺序刻意设计成"先全部改名备份，再全部搬入"：
     改名是同卷瞬时操作，所以中途失败也能立刻改回来。
     """
+    global _TOUCHED
     internal_src = os.path.join(src, INTERNAL_DIR)
     internal_dst = os.path.join(dst, INTERNAL_DIR)
     internal_bak = internal_dst + BACKUP_SUFFIX
@@ -255,6 +262,7 @@ def swap(src: str, dst: str):
         if os.path.isdir(internal_dst):
             rename_with_retry(internal_dst, internal_bak)
             renamed.append((internal_bak, internal_dst))
+            _TOUCHED = True
             log.info("已备份 %s -> %s", internal_dst, internal_bak)
 
         # 2) 备份根目录下要替换的文件
@@ -265,6 +273,7 @@ def swap(src: str, dst: str):
                 _remove_quietly(bak)
                 rename_with_retry(cur, bak)
                 renamed.append((bak, cur))
+                _TOUCHED = True
 
         # 3) 搬入新版本（同卷改名，瞬时；被杀软扫着时靠重试扛过去）
         rename_with_retry(internal_src, internal_dst)
@@ -310,11 +319,70 @@ def still_in_use(exe_path: str) -> bool:
         return True
 
 
+def processes_using(exe_path: str):
+    """列出正把 exe_path 作为镜像加载的进程 [(pid, 镜像路径)]。
+
+    为什么不用 Restart Manager：这里只要回答「谁在跑同一个安装目录里的虫师.exe」，
+    EnumProcesses + QueryFullProcessImageName 就够，纯 ctypes、无额外依赖。
+    任何异常都返回空列表 —— 这只是给提示用的，不能反过来把更新流程搞挂。
+    """
+    out = []
+    try:
+        from ctypes import wintypes
+        target = os.path.normcase(os.path.abspath(exe_path))
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        try:
+            enum_procs = ctypes.WinDLL("psapi", use_last_error=True).EnumProcesses
+        except OSError:
+            enum_procs = kernel32.K32EnumProcesses
+        enum_procs.restype = wintypes.BOOL
+        enum_procs.argtypes = [ctypes.POINTER(wintypes.DWORD), wintypes.DWORD,
+                               ctypes.POINTER(wintypes.DWORD)]
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL,
+                                         wintypes.DWORD]
+        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD)]
+
+        buf = (wintypes.DWORD * 4096)()
+        needed = wintypes.DWORD()
+        if not enum_procs(buf, ctypes.sizeof(buf), ctypes.byref(needed)):
+            return out
+        count = needed.value // ctypes.sizeof(wintypes.DWORD)
+        path_buf = ctypes.create_unicode_buffer(32768)
+        for i in range(count):
+            pid = buf[i]
+            if not pid:
+                continue
+            handle = kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                continue
+            try:
+                length = wintypes.DWORD(len(path_buf))
+                if kernel32.QueryFullProcessImageNameW(
+                        handle, 0, path_buf, ctypes.byref(length)):
+                    p = path_buf.value
+                    if os.path.normcase(os.path.abspath(p)) == target:
+                        out.append((pid, p))
+            finally:
+                kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+    return out
+
+
 def wait_until_unlocked(exe_path: str, timeout: float = OTHER_INSTANCE_WAIT) -> bool:
     """等"另一个实例"放锁（同一个安装目录被开了两次时会遇到）。返回是否已放开。"""
     if not still_in_use(exe_path):
         return True
-    log.warning("%s 仍被占用（可能有另一个虫师还开着），最多等 %.0f 秒…", exe_path, timeout)
+    holders = processes_using(exe_path)
+    who = ("；占用者：" + "、".join(f"pid {p} {q}" for p, q in holders)) if holders else ""
+    log.warning("%s 仍被占用（可能有另一个虫师还开着），最多等 %.0f 秒…%s",
+                exe_path, timeout, who)
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(1.0)
@@ -339,12 +407,20 @@ def relaunch(exe_path: str, workdir: str):
         log.error("启动新版失败：%s", e)
 
 
-def _fail_box(message: str, log_path: str):
-    """失败时用原生弹框告知（更新器没有界面，静默失败最坑人）。"""
+def _fail_box(message: str, log_path: str, rolled_back: bool = False):
+    """失败时用原生弹框告知（更新器没有界面，静默失败最坑人）。
+
+    rolled_back 决定开头那句：真的动过文件（并已还原）才说「已回滚」，
+    否则说「安装目录没有被改动」—— 像 exe 被占用这种失败发生在替换之前，
+    说「已回滚」会让人以为动过又还原了。
+    """
+    head = ("虫师自动更新失败，已回滚到原版本，可以继续使用。"
+            if rolled_back else
+            "虫师自动更新失败。安装目录没有任何改动，原版本可以照常使用。")
     try:
         ctypes.windll.user32.MessageBoxW(
             None,
-            f"虫师自动更新失败，已回滚到原版本，可以继续使用。\n\n{message}\n\n"
+            f"{head}\n\n{message}\n\n"
             f"详细信息见日志：\n{log_path}",
             "虫师更新失败", 0x10)      # MB_ICONERROR
     except Exception:
@@ -387,10 +463,15 @@ def main(argv=None) -> int:
         # 它照样锁着 _internal，会让后面的改名失败 —— 提前等它放开，并给出人话提示，
         # 而不是让人看到一串 [WinError 5]。
         if not wait_until_unlocked(os.path.join(dst, APP_EXE)):
+            holders = processes_using(os.path.join(dst, APP_EXE))
+            who = ("\n\n正在运行它的进程：\n"
+                   + "\n".join(f"  pid {p}   {q}" for p, q in holders)) if holders else ""
             raise RuntimeError(
-                f"安装目录里的 {APP_EXE} 还在被占用：\n{dst}\n\n"
-                f"多半是还开着另一个虫师窗口（或别的程序正用着这个目录）。\n"
-                f"请把它们全部关闭，然后重新点一次「检查更新」→「下载并更新」。")
+                f"安装目录里的 {APP_EXE} 还在被占用：\n{dst}{who}\n\n"
+                f"多半是还开着另一个虫师窗口（也可能最小化在系统托盘里）。\n"
+                f"请把它关掉（托盘图标右键 →「退出虫师」；"
+                f"找不到就用任务管理器结束上面列出的进程），"
+                f"然后重新点一次「检查更新」→「下载并更新」。")
 
         need_mb = dir_size_mb(os.path.join(src, INTERNAL_DIR))
         log.info("安装目录可用空间 %.0f MB（新版本 _internal 约 %.0f MB）",
@@ -407,7 +488,7 @@ def main(argv=None) -> int:
         if not _remove_with_retry(src, attempts=3, delay=1.0):
             log.warning("暂存目录没能删干净，应用可能仍把它当成可用的更新包")
         if not args.silent:
-            _fail_box(str(e), log_path)
+            _fail_box(str(e), log_path, rolled_back=_TOUCHED)
         return 1
 
     # 收尾：删掉暂存目录里剩下的东西（新版本已经被改名搬走了）
