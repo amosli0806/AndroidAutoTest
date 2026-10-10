@@ -166,9 +166,9 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-08</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-10</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.3.9</span>
+      <span class="badge">当前版本 v1.4.3</span>
       <span class="badge">8 个功能入口</span>
       <span class="badge">16 项扩展方向</span>
       <span class="badge">6 个开发阶段</span>
@@ -194,6 +194,7 @@
       <a href="#s6">六、速查表</a>
       <a href="#s7">七、堆转储与抓包整合</a>
       <a href="#s8">八、设备中断健壮性缺陷</a>
+      <a href="#s9">九、macOS 移植注意事项</a>
     </div>
   </nav>
 
@@ -689,7 +690,51 @@
     </div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-10-08 · v1.3.9</footer>
+  <!-- ============ 九、macOS 移植注意事项 ============ -->
+  <section class="chapter" id="s9">
+    <h2><span class="num">9</span>macOS 移植注意事项 <span class="tag plan">📐 2026-10-10 评估 · 未开始</span></h2>
+    <p class="small" style="margin-top:0">目标：把虫师跑在 Mac 上，连车机做同样的测试。下面按「不改就跑不起来 / 能跑但行为不对 / 已经写好不用动」三类梳理，每条都标了确切文件。</p>
+
+    <div class="card">
+      <h3>一、不改就跑不起来</h3>
+      <ul>
+        <li><b>依赖装不上</b>：<code>requirements.txt</code> 里的 <code>pywin32</code> / <code>pywin32-ctypes</code> 是 Windows 专有，macOS 上 <code>pip install -r</code> 会直接失败。要按平台拆（<code>requirements-win.txt</code> / <code>requirements-mac.txt</code>），或加环境标记 <code>pywin32; sys_platform == "win32"</code>。</li>
+        <li><b>离线语音是 Windows 专有</b>：<code>services/voice_service.py</code> 的 <code>WindowsSapiEngine</code> 走 <code>win32com</code> + SAPI。macOS 要么接系统 <code>say</code> / <code>NSSpeechSynthesizer</code>，要么只用跨平台的 Edge 在线语音（<code>EdgeTtsEngine</code> 已实现）。<code>main.spec</code> 里登记的 <code>win32com.client</code> / <code>pythoncom</code> 也要按平台去掉。</li>
+        <li><b>数据会写进 .app 里</b>：<code>utils/app_paths.py::get_app_dir()</code> 返回「exe 同级目录」。macOS 打包后 <code>sys.executable</code> 在 <code>虫师.app/Contents/MacOS/</code> 内，往那儿写 <code>data/</code> 会破坏 bundle（<code>/Applications</code> 下还可能只读，代码签名校验也会判为被篡改）。应改为 <code>~/Library/Application Support/虫师/</code>。</li>
+        <li><b>打包脚本是 Windows 形态</b>：<code>main.spec</code> 用的是 <code>EXE(manifest=…)</code>（Windows DPI 清单）、<code>icon=.ico</code>、<code>COLLECT</code> onedir。macOS 要改成 <code>BUNDLE(...)</code> + <code>.icns</code>，产物是 <code>.app</code> 目录。三个 spec（main / weditor / updater）各自都要处理。</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>二、能跑，但行为不对</h3>
+      <ul>
+        <li><b>自动更新整体不可移植</b>：<code>updater.py</code> 靠「等主程序退出 → 改名替换 exe 与 <code>_internal</code>」做热更新，全程 Windows API（<code>kernel32</code> 等进程、<code>EnumProcesses</code> 找占用者）。macOS 的 <code>.app</code> 是目录，且有 Gatekeeper / 公证与签名校验，替换内部文件会让应用起不来。macOS 上应改用 Sparkle 之类，或「下载 dmg → 引导用户替换」。</li>
+        <li><b>单实例保护</b>：现在用 Windows 命名互斥体（<code>main.py::_acquire_single_instance</code>，非 win32 已直接放行）。macOS 上要换成 <code>QLocalServer</code> 或文件锁。</li>
+        <li><b>weditor 子进程的「父死子亡」</b>：<code>services/weditor_service.py::_bind_kill_on_close</code> 用 Windows Job Object，非 win32 直接 return。macOS 上要自己保证退出时杀掉 weditor（<code>os.setsid</code> + 记 pid + 退出时 kill）。</li>
+        <li><b>字体</b>：<code>utils/theme.py</code> 写的是 <code>'Segoe UI', 'Microsoft YaHei'</code>，日志区与报告的等宽字体是 <code>Consolas</code> —— 这些在 macOS 上都不存在。中文会由系统挑 CJK 回退、不至于乱码，但等宽字体要补 <code>Menlo</code> / <code>SF Mono</code>。<code>views/splash_window.py</code> 的 <code>QFont('Microsoft YaHei')</code>、<code>utils/perf_report.py</code> 与 <code>views/help_view.py</code> 的 HTML 字体同理（<code>utils/api_report.py</code> 已经带了 <code>PingFang SC</code>，可照抄）。</li>
+        <li><b>系统托盘</b>：macOS 上托盘是菜单栏 —— <code>setToolTip</code> 不显示、<code>activated</code> 没有双击语义，自绘快捷面板（<code>views/tray_controller.py</code>）要按平台调整；「点 × 最小化到托盘」在 macOS 上也要重新想（那边习惯是关窗不退）。</li>
+        <li><b>内置工具是 Windows 二进制</b>：<code>tools/</code> 下的 <code>scrcpy.exe</code> 与一堆 dll 只能在 Windows 用，macOS 要换 mac 版 scrcpy。<code>utils/adb_path.py</code> 已按平台返回 <code>adb</code> / <code>adb.exe</code>，但 macOS 上得让用户 <code>brew install android-platform-tools</code>，帮助中心的安装指引也是 Windows 的。</li>
+        <li><b>「打开所在文件夹」有三处是坏的</b>：<code>controllers/notification_controller.py</code>、<code>controllers/execution_controller.py</code>、<code>controllers/api_controller.py</code> 用的是 <code>os.name == 'nt' → os.startfile，否则 xdg-open</code>，而 macOS 上没有 <code>xdg-open</code>，点了会静默失败。应统一成 win32 / darwin / else 三分支 —— <code>controllers/perf_controller.py</code> 里已经是正确写法，照抄即可。</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>三、已经写好，不用动</h3>
+      <ul>
+        <li><code>subprocess.CREATE_NO_WINDOW</code>：全项目都写成 <code>if sys.platform == 'win32' else 0</code>，非 Windows 传 0。</li>
+        <li><code>utils/adb_path.py</code>：<code>adb</code> / <code>adb.exe</code>、<code>scrcpy</code> / <code>scrcpy.exe</code> 已按平台取名。</li>
+        <li><code>utils/wireless_manager.py</code>：ping 次数参数 <code>-n</code>（Windows）/ <code>-c</code>（其他）。</li>
+        <li><code>services/adb_command_pool.py</code>：<code>os.setsid</code> 只在非 win32 分支里用（POSIX 可用）。</li>
+        <li><code>utils/win_dark_title.py</code>、<code>weditor_service._bind_kill_on_close</code>、<code>main._acquire_single_instance</code>：都有非 win32 早退。</li>
+      </ul>
+    </div>
+
+    <div class="tip">⚠ <b>工作量估计</b>：只求跑通「连车机 + 自动化执行 + 性能检测」这条主线，主要是 ① 拆依赖 ② 数据目录改到 <code>~/Library</code> ③ 改 <code>main.spec</code> 出 <code>.app</code> ④ 修那三处 <code>xdg-open</code>，属小到中等改动；若连「自动更新 + 系统托盘 + 离线语音」也一并搬，则要大改 —— 这三块本质上依赖 Windows。</div>
+
+    <div class="example">💡 <b>打个比方：</b>这就像把一间按自家户型装修好的房子搬到另一栋楼 —— 家具（Qt 界面、adb / uiautomator2 那套逻辑）都能直接用，但门框尺寸（打包成 <code>.app</code>）、水电接口（路径规范）、门锁（签名 / 公证）都不一样；至于「自动更新」，它更像埋在墙里的暗线，到新楼只能整条重走。</div>
+  </section>
+
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-10-10 · v1.4.3</footer>
 </div>
 </body>
 </html>
