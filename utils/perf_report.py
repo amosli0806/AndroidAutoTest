@@ -232,9 +232,17 @@ class PerfReportGenerator:
         start = session.start_time
         end = session.end_time
         metrics = session.metrics
-        duration = "0s"
+        duration = "0 秒"
         if samples:
-            duration = f"{samples[-1].timestamp - samples[0].timestamp:.1f}s"
+            _secs = samples[-1].timestamp - samples[0].timestamp
+            _h, _rem = divmod(int(round(_secs)), 3600)
+            _m, _s = divmod(_rem, 60)
+            if _h:
+                duration = f"{_h} 小时 {_m} 分 {_s} 秒"
+            elif _m:
+                duration = f"{_m} 分 {_s} 秒"
+            else:
+                duration = f"{_s} 秒"
 
         # 设备信息行（分辨率 / 屏幕密度 / 安卓版本）——旧会话无此数据时自动省略
         device_info_rows = ""
