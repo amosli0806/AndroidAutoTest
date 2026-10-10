@@ -229,8 +229,23 @@ class PerfReportGenerator:
         # 汇总信息
         app_pkg = session.app_package
         device = session.device_serial
-        start = session.start_time
-        end = session.end_time
+
+        def _fmt_time(raw: str) -> str:
+            """把 ISO 格式的起止时间（如 2026-10-10T20:14:40.070283）格式化成
+            「2026-10-10 20:14:40」；解析失败或为空时原样返回，不做破坏。"""
+            if not raw:
+                return raw
+            try:
+                return datetime.fromisoformat(raw).strftime('%Y-%m-%d %H:%M:%S')
+            except (ValueError, TypeError):
+                # 兼容 'Z' 结尾等 fromisoformat 不认的写法
+                try:
+                    return raw.replace('T', ' ').split('.')[0].rstrip('Z')
+                except Exception:
+                    return raw
+
+        start = _fmt_time(session.start_time)
+        end = _fmt_time(session.end_time)
         metrics = session.metrics
         duration = "0 秒"
         if samples:
