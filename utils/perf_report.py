@@ -310,8 +310,10 @@ class PerfReportGenerator:
 
         # 基线对比（自动匹配同应用基线）
         baseline_html = ""
+        baseline_rows = []
         if baseline is not None:
             rows = compare_stats(baseline.metrics, stats)
+            baseline_rows = rows
             if rows:
                 def _badge(status):
                     if status == 'worse':
@@ -343,6 +345,38 @@ class PerfReportGenerator:
         <table class="compare">
             <thead><tr><th>指标</th><th>基线</th><th>当前</th><th>变化</th><th>结论</th></tr></thead>
             <tbody>{tr_rows}</tbody>
+        </table>
+        """
+
+        # 内存详情：**不依赖基线** —— 把 Total + 各分类（Java/Native/Graphics/
+        # Stack/Code/Others）的 均值/峰值/最低 全列出来。以前这些数字只在
+        # 「基线对比」表里出现，没配基线就整段消失，看不到明细。
+        # 有基线且基线带内存数据时不再渲染：明细已经在基线对比表里了，
+        # 再列一遍纯属冗余。判据看的是**基线对比表里是否真有内存行**，
+        # 而不是「有没有基线对象」—— 老基线只有 CPU 数据时，内存明细仍要保留。
+        mem_detail_html = ""
+        baseline_covers_mem = any(
+            str(r.get('key', '')).startswith('mem') for r in baseline_rows)
+        mem_stat = stats.get('mem')
+        if 'mem' in metrics and mem_stat and not baseline_covers_mem:
+            breakdown = stats.get('mem_breakdown') or {}
+            detail_rows = [('Total', mem_stat)]
+            detail_rows += [(cat, breakdown[cat]) for cat, _lbl, _color in MEM_CATEGORIES
+                            if cat in breakdown]
+            detail_tr = ""
+            for label, st in detail_rows:
+                detail_tr += f"""
+                    <tr>
+                        <td>{label}</td>
+                        <td>{st.get('avg', 0):.2f}</td>
+                        <td>{st.get('max', 0):.2f}</td>
+                        <td>{st.get('min', 0):.2f}</td>
+                    </tr>"""
+            mem_detail_html = f"""
+        <h2>🧩 内存详情</h2>
+        <table class="compare">
+            <thead><tr><th>分类</th><th>均值 (MB)</th><th>峰值 (MB)</th><th>最低 (MB)</th></tr></thead>
+            <tbody>{detail_tr}</tbody>
         </table>
         """
 
@@ -468,7 +502,9 @@ class PerfReportGenerator:
             border-radius: 8px;
             padding: 16px;
             margin: 12px 0 4px;
-            height: 280px;
+            /* 图表高度：Chart.js 是 responsive + maintainAspectRatio:false，
+               完全跟着这个容器走（原 280px 时绘图区只剩 ~130px，太扁） */
+            height: 400px;
         }}
         .chart-toolbar {{
             text-align: right;
@@ -572,6 +608,8 @@ class PerfReportGenerator:
         <div class="summary">
             {summary_cards_html}
         </div>
+
+        {mem_detail_html}
 
         {baseline_html}
 
