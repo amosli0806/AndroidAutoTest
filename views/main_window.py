@@ -4090,6 +4090,14 @@ class MainWindow(QMainWindow):
         sub.setObjectName("AboutSubtitle")
         info_v.addWidget(sub)
 
+        # 彩蛋：连点版本号 5 次触发（见 views/easter_egg.py）。
+        # 整段逻辑独立在 easter_egg 模块里，这里只是一行挂钩，不影响对话框本体。
+        try:
+            from views.easter_egg import attach_about_easter_egg
+            attach_about_easter_egg(dialog, sub, dark=is_dark)
+        except Exception:
+            pass  # 彩蛋失败绝不能影响「关于」对话框正常显示
+
         info_v.addSpacing(10)
 
         info_v.addWidget(QLabel("作者：李金钊"))
