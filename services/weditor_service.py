@@ -10,6 +10,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import QLabel
 from PyQt6.QtCore import Qt
+from utils.app_paths import get_app_dir
 from utils.theme import ThemeMode
 
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
@@ -85,6 +86,8 @@ class WeditorService:
     def __init__(self):
         self.process = None
         self.web_view = None
+        # weditor 的输出日志文件句柄（见 _start_process_and_wait_locked）
+        self._log_file = None
         # 启动锁：防止并发调用 _start_process_and_wait 时重复 spawn weditor
         # （实测竞态：第一次还在等端口监听时第二次进来检测不到端口，又起一份
         #  —— 会出现两个 weditor 实例、两份 ipyshell，弹多个 python 窗口）
@@ -217,12 +220,27 @@ except Exception:
         if self._is_port_open(port):
             return port
 
+        # 输出必须落到**文件**，绝不能再用 PIPE。
+        #
+        # 为什么（2026-10-10 实测定位）：weditor 里是 tornado，**每处理一个请求就往
+        # 输出写一行 access log**（如 `200 GET /api/v1/version (127.0.0.1) 3.08ms`）。
+        # 界面会不停轮询截图/层级，几百个请求就把 Windows 的 4KB 管道写满；而原来的
+        # 代码只在启动 1 秒内读一次管道，之后再不读 —— weditor 于是**卡死在 write 上**，
+        # 单线程的 tornado IOLoop 整个停摆（实测连 `/api/v1/version` 都超时），
+        # 表现就是「应用可视化一直转圈」。
+        # 对照实验：开发环境 `python -m weditor` 输出到文件时完全正常。
+        log_path = os.path.join(get_app_dir(), "weditor.log")
+        try:
+            self._log_file = open(log_path, "w", encoding="utf-8", errors="replace")
+        except Exception:
+            self._log_file = None
+
         # 启动新进程
         try:
             self.process = subprocess.Popen(
                 self._build_weditor_command(port),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=self._log_file if self._log_file else subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
                 creationflags=CREATE_NO_WINDOW,
                 text=True
             )
@@ -234,8 +252,7 @@ except Exception:
         # 等待进程启动
         time.sleep(1)
         if self.process.poll() is not None:
-            stdout, stderr = self.process.communicate()
-            error_msg = stderr.strip() if stderr else stdout.strip()
+            error_msg = self._read_log_tail()
             if error_msg and "already running" in error_msg.lower():
                 # 可能已有实例，尝试连接
                 if self._wait_for_port(port, timeout=3):
@@ -252,6 +269,19 @@ except Exception:
             raise Exception("启动超时，端口未开放")
 
         return port
+
+    def _read_log_tail(self, max_lines: int = 30) -> str:
+        """读 weditor 日志的最后几行（启动失败时用来给出原因）。"""
+        if not self._log_file:
+            return ""
+        try:
+            self._log_file.flush()
+            path = self._log_file.name
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                lines = [ln.strip() for ln in f.read().splitlines() if ln.strip()]
+            return "\n".join(lines[-max_lines:])
+        except Exception:
+            return ""
 
     def start(self, port=17310):
         """兼容旧接口，直接创建 WebView（主线程调用）"""
@@ -304,3 +334,9 @@ except Exception:
         finally:
             self.process = None
             self.web_view = None
+            if self._log_file:
+                try:
+                    self._log_file.close()
+                except Exception:
+                    pass
+                self._log_file = None
