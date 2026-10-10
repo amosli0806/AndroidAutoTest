@@ -786,6 +786,10 @@ def main():
     # app.quit()（更新器接管 / 其他退出路径）先触发 aboutToQuit，这里设标志，
     # closeEvent 据此放行真正退出、不拦截（否则更新流程会关不掉窗口卡死）。
     app.aboutToQuit.connect(lambda: setattr(main_window, "_allow_quit", True))
+    # 退出前把所有在跑的 ADB 指令收掉：池子是 QThreadPool，析构会等 runnable 结束；
+    # 流式指令（logcat / 录屏）不主动停就永远不结束，会让整个进程卡在收尾退不掉
+    # —— 进程不退出，安装目录里的 虫师.exe 就一直被锁，自动更新必然失败。
+    app.aboutToQuit.connect(adb_toolbox_controller.pool.stop_all)
 
     # ---------- 消息中心接线 ----------
     # 纯新增：上方所有既有信号、弹窗与 toast 行为一律不动，消息中心只做留痕
@@ -913,6 +917,16 @@ def main():
         lambda msg: logger.warning("track-devices: %s", msg))
     main_window._device_watcher = device_watcher      # 保引用防 GC
     main_window._device_refresh_bridge = refresh_bridge
+    # 退出时停掉 watcher：它是 QThread，正式退出路径原先从没停过（只有截图脚本停了），
+    # 线程一直活着会让退出收尾多一份卡住的风险
+    def _stop_device_watcher():
+        try:
+            device_watcher.stop()
+            device_watcher.wait(2000)
+        except Exception:
+            pass
+
+    app.aboutToQuit.connect(_stop_device_watcher)
 
     # 兜底轮询：常开，不要依赖长连接"断开"来触发。
     #
@@ -1232,7 +1246,66 @@ def main():
     sys.exit(app.exec())
 
 
+# ---------- 单实例保护 ----------
+# 同一台机器只允许开一个虫师。1.4.0 加了「点 × 最小化到托盘」之后，很容易出现
+# 「托盘里藏着一个 + 又开一个」——两个实例都会锁安装目录里的 虫师.exe，自动更新
+# 必然失败（2026-10-10 实测：连续失败三次，全是这个原因）。
+# 互斥体句柄必须活到进程结束，所以存在模块级全局里（句柄一关锁就没了）。
+_SINGLE_INSTANCE_MUTEX = None
+
+
+def _acquire_single_instance() -> bool:
+    """拿到单实例锁返回 True；已有实例在跑返回 False。
+
+    非 Windows、或任何异常一律放行 —— 这个检查只是体验优化，绝不能反过来
+    挡住用户启动。
+    """
+    global _SINGLE_INSTANCE_MUTEX
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+        ERROR_ALREADY_EXISTS = 183
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL,
+                                          wintypes.LPCWSTR]
+        # Local\ 前缀：每个登录会话一把锁，多用户 / 远程桌面下互不干扰
+        handle = kernel32.CreateMutexW(None, False, "Local\\ChongshiSingleInstance")
+        err = ctypes.get_last_error()
+        if not handle:
+            return True
+        if err == ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(handle)
+            return False
+        _SINGLE_INSTANCE_MUTEX = handle        # 保引用，别让句柄被回收
+        return True
+    except Exception:
+        return True
+
+
+def _warn_already_running():
+    """第二个实例：用原生弹框提示（此时还没建 QApplication，也不该为这个去建）。"""
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            "虫师已经在运行了。\n\n"
+            "如果看不到它的窗口，多半是最小化在系统托盘里了："
+            "右键任务栏右下角的虫师图标，选「退出虫师」，然后再启动。\n\n"
+            "（两个实例同时开着会让自动更新失败，所以这里只允许开一个。）",
+            "虫师", 0x40)          # MB_ICONINFORMATION
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
+    # ---------- 单实例检查排在最前面：第二个实例直接退出，不加载任何重活 ----------
+    if not _acquire_single_instance():
+        _warn_already_running()
+        sys.exit(0)
+
     # ---------- 先弹启动封面，再让后面那些重活开始 ----------
     # 说明：main.py 顶层的 import（PyQt6、uiautomator2、views.* …）在进入这个块
     # 之前就已经执行完了，所以这里做不到「封面早于顶层 import」。

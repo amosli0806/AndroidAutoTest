@@ -278,6 +278,44 @@ class AdbCommandRunnable(QRunnable):
             self.signals.error.emit(f"[清理] 异常: {str(e)}", self.tag)
 
     # ---------- 主 run ----------
+    def _wait_for_process(self, no_limit: bool = True):
+        """等子进程结束 —— 带超时轮询，**绝不用 `process.wait(timeout=None)`**。
+
+        为什么不能用无限等待：流式指令（logcat / 录屏）本来就要一直跑到用户点停止，
+        无限等待会让这个 runnable 永不返回；而应用退出时 QThreadPool 的析构要等所有
+        runnable 结束 —— 整个进程就卡在收尾退不掉，安装目录里的 虫师.exe 一直被锁，
+        自动更新必然失败（2026-10-10 实测：一条 logcat 卡死整个退出流程，更新连失败
+        三次，弹框还只说「另一个虫师还开着」）。
+
+        no_limit=True ：logcat / 录屏 / 标了 no_timeout 的指令 —— 只在 stop() 或退出
+                        时结束，语义与原来的无限等待一致，但能及时响应。
+        no_limit=False：普通指令 —— 保留原来的 30 秒上限，超时抛 TimeoutExpired，
+                        交给调用方的 `except subprocess.TimeoutExpired` 处理。
+        """
+        deadline = None if no_limit else time.time() + 30
+        while self._is_running:
+            if deadline is not None and time.time() >= deadline:
+                raise subprocess.TimeoutExpired(
+                    (self.command.command_text or self.command.name or "adb"), 30)
+            try:
+                self.process.wait(timeout=0.3)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+            except Exception:
+                break
+
+        # 循环是因 stop()/退出而结束的：把进程收掉，别留个野进程继续占着管道
+        if self.process.poll() is None:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=2)
+            except Exception:
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
+
     def run(self):
         success = True
         try:
@@ -411,9 +449,11 @@ class AdbCommandRunnable(QRunnable):
             t_stdout.start()
             t_stderr.start()
 
-            self.process.wait()
-            t_stdout.join()
-            t_stderr.join()
+            # 等命令结束（见 _wait_for_process 的说明：绝不能用无限 wait）
+            self._wait_for_process(no_limit=True)
+
+            t_stdout.join(timeout=2)
+            t_stderr.join(timeout=2)
 
             if self.process.returncode != 0:
                 if self._stopped:
@@ -713,12 +753,12 @@ class AdbCommandRunnable(QRunnable):
             t_stderr.start()
 
             try:
-                if self.is_logcat or is_push_pull or self.command.no_timeout:
-                    timeout = None
-                else:
-                    timeout = 30
+                # 等命令结束（见 _wait_for_process 的说明：绝不能用无限 wait）
+                self._wait_for_process(
+                    no_limit=(self.is_logcat or is_push_pull
+                              or self.command.no_timeout))
 
-                returncode = self.process.wait(timeout=timeout)
+                returncode = self.process.returncode
                 t_stdout.join(timeout=5)
                 t_stderr.join(timeout=5)
 
@@ -878,6 +918,24 @@ class AdbCommandPool(QObject):
         runnable = self.running_commands.get(command_id)
         if runnable:
             runnable.stop()
+
+    def stop_all(self, wait_ms: int = 3000):
+        """退出前把所有在跑的命令收掉。
+
+        为什么必须有：池子用的是 QThreadPool，它的析构会等所有 runnable 结束。
+        流式指令（logcat / 录屏）不主动停就永远不结束 → 应用退出时卡在收尾、
+        进程退不掉、安装目录里的 虫师.exe 一直被锁 → 自动更新必然失败
+        （2026-10-10 实测：一条 logcat 卡死整个退出流程，更新连续失败三次）。
+        """
+        for runnable in list(self.running_commands.values()):
+            try:
+                runnable.stop()          # 内部会 terminate/kill 子进程
+            except Exception:
+                pass
+        try:
+            self.threadpool.waitForDone(wait_ms)
+        except Exception:
+            pass
 
     # ---------- 信号转发 ----------
     def _on_signals_started(self, cmd_id, cmd_name, tag):
