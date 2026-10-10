@@ -2326,11 +2326,12 @@ class MainWindow(QMainWindow):
         # 底部状态栏保留（用户要求迷你模式下也展示）
         self.help_action.setVisible(not enabled)
 
-        # 左上 8 个功能导航 + 中间的弹性占位
+        # 左上 8 个功能导航（迷你模式隐藏）。
+        # 中间的弹性占位**两种模式都必须保留**：它没有视觉，只负责把下面那组
+        # 底部按钮压到底。迷你模式下若把它一并隐藏，Qt 不再给它分配空间，
+        # 底部按钮就会被顶到工具栏最上方（实测踩过）。
         for action in self.nav_actions:
             action.setVisible(not enabled)
-        if self._nav_spacer_action is not None:
-            self._nav_spacer_action.setVisible(not enabled)
 
         # ADB 工具箱：只留「指令管理」区
         if self._adb_toolbox_widget is not None:
