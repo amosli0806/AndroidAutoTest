@@ -236,6 +236,20 @@ class PerfReportGenerator:
         if samples:
             duration = f"{samples[-1].timestamp - samples[0].timestamp:.1f}s"
 
+        # 设备信息行（分辨率 / 屏幕密度 / 安卓版本）——旧会话无此数据时自动省略
+        device_info_rows = ""
+        for _label, _val in (
+            ("分辨率", getattr(session, 'screen_resolution', '')),
+            ("屏幕密度", getattr(session, 'screen_density', '')),
+            ("安卓版本", getattr(session, 'android_version', '')),
+        ):
+            if _val:
+                device_info_rows += f"""
+            <tr>
+                <td class="label">{_label}</td>
+                <td>{_val}</td>
+            </tr>"""
+
         # 场景化信息
         scenario_info = ""
         if session.suite_name:
@@ -581,6 +595,7 @@ class PerfReportGenerator:
                 <td class="label">设备</td>
                 <td>{device}</td>
             </tr>
+            {device_info_rows}
             <tr>
                 <td class="label">开始时间</td>
                 <td>{start}</td>

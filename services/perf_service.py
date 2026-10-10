@@ -29,6 +29,42 @@ class PerfService:
         self._cpu_core_count = None  # 首次采集时探测
 
     # ============================================================
+    # 设备信息：会话开始时采集一次，用于报告的「基本信息」
+    # ============================================================
+    def get_device_info(self) -> dict:
+        """采集设备的分辨率 / 屏幕密度 / 安卓版本。
+
+        全部走 adb shell，任一项失败只留空、不影响采集主流程。
+        返回 {'resolution': '1080x2340', 'density': '480 dpi', 'android': '13'}。
+        """
+        info = {'resolution': '', 'density': '', 'android': ''}
+        try:
+            out = shell_text(self.device, "wm size")
+            # 「Physical size: 1080x2340」或「Override size: …」都取最后一处匹配
+            matches = re.findall(r"(\d{3,5}x\d{3,5})", out or "")
+            if matches:
+                info['resolution'] = matches[-1]
+        except Exception as e:
+            logger.debug("采集分辨率失败: %s", e)
+
+        try:
+            out = shell_text(self.device, "wm density")
+            # 「Physical density: 480」或「Override density: 420」
+            matches = re.findall(r"(\d{2,4})", out or "")
+            if matches:
+                info['density'] = f"{matches[-1]} dpi"
+        except Exception as e:
+            logger.debug("采集屏幕密度失败: %s", e)
+
+        try:
+            out = shell_text(self.device, "getprop ro.build.version.release")
+            info['android'] = (out or "").strip()
+        except Exception as e:
+            logger.debug("采集安卓版本失败: %s", e)
+
+        return info
+
+    # ============================================================
     # 对外接口：一次性采集所有启用的指标
     # ============================================================
     def collect_sample(self, package: str, metrics: list) -> PerfSample:

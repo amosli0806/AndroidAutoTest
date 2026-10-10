@@ -347,6 +347,16 @@ class PerfController(QObject):
             sample_interval=interval,
             metrics=metrics,
         )
+        # 设备信息（分辨率 / 屏幕密度 / 安卓版本）一次性采集，用于报告的「基本信息」
+        try:
+            _compat = AndroidCompat(self.device_service.device)
+            _svc = PerfService(self.device_service.device, _compat)
+            _info = _svc.get_device_info()
+            session.screen_resolution = _info.get('resolution', '')
+            session.screen_density = _info.get('density', '')
+            session.android_version = _info.get('android', '') or _compat.version
+        except Exception as e:
+            logger.debug("采集设备信息失败（不影响采集）: %s", e)
         self.current_session = session
         self._alert_cache = {k: False for k in metrics}
         self._last_worker_error = None

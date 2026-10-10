@@ -57,6 +57,10 @@ class PerfSession:
     suite_name: str = ""
     case_ids: List[str] = field(default_factory=list)
     case_names: List[str] = field(default_factory=list)
+    # 设备信息（会话创建时采集一次，用于报告「基本信息」；旧数据为空）
+    screen_resolution: str = ""       # 如 1080x2340（含物理分辨率时的 Override 值）
+    screen_density: str = ""          # 如 480（dpi），取自 wm density
+    android_version: str = ""         # 如 13，取自 ro.build.version.release
     # 阈值告警记录：[(timestamp, metric, message), ...]
     alerts: List[tuple] = field(default_factory=list)
 
@@ -74,6 +78,9 @@ class PerfSession:
             "suite_name": self.suite_name,
             "case_ids": self.case_ids,
             "case_names": self.case_names,
+            "screen_resolution": self.screen_resolution,
+            "screen_density": self.screen_density,
+            "android_version": self.android_version,
             "alerts": [list(a) for a in self.alerts],
         }
 
@@ -91,6 +98,9 @@ class PerfSession:
             suite_name=data.get("suite_name", ""),
             case_ids=data.get("case_ids", []),
             case_names=data.get("case_names", []),
+            screen_resolution=data.get("screen_resolution", ""),
+            screen_density=data.get("screen_density", ""),
+            android_version=data.get("android_version", ""),
         )
         for s in data.get("samples", []):
             # 兼容旧数据：早期 perf_data.json 的采样点里还带卡顿相关的字段，
