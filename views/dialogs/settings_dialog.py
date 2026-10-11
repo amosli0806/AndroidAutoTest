@@ -61,6 +61,8 @@ _SHORTCUT_LABELS = {
 }
 import qtawesome as qta
 from utils.settings import Settings, THEME_MODE_SYSTEM, THEME_MODE_LIGHT, THEME_MODE_DARK
+from utils.dialogs import InputDialog, QuestionDialog, ConfirmDeleteDialog
+from utils.toast import show_toast
 
 logger = logging.getLogger(__name__)
 
@@ -693,6 +695,29 @@ class SettingsDialog(QDialog):
         form.setSpacing(12)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
+        # 车型模板：把「换车会变」的配置（唤醒词 + 回执验证的日志标签/失败关键词）
+        # 存成命名预设。选中即套用（本行是预设控件，立即生效，不需要再点保存）。
+        self.car_profile_combo = QComboBox()
+        self.car_profile_combo.setMinimumWidth(200)
+        self.car_profile_combo.currentIndexChanged.connect(
+            self._on_car_profile_selected)
+        self.car_profile_save_btn = QPushButton("另存为…")
+        self.car_profile_save_btn.setFixedHeight(30)
+        self.car_profile_save_btn.clicked.connect(self._on_save_car_profile)
+        self.car_profile_del_btn = QPushButton("删除")
+        self.car_profile_del_btn.setFixedHeight(30)
+        self.car_profile_del_btn.setEnabled(False)
+        self.car_profile_del_btn.clicked.connect(self._on_delete_car_profile)
+        profile_row = QHBoxLayout()
+        profile_row.setContentsMargins(0, 0, 0, 0)
+        profile_row.setSpacing(8)
+        profile_row.addWidget(self.car_profile_combo, 1)
+        profile_row.addWidget(self.car_profile_save_btn)
+        profile_row.addWidget(self.car_profile_del_btn)
+        profile_holder = QWidget()
+        profile_holder.setLayout(profile_row)
+        form.addRow("车型模板:", profile_holder)
+
         self.voice_engine_combo = QComboBox()
         self.voice_engine_combo.setMinimumWidth(340)
         self.voice_engine_combo.currentIndexChanged.connect(
@@ -792,6 +817,101 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         return page
 
+    # ---------------- 车型模板 ----------------
+    def _refresh_car_profiles(self):
+        """把车型模板名灌进下拉框。blockSignals 防止刷新时误触发套用。"""
+        from models.voice_model import VoiceModel
+
+        vm = VoiceModel()
+        names = vm.car_profile_names()
+        cur = vm.current_car_profile
+        self.car_profile_combo.blockSignals(True)
+        self.car_profile_combo.clear()
+        self.car_profile_combo.addItem("（不使用模板）", "")
+        for n in names:
+            self.car_profile_combo.addItem(n, n)
+        idx = self.car_profile_combo.findData(cur)
+        self.car_profile_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.car_profile_combo.blockSignals(False)
+        self.car_profile_del_btn.setEnabled(bool(cur) and cur in names)
+
+    def _car_profile_snapshot(self) -> dict:
+        """从当前界面取一份模板内容（只含随车字段）。"""
+        return {
+            "wake_word": (self.wake_word_edit.text() or "").strip(),
+            "verify": {
+                "enabled": self.verify_enabled_check.isChecked(),
+                "log_tag": (self.verify_tag_edit.text() or "").strip(),
+                "fail_keywords": self._split_keywords(self.verify_fail_edit.text()),
+            },
+        }
+
+    def _fill_car_profile_fields(self, prof: dict):
+        """把模板内容回填到界面（唤醒词在本页，日志标签/关键词在「回执验证」页）。"""
+        if "wake_word" in prof:
+            self.wake_word_edit.setText(str(prof.get("wake_word") or ""))
+        verify = prof.get("verify") or {}
+        if "enabled" in verify:
+            self.verify_enabled_check.setChecked(bool(verify["enabled"]))
+        if "log_tag" in verify:
+            self.verify_tag_edit.setText(str(verify.get("log_tag") or ""))
+        if "fail_keywords" in verify:
+            self.verify_fail_edit.setText(
+                "，".join(verify.get("fail_keywords") or []))
+
+    def _on_car_profile_selected(self, _index):
+        """选中某个模板 → 只把内容回填到界面；点「应用 / 确定」才真正生效。
+
+        与本页其它字段（音色 / 唤醒词）一致：避免用户选完又点「取消」时配置被悄悄改掉。
+        """
+        name = self.car_profile_combo.currentData() or ""
+        self.car_profile_del_btn.setEnabled(bool(name))
+        if not name:
+            return
+        from models.voice_model import VoiceModel
+
+        prof = VoiceModel().get_car_profile(name)
+        if not prof:
+            return
+        self._fill_car_profile_fields(prof)
+        show_toast(self, f"已载入「{name}」，点「应用」或「确定」后生效", duration=2500)
+
+    def _on_save_car_profile(self):
+        """把当前界面的随车配置另存为一个车型模板。"""
+        from models.voice_model import VoiceModel
+
+        vm = VoiceModel()
+        default = self.car_profile_combo.currentData() or ""
+        name, ok = InputDialog.get_text(
+            self, "另存为车型模板", "模板名称（如：本田 23/4M）:",
+            default_text=default)
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        if name in vm.car_profile_names():
+            if not QuestionDialog.ask(
+                    self, "覆盖车型模板",
+                    f"「{name}」已存在，要用当前配置覆盖吗？",
+                    yes_text="覆盖", no_text="取消"):
+                return
+        if vm.save_car_profile(name, self._car_profile_snapshot()):
+            self._refresh_car_profiles()
+            show_toast(self, f"已保存车型模板「{name}」", duration=2000)
+
+    def _on_delete_car_profile(self):
+        name = self.car_profile_combo.currentData() or ""
+        if not name:
+            return
+        if not ConfirmDeleteDialog.ask(
+                self, "删除车型模板", f"确定删除车型模板「{name}」吗？",
+                detail="只删掉这组预设，不会改动当前的语音配置。"):
+            return
+        from models.voice_model import VoiceModel
+
+        if VoiceModel().delete_car_profile(name):
+            self._refresh_car_profiles()
+            show_toast(self, f"已删除车型模板「{name}」", duration=2000)
+
     def _load_voice_config(self):
         """把引擎/音色/输出设备选项灌进下拉框，并回填已保存的选择"""
         from models.voice_model import DEFAULT_WAKE_WORD, VoiceModel
@@ -834,6 +954,8 @@ class SettingsDialog(QDialog):
         idx = self.voice_device_combo.findData(settings.get("device_id") or "")
         if idx >= 0:
             self.voice_device_combo.setCurrentIndex(idx)
+
+        self._refresh_car_profiles()
 
     def _load_voice_tones(self):
         """按当前引擎 key 切引擎，并灌该引擎的音色列表。"""
@@ -892,6 +1014,9 @@ class SettingsDialog(QDialog):
             return
         vm = VoiceModel()
         verify = vm.settings.get("verify") or {}
+        # 记住车型模板下拉里的选择（选「不使用模板」时存空串）
+        if hasattr(self, "car_profile_combo"):
+            vm.current_car_profile = self.car_profile_combo.currentData() or ""
         vm.set_settings(
             engine=self.voice_engine_combo.currentData() or "",
             voice_id=self.voice_tone_combo.currentData() or "",

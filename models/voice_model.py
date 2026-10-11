@@ -213,6 +213,10 @@ class VoiceModel:
         self._dirty_settings = set()
         self.groups: List[VoiceGroup] = []
         self.cases: List[VoiceCase] = []
+        # 车型模板：名称 -> {"wake_word": str, "verify": {enabled, log_tag, fail_keywords}}
+        # 只存「换车会变」的配置；引擎 / 音色 / 输出设备跟测试机有关、不随车变，不进模板。
+        self.car_profiles: dict = {}
+        self.current_car_profile = ""      # 最近套用/保存的模板名，供设置页下拉回显
         self.load()
 
     # ---------------- 读写 ----------------
@@ -237,6 +241,8 @@ class VoiceModel:
                                for g in (data.get("groups") or [])]
                 self.cases = [VoiceCase.from_dict(c)
                               for c in (data.get("cases") or [])]
+                self.car_profiles = dict(data.get("car_profiles") or {})
+                self.current_car_profile = str(data.get("current_car_profile") or "")
                 return
             except Exception:
                 pass
@@ -247,6 +253,8 @@ class VoiceModel:
         self._dirty_settings = set()
         self.groups = []
         self.cases = []
+        self.car_profiles = {}
+        self.current_car_profile = ""
         self.save()
 
     def _merge_settings_for_save(self) -> dict:
@@ -279,6 +287,8 @@ class VoiceModel:
                     "settings": self.settings,
                     "groups": [g.to_dict() for g in self.groups],
                     "cases": [c.to_dict() for c in self.cases],
+                    "car_profiles": self.car_profiles,
+                    "current_car_profile": self.current_car_profile,
                 }, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"[voice_model] 保存失败 {self.DATA_FILE}: {e}")
@@ -290,6 +300,36 @@ class VoiceModel:
                 self.settings[key] = value
                 self._dirty_settings.add(key)
         self.save()
+
+    # ---------------- 车型模板 ----------------
+    # 换车时要改的就这几样：唤醒词（"你好本田"…）、回执验证的日志标签、失败关键词。
+    # 做成命名预设后一键套用，不用每次手改；成功关键词按用例配在检测步骤里，不进模板。
+    def car_profile_names(self) -> List[str]:
+        """已保存的车型模板名（按保存顺序）。"""
+        return list(self.car_profiles.keys())
+
+    def get_car_profile(self, name: str) -> dict:
+        """取某个模板的内容（副本，改它不影响库）。"""
+        return dict(self.car_profiles.get(name) or {})
+
+    def save_car_profile(self, name: str, snapshot: dict) -> bool:
+        """新增或覆盖一个车型模板，并记为当前模板。"""
+        name = (name or "").strip()
+        if not name or not isinstance(snapshot, dict):
+            return False
+        self.car_profiles[name] = snapshot
+        self.current_car_profile = name
+        self.save()
+        return True
+
+    def delete_car_profile(self, name: str) -> bool:
+        if name not in self.car_profiles:
+            return False
+        del self.car_profiles[name]
+        if self.current_car_profile == name:
+            self.current_car_profile = ""
+        self.save()
+        return True
 
     # ---------------- 分组 ----------------
     def get_group(self, group_id: str) -> Optional[VoiceGroup]:
