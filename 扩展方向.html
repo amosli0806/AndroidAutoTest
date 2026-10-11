@@ -226,7 +226,7 @@
         <h3>⚡ 自动化执行 <span class="tag done">✅</span></h3>
         <ul>
           <li>循环 1~999 次、失败停止、可中途打断</li>
-          <li>测试套件（创建 / 保存 / 加载 / 自动匹配 / 失效清理）+ HTML 报告（含失败截图）</li>
+          <li>测试套件（创建 / 保存 / 加载 / 自动匹配 / 失效清理 / <b>拖拽排序</b>，2026-10-11）+ HTML 报告（含失败截图）</li>
           <li>日志类型筛选 + 关键字搜索高亮、AI 失败分析</li>
           <li>定时执行（每天 / 每周 / 每月）</li>
           <li>设备离线自动重连、任务串行队列</li>
@@ -318,7 +318,7 @@
         <div class="gap-item"><span class="tag plan">📋</span><div><b>无图像识别定位</b> — 对游戏 / 视频 / 自绘控件无能为力。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>套件能力不完整</b> — 无套件级报告、排序、链式执行。</div></div>
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>套件能力不完整</b> — 无套件级报告、无链式执行（A→B）。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>执行能力受限</b> — 仅单设备串行，无命令行 / 无 CI/CD 接入。</div></div>
@@ -485,7 +485,7 @@
           <tr><td class="stars">⭐⭐⭐</td><td>变量 / 参数化</td><td>数据驱动是自动化测试的核心，是关键字驱动与数据驱动的共同地基</td></tr>
           <tr><td class="stars">⭐⭐⭐</td><td>批量操作增强</td><td>高频诉求，效率提升显著</td></tr>
           <tr><td class="stars">⭐⭐</td><td>执行健壮性（重试 + 显式等待）</td><td>直接影响用例稳定性与回归可信度</td></tr>
-          <tr><td class="stars">⭐⭐</td><td>测试套件增强</td><td>套件级报告与排序，提升组织效率</td></tr>
+          <tr><td class="stars">⭐⭐</td><td>测试套件增强</td><td>套件级报告与链式执行，提升组织效率</td></tr>
           <tr><td class="stars">⭐⭐</td><td>关键字驱动</td><td>封装复用，降低用例编写成本</td></tr>
           <tr><td class="stars">⭐</td><td>语音播报增强</td><td>剩余是唤醒词多套 / 车型模板 / 执行结果校验</td></tr>
           <tr><td class="stars">⭐</td><td>性能检测补全</td><td>诊断产物接进会话（堆转储 / 抓包 / 截图）+ 抓包参数与保护 + 补齐 GPU / 系统内存 / 整机 CPU 等维度</td></tr>
@@ -537,7 +537,7 @@
     <div class="card">
       <h3>阶段四 · 测试套件增强 <span class="tag plan">📋 可穿插，见效快</span></h3>
       <ul>
-        <li>套件：级报告与通过率、套件内拖拽排序、链式执行（A→B）</li>
+        <li>套件级报告与通过率、链式执行（A→B）</li>
       </ul>
       <div class="example">💡 <b>打个比方：</b>「歌单出成绩单」——开发量小、见效快，随时可以插队做。</div>
     </div>
@@ -580,7 +580,7 @@
         <tbody>
           <tr><td>阶段二</td><td>变量 / 参数化</td><td class="stars">⭐⭐⭐</td><td>关键字 / 数据驱动 / CI 的共同地基</td></tr>
           <tr><td>阶段三</td><td>执行健壮性</td><td class="stars">⭐⭐</td><td>提升用例稳定性，车机慢响应刚需</td></tr>
-          <tr><td>阶段四</td><td>套件增强</td><td class="stars">⭐⭐</td><td>套件级报告与排序，可穿插</td></tr>
+          <tr><td>阶段四</td><td>套件增强</td><td class="stars">⭐⭐</td><td>套件级报告与链式执行，可穿插</td></tr>
           <tr><td>阶段五</td><td>关键字 / 步骤模板</td><td class="stars">⭐⭐</td><td>复用提升，依赖阶段二</td></tr>
           <tr><td>阶段六</td><td>图像识别 + CI/CD</td><td class="stars">⭐</td><td>进阶能力，工作量大，逐步推进</td></tr>
           <tr><td>穿插</td><td>性能检测补全</td><td class="stars">⭐⭐</td><td>诊断产物接进会话 + 抓包参数 / 保护 + 补齐采集维度（GPU / 系统内存 / 整机 CPU 等）</td></tr>

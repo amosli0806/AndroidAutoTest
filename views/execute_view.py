@@ -2,7 +2,8 @@
 import qtawesome as qta
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QTreeView, QLabel, QSpinBox, QCheckBox,
-                             QComboBox, QMessageBox, QSizePolicy)
+                             QComboBox, QMessageBox, QSizePolicy,
+                             QDialog, QMenu)
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
 from PyQt6.QtGui import QStandardItemModel, QStandardItem, QIcon
 from models.project_model import ProjectModel, TreeNode
@@ -418,6 +419,10 @@ class ExecuteView(QWidget):
         self.suite_combo.setMinimumWidth(130)
         self.suite_combo.setFixedHeight(28)  # 与图标按钮同高，避免撑高工具栏行
         self.suite_combo.currentTextChanged.connect(self._on_suite_selected)
+        # 套件内容 / 执行顺序编辑走右键菜单：不往工具栏加按钮，避免挤动已有布局
+        self.suite_combo.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.suite_combo.customContextMenuRequested.connect(self._on_suite_menu)
+        self.suite_combo.setToolTip("选择套件；右键可编辑套件内容与执行顺序")
 
         self.save_suite_btn = QPushButton()
         self.save_suite_btn.setIcon(qta.icon('fa6s.floppy-disk', color=self._icon_color))
@@ -721,7 +726,7 @@ class ExecuteView(QWidget):
         if self._executing:
             self.stop_requested.emit()
             return
-        ids = self._get_checked_ids()
+        ids = self._ordered_run_ids(self._get_checked_ids())
         if ids:
             self._executing = True
             self._update_buttons()
@@ -773,6 +778,72 @@ class ExecuteView(QWidget):
     def set_executing(self, executing: bool):
         self._executing = executing
         self._update_buttons()
+
+    def _on_suite_menu(self, pos):
+        """套件下拉的右键菜单：编辑套件内容与执行顺序。"""
+        if self._executing:
+            return
+        name = self.suite_combo.currentText()
+        menu = QMenu(self)
+        edit_action = menu.addAction("编辑套件内容 / 执行顺序…")
+        edit_action.setEnabled(bool(name) and name != "(无套件)")
+        chosen = menu.exec(self.suite_combo.mapToGlobal(pos))
+        if chosen is edit_action:
+            self._edit_current_suite()
+
+    def _edit_current_suite(self):
+        """打开套件内容对话框：查看用例、拖拽排序、增删；保存后写回套件。"""
+        name = self.suite_combo.currentText()
+        if not name or name == "(无套件)":
+            return
+        suite = self.suite_model.get_suite_by_name(name)
+        if not suite:
+            return
+
+        from views.dialogs.suite_editor_dialog import SuiteEditorDialog
+
+        # 用例名从项目树取；取不到的回退显示 id（用例可能已被删，保存时会被清掉）
+        id_to_name = {}
+        if self.project_model is not None:
+            for cid in suite.case_ids:
+                node = self.project_model.get_node_by_id(cid)
+                if node:
+                    id_to_name[cid] = node.name
+
+        dlg = SuiteEditorDialog(name, list(suite.case_ids), id_to_name,
+                                available_ids=self._get_checked_ids(), parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        new_ids = dlg.result_ids()
+        if not new_ids:
+            show_toast(message="套件不能为空，未保存")
+            return
+        if new_ids == list(suite.case_ids):
+            return
+
+        self.suite_model.update_suite(name, new_ids)
+        self.suites_changed.emit()
+        self._refresh_suite_combo()
+        self._suppress_suite_signal = True
+        self.suite_combo.setCurrentText(name)
+        self._suppress_suite_signal = False
+        self._on_suite_selected(name)      # 按新集合重新勾选树
+        show_toast(message=f"套件「{name}」已更新（{len(new_ids)} 条）")
+
+    def _ordered_run_ids(self, ids):
+        """执行顺序：选中了套件、且勾选集合与它一致时，按套件里存的顺序跑。
+
+        没选套件（或勾选与套件不一致，说明是手动勾的）时保持树的顺序，
+        行为与改动前完全一致 —— 只有用户真的排过序才会体现差异。
+        """
+        name = self.suite_combo.currentText()
+        if name and name != "(无套件)":
+            suite = self.suite_model.get_suite_by_name(name)
+            if suite and set(suite.case_ids) == set(ids):
+                order = {cid: i for i, cid in enumerate(suite.case_ids)}
+                return sorted(ids, key=lambda c: order.get(c, len(order)))
+        return list(ids)
 
     def _refresh_suite_combo(self):
         current = self.suite_combo.currentText()
