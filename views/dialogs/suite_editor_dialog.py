@@ -5,7 +5,7 @@
 """
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
-    QPushButton, QLabel
+    QPushButton, QLabel, QFrame
 )
 from PyQt6.QtCore import Qt
 
@@ -35,7 +35,8 @@ class SuiteEditorDialog(QDialog):
         self._available_ids = list(available_ids or [])
 
         self.setWindowTitle(f"套件内容 · {suite_name}")
-        self.resize(540, 560)
+        self.resize(620, 560)
+        self.setMinimumWidth(600)
         self.setup_ui()
         self.apply_theme()
         self._populate(ordered_ids)
@@ -46,18 +47,25 @@ class SuiteEditorDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
 
+        # 标题行：左侧标题，右侧用例计数（同一行，省掉一条独立文本行）
+        header_row = QHBoxLayout()
+        header_row.setSpacing(10)
+
         self.title_label = QLabel(f"套件内容 · {self._suite_name}")
         self.title_label.setObjectName("titleLabel")
-        layout.addWidget(self.title_label)
+        header_row.addWidget(self.title_label)
+        header_row.addStretch()
+
+        self.count_label = QLabel("")
+        self.count_label.setObjectName("countLabel")
+        header_row.addWidget(self.count_label, 0,
+                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(header_row)
 
         self.hint_label = QLabel("拖拽条目可调整执行顺序（列表顺序 = 执行顺序）")
         self.hint_label.setObjectName("hintLabel")
         self.hint_label.setWordWrap(True)
         layout.addWidget(self.hint_label)
-
-        self.count_label = QLabel("")
-        self.count_label.setObjectName("countLabel")
-        layout.addWidget(self.count_label)
 
         self.list_widget = QListWidget()
         self.list_widget.setObjectName("suiteList")
@@ -69,46 +77,60 @@ class SuiteEditorDialog(QDialog):
         self.list_widget.model().rowsMoved.connect(lambda *_: self._renumber())
         layout.addWidget(self.list_widget, 1)
 
-        op_row = QHBoxLayout()
-        op_row.setSpacing(8)
+        # 细分隔线：把列表区与底部操作栏分开，底部读起来像一条独立工具栏
+        self.sep_line = QFrame()
+        self.sep_line.setObjectName("sepLine")
+        self.sep_line.setFixedHeight(1)
+        layout.addWidget(self.sep_line)
+
+        # 底部操作栏（**单行**）：左侧列表操作，右侧对话框动作。
+        # 原先分成 op_row / btn_row 两行，按钮一多就吃掉不少高度、视觉也散；
+        # 合并后靠中间的弹性空隙分组，既是一行、也自然分出「操作 | 确认」两区。
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+
         self.add_checked_btn = QPushButton("加入当前勾选的用例")
         self.add_checked_btn.setObjectName("opBtn")
+        self.add_checked_btn.setToolTip("把执行页当前勾选的用例追加到套件末尾")
         self.add_checked_btn.clicked.connect(self._on_add_checked)
-        op_row.addWidget(self.add_checked_btn)
+        action_row.addWidget(self.add_checked_btn)
 
         self.remove_btn = QPushButton("移除选中")
         self.remove_btn.setObjectName("opBtn")
+        self.remove_btn.setToolTip("把选中的用例移出套件（不影响用例本身）")
         self.remove_btn.clicked.connect(self._on_remove_selected)
-        op_row.addWidget(self.remove_btn)
+        action_row.addWidget(self.remove_btn)
 
         self.move_up_btn = QPushButton("上移")
         self.move_up_btn.setObjectName("opBtn")
+        self.move_up_btn.setToolTip("把选中的用例上移一位")
         self.move_up_btn.clicked.connect(lambda: self._move_selected(-1))
-        op_row.addWidget(self.move_up_btn)
+        action_row.addWidget(self.move_up_btn)
 
         self.move_down_btn = QPushButton("下移")
         self.move_down_btn.setObjectName("opBtn")
+        self.move_down_btn.setToolTip("把选中的用例下移一位")
         self.move_down_btn.clicked.connect(lambda: self._move_selected(1))
-        op_row.addWidget(self.move_down_btn)
-        op_row.addStretch()
-        layout.addLayout(op_row)
+        action_row.addWidget(self.move_down_btn)
 
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
+        action_row.addStretch(1)
+
         self.cancel_btn = QPushButton("取消")
         self.cancel_btn.setObjectName("cancelBtn")
-        self.cancel_btn.setFixedHeight(34)
-        self.cancel_btn.setMinimumWidth(120)
         self.cancel_btn.clicked.connect(self.reject)
-        btn_row.addWidget(self.cancel_btn)
+        action_row.addWidget(self.cancel_btn)
 
         self.ok_btn = QPushButton("保存")
         self.ok_btn.setObjectName("okBtn")
-        self.ok_btn.setFixedHeight(34)
-        self.ok_btn.setMinimumWidth(120)
         self.ok_btn.clicked.connect(self.accept)
-        btn_row.addWidget(self.ok_btn)
-        layout.addLayout(btn_row)
+        action_row.addWidget(self.ok_btn)
+
+        # 「取消 / 保存」给一个下限宽度，与左侧操作按钮拉开主次
+        # （高度统一由 QSS 的 min/max-height + padding 控制，避免两种机制打架）
+        self.cancel_btn.setMinimumWidth(88)
+        self.ok_btn.setMinimumWidth(88)
+
+        layout.addLayout(action_row)
 
     # ------------------------------------------------------------------
     def _display_name(self, case_id: str) -> str:
@@ -133,8 +155,7 @@ class SuiteEditorDialog(QDialog):
 
     def _update_count(self):
         n = self.list_widget.count()
-        self.count_label.setText(
-            f"共 {n} 条用例" if n else "套件里还没有用例 —— 可点下方「加入当前勾选的用例」")
+        self.count_label.setText(f"共 {n} 条用例" if n else "套件里还没有用例")
 
     def _update_op_buttons(self):
         has_sel = bool(self.list_widget.selectedItems())
@@ -211,6 +232,7 @@ class SuiteEditorDialog(QDialog):
 
         self.setStyleSheet(f"""
             QDialog {{ background-color: {bg}; }}
+            QFrame#sepLine {{ background-color: {border}; border: none; }}
             QDialog QLabel {{ color: {text}; background: transparent; font-size: 13px; }}
             QDialog QLabel#titleLabel {{ font-size: 16px; font-weight: bold; color: {title}; }}
             QDialog QLabel#hintLabel, QDialog QLabel#countLabel {{ color: {hint}; font-size: 12px; }}
@@ -230,16 +252,21 @@ class SuiteEditorDialog(QDialog):
                 border: 1px solid {border};
                 border-radius: 4px;
                 padding: 4px 12px;
-                min-height: 26px;
+                min-height: 22px;
+                max-height: 22px;
             }}
             QPushButton#opBtn:hover, QPushButton#cancelBtn:hover {{ background-color: {btn_hover}; }}
             QPushButton#opBtn:disabled {{ color: {hint}; }}
             QPushButton#okBtn {{
                 background-color: #1976d2;
                 color: #ffffff;
-                border: none;
+                border: 1px solid #1976d2;
                 border-radius: 4px;
+                padding: 4px 12px;
+                min-height: 22px;
+                max-height: 22px;
                 font-weight: 500;
             }}
             QPushButton#okBtn:hover {{ background-color: #1565c0; }}
+            QPushButton#okBtn:disabled {{ background-color: #9e9e9e; }}
         """)
