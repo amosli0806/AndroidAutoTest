@@ -244,13 +244,10 @@ class PerfController(QObject):
     # ------------------------------------------------------------------
     def _connect_signals(self):
         self.view.start_requested.connect(self._on_start)
-        self.view.pause_requested.connect(self._on_pause)
-        self.view.resume_requested.connect(self._on_resume)
         self.view.stop_requested.connect(self._on_stop)
         self.view.app_list_refresh_requested.connect(self._on_refresh_apps)
         self.view.export_csv_requested.connect(self._on_export_csv)
         self.view.export_json_requested.connect(self._on_export_json)
-        self.view.launch_test_requested.connect(self._on_launch_test)
         self.view.baseline_requested.connect(self._on_save_baseline)
         self.view.baseline_manager_requested.connect(self.open_baseline_manager)
         self.view.clear_requested.connect(self._on_clear_requested)
@@ -440,18 +437,6 @@ class PerfController(QObject):
                 )
         else:
             self.view.set_state(self.view.STATE_RUNNING)
-
-    def _on_pause(self):
-        if self.perf_worker:
-            self.perf_worker.pause()
-        self.view.set_state(self.view.STATE_PAUSED)
-        self._stats_timer.stop()
-
-    def _on_resume(self):
-        if self.perf_worker:
-            self.perf_worker.resume()
-        self.view.set_state(self.view.STATE_RUNNING)
-        self._stats_timer.start()
 
     def _on_stop(self):
         # 幂等：已经停止则直接返回，避免场景化结束信号与用户点击重复触发
@@ -934,51 +919,7 @@ class PerfController(QObject):
     # ------------------------------------------------------------------
     # 启动测试
     # ------------------------------------------------------------------
-    def _on_launch_test(self, payload: dict):
-        package = payload['package']
-        if not self.device_service.device:
-            show_toast(self.view, "请先连接设备")
-            return
-
-        from views.perf_dialogs import LaunchTestDialog
-
-        try:
-            compat = AndroidCompat(self.device_service.device)
-            service = PerfService(self.device_service.device, compat)
-
-            # 支持「重新测试」：在对话框内点重新测试就再跑一轮
-            while True:
-                # 先停掉，避免影响冷启动测量
-                cold_ms = service.measure_cold_launch(package)
-                warm_ms = service.measure_warm_launch(package)
-
-                # 持久化到模型（历史趋势 + 基线对比都基于它）
-                self.model.add_launch_record(package, cold_ms, warm_ms)
-                history = self.model.get_launch_history(package)
-                baseline = self.model.get_launch_baseline(package)
-
-                dlg = LaunchTestDialog(
-                    package, cold_ms, warm_ms,
-                    history=history, baseline=baseline,
-                    baseline_setter=lambda c, w: self.model.set_launch_baseline(package, c, w),
-                    parent=self.view
-                )
-                dlg.exec()
-
-                # 结果写进底部「虫师日志」，不进自动化执行日志区
-                from utils import log_colors
-                self.log_emitted.emit(
-                    f"<span style='color:{log_colors.log_color(log_colors.RESULT)};'>"
-                    f"[性能] 启动测试: 冷启动 {cold_ms} ms, 热启动 {warm_ms} ms</span>"
-                )
-
-                # 点「重新测试」则继续循环，否则结束
-                if not dlg.retest_requested:
-                    break
-        except Exception as e:
-            ErrorDialog.show_error(self.view, "启动测试失败", str(e))
-
-    # ---------- 新增：打开基线管理 ----------
+# ---------- 新增：打开基线管理 ----------
     def open_baseline_manager(self):
         from views.perf_dialogs import PerfBaselineDialog
         dlg = PerfBaselineDialog(self.model, self.view)

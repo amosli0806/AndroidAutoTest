@@ -105,11 +105,8 @@ class PerfView(QWidget):
                                             #  'mode': 'monitor'|'scenario',
                                             #  'suite': str, 'loop': int,
                                             #  'stop_on_fail': bool}
-    pause_requested = pyqtSignal()
-    resume_requested = pyqtSignal()
     stop_requested = pyqtSignal()
     app_list_refresh_requested = pyqtSignal()
-    launch_test_requested = pyqtSignal(dict)   # {'package', 'type': 'cold'|'warm'|'both'}
     export_csv_requested = pyqtSignal()
     export_json_requested = pyqtSignal()
     report_requested = pyqtSignal()
@@ -125,10 +122,9 @@ class PerfView(QWidget):
     screenshot_once_requested = pyqtSignal()        # 手动触发一次截图
     screenshot_interval_changed = pyqtSignal()      # 截图间隔变更
 
-    # 状态枚举
+    # 状态枚举（曾经的「暂停」状态已随暂停/继续按钮一并移除）
     STATE_IDLE = 'idle'
     STATE_RUNNING = 'running'
-    STATE_PAUSED = 'paused'
     STATE_SCENARIO = 'scenario'
 
     def __init__(self, parent=None):
@@ -149,6 +145,9 @@ class PerfView(QWidget):
         self._last_traffic_ts = None
         self._last_traffic_rx = 0
         self._last_traffic_tx = 0
+        # 开始/停止二合一按钮的两套外观（在 apply_theme 里按主题生成）
+        self._run_btn_qss_normal = ""
+        self._run_btn_qss_danger = ""
 
         self.setup_ui()
         self._apply_state()
@@ -315,29 +314,41 @@ class PerfView(QWidget):
         app_ok = self.app_combo.currentText() not in ("", "未检测到应用")
         if self._state == self.STATE_IDLE:
             self.start_btn.setEnabled(app_ok)
-        # 同步刷新开始按钮图标（置灰时只留文案）
+        self._refresh_run_btn()
+
+    def _refresh_run_btn(self):
+        """刷新「开始 / 停止」二合一按钮的外观。
+
+        空闲 = 开始（蓝底 play 图标）；采集中 / 场景化执行中 = 停止（红底 stop
+        图标）。两套 QSS 由 apply_theme 按当前主题预算好（见 _run_btn_qss_*），
+        这里只做切换；按钮被置灰（未选应用）时只留文案、去掉图标。
+        """
+        idle = self._state == self.STATE_IDLE
         if self.start_btn.isEnabled():
-            self.start_btn.setIcon(qta.icon('fa6s.play', color='white'))
+            self.start_btn.setIcon(
+                qta.icon('fa6s.play' if idle else 'fa6s.stop', color='white'))
         else:
             self.start_btn.setIcon(QIcon())
+        self.start_btn.setText("开始" if idle else "停止")
+        self.start_btn.setToolTip("开始采集" if idle else "停止采集")
+        qss = self._run_btn_qss_normal if idle else self._run_btn_qss_danger
+        if qss:
+            self.start_btn.setStyleSheet(qss)
 
     def _apply_state(self):
         state = self._state
-        running = state in (self.STATE_RUNNING, self.STATE_SCENARIO)
-        paused = state == self.STATE_PAUSED
         idle = state == self.STATE_IDLE
 
-        self.start_btn.setEnabled(idle)
-        self.pause_btn.setEnabled(running)
-        self.resume_btn.setEnabled(paused)
-        self.stop_btn.setEnabled(running or paused)
+        # 开始/停止二合一：空闲时按「是否选了应用」决定可用性，采集中恒可用（点即停止）
+        app_ok = self.app_combo.currentText() not in ("", "未检测到应用")
+        self.start_btn.setEnabled(app_ok if idle else True)
+        self._refresh_run_btn()
 
         self.app_combo.setEnabled(idle)
         self.interval_combo.setEnabled(idle)
         self.mode_combo.setEnabled(idle)
         self.duration_label.setEnabled(idle)
         self.duration_spin.setEnabled(idle)
-        self.launch_test_btn.setEnabled(idle)
 
         # 场景化相关控件：只要模式是「场景化测试」就保持显示（运行中仅置灰不隐藏，
         # 隐藏会导致开始监控后参数区突然空一块、结束后又弹回）
@@ -365,17 +376,6 @@ class PerfView(QWidget):
         self.screenshot_enable_check.setEnabled(idle)
         self.screenshot_interval_combo.setEnabled(
             idle and self.screenshot_enable_check.isChecked())
-        # 置灰时只显示文案，不显示图标
-        for btn, icon_name in self._btn_icon_map.items():
-            if btn.isEnabled():
-                btn.setIcon(qta.icon(icon_name, color='white'))
-            else:
-                btn.setIcon(QIcon())
-        # 底部"启动测试"按钮跟随同一规则
-        if self.launch_test_btn.isEnabled():
-            self.launch_test_btn.setIcon(qta.icon('fa6s.rocket', color='white'))
-        else:
-            self.launch_test_btn.setIcon(QIcon())
         self._update_status_bar()
 
     # ------------------------------------------------------------------
@@ -472,29 +472,14 @@ class PerfView(QWidget):
                      self.duration_label, self.duration_spin]))
         row1.addWidget(flow_host, 1)
 
-        # 执行组（吸右，不参与换行）
-        self.start_btn = QPushButton("开始监控")
-        self.start_btn.clicked.connect(self._on_start_clicked)
-        self.pause_btn = QPushButton("暂停")
-        self.pause_btn.clicked.connect(self.pause_requested.emit)
-        self.resume_btn = QPushButton("继续")
-        self.resume_btn.clicked.connect(self.resume_requested.emit)
-        self.stop_btn = QPushButton("停止")
-        self.stop_btn.setObjectName("dangerBtn")   # 危险语义：可用时红色
-        self.stop_btn.clicked.connect(self.stop_requested.emit)
-        # 记录图标名，置灰时清空图标
-        self._btn_icon_map = {
-            self.start_btn: 'fa6s.play',
-            self.pause_btn: 'fa6s.pause',
-            self.resume_btn: 'fa6s.play',
-            self.stop_btn: 'fa6s.stop',
-        }
-        # 统一固定宽度：保证置灰隐藏图标后按钮尺寸不变
-        for b in (self.start_btn, self.pause_btn, self.resume_btn, self.stop_btn):
-            b.setFixedWidth(100)
+        # 执行组（吸右，不参与换行）：开始/停止二合一。
+        # 空闲显示「开始」（蓝），采集中显示「停止」（红）—— 由 _refresh_run_btn
+        # 按状态切换文案 / 图标 / 配色。原来的「暂停 / 继续」已移除。
+        self.start_btn = QPushButton("开始")
+        self.start_btn.clicked.connect(self._on_run_btn_clicked)
+        self.start_btn.setFixedWidth(100)
         # 吸右 + 垂直居中：行 1 的流式区换行变高时，执行组保持自然高度不被拉伸
-        self.exec_group = _make_group(None, [
-            self.start_btn, self.pause_btn, self.resume_btn, self.stop_btn])
+        self.exec_group = _make_group(None, [self.start_btn])
         row1.addWidget(self.exec_group, 0,
                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         c_layout.addLayout(row1)
@@ -591,12 +576,6 @@ class PerfView(QWidget):
         b_layout.addWidget(self.status_info, 1)
 
         # 右侧：操作按钮组（按语义分三组）
-        # 组 1：单次测量
-        self.launch_test_btn = QPushButton("启动测试")
-        self.launch_test_btn.setIcon(qta.icon('fa6s.rocket', color='white'))
-        self.launch_test_btn.clicked.connect(self._on_launch_test_clicked)
-        b_layout.addWidget(self.launch_test_btn)
-
         # 组 2：配置 / 数据
         self.threshold_btn = QPushButton("阈值设置")
         self.threshold_btn.setIcon(qta.icon('fa6s.sliders', color='white'))
@@ -970,15 +949,13 @@ class PerfView(QWidget):
 
         self.start_requested.emit(payload)
 
-    def _on_launch_test_clicked(self):
-        package = self.app_combo.currentText().strip()
-        if not package or package == "未检测到应用":
-            show_toast(message="请先选择应用", parent=self)
-            return
-        self.launch_test_requested.emit({
-            'package': package,
-            'type': 'both',
-        })
+    def _on_run_btn_clicked(self):
+        """开始/停止二合一的派发：空闲时启动采集，采集中时停止。"""
+        if self._state == self.STATE_IDLE:
+            self._on_start_clicked()
+        else:
+            self.stop_requested.emit()
+
 
     def _on_clear_clicked(self):
         for card in self._cards.values():
@@ -1030,7 +1007,6 @@ class PerfView(QWidget):
                 total = max(total, len(first.get('x', [])))
         state_text = {
             self.STATE_RUNNING: "采集中",
-            self.STATE_PAUSED: "已暂停",
             self.STATE_SCENARIO: "场景化执行中",
         }.get(self._state, "")
         self.status_info.setText(f"{state_text} · 采样点 {total} · 间隔 {self.interval_combo.currentText()}")
@@ -1199,35 +1175,44 @@ class PerfView(QWidget):
                 color: {'#e0e0e0' if not is_dark else '#888'};
             }}
         """
+        # 危险语义（停止 / 清空）：红底。单独抽成变量，供「开始/停止」二合一按钮
+        # 在切到「停止」态时复用（见 _refresh_run_btn）。
+        danger_qss = f"""
+            QPushButton {{
+                background-color: {danger_bg};
+                color: {danger_fg};
+                border: none;
+                border-radius: 4px;
+                padding: 4px 14px;
+                font-weight: 500;
+                min-height: 22px;
+            }}
+            QPushButton:hover {{
+                background-color: {'#ef5350' if is_dark else '#c0392b'};
+            }}
+            QPushButton:pressed {{
+                background-color: {'#c62828' if is_dark else '#96281b'};
+            }}
+            QPushButton:disabled {{
+                background-color: {'#555' if is_dark else '#b0b0b0'};
+                color: {'#888' if is_dark else '#e0e0e0'};
+            }}
+        """
+        # 记住两套外观，供运行按钮按状态切换
+        self._run_btn_qss_normal = btn_qss
+        self._run_btn_qss_danger = danger_qss
+
         for btn in self.findChildren(QPushButton):
             if btn.objectName() == "dangerBtn":
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: {danger_bg};
-                        color: {danger_fg};
-                        border: none;
-                        border-radius: 4px;
-                        padding: 4px 14px;
-                        font-weight: 500;
-                        min-height: 22px;
-                    }}
-                    QPushButton:hover {{
-                        background-color: {'#ef5350' if is_dark else '#c0392b'};
-                    }}
-                    QPushButton:pressed {{
-                        background-color: {'#c62828' if is_dark else '#96281b'};
-                    }}
-                    QPushButton:disabled {{
-                        background-color: {'#555' if is_dark else '#b0b0b0'};
-                        color: {'#888' if is_dark else '#e0e0e0'};
-                    }}
-                """)
+                btn.setStyleSheet(danger_qss)
             else:
                 btn.setStyleSheet(btn_qss)
+        # 主题换色后，运行按钮要按它「当前是开始还是停止」重新套一次
+        self._refresh_run_btn()
 
         # 底部操作按钮统一宽度：取自然宽度最大者（QSS 生效后测量），
         # 避免「清空」这类短文案按钮与四字按钮宽窄不一
-        bottom_btns = [self.launch_test_btn, self.threshold_btn, self.baseline_btn,
+        bottom_btns = [self.threshold_btn, self.baseline_btn,
                        self.baseline_mgr_btn, self.report_btn,
                        self.export_csv_btn, self.clear_btn]
         uniform_w = max(b.sizeHint().width() for b in bottom_btns)

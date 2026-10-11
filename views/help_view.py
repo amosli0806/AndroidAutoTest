@@ -695,7 +695,7 @@ class HelpView(QFrame):
                     {'image': 'perf_1_select_app.png', 'desc': '顶部选择目标应用，点「刷新应用」可重新获取列表'},
                     {'image': 'perf_2_choose_metrics.png', 'desc': '勾选要监控的指标（设备不支持的会置灰）'},
                     {'image': 'perf_3_set_interval.png', 'desc': '设置采样间隔：单项 1 秒即可，多项建议 5 秒以上'},
-                    {'image': 'perf_4_start_monitor.png', 'desc': '点「开始监控」，曲线与统计实时刷新'},
+                    {'image': 'perf_4_start_monitor.png', 'desc': '点「开始」，曲线与统计实时刷新'},
                     {'image': 'perf_5_view_charts.png', 'desc': '实时查看各项指标曲线'},
                     {'image': 'perf_6_export_report.png', 'desc': '完成后可保存基线、导出 CSV、生成报告'},
                 ])}
@@ -727,7 +727,7 @@ class HelpView(QFrame):
                     {'image': 'perf_scenario_1_select_app.png', 'desc': '选择目标应用并保持在前后台'},
                     {'image': 'perf_scenario_2_choose_suite.png', 'desc': '模式切换为「场景化测试」，选择套件'},
                     {'image': 'perf_scenario_3_set_loop.png', 'desc': '设置循环次数（建议 1~3 次），按需勾选「失败停止」'},
-                    {'image': 'perf_scenario_4_start.png', 'desc': '点「开始监控」，采集与执行同时进行'},
+                    {'image': 'perf_scenario_4_start.png', 'desc': '点「开始」，采集与执行同时进行'},
                     {'image': 'perf_scenario_5_view_logs.png', 'desc': '左侧看执行进度，曲线区看性能数据'},
                 ])}
 

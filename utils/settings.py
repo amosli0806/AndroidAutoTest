@@ -74,7 +74,6 @@ DEFAULT_SHORTCUTS = {
 
     # ---------- 性能检测页 ----------
     "perf_toggle_monitor": "F9",
-    "perf_toggle_pause": "F6",
     "perf_export_csv": "Ctrl+Shift+E",
     "perf_save_baseline": "Ctrl+B",
 

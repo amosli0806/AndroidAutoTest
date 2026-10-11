@@ -1396,11 +1396,6 @@ class MainWindow(QMainWindow):
                      if self._perf_view.get_state() == self._perf_view.STATE_IDLE
                      else self._perf_view.stop_requested.emit(),
                      page_index=8)
-            register("perf_toggle_pause",
-                     lambda: (self._perf_view.pause_requested.emit()
-                              if self._perf_view.get_state() == self._perf_view.STATE_RUNNING
-                              else self._perf_view.resume_requested.emit()),
-                     page_index=8)
             register("perf_export_csv",
                      lambda: self._perf_view.export_csv_requested.emit(),
                      page_index=8)

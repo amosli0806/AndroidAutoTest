@@ -52,7 +52,6 @@ _SHORTCUT_LABELS = {
     "adb_weak_network": "弱网模拟",
     "adb_packet": "网络抓包",
     "perf_toggle_monitor": "开始/停止监控",
-    "perf_toggle_pause": "暂停/继续",
     "perf_export_csv": "导出 CSV",
     "perf_save_baseline": "保存基线",
     "elem_add": "新增元素",
@@ -1873,7 +1872,7 @@ class SettingsDialog(QDialog):
                                    "adb_push", "adb_device_info",
                                    "adb_hprof", "adb_monkey", "adb_crash",
                                    "adb_anr", "adb_md5", "adb_weak_network", "adb_packet"]),
-            ("—— 性能检测 ——", ["perf_toggle_monitor", "perf_toggle_pause",
+            ("—— 性能检测 ——", ["perf_toggle_monitor",
                                "perf_export_csv", "perf_save_baseline"]),
             ("—— 应用元素库 ——", ["elem_add", "elem_edit", "elem_delete", "elem_verify"]),
         ]
