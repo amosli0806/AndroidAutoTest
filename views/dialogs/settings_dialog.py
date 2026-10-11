@@ -685,10 +685,7 @@ class SettingsDialog(QDialog):
         title.setObjectName("SettingsPageTitle")
         layout.addWidget(title)
 
-        subtitle = QLabel(
-            "「语音播报」页把文案用电脑扬声器读出来，车机麦克风拾取后交给它自己的语音助手。"
-            "这里选音色和声音从哪个扬声器出去 —— 选错设备车机就完全听不见。"
-        )
+        subtitle = QLabel("设置播报的音色与输出设备；选错设备，车机会听不见。")
         subtitle.setObjectName("SettingsPageSubtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -736,13 +733,9 @@ class SettingsDialog(QDialog):
         layout.addLayout(test_row)
 
         hint = QLabel(
-            "音色和输出设备由「语音播报」页与用例里的语音步骤共用，保存后立即生效。"
-            "响度直接用电脑的系统音量，程序内不再单独调音量。"
-            "唤醒词是「语音播报」页「唤醒词」按钮追加到用例末尾的那句，留空则用默认的"
-            f"「{DEFAULT_WAKE_WORD}」。\n"
-            "引擎可选「Windows 内置语音」（离线，音色来自系统）或「Edge 在线语音」"
-            "（需联网，微软在线音色，普通话更自然）。系统音色偏少时，可到 "
-            "Windows 设置 → 时间和语言 → 语音 → 添加语音，装更多语言包。"
+            "音色与输出设备与「语音播报」页共用，保存后立即生效；响度跟随系统音量。\n"
+            f"唤醒词会追加到用例末尾，留空则用默认「{DEFAULT_WAKE_WORD}」。\n"
+            "引擎：「Windows 内置语音」离线可用；「Edge 在线语音」需联网、普通话更自然。"
         )
         hint.setObjectName("SettingsPageSubtitle")
         hint.setWordWrap(True)

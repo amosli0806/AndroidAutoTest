@@ -813,7 +813,9 @@ class HelpView(QFrame):
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     <b>设置 → 语音设置</b><br>
                     • <b>音色</b>：选择发音人　<b>输出设备</b>：选择扬声器，选错车机听不见<br>
-                    • <b>唤醒词</b>：唤醒词按钮追加的文案；改完可点「试听」确认
+                    • <b>引擎</b>：「Windows 内置语音」离线可用；「Edge 在线语音」需联网、普通话更自然<br>
+                    • <b>唤醒词</b>：唤醒词按钮追加的文案；改完可点「试听」确认<br>
+                    • <b>音色太少</b>：Windows 设置 → 时间和语言 → 语音 → 添加语音，可装更多语言包
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
