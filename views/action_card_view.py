@@ -18,6 +18,7 @@ from models.voice_model import get_wake_word
 from views.element_selector_dialog import ElementSelectorDialog
 from utils.toast import show_toast
 from utils.theme import Theme, ThemeMode
+from utils.wheel_guard import WheelScrollGuard
 
 
 def _get_spinbox_arrow_url(color: str, direction: str) -> str:
@@ -87,6 +88,9 @@ class ActionCardView(QScrollArea):
             "color: #999; font-size: 14px; background: transparent;")
         self._empty_hint.hide()
         self._wake_word_applied = ""     # 上次自动填进「播报文案」的唤醒词
+        # 滚轮守卫：卡片里的下拉 / 数字框**没获得焦点**时，滚轮交给本滚动区。
+        # 否则光标划过参数框时列表会停住，参数的值反而被滚轮改掉（很打断操作）。
+        self._wheel_guard = WheelScrollGuard(self)
         self._build_cards()
         self._visible_types = self._load_visible_types()
         # 全部显示时 _build_cards 已经把位置排好了，不用再走一遍重排
@@ -360,6 +364,8 @@ class ActionCardView(QScrollArea):
             card.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             self.layout.addWidget(card, row, col)
             self._cards.append(card)
+            # 卡片里的下拉 / 数字框装滚轮守卫（卡片只建一次，这里装一次就够）
+            self._wheel_guard.watch(card)
 
             if col == 0:
                 row_cards.append([card])
