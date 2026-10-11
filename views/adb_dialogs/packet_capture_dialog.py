@@ -3,6 +3,7 @@
 import os
 import sys
 import subprocess
+import threading
 from datetime import datetime
 
 import qtawesome as qta
@@ -18,6 +19,23 @@ from utils.theme import ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 from utils.toast import show_toast
 from utils.dialogs import WarningDialog, ErrorDialog, ConfirmDeleteDialog
+
+
+# 抓包保护默认值：单次抓包的时长 / 文件大小上限，到限自动停止并保存已抓内容。
+# 目的是防止「忘了停」把设备 / 本地磁盘撑爆（尤其长时间无人值守时）。
+CAPTURE_MAX_SECONDS = 10 * 60              # 10 分钟
+CAPTURE_MAX_BYTES = 100 * 1024 * 1024      # 100 MB
+
+
+def capture_limit_text(reason: str) -> str:
+    """把 CaptureWorker.stop_reason 转成给用户看的限制说明。
+
+    仅在「到限自动停止」（time / size）时返回文案；手动停止或自然结束返回空串。
+    """
+    return {
+        'time': f'已达时长上限 {CAPTURE_MAX_SECONDS // 60} 分钟',
+        'size': f'已达大小上限 {CAPTURE_MAX_BYTES // 1024 // 1024} MB',
+    }.get(reason or '', '')
 
 
 class TcpdumpDeployThread(QThread):
@@ -85,21 +103,30 @@ class TcpdumpDeployThread(QThread):
 
 
 class CaptureWorker(QThread):
-    """后台线程：执行 tcpdump 抓包，实时输出到 pcap 文件"""
+    """后台线程：执行 tcpdump 抓包，实时输出到 pcap 文件。
+
+    带保护：超过时长 / 文件大小上限后自动停止并保存已抓内容。跑完可读
+    ``stop_reason`` 判断停止原因（'' 自然结束 / 'time' 超时 / 'size' 超量 / 'user' 手动）。
+    """
     started_signal = pyqtSignal(str)          # 文件路径
     finished_signal = pyqtSignal(bool, str)   # (成功, 结果)
     error_signal = pyqtSignal(str)
     size_updated = pyqtSignal(int)            # 文件大小
 
-    def __init__(self, serial, output_dir, filter_expr=""):
+    def __init__(self, serial, output_dir, filter_expr="",
+                 max_seconds=CAPTURE_MAX_SECONDS, max_bytes=CAPTURE_MAX_BYTES):
         super().__init__()
         self.serial = serial
         self.output_dir = output_dir
         self.filter_expr = filter_expr
+        self.max_seconds = max_seconds
+        self.max_bytes = max_bytes
         self._is_running = True
         self.process = None
         self.capture_file = None
         self.file_handle = None
+        self.stop_reason = ""
+        self._limit_timer = None
 
     def run(self):
         adb = get_adb_path()
@@ -143,6 +170,13 @@ class CaptureWorker(QThread):
 
         self.started_signal.emit(self.capture_file)
 
+        # 时长上限用独立计时器触发：无流量时 stdout.read 会一直阻塞，
+        # 光靠循环里的时间判断触发不了（这是保护最容易失效的地方）。
+        if self.max_seconds and self.max_seconds > 0:
+            self._limit_timer = threading.Timer(self.max_seconds, self._stop_by_time)
+            self._limit_timer.daemon = True
+            self._limit_timer.start()
+
         try:
             while self._is_running:
                 data = self.process.stdout.read(8192)
@@ -153,12 +187,34 @@ class CaptureWorker(QThread):
                 size = self.file_handle.tell()
                 if size % (1024 * 1024) < 8192:
                     self.size_updated.emit(size)
+                # 大小上限：有数据写入时才可能触发（够用，且不引入额外查询）
+                if self.max_bytes and size >= self.max_bytes:
+                    self.stop_reason = "size"
+                    break
         except Exception as e:
             self.error_signal.emit(f"读取数据异常: {e}")
         finally:
             self._cleanup()
 
+    def _stop_by_time(self):
+        """时长计时器回调：标记原因并终止 tcpdump，让阻塞的 read 返回。"""
+        if not self._is_running:
+            return
+        self.stop_reason = "time"
+        self._is_running = False
+        if self.process and self.process.poll() is None:
+            try:
+                self.process.terminate()
+            except Exception:
+                pass
+
     def _cleanup(self):
+        if self._limit_timer:
+            try:
+                self._limit_timer.cancel()
+            except Exception:
+                pass
+            self._limit_timer = None
         if self.process:
             try:
                 self.process.terminate()
@@ -180,6 +236,9 @@ class CaptureWorker(QThread):
         self.finished_signal.emit(True, self.capture_file)
 
     def stop(self):
+        """外部请求停止（用户点击 / 随监控结束自动收尾）。"""
+        if self._is_running:
+            self.stop_reason = "user"
         self._is_running = False
         if self.process and self.process.poll() is None:
             try:
@@ -216,6 +275,8 @@ class PacketCaptureDialog(QDialog):
         warning = QLabel(
             "⚠️ 抓包需要设备已 root，且工具已部署到 /data/local/tmp/tcpdump。"
             "抓取结果保存为 pcap 文件，可用 Wireshark 分析。"
+            f"单次抓包最长 {CAPTURE_MAX_SECONDS // 60} 分钟 / "
+            f"{CAPTURE_MAX_BYTES // 1024 // 1024} MB，到限自动停止并保存。"
         )
         warning.setObjectName("warningLabel")
         warning.setWordWrap(True)
@@ -423,10 +484,13 @@ class PacketCaptureDialog(QDialog):
 
     def _on_finished(self, success: bool, result: str):
         self.size_timer.stop()
+        reason = getattr(self.capture_worker, 'stop_reason', '') if self.capture_worker else ''
+        limit = capture_limit_text(reason)
+        note = f"（{limit}，已自动停止）" if limit else ""
         if success:
             self._set_buttons(stopped=True)
-            self.status_label.setText(f"✅ 抓包完成: {os.path.basename(result)}")
-            show_toast(self, "抓包完成", duration=2000)
+            self.status_label.setText(f"✅ 抓包完成: {os.path.basename(result)}{note}")
+            show_toast(self, f"抓包完成{note}", duration=2500)
         else:
             self._set_buttons(stopped=False)
             self.status_label.setText(f"❌ {result}")

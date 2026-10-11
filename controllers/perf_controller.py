@@ -561,6 +561,8 @@ class PerfController(QObject):
         # 堆转储/截图自动循环随监控结束而停止（勾选状态保留，作为下次监控的预设）
         self._stop_hprof_loop()
         self._stop_screenshot_loop()
+        # 抓包也随监控结束收尾：否则它会一直抓到时长/大小上限，甚至用户以为早就停了
+        self._stop_capture()
 
         # 结束会话
         if self.current_session:
@@ -992,19 +994,34 @@ class PerfController(QObject):
         self.view.set_packet_status("抓包中…")
 
     def _on_capture_finished(self, success: bool, result: str):
+        from views.adb_dialogs.packet_capture_dialog import capture_limit_text
+        worker = self._capture_worker
+        self._capture_worker = None
+        reason = getattr(worker, 'stop_reason', '') if worker else ''
+        # 自动停止时把原因讲清楚，避免用户以为是自己点停的 / 是异常
+        limit_txt = capture_limit_text(reason)
+        note = f'（{limit_txt}，已自动停止）' if limit_txt else ''
         if success:
             self.view.set_packet_capturing(False)
-            self.view.set_packet_status(f"完成：{os.path.basename(result)}")
+            self.view.set_packet_status(f"完成：{os.path.basename(result)}{note}")
             if self.logs_view:
-                self.logs_view.add_log(f"[抓包] 完成：{result}", "success")
+                self.logs_view.add_log(f"[抓包] 完成：{result}{note}", "success")
+            if limit_txt:
+                show_toast(self.view, f"抓包{limit_txt}，已自动停止并保存", duration=4000)
         else:
             self.view.set_packet_capturing(False)
             self.view.set_packet_status(f"❌ {result}")
 
     def _stop_capture(self):
+        """停止抓包（用户手动点击 / 随监控结束自动收尾）。
+
+        在部署 tcpdump 阶段（worker 尚未创建）或已结束时，只把按钮与状态复位。
+        """
         if self._capture_worker and self._capture_worker.isRunning():
             self._capture_worker.stop()
             self.view.set_packet_status("正在停止…")
+        else:
+            self.view.set_packet_capturing(False)
 
     # ------------------------------------------------------------------
     def _on_scenario_progress(self, message, log_type):
