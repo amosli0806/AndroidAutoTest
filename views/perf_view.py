@@ -486,16 +486,8 @@ class PerfView(QWidget):
                      self.duration_label, self.duration_spin]))
         row1.addWidget(flow_host, 1)
 
-        # 执行组（吸右，不参与换行）：开始/停止二合一。
-        # 空闲显示「开始」（蓝），采集中显示「停止」（红）—— 由 _refresh_run_btn
-        # 按状态切换文案 / 图标 / 配色。原来的「暂停 / 继续」已移除。
-        self.start_btn = QPushButton("开始")
-        self.start_btn.clicked.connect(self._on_run_btn_clicked)
-        self.start_btn.setFixedWidth(100)
-        # 吸右 + 垂直居中：行 1 的流式区换行变高时，执行组保持自然高度不被拉伸
-        self.exec_group = _make_group(None, [self.start_btn])
-        row1.addWidget(self.exec_group, 0,
-                       Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        # 行 1 只承载「应用 + 采集参数」（流式换行）；
+        # 「开始 / 停止」二合一按钮已挪到底部按钮行的最左侧（见下方底部状态栏）。
         c_layout.addLayout(row1)
 
         # ---------- 行 2：指标 + 场景化参数（流式）----------
@@ -589,7 +581,14 @@ class PerfView(QWidget):
         )
         b_layout.addWidget(self.status_info, 1)
 
-        # 右侧：操作按钮组（按语义分三组）
+        # 右侧：操作按钮组
+        # 组 1：开始 / 停止（二合一）—— 空闲蓝底「开始」，采集中红底「停止」，
+        # 由 _refresh_run_btn 按状态切换文案 / 图标 / 配色。
+        self.start_btn = QPushButton("开始")
+        self.start_btn.clicked.connect(self._on_run_btn_clicked)
+        self.start_btn.setFixedWidth(100)
+        b_layout.addWidget(self.start_btn)
+
         # 组 2：配置 / 数据
         self.threshold_btn = QPushButton("阈值设置")
         self.threshold_btn.setIcon(qta.icon('fa6s.sliders', color='white'))
