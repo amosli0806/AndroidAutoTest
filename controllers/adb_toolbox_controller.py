@@ -25,8 +25,6 @@ from views.adb_dialogs.wireless_dialog import WirelessDialog
 from views.adb_dialogs.process_selector_dialog import ProcessSelectorDialog
 from utils import log_colors
 from services.anr_parser import parse_anr
-from views.adb_dialogs.packet_capture_dialog import PacketCaptureDialog
-from views.adb_dialogs.memory_monitor_dialog import MemoryMonitorDialog
 from views.adb_dialogs.push_progress_dialog import PushProgressDialog
 from views.adb_dialogs.push_setup_dialog import PushSetupDialog
 from views.adb_dialogs.search_results_dialog import SearchResultsDialog
@@ -409,7 +407,6 @@ class AdbToolboxController(QObject):
             "hprof": self._action_hprof,
             "crash": self._action_crash,
             "anr": self._action_anr,
-            "packet": self._action_packet,
         }
         handler = handlers.get(key)
         if handler:
@@ -724,16 +721,6 @@ class AdbToolboxController(QObject):
                 )
         except Exception as e:
             ErrorDialog.show_error(self.view, "计算失败", str(e))
-
-    def _action_packet(self):
-        output_dir = Settings.get_output_dir()
-        dlg = PacketCaptureDialog(self.device_service, output_dir, self.view)
-        dlg.exec()
-
-    def _action_memory(self):
-        output_dir = Settings.get_output_dir()
-        dlg = MemoryMonitorDialog(self.device_service, output_dir, self.view)
-        dlg.exec()
 
     # ------------------------------------------------------------------
     def apply_theme(self, theme_mode, has_wallpaper=False):

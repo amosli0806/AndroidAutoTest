@@ -98,8 +98,7 @@ a = Analysis(
         'views.adb_dialogs.search_results_dialog',
         'views.adb_dialogs.wireless_dialog',
         'views.adb_dialogs.push_progress_dialog',
-        'views.adb_dialogs.packet_capture_dialog',
-        'views.adb_dialogs.memory_monitor_dialog',
+        'services.packet_capture',
 
         # ---------- 新增：控制器 ----------
         'controllers.adb_toolbox_controller',

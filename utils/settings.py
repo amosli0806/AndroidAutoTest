@@ -70,7 +70,6 @@ DEFAULT_SHORTCUTS = {
     "adb_anr": "Alt+R",
     "adb_md5": "Alt+Q",
     "adb_weak_network": "Alt+Y",
-    "adb_packet": "Alt+B",
 
     # ---------- 性能检测页 ----------
     "perf_toggle_monitor": "F9",

@@ -955,7 +955,7 @@ class PerfController(QObject):
             show_toast(self.view, "设备未连接")
             self.view.set_packet_capturing(False)
             return
-        from views.adb_dialogs.packet_capture_dialog import (
+        from services.packet_capture import (
             TcpdumpDeployThread, CaptureWorker)
         from utils.settings import Settings as _Settings
 
@@ -976,7 +976,7 @@ class PerfController(QObject):
         self.view.set_packet_status("准备 tcpdump…")
 
     def _on_capture_deployed(self, ok: bool, message: str):
-        from views.adb_dialogs.packet_capture_dialog import CaptureWorker
+        from services.packet_capture import CaptureWorker
         from utils.settings import Settings as _Settings
         if not ok:
             self.view.set_packet_capturing(False)
@@ -994,7 +994,7 @@ class PerfController(QObject):
         self.view.set_packet_status("抓包中…")
 
     def _on_capture_finished(self, success: bool, result: str):
-        from views.adb_dialogs.packet_capture_dialog import capture_limit_text
+        from services.packet_capture import capture_limit_text
         worker = self._capture_worker
         self._capture_worker = None
         reason = getattr(worker, 'stop_reason', '') if worker else ''

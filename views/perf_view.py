@@ -726,8 +726,8 @@ class PerfView(QWidget):
         self.packet_toggle_btn = QPushButton("开始抓包")
         self.packet_toggle_btn.setIcon(qta.icon('fa6s.network-wired', color='white'))
         self.packet_toggle_btn.setCheckable(True)
-        # 保护说明：单次抓包有时长/大小上限，到限自动停（值见 packet_capture_dialog 顶部常量）
-        from views.adb_dialogs.packet_capture_dialog import (
+        # 保护说明：单次抓包有时长/大小上限，到限自动停（值见 services/packet_capture 顶部常量）
+        from services.packet_capture import (
             CAPTURE_MAX_SECONDS as _cap_sec, CAPTURE_MAX_BYTES as _cap_bytes)
         self.packet_toggle_btn.setToolTip(
             f"抓取设备网络流量存为 pcap（需 root）。单次最长 {_cap_sec // 60} 分钟 / "

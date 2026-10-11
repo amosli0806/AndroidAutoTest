@@ -1376,7 +1376,6 @@ class MainWindow(QMainWindow):
                 ("adb_anr", "anr"),
                 ("adb_md5", "md5"),
                 ("adb_weak_network", "weak_network"),
-                ("adb_packet", "packet"),
             ]:
                 if action_key in ("device_info", "crash", "anr"):
                     # 这几个功能的内容在底部日志区显示：快捷键与左工具栏按钮走同一条路，
