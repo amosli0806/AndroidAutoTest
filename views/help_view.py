@@ -836,7 +836,13 @@ class HelpView(QFrame):
                     • <b>日志标签</b>：填车机语音助手的日志标签，可填多个（空格或逗号分隔）；
                     留空会抓取全部日志，建议至少填一个<br>
                     • <b>失败关键词</b>：车机说「没听清」这类话术里的词，逗号分隔；
-                    预期结果里已写明的词不会误判为失败
+                    预期结果里已写明的词不会误判为失败<br>
+                    • <b>抓取规则因车型而异</b>，建议先不开启；等拿到车机、按它的日志格式
+                    填好标签和关键词后再打开
+                </div>
+
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 标签和关键词都填好、却一句反馈都没抓到时，也会当作判定失败 —— 避免没验证到却按通过算。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">

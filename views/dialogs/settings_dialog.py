@@ -755,10 +755,7 @@ class SettingsDialog(QDialog):
         title.setObjectName("SettingsPageTitle")
         layout.addWidget(title)
 
-        subtitle = QLabel(
-            "播报后从车机日志里抓反馈文案，判定这句语音是否被正确识别。"
-            "判定失败时该步骤会标红，并附上车机反馈的原文，方便回看是哪句没被听懂。"
-        )
+        subtitle = QLabel("播报后抓车机日志，判定这句是否被正确识别；失败时该步骤标红并附反馈原文。")
         subtitle.setObjectName("SettingsPageSubtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -784,14 +781,10 @@ class SettingsDialog(QDialog):
         layout.addLayout(form)
 
         hint = QLabel(
-            "日志标签填车机语音助手打日志用的 tag，可填多个、用空格或逗号分隔"
-            "（如：TtsBusinessManager TestManager）。留空抓全量日志：量大，且别的应用"
-            "打出的日志可能碰巧命中关键词，建议至少填一个。\n"
-            "抓取规则因车型而异，建议先不开启；等拿到车机、按它的日志格式填好标签和关键词后再打开。"
-            "都填好但一句反馈都没抓到时，也会当作判定失败，避免没验证到却按通过算。\n"
-            "这个开关只是总闸，只对「配了检测步骤的播报」生效 —— 判定依据是预期结果关键词，"
-            "在「语音播报页」选中用例后点「+ 添加检测」按用例配置；"
-            "没配检测步骤的播报一律不验证。这里只保留很少变的失败关键词。"
+            "日志标签填车机语音助手打日志用的 tag，可多个、空格或逗号分隔"
+            "（如：TtsBusinessManager TestManager）。留空会抓全量日志，量大且容易误判，"
+            "建议至少填一个。\n"
+            "开关只对「配了检测步骤的播报」生效，检测步骤在「语音播报」页按用例配置。"
         )
         hint.setObjectName("SettingsPageSubtitle")
         hint.setWordWrap(True)
