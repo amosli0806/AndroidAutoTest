@@ -1116,9 +1116,9 @@ class SettingsDialog(QDialog):
         title.setObjectName("SettingsPageTitle")
         layout.addWidget(title)
 
-        subtitle = QLabel(
-            "设备断连、任务完成时弹系统托盘通知；关闭窗口时最小化到托盘，后台继续运行。"
-        )
+        # 副标题原本只是把下面两个勾选项抄了一遍（纯重复），改为回答
+        # 「开了最小化到托盘之后，怎么彻底退出」这个真问题。
+        subtitle = QLabel("要完全退出程序，右键托盘图标选「退出」。")
         subtitle.setObjectName("SettingsPageSubtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -1127,11 +1127,11 @@ class SettingsDialog(QDialog):
         tray_form.setSpacing(12)
         tray_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.notify_tray_check = QCheckBox("设备断连 / 任务完成时弹系统托盘通知")
+        self.notify_tray_check = QCheckBox("设备断连、任务完成时提醒")
         self.notify_tray_check.setChecked(True)
         tray_form.addRow("托盘通知:", self.notify_tray_check)
 
-        self.notify_tray_minimize_check = QCheckBox("关闭窗口时最小化到托盘（不退出程序）")
+        self.notify_tray_minimize_check = QCheckBox("关闭窗口时最小化，不退出程序")
         self.notify_tray_minimize_check.setChecked(True)
         tray_form.addRow("最小化到托盘:", self.notify_tray_minimize_check)
 
