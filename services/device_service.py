@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 from typing import Optional, List
 from models.step_model import Step
-from services.perf_compat import shell_text
+from services.perf_compat import GUI_TIMEOUT, shell_text
 from utils.adb_path import get_adb_path
 from utils.settings import Settings
 from utils.theme import ThemeMode
@@ -109,7 +109,7 @@ class DeviceService:
 
     def current_ime(self) -> str:
         """当前默认输入法 id；未设置或读不到时返回空串。"""
-        raw = shell_text(self.device, "settings get secure default_input_method").strip()
+        raw = shell_text(self.device, "settings get secure default_input_method", timeout=GUI_TIMEOUT).strip()
         if not raw or raw.lower() == "null":
             return ""
         return raw.splitlines()[0].strip()
@@ -119,7 +119,7 @@ class DeviceService:
 
         个别 ROM 没有 `ime` 命令，读不到时返回空列表 —— 调用方据此退回「盲试通用键盘」。
         """
-        raw = shell_text(self.device, "ime list -s")
+        raw = shell_text(self.device, "ime list -s", timeout=GUI_TIMEOUT)
         return [ln.strip() for ln in raw.splitlines() if ln.strip()]
 
     def restore_ime(self) -> str:
@@ -159,8 +159,8 @@ class DeviceService:
 
         for ime_id in candidates:
             # 未启用的输入法 ime set 会失败，先 enable 一次；失败也无妨，下面以实际状态为准
-            shell_text(self.device, f"ime enable {ime_id}")
-            shell_text(self.device, f"ime set {ime_id}")
+            shell_text(self.device, f"ime enable {ime_id}", timeout=GUI_TIMEOUT)
+            shell_text(self.device, f"ime set {ime_id}", timeout=GUI_TIMEOUT)
             if self.current_ime() == ime_id:
                 return f"已恢复输入法：{ime_id}"
 

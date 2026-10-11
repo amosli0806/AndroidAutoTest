@@ -8,7 +8,19 @@ from typing import Optional
 from models.perf_model import PerfSample
 
 logger = logging.getLogger(__name__)
-from services.perf_compat import shell_text
+from services.perf_compat import (
+    GUI_TIMEOUT, WORKER_TIMEOUT, shell_text, shell_text_checked,
+)
+
+
+class PerfShellError(RuntimeError):
+    """shell 执行失败（通道异常 / 超时）或**该有输出却没有**。
+
+    与「命令成功但确实没输出」是两回事 —— 采集侧以前无法区分，于是失败被
+    静默记成 0（内存卡片「当前 0MB」而峰值正常就是这么来的）。现在一律抛
+    异常，由 collect_sample 记进 sample.errors。
+    """
+
 
 class PerfService:
     """封装所有性能指标的采集方法"""
@@ -29,6 +41,22 @@ class PerfService:
         self._cpu_core_count = None  # 首次采集时探测
 
     # ============================================================
+    def _sh(self, cmd: str, require_output: bool = True,
+            timeout: float = None, what: str = "") -> str:
+        """带超时执行 shell；**执行失败或该有输出却没有，一律抛 PerfShellError**。
+
+        这是「静默 0」的根治点：调用方要么拿到真数据，要么走异常分支被记进
+        sample.errors，不允许悄悄变成 0 混进曲线和统计。
+        """
+        ok, out = shell_text_checked(
+            self.device, cmd, timeout=WORKER_TIMEOUT if timeout is None else timeout)
+        if not ok:
+            raise PerfShellError(f"shell 执行失败（通道异常/超时）：{cmd}")
+        if require_output and not out.strip():
+            raise PerfShellError(f"无输出：{what or cmd}")
+        return out
+
+    # ============================================================
     # 设备信息：会话开始时采集一次，用于报告的「基本信息」
     # ============================================================
     def get_device_info(self) -> dict:
@@ -39,7 +67,7 @@ class PerfService:
         """
         info = {'resolution': '', 'density': '', 'android': ''}
         try:
-            out = shell_text(self.device, "wm size")
+            out = shell_text(self.device, "wm size", timeout=GUI_TIMEOUT)
             # 「Physical size: 1080x2340」或「Override size: …」都取最后一处匹配
             matches = re.findall(r"(\d{3,5}x\d{3,5})", out or "")
             if matches:
@@ -48,7 +76,7 @@ class PerfService:
             logger.debug("采集分辨率失败: %s", e)
 
         try:
-            out = shell_text(self.device, "wm density")
+            out = shell_text(self.device, "wm density", timeout=GUI_TIMEOUT)
             # 「Physical density: 480」或「Override density: 420」
             matches = re.findall(r"(\d{2,4})", out or "")
             if matches:
@@ -57,7 +85,7 @@ class PerfService:
             logger.debug("采集屏幕密度失败: %s", e)
 
         try:
-            out = shell_text(self.device, "getprop ro.build.version.release")
+            out = shell_text(self.device, "getprop ro.build.version.release", timeout=GUI_TIMEOUT)
             info['android'] = (out or "").strip()
         except Exception as e:
             logger.debug("采集安卓版本失败: %s", e)
@@ -67,8 +95,12 @@ class PerfService:
     # ============================================================
     # 对外接口：一次性采集所有启用的指标
     # ============================================================
-    def collect_sample(self, package: str, metrics: list) -> PerfSample:
-        """执行一次完整的采样"""
+    def collect_sample(self, package: str, metrics: list) -> Optional[PerfSample]:
+        """执行一次完整的采样。
+
+        返回 None 表示**本轮所有启用指标都失败**（典型：设备通道失效）——
+        调用方应跳过入库，不要拿一条全 0 的样本去污染曲线与统计。
+        """
         sample = PerfSample(timestamp=time.time())
 
         if 'cpu' in metrics:
@@ -87,12 +119,7 @@ class PerfService:
 
         if 'fps' in metrics:
             try:
-                gfx_out = shell_text(self.device, f"dumpsys gfxinfo {package}")
-            except Exception as e:
-                gfx_out = ""
-                sample.errors.append(f"fps:{e}")
-
-            try:
+                gfx_out = self._sh(f"dumpsys gfxinfo {package}", what="dumpsys gfxinfo")
                 sample.fps = self._parse_fps(gfx_out)
             except Exception as e:
                 sample.errors.append(f"fps:{e}")
@@ -105,6 +132,13 @@ class PerfService:
             except Exception as e:
                 sample.errors.append(f"traffic:{e}")
 
+        # 全部启用指标都失败 → 这次采样没有价值，丢弃（避免 0 值污染曲线/统计，
+        # 也让「设备失联」这件事在采样层就显性化，交给调用方判定重连）
+        if metrics and len(sample.errors) >= len(metrics):
+            logger.warning("[PerfService] 本轮 %d 项指标全部采集失败，样本丢弃：%s",
+                           len(metrics), sample.errors)
+            return None
+
         return sample
 
     # ============================================================
@@ -114,58 +148,53 @@ class PerfService:
         """
         通过 /proc/<pid>/stat 差分计算进程 CPU 占用率（Linux 通用，不依赖 dumpsys）。
         首采样返回 0（无基准）；后续按 (Δutime+Δstime)/Δt 计算。
+
+        拿不到数据一律抛 PerfShellError（**不再静默返回 0**）—— 见 _sh 的说明。
         """
         import time as _time
-        try:
-            pid_out = shell_text(self.device, f"pidof {package}").strip()
-            if not pid_out:
-                return 0.0
-            pid = pid_out.split()[0]
+        # pidof：命令执行失败抛异常（通道问题）；命令成功但没输出 = 应用确实没在跑
+        pid_out = self._sh(f"pidof {package}", require_output=False).strip()
+        if not pid_out:
+            raise PerfShellError(f"应用未在运行（pidof 无输出）：{package}")
+        pid = pid_out.split()[0]
 
-            stat = shell_text(self.device, f"cat /proc/{pid}/stat")
-            if not stat:
-                return 0.0
+        stat = self._sh(f"cat /proc/{pid}/stat", what=f"/proc/{pid}/stat")
 
-            # 第 14/15 项是 utime/stime，需从最后一个 ")" 之后切（comm 里可能有空格/括号）
-            rp = stat.rfind(")")
-            if rp < 0:
-                return 0.0
-            fields = stat[rp + 2:].split()
-            if len(fields) < 13:
-                return 0.0
-            utime = int(fields[11])
-            stime = int(fields[12])
-            total_ticks = utime + stime
-            now = _time.time()
+        # 第 14/15 项是 utime/stime，需从最后一个 ")" 之后切（comm 里可能有空格/括号）
+        rp = stat.rfind(")")
+        if rp < 0:
+            raise PerfShellError(f"/proc/{pid}/stat 格式异常")
+        fields = stat[rp + 2:].split()
+        if len(fields) < 13:
+            raise PerfShellError(f"/proc/{pid}/stat 字段不足（{len(fields)} 项）")
+        total_ticks = int(fields[11]) + int(fields[12])
+        now = _time.time()
 
-            if self._last_cpu_ticks is None:
-                self._last_cpu_ticks = total_ticks
-                self._last_cpu_time = now
-                return 0.0
-
-            delta_ticks = total_ticks - self._last_cpu_ticks
-            delta_sec = now - self._last_cpu_time
+        if self._last_cpu_ticks is None:
             self._last_cpu_ticks = total_ticks
             self._last_cpu_time = now
-
-            if delta_sec <= 0 or delta_ticks < 0:
-                return 0.0
-            cpu_sec = delta_ticks / self._cpu_ticks_per_sec
-            percent = cpu_sec / delta_sec * 100.0
-
-            # 首次采集时探测设备核数（决定合理上限：核数 × 100%）
-            if self._cpu_core_count is None:
-                try:
-                    cores_out = shell_text(self.device, "nproc").strip()
-                    self._cpu_core_count = int(cores_out) if cores_out else 8
-                except Exception:
-                    self._cpu_core_count = 8  # 保守默认
-
-            max_percent = self._cpu_core_count * 100.0
-            return round(min(percent, max_percent), 2)
-        except Exception as e:
-            logger.warning(f"[PerfService] CPU 差分采集失败: {e}")
             return 0.0
+
+        delta_ticks = total_ticks - self._last_cpu_ticks
+        delta_sec = now - self._last_cpu_time
+        self._last_cpu_ticks = total_ticks
+        self._last_cpu_time = now
+
+        if delta_sec <= 0 or delta_ticks < 0:
+            return 0.0
+        cpu_sec = delta_ticks / self._cpu_ticks_per_sec
+        percent = cpu_sec / delta_sec * 100.0
+
+        # 首次采集时探测设备核数（决定合理上限：核数 × 100%）
+        if self._cpu_core_count is None:
+            try:
+                cores_out = self._sh("nproc", require_output=False).strip()
+                self._cpu_core_count = int(cores_out) if cores_out else 8
+            except Exception:
+                self._cpu_core_count = 8  # 保守默认
+
+        max_percent = self._cpu_core_count * 100.0
+        return round(min(percent, max_percent), 2)
 
     # ============================================================
     # 内存
@@ -177,17 +206,18 @@ class PerfService:
           - breakdown：Android Studio 风格分类拆解 dict，如
             {'Java': 61.8, 'Native': 12.3, 'Graphics': 5.0, ...}（单位 MB）
         """
-        out = shell_text(self.device, f"dumpsys meminfo {package}")
-        pss_mb = 0.0
-        breakdown = {}
-        if out:
-            # TOTAL PSS 优先取 App Summary，回退到进程明细表 TOTAL 行
-            m = re.search(r"TOTAL PSS:\s*(\d+)", out)
-            if not m:
-                m = re.search(r"TOTAL\s+(\d+)", out)
-            if m:
-                pss_mb = int(m.group(1)) / 1024.0  # KB -> MB
-            breakdown = self._parse_mem_breakdown(out)
+        out = self._sh(f"dumpsys meminfo {package}", what="dumpsys meminfo")
+        # 应用没在跑时 dumpsys 会这么回 —— 给出明确结论，而不是记一个 0 内存
+        if "No process found" in out or "Unknown package" in out:
+            raise PerfShellError(f"应用未在运行（dumpsys meminfo 无进程）：{package}")
+        # TOTAL PSS 优先取 App Summary，回退到进程明细表 TOTAL 行
+        m = re.search(r"TOTAL PSS:\s*(\d+)", out)
+        if not m:
+            m = re.search(r"TOTAL\s+(\d+)", out)
+        if not m:
+            raise PerfShellError(f"dumpsys meminfo 输出里没有 TOTAL PSS：{package}")
+        pss_mb = int(m.group(1)) / 1024.0  # KB -> MB
+        breakdown = self._parse_mem_breakdown(out)
         return pss_mb, breakdown
 
     def _parse_mem_breakdown(self, out: str) -> dict:
@@ -256,7 +286,7 @@ class PerfService:
     # FPS
     # ============================================================
     def _collect_fps(self, package: str) -> int:
-        out = shell_text(self.device, f"dumpsys gfxinfo {package}")
+        out = self._sh(f"dumpsys gfxinfo {package}", what="dumpsys gfxinfo")
         return self._parse_fps(out)
 
     def _parse_fps(self, out: str) -> int:
@@ -285,30 +315,37 @@ class PerfService:
     def _collect_traffic(self, package: str) -> tuple:
         uid = self.compat.get_package_uid(package)
         if uid < 0:
-            return self._last_rx, self._last_tx
+            # 以前这里静默回退成上一次的值（通常是 0），于是「通道挂了」也能凑出
+            # 一条 traffic=0 的样本，把「全部指标失败」的判定绕过去。改成抛异常，
+            # 让流量这一项如实算作失败。
+            raise PerfShellError(f"拿不到应用 UID，无法采集流量：{package}")
 
         method = self.compat.get_traffic_collect_method()
 
         if method == "uid_stat":
             # Android 9 及以下：直接读 /proc/uid_stat
             try:
-                rx = int((shell_text(self.device, f"cat /proc/uid_stat/{uid}/tcp_rcv") or "0").strip())
-                tx = int((shell_text(self.device, f"cat /proc/uid_stat/{uid}/tcp_snd") or "0").strip())
+                # require_output=False：命令成功但文件为空 = 该 uid 还没有流量记录，记 0 合理；
+                # 命令**执行失败**（通道异常/超时）会抛异常 → 由 collect_sample 记进 sample.errors
+                rx = int((self._sh(f"cat /proc/uid_stat/{uid}/tcp_rcv",
+                                   require_output=False) or "0").strip())
+                tx = int((self._sh(f"cat /proc/uid_stat/{uid}/tcp_snd",
+                                   require_output=False) or "0").strip())
                 self._last_rx, self._last_tx = rx, tx
                 return rx, tx
             except (ValueError, TypeError):
                 return self._last_rx, self._last_tx
 
         elif method == "qtaguid":
-            # Android 10~12：优先 xt_qtaguid
-            try:
-                out = shell_text(self.device, "cat /proc/net/xt_qtaguid/stats")
+            # Android 10~12：优先 xt_qtaguid。这个文件在部分内核/ROM 上已被移除，
+            # 因此**读不到就正常降级到 netstats**，不算错误。
+            ok, out = shell_text_checked(self.device, "cat /proc/net/xt_qtaguid/stats",
+                                         timeout=WORKER_TIMEOUT)
+            if ok:
                 rx, tx = self._parse_qtaguid(out, uid)
                 if rx >= 0:
                     self._last_rx, self._last_tx = rx, tx
                     return rx, tx
-            except Exception:
-                pass
             # 降级到 netstats
             return self._collect_netstats(uid)
 
@@ -317,14 +354,14 @@ class PerfService:
             return self._collect_netstats(uid)
 
     def _collect_netstats(self, uid: int) -> tuple:
-        try:
-            out = shell_text(self.device, "dumpsys netstats detail")
-            rx, tx = self._parse_netstats(out, uid)
-            if rx >= 0:
-                self._last_rx, self._last_tx = rx, tx
-                return rx, tx
-        except Exception:
-            pass
+        # 走到这里说明 uid_stat / qtaguid 都不可用，netstats 是最后一手 ——
+        # 它再失败就是真的拿不到数据，抛异常让上层记录，不再静默沿用旧值。
+        out = self._sh("dumpsys netstats detail", what="dumpsys netstats detail")
+        rx, tx = self._parse_netstats(out, uid)
+        if rx >= 0:
+            self._last_rx, self._last_tx = rx, tx
+            return rx, tx
+        # 输出正常但没有该 uid 的记录：说明它确实还没有流量
         return self._last_rx, self._last_tx
 
     def _parse_qtaguid(self, out: str, uid: int) -> tuple:
@@ -403,7 +440,7 @@ class PerfService:
         """
         try:
             # 先停掉应用
-            shell_text(self.device, f"am force-stop {package}")
+            shell_text(self.device, f"am force-stop {package}", timeout=WORKER_TIMEOUT)
             time.sleep(0.5)
             return self._do_launch(package, activity)
         except Exception as e:
@@ -421,7 +458,7 @@ class PerfService:
         try:
             for attempt in range(4):
                 # 按 Home 键回桌面，但应用仍在内存中
-                shell_text(self.device, "input keyevent KEYCODE_HOME")
+                shell_text(self.device, "input keyevent KEYCODE_HOME", timeout=WORKER_TIMEOUT)
                 time.sleep(0.5 if attempt == 0 else 2.0)
                 ms = self._do_launch(package, activity)
                 if ms > 0:
@@ -443,7 +480,8 @@ class PerfService:
                 return -1
         out = shell_text(
             self.device,
-            f"am start -W -n {package}/{activity}"
+            f"am start -W -n {package}/{activity}",
+            timeout=WORKER_TIMEOUT,
         )
         if not out:
             return -1
@@ -460,7 +498,8 @@ class PerfService:
         try:
             out = shell_text(
                 self.device,
-                f"cmd package resolve-activity --brief {package}"
+                f"cmd package resolve-activity --brief {package}",
+                timeout=WORKER_TIMEOUT,
             )
             if out:
                 lines = out.strip().splitlines()

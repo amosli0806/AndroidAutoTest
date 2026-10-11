@@ -148,6 +148,8 @@ class PerfView(QWidget):
         # 开始/停止二合一按钮的两套外观（在 apply_theme 里按主题生成）
         self._run_btn_qss_normal = ""
         self._run_btn_qss_danger = ""
+        # 应用列表是否已成功加载（决定「开始」按钮可用性；见 update_app_list）
+        self._apps_loaded = False
 
         self.setup_ui()
         self._apply_state()
@@ -171,13 +173,22 @@ class PerfView(QWidget):
     def set_project_model(self, model):
         self._project_model = model
 
-    def update_app_list(self, packages):
+    def update_app_list(self, packages, load_failed: bool = False):
+        """刷新应用下拉框。
+
+        load_failed=True 表示**这次是读取失败**（通道异常/超时），而不是
+        「设备上真的没有应用」—— 占位文案要能区分，否则用户只会看到
+        「未检测到应用」而不知道是失败（2026-10-11 修）。
+        """
         self.app_combo.blockSignals(True)
         current = self.app_combo.currentText()
         self.app_combo.clear()
         if not packages:
-            self.app_combo.addItem("未检测到应用")
+            self._apps_loaded = False
+            self.app_combo.addItem(
+                "未检测到应用 · 点「刷新」重试" if load_failed else "未检测到应用")
         else:
+            self._apps_loaded = True
             self.app_combo.addItems(packages)
             idx = self.app_combo.findText(current)
             if idx >= 0:
@@ -311,7 +322,9 @@ class PerfView(QWidget):
         self._apply_state()
 
     def _check_state(self):
-        app_ok = self.app_combo.currentText() not in ("", "未检测到应用")
+        # 用「应用列表是否真的加载成功」判断，而不是比对占位文案 —— 否则改一句
+        # 提示语就会让开始按钮的可用性判断失效。
+        app_ok = bool(getattr(self, '_apps_loaded', False))
         if self._state == self.STATE_IDLE:
             self.start_btn.setEnabled(app_ok)
         self._refresh_run_btn()
@@ -339,8 +352,9 @@ class PerfView(QWidget):
         state = self._state
         idle = state == self.STATE_IDLE
 
-        # 开始/停止二合一：空闲时按「是否选了应用」决定可用性，采集中恒可用（点即停止）
-        app_ok = self.app_combo.currentText() not in ("", "未检测到应用")
+        # 开始/停止二合一：空闲时按「应用列表是否加载成功」决定可用性，
+        # 采集中恒可用（点即停止）
+        app_ok = bool(getattr(self, '_apps_loaded', False))
         self.start_btn.setEnabled(app_ok if idle else True)
         self._refresh_run_btn()
 

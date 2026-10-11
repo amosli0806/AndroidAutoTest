@@ -637,7 +637,7 @@
 
   <!-- ============ 八、性能检测：设备连接中断的健壮性缺陷 ============ -->
   <section class="chapter" id="s8">
-    <h2><span class="num">8</span>性能检测页 · 设备连接中断的健壮性缺陷 <span class="tag plan">📐 2026-10-08 诊断稿 · 未修复</span></h2>
+    <h2><span class="num">8</span>性能检测页 · 设备连接中断的健壮性缺陷 <span class="tag done">✅ 2026-10-11 五项全部落地</span></h2>
     <div class="card">
       <h3>现象（两个症状，同一根因）</h3>
       <ul>
@@ -685,6 +685,18 @@
       </ul>
 
       <div class="tip">⚠ <b>影响面</b>：①② 只改 <code>services/perf_compat.py</code>（新增可选参数）+ 性能检测的调用点；③④ 在 <code>services/perf_service.py</code> 与 <code>controllers/perf_controller.py</code>；⑤ 在 <code>_on_start()</code>。不改动 <code>device_service</code> 的既有方法，不涉及 ADB 工具箱与自动化执行。</div>
+
+      <div class="card">
+        <h3>落实记录（2026-10-11 · 五项全部完成）</h3>
+        <ul>
+          <li><b>① shell_text 加超时 + 可判定失败</b>：<code>shell_text(device, cmd, timeout=None)</code> 新增可选参数（不传仍走 u2 默认值，旧行为不变），并对不接受该参数的旧版 u2 回退；新增 <code>shell_text_checked()</code> 返回 <code>(ok, text)</code>，把「执行失败」与「真的没输出」分开。</li>
+          <li><b>② 调用点全部带超时</b>：<code>perf_compat</code> 用 <code>GUI_TIMEOUT=5s</code> / <code>GUI_TIMEOUT_HEAVY=6s</code>（pm list packages、dumpsys 这类重命令给宽一点，免得车机慢被误判成失败）；<code>perf_service</code> 用 <code>WORKER_TIMEOUT=10s</code>；会话创建时的设备信息采集用 5s。顺手把 <code>device_service.restore_ime</code> 的 4 处也补了 5s（同在 GUI 线程，同类隐患）。</li>
+          <li><b>③ 不再静默 0</b>：<code>PerfService._sh()</code> 作为统一入口，执行失败或「该有输出却没有」一律抛 <code>PerfShellError</code>（「应用未在运行」也给明确文案）；<code>collect_sample()</code> 在<b>所有启用指标都失败</b>时返回 <code>None</code>，调用方跳过入库。<b>额外发现并修掉</b>：流量采集拿不到 UID 时静默回退成旧值，会绕开「全失败」判定 → 改为抛异常。</li>
+          <li><b>④ 失联判定扩到「连续 N 轮全失败」</b>：<code>PerfWorker.LINK_FAIL_THRESHOLD=3</code>，够次数就 <code>check_device_online()</code> 探活 + <code>connect()</code> 重建通道（覆盖 <code>device</code> 非 None 却已失效的「假在线」），成功即恢复、失败才 <code>link_lost</code>（带去重）。</li>
+          <li><b>⑤ 开始监控不再误报</b>：改用 <code>is_package_running_checked()</code>，查询失败时先探活 —— 设备离线提示「设备连接异常」，设备在线提示「读取失败，可重试」；只有真查到「没在跑」才提示启动应用。</li>
+          <li><b>附带修掉（本次一并发现）</b>：应用列表只在 serial 变化时拉一次、且失败后<b>永不重试</b>（连接瞬间抖一下就一直显示「未检测到应用」，只能手动点刷新或拔插设备）—— 现在同一台设备未拿到列表会<b>限次自动重试</b>（3 次，每 2 秒一次），占位文案也区分成「未检测到应用 · 点「刷新」重试」。</li>
+        </ul>
+      </div>
 
       <div class="example">💡 <b>打个比方：</b>现在的采集像「打不通电话就当作对方不在家」——电话线被邻居（Android Studio）拔了重接，这边拨号一直等到自动挂断（60 秒），挂断后还记下一句「他不在家」，其实人家好好待着。要做的是：给拨号加个「响 5 秒没人接就挂」的短超时，并把「没接通」和「真不在家」分开报，而不是一律记成「不在家」。</div>
     </div>

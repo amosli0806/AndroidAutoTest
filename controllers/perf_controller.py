@@ -46,6 +46,11 @@ class PerfWorker(QThread):
         self._service = None
         self._device_obj = None
         self._link_down = False
+        # 连续多少轮「一项数据都没采到」才判定链路有问题（先容忍偶发抖动）
+        self._consecutive_failed = 0
+
+    # 连续失败到该次数就动手探活 + 重建连接
+    LINK_FAIL_THRESHOLD = 3
 
     def pause(self):
         self._paused = True
@@ -82,6 +87,41 @@ class PerfWorker(QThread):
                 pass
         return True
 
+    def _try_recover_link(self) -> bool:
+        """探活 + 重建设备通道。返回 True 表示已恢复。
+
+        为什么要这一步：adb server 被外部工具（如 Android Studio）重启时，
+        `adb devices` 前后可能完全一致 → 主窗口的掉线判定不触发 → 不会重连 →
+        device_service.device 一直是个「非 None 却已失效」的旧对象。旧逻辑只在
+        device is None 时才自愈，这种「假在线」就一直空采（内存卡片「当前 0MB」
+        而峰值正常，就是这么来的）。这里用内置 adb 探活，在线就把对象重建。
+        """
+        serial = getattr(self.device_service, 'serial', None)
+        try:
+            if not self.device_service.check_device_online(serial):
+                return False
+            self.device_service.connect(serial)
+            # 置空 → 下一轮 _ensure_service 会用新对象重建 Service
+            self._service = None
+            self._device_obj = None
+            logger.info("[PerfMonitor] 设备仍在线，已重建连接通道")
+            return True
+        except Exception as e:
+            logger.warning("[PerfMonitor] 尝试重建连接失败: %s", e)
+            return False
+
+    def _recover_or_report_link(self):
+        """连续多轮采不到数据时的处置：**先自救，确实掉线才报**。"""
+        if self._try_recover_link():
+            self._consecutive_failed = 0
+            if self._link_down:
+                self._link_down = False
+                self.link_restored.emit()
+            return
+        if not self._link_down:
+            self._link_down = True
+            self.link_lost.emit()
+
     def run(self):
         # 监控时长上限：按墙钟计算（含暂停/掉线等待期间），到点自动停
         deadline = (time.time() + self.duration_minutes * 60
@@ -109,12 +149,24 @@ class PerfWorker(QThread):
 
             start = time.time()
 
+            sample = None
             try:
                 sample = self._service.collect_sample(self.package, self.metrics)
-                self.sample_ready.emit(sample)
             except Exception as e:
                 logger.exception("采样失败")
                 self.error_occurred.emit(str(e))
+
+            if sample is None:
+                # 本轮一项数据都没采到（全指标失败 / 抛异常）：先怀疑通道
+                self._consecutive_failed += 1
+                if self._consecutive_failed >= self.LINK_FAIL_THRESHOLD:
+                    self._recover_or_report_link()
+            else:
+                self._consecutive_failed = 0
+                self.sample_ready.emit(sample)
+                if self._link_down:
+                    self._link_down = False
+                    self.link_restored.emit()
 
             # 计算下次采样时间的等待时长
             elapsed = time.time() - start
@@ -267,39 +319,68 @@ class PerfController(QObject):
     def _check_compat_on_startup(self):
         """设备由主窗口统一维护，这里只做轮询，等设备就绪再拉应用"""
         self._last_device_serial = None
+        # 应用列表没拿到之前的剩余重试次数（见 _maybe_refresh_apps）
+        self._apps_retry_left = 0
         self._device_watch_timer = QTimer(self)
         self._device_watch_timer.setInterval(2000)
         self._device_watch_timer.timeout.connect(self._maybe_refresh_apps)
         self._device_watch_timer.start()
 
+    # 拉应用列表失败后的自动重试次数（每 2 秒一次）
+    APP_LIST_RETRY = 3
+
     def _maybe_refresh_apps(self):
-        """当主窗口连接/切换设备时，自动刷新应用列表"""
+        """设备已就绪时保证应用列表被拉到 —— 失败会重试，不会一直空着。
+
+        旧逻辑只在 serial 变化时拉一次，且**先记账再拉取**：那一次如果失败，
+        后续轮询都判定「设备没变」而跳过 → 列表永远停在「未检测到应用」，
+        只能靠用户手动点「刷新」或拔插设备。连接瞬间的通道抖动就会撞上这个坑。
+        """
         if not self.device_service.device:
             if self._last_device_serial is not None:
                 self._last_device_serial = None
+                self._apps_retry_left = 0
                 self.view.update_app_list([])  # 清空
             return
+
         current = self.device_service.serial
         if current and current != self._last_device_serial:
             self._last_device_serial = current
+            self._apps_retry_left = self.APP_LIST_RETRY
+            self._on_refresh_apps()
+            return
+
+        # 同一台设备、但列表还没拿到 → 继续重试（限次）
+        if current and not getattr(self.view, '_apps_loaded', False) and self._apps_retry_left > 0:
+            self._apps_retry_left -= 1
+            logger.debug("[PerfController] 应用列表为空，自动重试（剩 %d 次）", self._apps_retry_left)
             self._on_refresh_apps()
 
     def _on_refresh_apps(self):
-        """刷新应用列表 + 更新指标可用性"""
+        """刷新应用列表 + 更新指标可用性。
+
+        用 checked 版拿到「命令是否成功」——两条 pm 命令都失败时，空列表**不代表
+        设备上没有应用**，此时把下拉框提示换成「点刷新重试」，不再让用户误以为
+        真的没应用（2026-10-11 修）。
+        """
         if not self.device_service.device:
             return
         try:
             compat = AndroidCompat(self.device_service.device)
-            packages = compat.list_all_packages()
-            self.view.update_app_list(packages)
+            ok, packages = compat.list_all_packages_checked()
+            self.view.update_app_list(packages, load_failed=not ok)
+            if ok and packages:
+                self._apps_retry_left = 0      # 拿到了，别再重试
+            if not ok:
+                logger.warning("[PerfController] 应用列表读取失败（通道异常/超时）")
 
             # 更新指标可用性
             available = {}
             reasons = {}
             for key in ('cpu', 'mem', 'fps', 'traffic'):
-                ok = compat.is_metric_available(key)
-                available[key] = ok
-                if not ok:
+                ok_m = compat.is_metric_available(key)
+                available[key] = ok_m
+                if not ok_m:
                     reasons[key] = compat.get_unavailable_reason(key)
             self.view.update_metric_availability(available, reasons)
         except Exception as e:
@@ -322,10 +403,30 @@ class PerfController(QObject):
             )
             return
 
-        # 检查应用是否运行
+        # 检查应用是否运行。
+        # 关键：pidof **查询失败**（通道异常/超时）不能等同于「应用没运行」——
+        # 以前两者都走 shell_text 吞成空串，于是通道一抖就弹「应用未在运行」，
+        # 而车机上应用明明跑着（2026-10-11 修）。这里用 checked 版区分开。
         try:
             compat = AndroidCompat(self.device_service.device)
-            if not compat.is_package_running(package):
+            ok, running = compat.is_package_running_checked(package)
+            if not ok:
+                # 查不到就先探活：设备在线说明是短暂抖动，让用户重试即可；
+                # 设备真的不在线才提示重连。
+                if not self.device_service.check_device_online():
+                    ErrorDialog.show_error(
+                        self.view, "设备连接异常",
+                        "与设备的连接已中断，采集无法开始。\n"
+                        "请检查 USB 连接或重新连接设备后重试。"
+                    )
+                    return
+                WarningDialog.show_warning(
+                    self.view, "读取失败",
+                    f"暂时读不到应用 {package} 的运行状态（设备通道忙或刚重连）。\n"
+                    "请稍后重试；若持续失败，可在顶部工具栏重新选择设备。"
+                )
+                return
+            if not running:
                 WarningDialog.show_warning(
                     self.view, "提示",
                     f"应用 {package} 未在运行，请先启动应用再开始采集"
