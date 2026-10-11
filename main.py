@@ -361,6 +361,21 @@ def cleanup_unused_data(project_model, step_model, suite_model):
     return stat
 
 
+def unused_data_size(project_model, step_model, suite_model):
+    """估算「清理缓存」能回收多少字节；用例数据未就绪时返回 None。
+
+    纯只读估算（与 cleanup_unused_data 同一口径），供设置页在清理前显示缓存大小。
+    """
+    try:
+        if not project_model.root_nodes:
+            return None
+        valid_case_ids = {case.id for case in project_model.get_all_cases()}
+        return step_model.orphan_bytes(valid_case_ids)
+    except Exception:
+        logger.debug("估算可清理缓存大小失败", exc_info=True)
+        return None
+
+
 def main():
     global _APP
     # ---------- 子进程无黑窗补丁（必须在任何 adb 调用之前）----------    # 虫师打包为无控制台 GUI 后，第三方库（adbutils/u2 等）内部 spawn 的控制台
@@ -550,9 +565,11 @@ def main():
     if os.path.exists(icon_path):
         main_window.setWindowIcon(QIcon(icon_path))
     main_window.set_models(project_model, step_model)
-    # 设置页「数据维护 → 清理无用数据」的入口，与启动自愈同一套逻辑
+    # 设置页「数据维护 → 清理缓存」的入口，与启动自愈同一套逻辑
     main_window.set_data_cleanup_handler(
         lambda: cleanup_unused_data(project_model, step_model, suite_model))
+    main_window.set_cache_size_handler(
+        lambda: unused_data_size(project_model, step_model, suite_model))
 
     # ---------- 装配期：批量模式 ----------
     # 下面会连着 set_edit_views / set_element_manager_view / set_help_view /

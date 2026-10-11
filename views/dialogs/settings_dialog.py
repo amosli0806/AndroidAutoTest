@@ -1,4 +1,5 @@
 # views/dialogs/settings_dialog.py
+import logging
 import os
 import sys
 
@@ -62,6 +63,8 @@ _SHORTCUT_LABELS = {
 import qtawesome as qta
 from utils.settings import Settings, THEME_MODE_SYSTEM, THEME_MODE_LIGHT, THEME_MODE_DARK
 from utils.toast import show_toast
+
+logger = logging.getLogger(__name__)
 
 
 # 试听念什么见 _on_test_voice：**当前唤醒词本身**。
@@ -283,7 +286,7 @@ class SettingsDialog(QDialog):
         data_root.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.nav_tree.addTopLevelItem(data_root)
 
-        data_item = QTreeWidgetItem(["无用数据清理"])
+        data_item = QTreeWidgetItem(["清理缓存"])
         data_item.setData(0, Qt.ItemDataRole.UserRole, idx)
         data_root.addChild(data_item)
         self.content_stack.addWidget(self._build_data_page())
@@ -1050,7 +1053,7 @@ class SettingsDialog(QDialog):
                 show_toast(self, "恢复输入法失败", duration=2000)
 
     # ------------------------------------------------------------------
-    # 数据维护：回收无用步骤数据
+    # 数据维护：清理缓存
     # ------------------------------------------------------------------
     def _build_data_page(self):
         page = QWidget()
@@ -1058,18 +1061,19 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
 
-        title = QLabel("无用数据清理")
+        title = QLabel("清理缓存")
         title.setObjectName("SettingsPageTitle")
         layout.addWidget(title)
 
-        subtitle = QLabel("回收用例数据和执行数据里已经没人引用的残留")
+        subtitle = QLabel("清除历史遗留的冗余数据，释放其占用的存储空间")
         subtitle.setObjectName("SettingsPageSubtitle")
+        subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
         row = QHBoxLayout()
         row.setSpacing(10)
 
-        self.cleanup_btn = QPushButton("清理无用数据")
+        self.cleanup_btn = QPushButton("清理缓存")
         self.cleanup_btn.setObjectName("cleanupDataBtn")
         self.cleanup_btn.setIcon(qta.icon('fa6s.broom', color='white'))
         self.cleanup_btn.setFixedSize(140, 32)
@@ -1078,24 +1082,33 @@ class SettingsDialog(QDialog):
         row.addStretch()
         layout.addLayout(row)
 
-        hint = QLabel(
-            "删除用例、删除项目/功能模块、导入用例都会在 steps_data.json 里留下没人引用的"
-            "步骤（那份文件每改一个步骤就要整个重写一遍，残留越多越拖慢）。"
-            "清理只删「不被任何现存用例引用」的步骤和套件里指向已删除用例的引用，"
-            "现存用例的步骤一条都不会动。程序每次启动也会自动清理一次。"
-        )
-        hint.setObjectName("SettingsPageSubtitle")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-
-        # 上一次清理的结果（按钮点完把统计写在这里，不弹窗打断）
+        # 状态行：进入页面显示「当前缓存 X」，清理后显示结果（不弹窗打断）
         self.cleanup_result = QLabel("")
         self.cleanup_result.setObjectName("SettingsPageSubtitle")
         self.cleanup_result.setWordWrap(True)
         layout.addWidget(self.cleanup_result)
 
         layout.addStretch()
+
+        self._refresh_cache_size()
         return page
+
+    def _refresh_cache_size(self):
+        """进入页面时显示当前可清理的缓存大小（拿不到就留空，不打扰用户）。"""
+        main_win = self.parent()
+        handler = getattr(main_win, 'cache_size_handler', None) if main_win else None
+        if not callable(handler):
+            return
+        try:
+            size = handler()
+        except Exception:
+            size = None
+        if size is None:
+            self.cleanup_result.setText("")
+        elif size <= 0:
+            self.cleanup_result.setText("当前没有需要清理的缓存")
+        else:
+            self.cleanup_result.setText(f"当前缓存 {self._fmt_size(size)}")
 
     def _build_notify_page(self):
         """系统托盘页：托盘通知 + 最小化到托盘。"""
@@ -1148,24 +1161,25 @@ class SettingsDialog(QDialog):
         main_win = self.parent()
         handler = getattr(main_win, 'data_cleanup_handler', None) if main_win else None
         if not callable(handler):
-            self.cleanup_result.setText("当前无法清理：用例数据未就绪")
+            self.cleanup_result.setText("暂时无法清理，请稍后再试")
             return
         try:
             stat = handler()
-        except Exception as e:
-            self.cleanup_result.setText(f"清理失败：{e}")
+        except Exception:
+            logger.debug("清理缓存失败", exc_info=True)
+            self.cleanup_result.setText("清理失败，请稍后再试")
             return
         if not stat:
-            self.cleanup_result.setText("用例数据未加载完成，已跳过（不会动任何数据）")
+            self.cleanup_result.setText("数据尚未就绪，请稍后再试")
             return
+
+        freed = stat.get('freed', 0)
         if not stat.get('steps') and not stat.get('keys') and not stat.get('suite_refs'):
-            self.cleanup_result.setText("很干净，没有需要清理的残留")
+            self.cleanup_result.setText("已经很干净了，没有需要清理的缓存")
             return
+
         self.cleanup_result.setText(
-            f"清理完成：删除无用步骤 {stat.get('steps', 0)} 个、"
-            f"失效用例映射 {stat.get('keys', 0)} 条、"
-            f"套件里的失效引用 {stat.get('suite_refs', 0)} 条，"
-            f"steps_data.json 省下 {self._fmt_size(stat.get('freed', 0))}"
+            f"清理完成，释放 {self._fmt_size(freed)}" if freed > 0 else "清理完成"
         )
 
     @staticmethod
@@ -1652,7 +1666,7 @@ class SettingsDialog(QDialog):
                 border-color: #216692;
             }}
 
-            /* ---------- 数据维护：清理无用数据 ----------
+            /* ---------- 数据维护：清理缓存 ----------
                取值与上面「设备维护：恢复输入法」#restoreImeBtn 完全一致，
                改一处记得同步另一处，保证两个页面的动作按钮观感相同 */
             #SettingsDialog QPushButton#cleanupDataBtn {{

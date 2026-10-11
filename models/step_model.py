@@ -173,7 +173,7 @@ class StepModel:
         return False
 
     # ------------------------------------------------------------------
-    # 无用数据回收
+    # 孤儿数据的回收与体积估算（设置页「清理缓存」）
     # ------------------------------------------------------------------
     def gc_orphan_steps(self, valid_case_ids) -> dict:
         """回收无用步骤，返回 {'keys': 删掉的失效映射数, 'steps': 删掉的步骤数, 'freed': 省下的字节数}。
@@ -211,3 +211,34 @@ class StepModel:
             'steps': len(removed_ids),
             'freed': max(0, before - after),
         }
+
+    def orphan_bytes(self, valid_case_ids) -> int:
+        """估算可回收的字节数（**只读，不修改任何数据**）。
+
+        算法与 gc_orphan_steps 的 freed 完全一致：拿「当前文件大小」减去
+        「清理后应有的文件大小」（把清理结果序列化一遍、不落盘）。这样设置页
+        显示的「当前缓存 X」与清理后报告的释放量能对上，不会一个 1.9 KB
+        一个 2.4 KB。
+        """
+        if not os.path.exists(self.DATA_FILE):
+            return 0
+        valid = set(valid_case_ids or ())
+        kept_case_steps = {k: v for k, v in self.case_steps.items() if k in valid}
+        referenced = {sid for ids in kept_case_steps.values() for sid in ids}
+        kept_steps = [s.to_dict() for sid, s in self._steps.items() if sid in referenced]
+
+        try:
+            after_doc = {
+                'id_counter': self._id_counter,
+                'case_steps': kept_case_steps,
+                'steps': kept_steps,
+            }
+            text = json.dumps(after_doc, ensure_ascii=False, indent=2)
+            # save() 走文本模式 open()，Windows 上 \n 会被落成 \r\n。
+            # 按现有文件实际的换行风格换算，估算值才能与清理后报告的释放量对齐。
+            with open(self.DATA_FILE, 'rb') as f:
+                nl = '\r\n' if b'\r\n' in f.read(8192) else '\n'
+            after = len(text.replace('\n', nl).encode('utf-8'))
+        except Exception:
+            return 0
+        return max(0, os.path.getsize(self.DATA_FILE) - after)

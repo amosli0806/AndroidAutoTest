@@ -137,7 +137,8 @@ class MainWindow(QMainWindow):
         self.visualize_button = None
         self.project_model = None
         self.step_model = None
-        self.data_cleanup_handler = None    # 「清理无用数据」入口，由 main.py 注入
+        self.data_cleanup_handler = None    # 「清理缓存」执行入口，由 main.py 注入
+        self.cache_size_handler = None      # 「清理缓存」大小估算入口，由 main.py 注入
         self.element_controller = None
         self.project_controller = None
         self.step_controller = None
@@ -667,11 +668,18 @@ class MainWindow(QMainWindow):
         self.step_model = step_model
 
     def set_data_cleanup_handler(self, handler):
-        """注入「清理无用数据」的执行入口（main.py 注册，设置页的数据维护页用它）。
+        """注入「清理缓存」的执行入口（main.py 注册，设置页的数据维护页用它）。
 
         处理器由调用方提供、签名 () -> dict|None，返回回收统计（None = 当前不能清理）。
         """
         self.data_cleanup_handler = handler
+
+    def set_cache_size_handler(self, handler):
+        """注入「清理缓存」的大小估算入口（main.py 注册）。
+
+        签名 () -> int|None：返回可回收的字节数，None = 当前数据未就绪、无法估算。
+        """
+        self.cache_size_handler = handler
 
     def set_project_controller(self, controller):
         self.project_controller = controller
