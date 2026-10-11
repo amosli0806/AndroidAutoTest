@@ -75,6 +75,9 @@ class SuiteEditorDialog(QDialog):
         self.list_widget.setSelectionMode(
             QListWidget.SelectionMode.ExtendedSelection)
         self.list_widget.model().rowsMoved.connect(lambda *_: self._renumber())
+        # 选中变化时刷新操作按钮的可用状态 —— 漏了这条会出现「重新点选条目，
+        # 移除/上移/下移仍是灰的」（按钮只在重排/增删时才更新）。
+        self.list_widget.itemSelectionChanged.connect(self._update_op_buttons)
         layout.addWidget(self.list_widget, 1)
 
         # 细分隔线：把列表区与底部操作栏分开，底部读起来像一条独立工具栏
@@ -115,20 +118,24 @@ class SuiteEditorDialog(QDialog):
 
         action_row.addStretch(1)
 
-        self.cancel_btn = QPushButton("取消")
-        self.cancel_btn.setObjectName("cancelBtn")
-        self.cancel_btn.clicked.connect(self.reject)
-        action_row.addWidget(self.cancel_btn)
-
+        # 不再放「取消」：标题栏的关闭按钮（以及 Esc）已经能放弃修改，
+        # 底部只保留唯一的确认动作，避免两个按钮做同一件事。
         self.ok_btn = QPushButton("保存")
         self.ok_btn.setObjectName("okBtn")
         self.ok_btn.clicked.connect(self.accept)
         action_row.addWidget(self.ok_btn)
 
-        # 「取消 / 保存」给一个下限宽度，与左侧操作按钮拉开主次
+        # 「保存」给一个下限宽度，与左侧操作按钮拉开主次
         # （高度统一由 QSS 的 min/max-height + padding 控制，避免两种机制打架）
-        self.cancel_btn.setMinimumWidth(88)
-        self.ok_btn.setMinimumWidth(88)
+        self.ok_btn.setMinimumWidth(96)
+
+        # 回车键要落在「保存」上。QDialog 会把焦点链里第一个按钮自动设成默认，
+        # 不显式指定的话回车会误触发「加入当前勾选的用例」。
+        for b in (self.add_checked_btn, self.remove_btn,
+                  self.move_up_btn, self.move_down_btn):
+            b.setAutoDefault(False)
+        self.ok_btn.setDefault(True)
+        self.ok_btn.setAutoDefault(True)
 
         layout.addLayout(action_row)
 
@@ -158,9 +165,17 @@ class SuiteEditorDialog(QDialog):
         self.count_label.setText(f"共 {n} 条用例" if n else "套件里还没有用例")
 
     def _update_op_buttons(self):
-        has_sel = bool(self.list_widget.selectedItems())
-        for b in (self.remove_btn, self.move_up_btn, self.move_down_btn):
-            b.setEnabled(has_sel)
+        """按当前选中刷新操作按钮状态（选中变化 / 增删 / 重排后都要调）。"""
+        if not hasattr(self, 'remove_btn'):
+            return
+        rows = sorted(self.list_widget.row(i)
+                      for i in self.list_widget.selectedItems())
+        has_sel = bool(rows)
+        self.remove_btn.setEnabled(has_sel)
+        # 已在首 / 末位时禁用对应方向，避免「点了没反应」
+        self.move_up_btn.setEnabled(has_sel and rows[0] > 0)
+        self.move_down_btn.setEnabled(
+            has_sel and rows[-1] < self.list_widget.count() - 1)
 
     def _current_ids(self):
         return [self.list_widget.item(i).data(_ID_ROLE)
@@ -246,7 +261,7 @@ class SuiteEditorDialog(QDialog):
             }}
             QListWidget#suiteList::item {{ padding: 5px 6px; border-radius: 3px; }}
             QListWidget#suiteList::item:selected {{ background-color: {list_sel}; color: {text}; }}
-            QPushButton#opBtn, QPushButton#cancelBtn {{
+            QPushButton#opBtn {{
                 background-color: {btn_bg};
                 color: {btn_fg};
                 border: 1px solid {border};
@@ -255,7 +270,7 @@ class SuiteEditorDialog(QDialog):
                 min-height: 22px;
                 max-height: 22px;
             }}
-            QPushButton#opBtn:hover, QPushButton#cancelBtn:hover {{ background-color: {btn_hover}; }}
+            QPushButton#opBtn:hover {{ background-color: {btn_hover}; }}
             QPushButton#opBtn:disabled {{ color: {hint}; }}
             QPushButton#okBtn {{
                 background-color: #1976d2;
