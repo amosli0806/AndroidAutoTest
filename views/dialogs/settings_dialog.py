@@ -62,7 +62,6 @@ _SHORTCUT_LABELS = {
 }
 import qtawesome as qta
 from utils.settings import Settings, THEME_MODE_SYSTEM, THEME_MODE_LIGHT, THEME_MODE_DARK
-from utils.toast import show_toast
 
 logger = logging.getLogger(__name__)
 
@@ -275,7 +274,7 @@ class SettingsDialog(QDialog):
         device_root.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.nav_tree.addTopLevelItem(device_root)
 
-        device_item = QTreeWidgetItem(["设备维护"])
+        device_item = QTreeWidgetItem(["恢复输入法"])
         device_item.setData(0, Qt.ItemDataRole.UserRole, idx)
         device_root.addChild(device_item)
         self.content_stack.addWidget(self._build_device_page())
@@ -1002,15 +1001,15 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
 
-        title = QLabel("设备维护")
+        title = QLabel("恢复输入法")
         title.setObjectName("SettingsPageTitle")
         layout.addWidget(title)
 
-        subtitle = QLabel("修复设备连接相关的异常状态，操作前请确保设备已连接")
+        subtitle = QLabel("设备无法输入文字时，把输入法一键恢复为系统默认")
         subtitle.setObjectName("SettingsPageSubtitle")
+        subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
 
-        # 恢复输入法
         row = QHBoxLayout()
         row.setSpacing(10)
 
@@ -1023,14 +1022,11 @@ class SettingsDialog(QDialog):
         row.addStretch()
         layout.addLayout(row)
 
-        hint = QLabel(
-            "检查设备当前输入法：正常时不做任何改动；"
-            "异常（未设置或已被卸载）时自动切回可用的输入法（优先系统 AOSP 键盘），"
-            "解决输入法被篡改导致 uiautomator2 无法输入文字的问题。"
-        )
-        hint.setObjectName("SettingsPageSubtitle")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        # 结果行：与「清理缓存」页一致，结论直接显示在页面里，不弹窗打断
+        self.ime_result = QLabel("")
+        self.ime_result.setObjectName("SettingsPageSubtitle")
+        self.ime_result.setWordWrap(True)
+        layout.addWidget(self.ime_result)
 
         layout.addStretch()
         return page
@@ -1039,18 +1035,18 @@ class SettingsDialog(QDialog):
         main_win = self.parent()
         ds = getattr(main_win, 'device_service', None) if main_win else None
         if ds is None:
-            show_toast(self, "设备服务未初始化", duration=2000)
+            self.ime_result.setText("暂时无法恢复，请稍后再试")
             return
         try:
             # 直接展示服务返回的结论：正常时是「当前输入法正常，无需恢复」，
             # 真恢复过则是「已恢复输入法：xxx」，比笼统的"成功"更有信息量
-            show_toast(self, ds.restore_ime(), duration=2500)
+            self.ime_result.setText(ds.restore_ime())
         except Exception as e:
-            msg = str(e)
-            if "设备未连接" in msg:
-                show_toast(self, "设备未连接", duration=2000)
+            if "设备未连接" in str(e):
+                self.ime_result.setText("设备未连接，请先连接设备")
             else:
-                show_toast(self, "恢复输入法失败", duration=2000)
+                logger.debug("恢复输入法失败", exc_info=True)
+                self.ime_result.setText("恢复输入法失败，请稍后再试")
 
     # ------------------------------------------------------------------
     # 数据维护：清理缓存
@@ -1650,7 +1646,7 @@ class SettingsDialog(QDialog):
                 background-color: {btn_secondary_pressed};
             }}
 
-            /* ---------- 设备维护：恢复输入法 ---------- */
+            /* ---------- 恢复输入法页的动作按钮 ---------- */
             #SettingsDialog QPushButton#restoreImeBtn {{
                 background-color: #3498db;
                 color: white;
@@ -1667,7 +1663,7 @@ class SettingsDialog(QDialog):
             }}
 
             /* ---------- 数据维护：清理缓存 ----------
-               取值与上面「设备维护：恢复输入法」#restoreImeBtn 完全一致，
+               取值与上面「恢复输入法」#restoreImeBtn 完全一致，
                改一处记得同步另一处，保证两个页面的动作按钮观感相同 */
             #SettingsDialog QPushButton#cleanupDataBtn {{
                 background-color: #3498db;

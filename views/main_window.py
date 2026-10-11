@@ -3751,7 +3751,7 @@ class MainWindow(QMainWindow):
         elif action == "settings":
             self.on_settings()
         elif action == "restore_ime":
-            # 设置页「设备维护 → 恢复输入法」的快捷键入口（此前注册了快捷键却没有这个分支，
+            # 设置页「设备管理 → 恢复输入法」的快捷键入口（此前注册了快捷键却没有这个分支，
             # 按了没反应）。与服务走同一套判定：输入法正常时不改动、直接给出结论。
             ds = self.device_service
             if ds is None:

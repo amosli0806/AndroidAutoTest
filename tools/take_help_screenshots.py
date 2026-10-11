@@ -892,7 +892,7 @@ def step_device_combo_popup():
 
 def step_settings_device_page():
     global _settings_dlg
-    _settings_dlg = open_settings_page("设备维护")
+    _settings_dlg = open_settings_page("恢复输入法")
     grab_widget(_settings_dlg, "device_4_restore_ime.png")
 
 def step_settings_voice_page():
@@ -1082,7 +1082,7 @@ STEPS = [
     (500,  step_element_context_menu,"元素右键菜单"),
     (500,  step_weditor_container_shot, "weditor 启动按钮页"),
     (500,  step_device_combo_popup,  "设备下拉弹窗"),
-    (600,  step_settings_device_page,"设置-设备维护页"),
+    (600,  step_settings_device_page,"设置-恢复输入法页"),
     (600,  step_settings_voice_page, "设置-语音设置页"),
     (400,  step_settings_close,      "关闭设置"),
     (500,  step_project_menu,        "项目管理菜单"),
