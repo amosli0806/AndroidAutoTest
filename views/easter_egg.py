@@ -13,9 +13,9 @@
 设计原则（与项目其它 UI 一致）：
   * **完全独立**：不引用任何业务对象，只依赖 QDialog + QPainter + 动画。
     主窗口侧只需一行 `attach_about_easter_egg(dialog, sub_label, is_dark)`。
-  * **零外部素材**：鲸鱼与粒子全部 QPainter 自绘（形取自常见鲸鱼插画画法：
-    圆头 + 圆肚 + 上扬尾鳍 + 胸鳍 + 喷水），不新增图片资源，
-    不受打包 spec 影响。
+  * **零外部素材**：鲸鱼与粒子全部 QPainter 自绘。鲸鱼画成**座头鲸**
+    （大钝头 + 浅色下颌与喉腹褶 + 大眼 + 长胸鳍 + 上扬分叉尾鳍），
+    形取自用户提供的参考图；不新增图片资源，不受打包 spec 影响。
   * **不干扰**：覆盖层鼠标穿透（WA_TransparentForMouseEvents），
     彩蛋进行中点「关闭 / 复制并关闭」照常可用；随对话框一起销毁。
   * **不剧透**：触发标签**不设 tooltip、不改光标** —— 彩蛋要留给用户自己发现。
@@ -95,6 +95,8 @@ class _EggOverlay(QWidget):
         base.setAlphaF(0.94 * fade)
         p.fillRect(0, 0, w, h, base)
 
+        # 水下斜射光（呼应参考图的氛围）
+        self._draw_rays(p, w, h, t, fade)
         self._draw_particles(p, w, h, t, fade)
 
         # 鲸鱼：t 0.10~0.90 内从右往左游过。
@@ -115,6 +117,33 @@ class _EggOverlay(QWidget):
             self._draw_quote(p, w, h, fade * qa)
         p.end()
 
+    def _draw_rays(self, p: QPainter, w: int, h: int, t: float, fade: float):
+        """水下斜射光：几道自左上斜向右下的柔光柱（呼应参考图的氛围）。
+
+        只画在暗色主题 —— 浅色底上光柱几乎不可见，画了反而脏。
+        """
+        if not self._dark:
+            return
+        p.save()
+        p.setPen(Qt.PenStyle.NoPen)
+        # (起点 x 比例, 柱宽, 倾角系数)：自上而下渐隐，避免变成生硬的条纹
+        for xf, wid, lean in ((0.12, 26, 0.32), (0.34, 40, 0.42),
+                              (0.60, 20, 0.36), (0.80, 32, 0.48)):
+            x0 = w * xf
+            grad = QLinearGradient(0, 0, 0, h)
+            grad.setColorAt(0.0, QColor(150, 205, 245, int(34 * fade)))
+            grad.setColorAt(0.55, QColor(150, 205, 245, int(11 * fade)))
+            grad.setColorAt(1.0, QColor(150, 205, 245, 0))
+            p.setBrush(grad)
+            path = QPainterPath()
+            path.moveTo(x0, 0)
+            path.lineTo(x0 + wid, 0)
+            path.lineTo(x0 + wid + h * lean, h)
+            path.lineTo(x0 + h * lean, h)
+            path.closeSubpath()
+            p.drawPath(path)
+        p.restore()
+
     def _draw_particles(self, p: QPainter, w: int, h: int, t: float, fade: float):
         """微光粒子（「虫」）：缓慢上浮 + 明灭。"""
         p.setPen(Qt.PenStyle.NoPen)
@@ -131,103 +160,153 @@ class _EggOverlay(QWidget):
             p.drawEllipse(QPointF(px, py), r, r)
 
     def _draw_whale(self, p: QPainter, cx: float, cy: float, fade: float):
-        """画一只自然可爱的鲸鱼（朝左游）。
+        """画一只座头鲸（humpback），形取自用户提供的参考图。
 
-        参照常见鲸鱼插画的画法：**大而圆的头**（占身体大部分）+ 圆肚子 +
-        上扬的小尾鳍（两叶、圆润）+ 小胸鳍 + 大眼高光 + 头顶喷水。
-        坐标以 (cx, cy) 为身体中心，整体约占 150×110 的方框。
+        抓住座头鲸的几个标志性特征：
+          * **又大又钝的头** + 向下的下颌线；
+          * 下颌与喉腹是**浅色**，并带多道 **喉腹褶（ventral pleats）**；
+          * **大而传神的眼睛**（虹膜 + 瞳孔 + 高光）；
+          * 座头鲸招牌的**长胸鳍**（约占体长 1/3），向下后方舒展；
+          * **高高扬起的分叉尾鳍**。
+
+        坐标以 (cx, cy) 为鲸身中心；内部用 translate+scale 在局部坐标
+        （原点=鲸身中心）作画，整体约占 180×150 的方框。
         """
         a = max(0.0, min(1.0, fade))
+        if a <= 0.01:
+            return
 
-        top = QColor(110, 210, 255); top.setAlphaF(0.98 * a)
-        bot = QColor(24, 146, 246);  bot.setAlphaF(0.98 * a)
-        belly = QColor(214, 240, 255); belly.setAlphaF(0.92 * a)
+        p.save()
+        p.translate(cx, cy)
+        p.scale(0.80, 0.80)
 
-        # ---- 身体：大圆弧头 + 圆肚子，尾根收细 ----
+        # 配色：保持青蓝调（契合彩蛋的深蓝/浅蓝底），但用座头鲸的明暗关系
+        top_c = QColor(96, 168, 216); top_c.setAlphaF(0.99 * a)
+        bot_c = QColor(38, 100, 156);  bot_c.setAlphaF(0.99 * a)
+        belly_c = QColor(228, 241, 251); belly_c.setAlphaF(0.97 * a)
+
+        # ---- 主体轮廓：大钝头 + 平缓背部 + 圆腹，尾根收细 ----
         body = QPainterPath()
-        body.moveTo(cx - 62, cy + 6)                                    # 吻端
-        body.cubicTo(cx - 62, cy - 40, cx - 10, cy - 52, cx + 26, cy - 34)  # 背部大弧
-        body.cubicTo(cx + 44, cy - 25, cx + 52, cy - 12, cx + 54, cy - 4)   # 收向尾根
-        body.cubicTo(cx + 52, cy + 6, cx + 42, cy + 16, cx + 22, cy + 24)   # 腹部
-        body.cubicTo(cx - 12, cy + 34, cx - 54, cy + 30, cx - 62, cy + 6)   # 回到吻端
+        body.moveTo(-96, -2)                                      # 吻端（钝圆）
+        body.cubicTo(-101, -34, -68, -55, -22, -55)               # 头顶大弧
+        body.cubicTo(20, -55, 48, -47, 58, -33)                   # 背部
+        body.cubicTo(64, -23, 62, -13, 54, -3)                    # 收向尾根
+        body.cubicTo(50, 17, 26, 37, -16, 45)                     # 腹部
+        body.cubicTo(-54, 51, -92, 37, -96, -2)                   # 回到吻端
         body.closeSubpath()
 
-        grad = QLinearGradient(cx, cy - 52, cx, cy + 34)
-        grad.setColorAt(0.0, top)
-        grad.setColorAt(1.0, bot)
+        grad = QLinearGradient(0, -55, 0, 46)
+        grad.setColorAt(0.0, top_c)
+        grad.setColorAt(1.0, bot_c)
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(grad)
         p.drawPath(body)
 
-        # ---- 腹部浅色弧（鲸鱼特征）----
+        # ---- 浅色的下颌 / 喉腹（裁剪在体内）----
         p.save()
         p.setClipPath(body)
-        belly_path = QPainterPath()
-        belly_path.moveTo(cx - 62, cy + 10)
-        belly_path.cubicTo(cx - 30, cy + 52, cx + 20, cy + 50, cx + 54, cy + 10)
-        belly_path.cubicTo(cx + 34, cy + 40, cx - 26, cy + 44, cx - 62, cy + 10)
-        belly_path.closeSubpath()
-        p.setBrush(belly)
-        p.drawPath(belly_path)
+        lower = QPainterPath()
+        lower.moveTo(-98, -4)
+        lower.cubicTo(-72, 32, -20, 50, 22, 46)
+        lower.cubicTo(48, 42, 60, 20, 62, 2)
+        lower.lineTo(84, 92)
+        lower.lineTo(-124, 92)
+        lower.closeSubpath()
+        p.setBrush(belly_c)
+        p.drawPath(lower)
+
+        # ---- 喉腹褶（ventral pleats）：几道平行的浅色沟 ----
+        pen = QPen(QColor(146, 178, 206, int(155 * a)))
+        pen.setWidthF(1.7)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for i in range(6):
+            k = i / 5.0
+            pl = QPainterPath()
+            pl.moveTo(-82 + k * 9, 3 + k * 10)
+            pl.cubicTo(-50, 24 + k * 9, -8, 39 + k * 5, 28, 29 + k * 2)
+            p.drawPath(pl)
         p.restore()
 
-        # ---- 尾鳍：尾根处向右上扬的两叶（圆润、翘起）----
-        tail = QPainterPath()
-        tail.moveTo(cx + 48, cy - 4)
-        # 上叶（向右上翘）
-        tail.cubicTo(cx + 62, cy - 22, cx + 82, cy - 34, cx + 90, cy - 28)
-        tail.cubicTo(cx + 84, cy - 10, cx + 68, cy - 2, cx + 56, cy + 2)
-        # 下叶（略向右下）
-        tail.cubicTo(cx + 70, cy + 4, cx + 84, cy + 2, cx + 90, cy + 10)
-        tail.cubicTo(cx + 76, cy + 22, cx + 58, cy + 16, cx + 48, cy + 4)
-        tail.closeSubpath()
-        tgrad = QLinearGradient(cx + 48, cy - 30, cx + 90, cy + 16)
-        t1 = QColor(128, 218, 255); t1.setAlphaF(0.96 * a)
-        t2 = QColor(24, 146, 246);  t2.setAlphaF(0.96 * a)
-        tgrad.setColorAt(0.0, t1)
-        tgrad.setColorAt(1.0, t2)
-        p.setBrush(tgrad)
-        p.drawPath(tail)
-
-        # ---- 胸鳍：身体下方一片小小的船桨 ----
-        fin = QPainterPath()
-        fin.moveTo(cx - 30, cy + 18)
-        fin.cubicTo(cx - 42, cy + 32, cx - 58, cy + 40, cx - 66, cy + 36)
-        fin.cubicTo(cx - 60, cy + 22, cx - 46, cy + 12, cx - 34, cy + 10)
-        fin.closeSubpath()
-        fcol = QColor(24, 146, 246); fcol.setAlphaF(0.9 * a)
-        p.setBrush(fcol)
-        p.drawPath(fin)
-
-        # ---- 眼睛：大眼 + 白色高光（靠吻端一些，符合鲸鱼侧脸比例）----
-        eye_c = QPainterPath()
-        eye_c.addEllipse(QPointF(cx - 48, cy - 8), 5.6, 5.6)
-        p.setBrush(QColor(255, 255, 255, int(245 * a)))
-        p.drawPath(eye_c)
-        p.setBrush(QColor(20, 55, 100, int(245 * a)))
-        p.drawEllipse(QPointF(cx - 47, cy - 8), 3.1, 3.1)
-        p.setBrush(QColor(255, 255, 255, int(235 * a)))
-        p.drawEllipse(QPointF(cx - 48.6, cy - 9.4), 1.3, 1.3)
-
-        # ---- 喷水：头顶一道细细的水柱 + 顶端水花 ----
-        # 亮色背景下白色太淡，改用浅蓝白；暗色下用纯白。
-        sp_c = (QColor(255, 255, 255, int(190 * a)) if self._dark
-                else QColor(150, 205, 245, int(210 * a)))
-        pen = QPen(sp_c)
-        pen.setWidthF(2.2)
+        # ---- 嘴线：自吻端向后下方轻扫（下颌与上颌的分界）----
+        pen = QPen(QColor(26, 64, 102, int(205 * a)))
+        pen.setWidthF(3.0)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
-        spout = QPainterPath()
-        spout.moveTo(cx - 16, cy - 44)
-        spout.cubicTo(cx - 20, cy - 58, cx - 14, cy - 68, cx - 8, cy - 74)
-        p.drawPath(spout)
+        mouth = QPainterPath()
+        mouth.moveTo(-97, 3)
+        mouth.cubicTo(-74, -1, -48, -5, -26, -7)
+        p.drawPath(mouth)
+
+        # ---- 远侧胸鳍（在身体后下方，深色，先画）----
+        far_fin = QPainterPath()
+        far_fin.moveTo(-20, 30)
+        far_fin.cubicTo(-8, 52, 6, 74, 16, 88)
+        far_fin.cubicTo(24, 96, 30, 94, 27, 84)
+        far_fin.cubicTo(20, 66, 10, 48, 2, 32)
+        far_fin.closeSubpath()
+        far_c = QColor(30, 84, 134); far_c.setAlphaF(0.9 * a)
+        p.setBrush(far_c)
+        p.drawPath(far_fin)
+
+        # ---- 尾鳍：自尾根向右上高高扬起的分叉大尾 ----
+        fluke = QPainterPath()
+        fluke.moveTo(52, -33)                                     # 尾根上端
+        fluke.cubicTo(70, -50, 88, -80, 98, -102)                 # 上叶尖（略偏左）
+        fluke.cubicTo(104, -94, 102, -78, 93, -66)                # 叶间缺刻
+        fluke.cubicTo(102, -68, 116, -66, 128, -62)               # 下叶尖（偏右）
+        fluke.cubicTo(118, -46, 96, -32, 78, -24)
+        fluke.cubicTo(66, -20, 56, -24, 52, -33)
+        fluke.closeSubpath()
+        fgrad = QLinearGradient(52, -100, 128, -22)
+        f1 = QColor(112, 182, 226); f1.setAlphaF(0.98 * a)
+        f2 = QColor(34, 94, 148);   f2.setAlphaF(0.98 * a)
+        fgrad.setColorAt(0.0, f1)
+        fgrad.setColorAt(1.0, f2)
+        p.setBrush(fgrad)
+        p.drawPath(fluke)
+
+        # ---- 近侧胸鳍：座头鲸招牌的长胸鳍，向下后方舒展，带浅色斑 ----
+        fin = QPainterPath()
+        fin.moveTo(-32, 12)
+        fin.cubicTo(-14, 34, 12, 60, 32, 78)
+        fin.cubicTo(46, 90, 60, 90, 58, 76)
+        fin.cubicTo(52, 58, 28, 34, 8, 14)
+        fin.cubicTo(-2, 4, -24, 2, -32, 12)
+        fin.closeSubpath()
+        ngrad = QLinearGradient(0, 10, 56, 86)
+        n1 = QColor(168, 214, 240); n1.setAlphaF(0.96 * a)
+        n2 = QColor(74, 144, 198);  n2.setAlphaF(0.96 * a)
+        ngrad.setColorAt(0.0, n1)
+        ngrad.setColorAt(1.0, n2)
+        p.setBrush(ngrad)
+        p.drawPath(fin)
+
+        # ---- 眼睛：大眼（暗色眼周 + 暖金虹膜 + 瞳孔 + 高光）----
+        ex, ey = -42, -21
         p.setPen(Qt.PenStyle.NoPen)
-        droplet = (QColor(255, 255, 255, int(200 * a)) if self._dark
-                   else QColor(150, 205, 245, int(220 * a)))
-        p.setBrush(droplet)
-        for dx, dy, r in ((-14, -80, 2.6), (-7, -84, 2.0), (-1, -79, 1.6)):
-            p.drawEllipse(QPointF(cx + dx, cy + dy), r, r)
+        p.setBrush(QColor(120, 164, 200, int(95 * a)))        # 眼周淡影
+        p.drawEllipse(QPointF(ex, ey), 11.6, 11.6)
+        p.setBrush(QColor(36, 70, 106, int(246 * a)))         # 眼球深色
+        p.drawEllipse(QPointF(ex, ey), 8.7, 8.7)
+        p.setBrush(QColor(198, 160, 94, int(242 * a)))        # 暖金虹膜（含蓄）
+        p.drawEllipse(QPointF(ex, ey), 6.0, 6.0)
+        p.setBrush(QColor(17, 25, 37, 253))                   # 瞳孔
+        p.drawEllipse(QPointF(ex + 0.3, ey + 0.3), 3.2, 3.2)
+        p.setBrush(QColor(255, 255, 255, int(235 * a)))       # 高光
+        p.drawEllipse(QPointF(ex - 2.2, ey - 2.4), 1.7, 1.7)
+
+        # ---- 几颗细小的气泡（水下感，呼应参考图的氛围）----
+        bub = QColor(255, 255, 255, int(90 * a))
+        pen = QPen(bub)
+        pen.setWidthF(1.4)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for bx, by, br in ((70, 4, 3.4), (84, -10, 2.5), (94, 2, 1.9)):
+            p.drawEllipse(QPointF(bx, by), br, br)
+
+        p.restore()
 
     def _draw_quote(self, p: QPainter, w: int, h: int, alpha: float):
         alpha = max(0.0, min(1.0, alpha))
