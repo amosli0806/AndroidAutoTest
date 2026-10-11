@@ -642,6 +642,11 @@ class MainWindow(QMainWindow):
                 font-size: 13px;
                 background: transparent;
             }}
+            QLabel#WelcomeHint {{
+                color: {tip_desc_color};
+                font-size: 12px;
+                background: transparent;
+            }}
             QWidget#WelcomeTipRow {{
                 background: transparent;
             }}
@@ -983,6 +988,8 @@ class MainWindow(QMainWindow):
             ("fa6s.mobile-screen", "连接设备", "顶部工具栏 → 选择设备 → 刷新"),
             ("fa6s.pen-to-square", "创建用例", "「自动化编辑」→ 右键项目树 → 创建用例"),
             ("fa6s.video", "录制步骤", "选中用例 → 点步骤列表上方 ● 开始录制"),
+            ("fa6s.eye", "应用可视化", "「应用可视化」→ 一键启动，抓界面元素"),
+            ("fa6s.list", "应用元素库", "「应用元素库」→ 抓取界面一键导入 / Excel 互导"),
             ("fa6s.play", "执行测试", "「自动化执行」→ 勾选用例 → 执行"),
             ("fa6s.screwdriver-wrench", "ADB 调试", "「ADB 工具箱」→ 指令 / 弱网 / Monkey"),
             ("fa6s.gauge-high", "性能检测", "「性能检测」→ 选应用 → 开始监控"),
@@ -1019,6 +1026,16 @@ class MainWindow(QMainWindow):
             tips_layout.addWidget(row_widget)
 
         welcome_layout.addWidget(tips_container, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        welcome_layout.addSpacing(16)
+
+        # 底部一句指路：帮助中心有全套图文说明，但欢迎页此前完全没提这个入口，
+        # 新用户容易不知道它存在。快捷键从设置读，用户改过键位这里也跟着变。
+        _help_key = (Settings.get_shortcuts().get("help_center") or "F1").strip() or "F1"
+        welcome_hint = QLabel(f"首次使用？按 {_help_key} 打开帮助中心，有完整的图文说明")
+        welcome_hint.setObjectName("WelcomeHint")
+        welcome_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        welcome_layout.addWidget(welcome_hint)
 
         wrapper_layout.addWidget(welcome_widget)
         self.stacked_widget.insertWidget(6, welcome_wrapper)
