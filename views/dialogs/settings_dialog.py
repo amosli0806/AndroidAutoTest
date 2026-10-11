@@ -883,7 +883,7 @@ class SettingsDialog(QDialog):
         vm = VoiceModel()
         default = self.car_profile_combo.currentData() or ""
         name, ok = InputDialog.get_text(
-            self, "另存为车型模板", "模板名称（如：本田 23/4M）:",
+            self, "另存为车型模板", "模板名称（如：本田）:",
             default_text=default)
         name = (name or "").strip()
         if not ok or not name:
