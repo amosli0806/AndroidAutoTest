@@ -29,6 +29,7 @@ from views.adb_panels.common import (form_label, panel_chrome_qss, panel_header,
                                      panel_separator, thin_scrollbar_qss,
                                      disable_context_menus, BorderedCheckBox)
 from utils.dialogs import WarningDialog, ErrorDialog
+from utils.wheel_guard import WheelScrollGuard
 
 
 class MonkeyPanel(QWidget):
@@ -245,6 +246,13 @@ class MonkeyPanel(QWidget):
         layout.addWidget(self.advanced_group)
 
         # 状态提示已不再在面板内占一行，改为发信号到主窗口底部"虫师日志"
+
+        # 滚轮守卫：面板里的下拉 / 数字框**没获得焦点**时，滚轮交给滚动区。
+        # 面板本身可能被放进外层滚动区（ADB 工具箱的 tool_scroll），高级选项里
+        # 又有一层自己的滚动区 —— 守卫会在事件发生时找「最近的、还能滚的那个」，
+        # 所以内层滚到头后滚轮会顺势交给外层，不会卡住（见 utils/wheel_guard.py）。
+        self._wheel_guard = WheelScrollGuard(self)
+        self._wheel_guard.watch(self)
 
         # 面板里所有输入控件禁用右键编辑菜单
         disable_context_menus(self)
