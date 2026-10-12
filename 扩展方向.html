@@ -170,7 +170,7 @@
     <div class="badges">
       <span class="badge">当前版本 v1.4.6</span>
       <span class="badge">8 个功能入口</span>
-      <span class="badge">12 项扩展方向</span>
+      <span class="badge">13 项扩展方向</span>
       <span class="badge">4 个开发阶段</span>
     </div>
   </header>
@@ -335,6 +335,9 @@
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>无工程化配套</b> — 无 Git 集成（用例数据没有版本管理与回滚）。</div></div>
       </div>
+      <div class="card">
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>无经验沉淀</b> — 踩过的坑散落在聊天记录 / 旧文档里，没有统一记录与检索处，跨项目经验难复用。</div></div>
+      </div>
     </div>
   </section>
 
@@ -342,7 +345,7 @@
   <section class="chapter" id="s3">
     <h2><span class="num">3</span>扩展方向（按优先级）</h2>
 
-    <p class="small" style="margin-top:0">12 项规划按 <b>「改动小 → 改动大」</b> 四档重排：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
+    <p class="small" style="margin-top:0">13 项规划按 <b>「改动小 → 改动大」</b> 四档重排：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 第一优先 · 改动小、见效快</h3>
 
@@ -378,10 +381,25 @@
       <div class="example">💡 <b>打个比方：</b>像文档的「修订记录 / 历史版本」——用例改乱了，一键回到昨天的版本，还能看看到底改了哪几行。</div>
     </div>
 
+    <div class="card">
+      <h3>5. 个人测试知识库 <span class="tag plan">📋 规划中</span></h3>
+      <p>右工具栏「帮助中心」下方新增入口。把负责不同项目时踩的坑随手记下来，按项目 / 标签归类、全文检索，下次撞上同类问题一键翻出来。（帮助中心是官方内置说明、只读；知识库是使用者自己的、可读写。）</p>
+      <ul>
+        <li><b>随手记（零摩擦）</b>：全局快捷键唤出浮层，一句话 + 标签 + 可粘贴截图 / 日志片段即可存下</li>
+        <li><b>从异常一键沉淀</b>：崩溃 / ANR 面板、失败用例报告、接口断言失败、性能告警 → 一键「记入知识库」，自动带入设备、包名、版本号与日志片段</li>
+        <li><b>结构化「坑」模板</b>：现象 / 原因 / 解决方案 / 涉及设备与系统版本 / 关联版本号 / 状态（已解决 / 待验证 / 死坑）</li>
+        <li><b>组织与检索</b>：项目 + 标签双维度；Markdown 正文（代码块 / 表格 / 链接）；全文搜索 + Ctrl+K 风格命令面板直达；收藏 / 置顶 / 最近访问</li>
+        <li><b>失败自动关联</b>：用例执行失败或 AI 失败分析时，自动匹配库里相似报错，给出「你之前遇到过这个，当时是这么解决的」</li>
+        <li><b>导入 / 导出</b>：Markdown / Excel 导出便于交接；支持从现有 md、飞书 / 语雀等文档导入</li>
+      </ul>
+      <p class="small"><b>一期最小闭环：</b>入口 + 项目 / 标签组织 + Markdown 正文 + 全文搜索 + 从异常一键沉淀。<b>二期：</b>失败自动关联、导入 / 导出、团队共享库。</p>
+      <div class="example">💡 <b>打个比方：</b>像长在虫师里的「个人版语雀 / 印象笔记」——测试时随手把坑记下，下次再撞上同一个报错，工具直接把当时的解法翻给你，不用再去翻聊天记录和旧文档。</div>
+    </div>
+
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 第三优先 · 改动较大，需先设计</h3>
 
     <div class="card">
-      <h3>5. 执行健壮性增强 <span class="tag plan">📋 规划中</span></h3>
+      <h3>6. 执行健壮性增强 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>步骤级失败重试（次数 + 间隔 + 触发条件可配）</li>
         <li>显式等待（等元素出现 / 消失 / 可点击，替代固定 sleep）</li>
@@ -390,7 +408,7 @@
     </div>
 
     <div class="card">
-      <h3>6. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
+      <h3>7. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>前后置脚本（Python 钩子，处理签名 / 加解密 / 数据提取）</li>
         <li>链路场景编排（接口串联，上一步响应作为下一步入参）</li>
@@ -400,7 +418,7 @@
     </div>
 
     <div class="card">
-      <h3>7. 图像识别定位 <span class="tag plan">📋 规划中</span></h3>
+      <h3>8. 图像识别定位 <span class="tag plan">📋 规划中</span></h3>
       <p>新增「图像」定位方式（模板匹配 + 相似度阈值），元素库可上传参考图，执行时截图比对。</p>
       <div class="example">💡 <b>打个比方：</b>像「人脸识别解锁」或玩「找不同」——游戏里的按钮是「画」出来的（不是代码控件，看不到元素树），靠截图比对把它认出来，从而覆盖游戏、视频、自绘界面。</div>
     </div>
@@ -408,7 +426,7 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 第四优先 · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
-      <h3>8. 变量 / 参数化 <span class="tag plan">📋 规划中</span></h3>
+      <h3>9. 变量 / 参数化 <span class="tag plan">📋 规划中</span></h3>
       <p>定义全局变量（设备序列号、测试账号、环境地址），步骤参数里用 <code>${变量}</code> 引用；同一用例可循环跑多组数据（数据驱动）。</p>
       <ul>
         <li>全局变量表，元素库与步骤参数统一走一层变量替换</li>
@@ -418,13 +436,13 @@
     </div>
 
     <div class="card">
-      <h3>9. 测试数据管理 <span class="tag plan">📋 规划中</span></h3>
+      <h3>10. 测试数据管理 <span class="tag plan">📋 规划中</span></h3>
       <p>从 Excel / CSV 读取测试数据，参数化执行同一用例多组数据（与「变量 / 参数化」合并实现更合理）。</p>
       <div class="example">💡 <b>打个比方：</b>像「同一张答题卡批不同试卷」——用例就是那张答题卡，数据就是试卷，套上账号 A、账号 B、账号 C 各跑一遍，批量出结果。</div>
     </div>
 
     <div class="card">
-      <h3>10. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
+      <h3>11. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把唤醒词、语速等提升为可参数化变量，用例内可覆盖</li>
       </ul>
@@ -432,13 +450,13 @@
     </div>
 
     <div class="card">
-      <h3>11. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
+      <h3>12. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
       <div class="example">💡 <b>打个比方：</b>像手机「快捷指令 / 宏」——把「打开 App → 输账号 → 输密码 → 点登录」这 5 步打包成一个「登录」关键字，以后任何用例点一下就好，不用重复拖 5 个步骤。</div>
     </div>
 
     <div class="card">
-      <h3>12. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <h3>13. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把堆转储 / 抓包 / 截图<b>接进监控会话</b>——产物归会话、报告出「诊断产物」、曲线画事件标记（见第七章）</li>
         <li>抓包过滤参数（端口 / 主机过滤）；剩余保护（设备剩余空间告警、到限改为分段存盘）</li>
@@ -460,6 +478,7 @@
           <tr><td class="stars">⭐⭐⭐</td><td>步骤模板</td><td>本质是「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
           <tr><td class="stars">⭐⭐</td><td>语音播报增强</td><td>模块独立：唤醒词多套是数据 + UI；结果校验与用例互转稍大</td></tr>
           <tr><td class="stars">⭐⭐</td><td>版本控制集成（Git）</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
+          <tr><td class="stars">⭐⭐</td><td>个人测试知识库</td><td>纯新增页面 + 本地存储与检索，不碰执行器与数据结构；功能面可大可小，建议按一期最小闭环起步</td></tr>
           <tr><td class="stars">⭐⭐</td><td>执行健壮性增强</td><td>价值高，但要动核心执行循环与步骤模型，影响所有用例的执行路径</td></tr>
           <tr><td class="stars">⭐⭐</td><td>接口模块二期</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
           <tr><td class="stars">⭐⭐</td><td>图像识别定位</td><td>纯新增定位方式、不改现有行为；但要引入 OpenCV，工作量较大</td></tr>
@@ -492,8 +511,9 @@
       <ul>
         <li>语音播报增强：唤醒词多套管理（按用例切换、多条候选轮播）、执行结果校验（除「被识别」再验「真执行了」）、语音用例 ↔ 自动化用例互转</li>
         <li>版本控制集成（Git）：数据文件接入版本管理，支持版本回滚与差异对比</li>
+        <li>个人测试知识库：右工具栏新增入口，按项目 / 标签沉淀踩坑记录，全文检索、从异常一键记入（详见第三章第 5 项）</li>
       </ul>
-      <div class="example">💡 <b>打个比方：</b>「按用例换称呼」+「文档的修订记录」——都在自己模块里闭环，不牵动执行链路。</div>
+      <div class="example">💡 <b>打个比方：</b>「按用例换称呼」+「文档的修订记录」+「个人小笔记」——都在自己模块里闭环，不牵动执行链路。</div>
     </div>
 
     <div class="card">
@@ -531,6 +551,7 @@
           <tr><td>阶段一</td><td>步骤模板</td><td class="stars">⭐⭐⭐</td><td>「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
           <tr><td>阶段二</td><td>语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；结果校验与用例互转稍大</td></tr>
           <tr><td>阶段二</td><td>版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
+          <tr><td>阶段二</td><td>个人测试知识库</td><td class="stars">⭐⭐</td><td>纯新增页面 + 本地存储与检索，不碰执行器与数据结构；按一期最小闭环起步</td></tr>
           <tr><td>阶段三</td><td>执行健壮性增强</td><td class="stars">⭐⭐</td><td>价值高，但要动核心执行循环与步骤模型，影响所有用例的执行路径</td></tr>
           <tr><td>阶段三</td><td>接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
           <tr><td>阶段三</td><td>图像识别定位</td><td class="stars">⭐⭐</td><td>纯新增定位方式、不改现有行为；但要引入 OpenCV，工作量较大</td></tr>
