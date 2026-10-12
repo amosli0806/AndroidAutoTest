@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 import qtawesome as qta
+from utils.icons import menu_icon
 
 from models.voice_model import (
     DEFAULT_DELAY, DEFAULT_WAKE_WORD, KIND_PHRASE, KIND_VERIFY, VoiceModel)
@@ -1106,7 +1107,7 @@ class VoiceView(QWidget):
         icon_color = "#bbbbbb" if is_dark else "#555555"
 
         # 「新建分组」任何时候都有：空白 / 分组 / 用例上右键都能建顶层分组
-        menu.addAction(qta.icon('fa6s.plus', color=icon_color), "新建分组",
+        menu.addAction(menu_icon('fa6s.plus', icon_color), "新建分组",
                        self._on_new_group)
 
         # 「新建语音用例」只在已存在至少一个分组时才出现：
@@ -1121,7 +1122,7 @@ class VoiceView(QWidget):
             else:
                 target_group = self._selected_group_id()
             menu.addAction(
-                qta.icon('fa6s.comment-dots', color=icon_color), "新建语音用例",
+                menu_icon('fa6s.comment-dots', icon_color), "新建语音用例",
                 lambda: self._on_new_case(target_group))
 
         if kind in ("case", "group"):
@@ -1129,17 +1130,17 @@ class VoiceView(QWidget):
             # 复制：用例复制一条，分组连组内用例一起复制
             # （与「项目管理」树的 复制用例 / 复制功能模块 对齐）
             if kind == "case":
-                menu.addAction(qta.icon('fa6s.copy', color=icon_color),
+                menu.addAction(menu_icon('fa6s.copy', icon_color),
                                "复制语音用例",
                                lambda: self._on_copy_case(node_id))
             else:
-                menu.addAction(qta.icon('fa6s.copy', color=icon_color),
+                menu.addAction(menu_icon('fa6s.copy', icon_color),
                                "复制分组",
                                lambda: self._on_copy_group(node_id))
             menu.addSeparator()
-            menu.addAction(qta.icon('fa6s.pen', color=icon_color), "重命名",
+            menu.addAction(menu_icon('fa6s.pen', icon_color), "重命名",
                            lambda: self._on_rename_node(kind, node_id))
-            menu.addAction(qta.icon('fa6s.trash', color=icon_color), "删除",
+            menu.addAction(menu_icon('fa6s.trash', icon_color), "删除",
                            lambda: self._on_delete_node(kind, node_id))
 
         menu.exec(self.tree.viewport().mapToGlobal(pos))

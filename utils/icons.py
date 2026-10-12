@@ -95,3 +95,23 @@ class IconManager:
         painter.drawRect(4, 4, 16, 16)
         painter.end()
         return QIcon(pixmap)
+
+def menu_icon(name: str, color: str):
+    """菜单项图标：**鼠标划过时自动转白**。
+
+    为什么需要它：应用的右键菜单（`QMenu`）大多没设自己的样式表，会走
+    `main.py` 里那套全局 Fusion 调色板 —— `Highlight = #1976d2`、
+    `HighlightedText = 白`，也就是悬浮项是「蓝底白字」。图标若保持本色
+    （蓝、深红、深灰…）会糊在蓝底上，看起来像一小块色块。
+
+    这里把 QIcon 的 Active / Selected 两个模式设成白色：平时按 color 显示，
+    悬浮时自动变白（Qt 画菜单项时会按 `QIcon.Selected` 取图）。
+    自带样式表、且把悬浮底色设成浅色的菜单（如 ADB 工具箱的指令菜单、
+    主菜单）不受影响，也不需要这个函数。
+
+    :param name: qtawesome 图标名，如 'fa6s.pen-to-square'
+    :param color: 常态颜色（悬浮时固定为白色）
+    """
+    import qtawesome as qta
+    return qta.icon(name, color=color,
+                    color_active='#ffffff', color_selected='#ffffff')

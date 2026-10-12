@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QWidget, QHBoxLayout, 
 from PyQt6.QtCore import pyqtSignal, Qt, QMimeData, QTimer, QSize
 from PyQt6.QtGui import QDrag, QResizeEvent
 from models.step_model import Step
-from utils.icons import IconManager
+from utils.icons import IconManager, menu_icon
 from utils.flow_layout import FlowLayout
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings
@@ -282,15 +282,18 @@ class StepListView(QListWidget):
         if not ids:
             return
         menu = QMenu(self)
-        # 批量修改参数（单个步骤也可以走这里，省得进「更新步骤」翻半天）
+        # 图标用 menu_icon()：这个菜单没有自己的样式表，会走全局 Fusion 调色板的
+        # 「蓝底白字」悬浮效果，本色图标（蓝 / 深红）在蓝底上会糊掉，
+        # menu_icon 让图标在悬浮时自动转白。
         edit_act = menu.addAction(
-            qta.icon('fa6s.pen-to-square', color='#1976d2'),
+            menu_icon('fa6s.pen-to-square', '#1976d2'),
             f"批量修改参数（{len(ids)} 个步骤）…")
         menu.addSeparator()
         if len(ids) == 1:
-            act = menu.addAction(qta.icon('fa6s.trash-can', color='#e74c3c'), "删除此步骤")
+            act = menu.addAction(menu_icon('fa6s.trash-can', '#e74c3c'),
+                                 "删除此步骤")
         else:
-            act = menu.addAction(qta.icon('fa6s.trash-can', color='#e74c3c'),
+            act = menu.addAction(menu_icon('fa6s.trash-can', '#e74c3c'),
                                  f"删除选中步骤（{len(ids)} 个）")
         chosen = menu.exec(event.globalPos())
         if chosen is None:
