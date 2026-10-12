@@ -35,6 +35,7 @@ class StepListView(QListWidget):
     update_step = pyqtSignal(int)
     delete_step = pyqtSignal(int)
     delete_steps = pyqtSignal(list)     # 批量删除：选中步骤的 id 列表
+    batch_edit_steps = pyqtSignal(list)  # 批量修改参数：选中步骤的 id 列表
     duplicate_step = pyqtSignal(int)
     recording_state_changed = pyqtSignal(bool)
 
@@ -281,12 +282,22 @@ class StepListView(QListWidget):
         if not ids:
             return
         menu = QMenu(self)
+        # 批量修改参数（单个步骤也可以走这里，省得进「更新步骤」翻半天）
+        edit_act = menu.addAction(
+            qta.icon('fa6s.pen-to-square', color='#1976d2'),
+            f"批量修改参数（{len(ids)} 个步骤）…")
+        menu.addSeparator()
         if len(ids) == 1:
             act = menu.addAction(qta.icon('fa6s.trash-can', color='#e74c3c'), "删除此步骤")
         else:
             act = menu.addAction(qta.icon('fa6s.trash-can', color='#e74c3c'),
                                  f"删除选中步骤（{len(ids)} 个）")
-        if menu.exec(event.globalPos()) == act:
+        chosen = menu.exec(event.globalPos())
+        if chosen is None:
+            return
+        if chosen == edit_act:
+            self.batch_edit_steps.emit(ids)
+        elif chosen == act:
             self.delete_steps.emit(ids)
 
     def set_steps(self, steps):

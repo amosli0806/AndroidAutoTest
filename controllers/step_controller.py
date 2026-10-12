@@ -22,6 +22,8 @@ from utils.toast import show_toast
 from utils.adb_path import get_adb_path
 from utils.android_packages import is_system_ui_package
 from utils.theme import ThemeMode
+from utils.step_params import PARAM_LABELS, label_of
+from views.dialogs.batch_edit_dialog import BatchEditStepsDialog
 import qtawesome as qta
 
 
@@ -87,6 +89,7 @@ class StepController(QObject):
         self.step_view.update_step.connect(self._on_update_step)
         self.step_view.delete_step.connect(self._on_delete_step)
         self.step_view.delete_steps.connect(self._on_delete_steps)
+        self.step_view.batch_edit_steps.connect(self._on_batch_edit_steps)
         self.step_view.duplicate_step.connect(self._on_duplicate_step)
         self.action_view.add_step_signal.connect(self._on_add_step_from_card)
 
@@ -399,24 +402,9 @@ class StepController(QObject):
             # 样式由 #UpdateStepDialog QSS 控制
             form.addRow("步骤名称:", name_edit)
 
-            label_map = {
-                'locationType': '定位方式', 'locationValue': '定位值', 'duration': '时长(秒)',
-                'text': '输入文字', 'longPressMs': '长按毫秒', 'startX': '起始X', 'startY': '起始Y',
-                'endX': '结束X', 'endY': '结束Y', 'keyword': '搜索关键字',
-                'fromLocationType': '源定位方式', 'fromValue': '源定位值',
-                'toLocationType': '目标定位方式', 'toValue': '目标定位值',
-                'direction': '方向', 'points': '路径点', 'durationMs': '总时长(毫秒)',
-                'gestureType': '手势类型', 'centerX': '中心点X', 'centerY': '中心点Y',
-                'scale': '缩放比例', 'distance': '飞掠距离(像素)', 'velocity': '速度(像素/秒)',
-                'sequenceId': '手势序列编号', 'description': '手势描述',
-                'keyName': '按键名称', 'action': '操作', 'packageName': '包名/应用名',
-                'apkPath': '安装包路径', 'savePath': '保存路径', 'fileName': '文件名前缀',
-                'assert_type': '断言类型', 'expected_value': '预期值', 'timeout': '超时(秒)',
-                'element_id': '元素ID',
-                'instance': '实例序号',
-                'fallbackType': '备用定位方式', 'fallbackValue': '备用定位值',
-                'voiceText': '播报文案', 'afterDelay': '播后等待(秒)'
-            }
+            # 参数中文名统一放在 utils/step_params.py（批量修改参数对话框共用同一份），
+            # 这里只做个别名，别在本地再抄一份 —— 两份必然出现「改了一处不生效」。
+            label_map = PARAM_LABELS
 
             # 各字段控件的样式由 dialog 层的 #UpdateStepDialog QSS 统一控制
             line_style = ""
@@ -713,6 +701,61 @@ class StepController(QObject):
         for step_id in step_ids:
             self.model.remove_step(step_id, self.current_case_id)
         self.refresh_steps()
+
+    def _on_batch_edit_steps(self, step_ids):
+        """批量修改选中步骤的某个参数（步骤列表右键 →「批量修改参数…」）。
+
+        对话框负责让用户选字段与新值，并说明「会改动几个 / 跳过几个」；
+        这里只做落盘与刷新。绑定元素库的步骤是否一并改（并解除绑定）由对话框
+        里的「作用范围」决定 —— 因为那些步骤运行时以元素库为准。
+        """
+        if not step_ids:
+            return
+        steps = [self.model._steps.get(sid) for sid in step_ids]
+        steps = [s for s in steps if s is not None]
+        if not steps:
+            show_toast(message="选中的步骤已不存在")
+            return
+
+        dialog = BatchEditStepsDialog(steps, parent=self.step_view)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = dialog.result_value()
+        if not result:
+            return
+        key, value, unbind = result['key'], result['value'], result['unbind']
+        # 只改对话框明确挑中的步骤：绑定元素库的步骤是否包含在内，由对话框的
+        # 「作用范围」决定，控制器不要自己按「有没有这个字段」重新挑一遍。
+        targets = set(result.get('step_ids') or ())
+
+        changed = 0
+        unbound = 0
+        for step in steps:
+            if step.id not in targets:
+                continue
+            if not isinstance(step.params, dict):
+                step.params = {}
+            params = step.params
+            if key not in params:
+                continue
+            if unbind and params.get('element_id'):
+                # 解除元素库绑定：之后直接用步骤里的定位方式 / 定位值
+                params.pop('element_id', None)
+                unbound += 1
+            params[key] = value
+            changed += 1
+
+        if not changed:
+            show_toast(message="没有步骤被修改")
+            return
+
+        self.model.save()
+        self.refresh_steps()
+
+        detail = f"已把 {changed} 个步骤的「{label_of(key)}」改为「{value}」"
+        if unbound:
+            detail += f"（其中 {unbound} 个已解除元素库绑定）"
+        show_toast(message=detail, duration=3000)
 
     def _on_duplicate_step(self, step_id):
         if self.current_case_id:
