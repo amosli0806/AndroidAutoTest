@@ -170,7 +170,7 @@
     <div class="badges">
       <span class="badge">当前版本 v1.4.6</span>
       <span class="badge">8 个功能入口</span>
-      <span class="badge">13 项扩展方向</span>
+      <span class="badge">12 项扩展方向</span>
       <span class="badge">4 个开发阶段</span>
     </div>
   </header>
@@ -218,6 +218,7 @@
           <li>项目 → 模块 → 用例三层树，右键菜单齐全</li>
           <li>17 种动作卡片 + 5 种定位方式</li>
           <li>批量删除用例 / 批量删除元素</li>
+          <li><b>批量修改步骤参数</b>（2026-10-12）：步骤列表右键可批量改超时时间 / 等待时长 / 步骤间隔等；定位类字段还能选作用范围——只改选中步骤，或改「引用同一元素的所有步骤」</li>
           <li>录制回放（自动识别手势、语义定位）</li>
           <li>自然语言生成步骤 + 内置 weditor 可视化</li>
         </ul>
@@ -341,21 +342,12 @@
   <section class="chapter" id="s3">
     <h2><span class="num">3</span>扩展方向（按优先级）</h2>
 
-    <p class="small" style="margin-top:0">13 项规划按 <b>「改动小 → 改动大」</b> 四档重排：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
+    <p class="small" style="margin-top:0">12 项规划按 <b>「改动小 → 改动大」</b> 四档重排：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 第一优先 · 改动小、见效快</h3>
 
     <div class="card">
-      <h3>1. 批量操作增强 <span class="tag plan">📋 规划中</span></h3>
-      <ul>
-        <li>批量修改定位方式（如全部「资源ID」→「XPath」）</li>
-        <li>批量修改步骤参数（超时时间、等待时长、步骤间隔）</li>
-      </ul>
-      <div class="example">💡 <b>打个比方：</b>像 Excel 的「查找替换」——100 个步骤里所有「等待 3 秒」一次全改成「等待 5 秒」，不用一条条手改。</div>
-    </div>
-
-    <div class="card">
-      <h3>2. 测试套件增强 <span class="tag plan">📋 规划中</span></h3>
+      <h3>1. 测试套件增强 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>套件级执行报告与通过率　套件链式执行（A→B）</li>
       </ul>
@@ -363,7 +355,7 @@
     </div>
 
     <div class="card">
-      <h3>3. 步骤模板 <span class="tag plan">📋 规划中</span></h3>
+      <h3>2. 步骤模板 <span class="tag plan">📋 规划中</span></h3>
       <p>保存常用步骤组合为模板（如「启动应用 → 等待 → 点击首页」），任意用例里插入复用。</p>
       <div class="example">💡 <b>打个比方：</b>像 Word / PPT 模板——「启动 → 等待 → 点首页」这套成熟流程存成模板，新用例直接套用，不用每次从零搭。</div>
     </div>
@@ -371,7 +363,7 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 第二优先 · 改动适中、模块独立</h3>
 
     <div class="card">
-        <h3>4. 语音播报增强 <span class="tag plan">📋 规划中</span></h3>
+        <h3>3. 语音播报增强 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>唤醒词多套管理（按用例切换、多条候选轮播）</li>
         <li>执行结果校验（除「被识别」，再验「真执行了」，如地图是否全屏）</li>
@@ -381,7 +373,7 @@
     </div>
 
     <div class="card">
-      <h3>5. 版本控制集成（Git）<span class="tag plan">📋 规划中</span></h3>
+      <h3>4. 版本控制集成（Git）<span class="tag plan">📋 规划中</span></h3>
       <p>把项目数据、步骤、元素库等接入 Git，支持版本回滚、差异对比、分支管理。</p>
       <div class="example">💡 <b>打个比方：</b>像文档的「修订记录 / 历史版本」——用例改乱了，一键回到昨天的版本，还能看看到底改了哪几行。</div>
     </div>
@@ -389,7 +381,7 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 第三优先 · 改动较大，需先设计</h3>
 
     <div class="card">
-      <h3>6. 执行健壮性增强 <span class="tag plan">📋 规划中</span></h3>
+      <h3>5. 执行健壮性增强 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>步骤级失败重试（次数 + 间隔 + 触发条件可配）</li>
         <li>显式等待（等元素出现 / 消失 / 可点击，替代固定 sleep）</li>
@@ -398,7 +390,7 @@
     </div>
 
     <div class="card">
-      <h3>7. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
+      <h3>6. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>前后置脚本（Python 钩子，处理签名 / 加解密 / 数据提取）</li>
         <li>链路场景编排（接口串联，上一步响应作为下一步入参）</li>
@@ -408,7 +400,7 @@
     </div>
 
     <div class="card">
-      <h3>8. 图像识别定位 <span class="tag plan">📋 规划中</span></h3>
+      <h3>7. 图像识别定位 <span class="tag plan">📋 规划中</span></h3>
       <p>新增「图像」定位方式（模板匹配 + 相似度阈值），元素库可上传参考图，执行时截图比对。</p>
       <div class="example">💡 <b>打个比方：</b>像「人脸识别解锁」或玩「找不同」——游戏里的按钮是「画」出来的（不是代码控件，看不到元素树），靠截图比对把它认出来，从而覆盖游戏、视频、自绘界面。</div>
     </div>
@@ -416,7 +408,7 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 第四优先 · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
-      <h3>9. 变量 / 参数化 <span class="tag plan">📋 规划中</span></h3>
+      <h3>8. 变量 / 参数化 <span class="tag plan">📋 规划中</span></h3>
       <p>定义全局变量（设备序列号、测试账号、环境地址），步骤参数里用 <code>${变量}</code> 引用；同一用例可循环跑多组数据（数据驱动）。</p>
       <ul>
         <li>全局变量表，元素库与步骤参数统一走一层变量替换</li>
@@ -426,13 +418,13 @@
     </div>
 
     <div class="card">
-      <h3>10. 测试数据管理 <span class="tag plan">📋 规划中</span></h3>
+      <h3>9. 测试数据管理 <span class="tag plan">📋 规划中</span></h3>
       <p>从 Excel / CSV 读取测试数据，参数化执行同一用例多组数据（与「变量 / 参数化」合并实现更合理）。</p>
       <div class="example">💡 <b>打个比方：</b>像「同一张答题卡批不同试卷」——用例就是那张答题卡，数据就是试卷，套上账号 A、账号 B、账号 C 各跑一遍，批量出结果。</div>
     </div>
 
     <div class="card">
-      <h3>11. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
+      <h3>10. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把唤醒词、语速等提升为可参数化变量，用例内可覆盖</li>
       </ul>
@@ -440,13 +432,13 @@
     </div>
 
     <div class="card">
-      <h3>12. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
+      <h3>11. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
       <div class="example">💡 <b>打个比方：</b>像手机「快捷指令 / 宏」——把「打开 App → 输账号 → 输密码 → 点登录」这 5 步打包成一个「登录」关键字，以后任何用例点一下就好，不用重复拖 5 个步骤。</div>
     </div>
 
     <div class="card">
-      <h3>13. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <h3>12. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把堆转储 / 抓包 / 截图<b>接进监控会话</b>——产物归会话、报告出「诊断产物」、曲线画事件标记（见第七章）</li>
         <li>抓包过滤参数（端口 / 主机过滤）；剩余保护（设备剩余空间告警、到限改为分段存盘）</li>
@@ -464,7 +456,6 @@
       <table>
         <thead><tr><th>优先级</th><th>功能模块</th><th>理由</th></tr></thead>
         <tbody>
-          <tr><td class="stars">⭐⭐⭐</td><td>批量操作增强</td><td>纯 UI 层的批量编辑，不碰执行器与数据结构</td></tr>
           <tr><td class="stars">⭐⭐⭐</td><td>测试套件增强</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
           <tr><td class="stars">⭐⭐⭐</td><td>步骤模板</td><td>本质是「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
           <tr><td class="stars">⭐⭐</td><td>语音播报增强</td><td>模块独立：唤醒词多套是数据 + UI；结果校验与用例互转稍大</td></tr>
@@ -490,11 +481,10 @@
     <div class="card">
       <h3>阶段一 · 改动小、见效快 <span class="tag plan">📋 可立即穿插，目标 1 个版本周期</span></h3>
       <ul>
-        <li>批量操作增强：批量改定位方式（如全部「资源ID」→「XPath」）、批量改步骤参数（超时时间 / 等待时长 / 步骤间隔）</li>
         <li>测试套件增强：套件级报告与通过率、链式执行（A→B）</li>
         <li>步骤模板：保存常用步骤组合为模板（如「启动应用 → 等待 → 点击首页」），任意用例插入复用</li>
       </ul>
-      <div class="example">💡 <b>打个比方：</b>「Excel 查找替换」+「歌单出成绩单」+「Word 模板」——都是小改动、当场见效，随时可以插队做。</div>
+      <div class="example">💡 <b>打个比方：</b>「歌单出成绩单」+「Word 模板」——都是小改动、当场见效，随时可以插队做。</div>
     </div>
 
     <div class="card">
@@ -537,7 +527,6 @@
       <table>
         <thead><tr><th>阶段</th><th>能力</th><th>优先级</th><th>理由</th></tr></thead>
         <tbody>
-          <tr><td>阶段一</td><td>批量操作增强</td><td class="stars">⭐⭐⭐</td><td>纯 UI 层的批量编辑，不碰执行器与数据结构</td></tr>
           <tr><td>阶段一</td><td>测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
           <tr><td>阶段一</td><td>步骤模板</td><td class="stars">⭐⭐⭐</td><td>「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
           <tr><td>阶段二</td><td>语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；结果校验与用例互转稍大</td></tr>
@@ -553,7 +542,7 @@
         </tbody>
       </table>
     </div>
-    <div class="tip">💡 建议从「阶段一 · 改动小、见效快」起步——批量操作增强 / 套件增强 / 步骤模板都是小步快跑、影响面可控的活，可立即穿插。变量 / 参数化虽然是关键字驱动、数据驱动的共同地基，但它改动最大，等真正要做其中任何一项时再回来做，别提前动。</div>
+    <div class="tip">💡 建议从「阶段一 · 改动小、见效快」起步——套件增强 / 步骤模板都是小步快跑、影响面可控的活，可立即穿插。变量 / 参数化虽然是关键字驱动、数据驱动的共同地基，但它改动最大，等真正要做其中任何一项时再回来做，别提前动。</div>
   </section>
 
   <!-- ============ 七、性能检测页：堆转储与抓包整合设计 ============ -->
