@@ -31,6 +31,7 @@ DEFAULT_SHORTCUTS = {
     # ---------- 全局 ----------
     "help_center": "F1",
     "open_settings": "F2",
+    "knowledge_base": "F3",
     "refresh_devices": "F5",
     "toggle_log_panel": "Ctrl+L",
     "restore_ime": "Ctrl+Shift+K",
@@ -403,4 +404,22 @@ class Settings:
         notify = dict(settings.get('notify') or {})
         notify.update(kwargs)
         settings['notify'] = notify
+        cls.save(settings)
+
+    # ---------- 性能检测页：记住上次的采集配置 ----------
+    # 存成一个嵌套 dict（而不是散落一堆顶层键），字段含义见 perf_view._collect_perf_config。
+    @classmethod
+    def get_perf_config(cls) -> dict:
+        """读取性能检测页上次用的采集配置（间隔 / 模式 / 时长 / 指标 / 卡片开关等）。
+
+        没存过、或存进去的结构不是 dict 时返回 {}，由视图侧各自用默认值兜底。
+        """
+        settings = cls.load()
+        cfg = settings.get('perf_config')
+        return dict(cfg) if isinstance(cfg, dict) else {}
+
+    @classmethod
+    def set_perf_config(cls, cfg: dict):
+        settings = cls.load()
+        settings['perf_config'] = dict(cfg or {})
         cls.save(settings)

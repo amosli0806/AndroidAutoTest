@@ -17,6 +17,7 @@ from models.project_model import ProjectModel
 from models.step_model import StepModel
 from models.execution_model import ExecutionModel
 from models.element_model import ElementModel
+from models.knowledge_model import KnowledgeModel
 from models.suite_model import SuiteModel
 from models.task_model import TaskModel
 from views.project_tree_view import ProjectTreeView
@@ -27,6 +28,7 @@ from views.logs_view import LogsView
 from views.element_manager_view import ElementManagerView
 from views.task_view import TaskView
 from views.help_view import HelpView
+from views.knowledge_view import KnowledgeView
 from controllers.project_controller import ProjectController
 from controllers.step_controller import StepController
 from controllers.execution_controller import ExecutionController
@@ -536,6 +538,7 @@ def main():
     element_model = ElementModel()
     suite_model = SuiteModel()
     task_model = TaskModel()
+    knowledge_model = KnowledgeModel()
 
     # ---------- 存量数据自愈：节点 id 撞车 ----------
     # 老版本的项目树节点 id 用 id(name)（字符串的内存地址）生成，地址会被回收复用，
@@ -587,6 +590,7 @@ def main():
     logs_view = LogsView()
     element_manager = ElementManagerView(element_model)
     help_view = HelpView()
+    knowledge_view = KnowledgeView(knowledge_model)
 
     # ---------- 设置套件模型 ----------
     execute_view.set_suite_model(suite_model)
@@ -676,6 +680,9 @@ def main():
 
     # 5. 帮助中心
     main_window.set_help_view(help_view)
+
+    # 5.5 个人知识库（按项目记录差异点与踩坑，独立于帮助中心）
+    main_window.set_knowledge_view(knowledge_view)
 
     # 6. ADB工具箱
     from views.adb_toolbox_view import AdbToolboxView

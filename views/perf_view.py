@@ -150,8 +150,17 @@ class PerfView(QWidget):
         self._run_btn_qss_danger = ""
         # 应用列表是否已成功加载（决定「开始」按钮可用性；见 update_app_list）
         self._apps_loaded = False
+        # 配置恢复期间的守卫：恢复过程会触发控件的变更信号，此时不回写配置，
+        # 否则会把「恢复出来的值」当成用户刚改的值又存一遍（无害但纯属多余写入）
+        self._perf_cfg_ready = False
+        # 记忆里的上次应用包名：应用列表还没加载（或首次加载失败）时用它回选
+        self._pref_package = ""
+        # 记忆里的上次套件名：套件列表由 set_suite_model 稍后填充，届时回选
+        self._pref_suite = ""
 
         self.setup_ui()
+        self._restore_perf_config()
+        self._perf_cfg_ready = True
         self._apply_state()
 
     # ------------------------------------------------------------------
@@ -182,6 +191,10 @@ class PerfView(QWidget):
         """
         self.app_combo.blockSignals(True)
         current = self.app_combo.currentText()
+        # 当前是占位文案（还没成功加载过）时，用记忆里的上次包名去回选，
+        # 否则「首次读取失败 → 重试成功」这条路径会把记住的应用弄丢
+        if not current or current.startswith("未检测到应用"):
+            current = getattr(self, '_pref_package', '') or current
         self.app_combo.clear()
         if not packages:
             self._apps_loaded = False
@@ -667,6 +680,31 @@ class PerfView(QWidget):
         # 初始布局
         self._relayout_cards()
 
+        # 配置记忆：任一控件改动即回写 data/config.json（见 _save_perf_config）
+        self._connect_perf_cfg_signals()
+
+    def _connect_perf_cfg_signals(self):
+        """把「需要被记住」的控件的变更信号接到 _save_perf_config。
+
+        单独成方法是为了让 setup_ui 保持清爽；新增需要记忆的控件时只改这里。
+        """
+        self.app_combo.currentTextChanged.connect(self._save_perf_config)
+        self.interval_combo.currentTextChanged.connect(self._save_perf_config)
+        self.mode_combo.currentIndexChanged.connect(self._save_perf_config)
+        self.duration_spin.valueChanged.connect(self._save_perf_config)
+        for cb in self.metric_radios.values():
+            cb.toggled.connect(self._save_perf_config)
+        for chk in (self.hprof_visible_check, self.packet_visible_check,
+                    self.screenshot_visible_check):
+            chk.toggled.connect(self._save_perf_config)
+        self.hprof_enable_check.toggled.connect(self._save_perf_config)
+        self.hprof_interval_combo.currentTextChanged.connect(self._save_perf_config)
+        self.screenshot_enable_check.toggled.connect(self._save_perf_config)
+        self.screenshot_interval_combo.currentTextChanged.connect(self._save_perf_config)
+        self.suite_combo.currentTextChanged.connect(self._save_perf_config)
+        self.loop_spin.valueChanged.connect(self._save_perf_config)
+        self.stop_on_fail_check.toggled.connect(self._save_perf_config)
+
     def _build_tool_cards(self):
         """构建三个工具卡片：堆转储（可自动循环）、抓包（手动开始/停止）、截图（可自动循环）。
         统一单行紧凑结构：圆点 + 标题 + 控件一行排开，高度 44 与控制面板分组一致。"""
@@ -934,7 +972,10 @@ class PerfView(QWidget):
         }
         interval = interval_map.get(interval_text, 5.0)
 
-        metrics = [k for k, cb in self.metric_radios.items() if cb.isChecked()]
+        # 过滤掉当前设备不支持的指标：记忆恢复出来的 FPS/流量在换到老设备上会
+        # 「置灰但仍勾选」，不过滤就会被带进采集（_metric_available 未就绪时按可用算）
+        metrics = [k for k, cb in self.metric_radios.items()
+                   if cb.isChecked() and self._metric_available.get(k, True)]
         if not metrics:
             show_toast(message="请选择一项监控指标", parent=self)
             return
@@ -995,6 +1036,13 @@ class PerfView(QWidget):
         # 保留当前选择：这个方法现在会被频繁调用（自动化执行页增删套件后即时同步），
         # 不能每次都把用户选好的套件重置回「(无套件)」
         current = self.suite_combo.currentText()
+        if not current or current == "(无套件)":
+            # 首次填充（或当前还是占位）时，用记忆里的上次套件回选；
+            # 只消费一次，之后完全以用户当前选择为准，避免用户改选「(无套件)」又被拉回去
+            pref = getattr(self, '_pref_suite', '')
+            if pref:
+                current = pref
+                self._pref_suite = ''
         self.suite_combo.clear()
         self.suite_combo.addItem("(无套件)")
         if self._suite_model:
@@ -1004,6 +1052,111 @@ class PerfView(QWidget):
             self.suite_combo.setCurrentText(current)
         else:
             self.suite_combo.setCurrentText("(无套件)")
+
+    # ------------------------------------------------------------------
+    # 配置记忆（data/config.json 的 perf_config）
+    # ------------------------------------------------------------------
+    def _collect_perf_config(self) -> dict:
+        """把当前控件状态收成一个可 JSON 化的 dict（字段含义见 _restore_perf_config）。"""
+        primary = 'mem' if self.metric_radios['mem'].isChecked() else 'cpu'
+        # 占位文案（未检测到应用 / 未检测到应用 · 点「刷新」重试）不是真的包名，别存进去
+        pkg = self.app_combo.currentText().strip()
+        if pkg.startswith("未检测到应用"):
+            pkg = ""
+        return {
+            'interval': self.interval_combo.currentText(),
+            'mode': 'scenario' if self.mode_combo.currentIndex() == 1 else 'monitor',
+            'duration_minutes': self.duration_spin.value(),
+            'metric': primary,
+            'fps': self.metric_radios['fps'].isChecked(),
+            'traffic': self.metric_radios['traffic'].isChecked(),
+            'show_hprof': self.hprof_visible_check.isChecked(),
+            'show_packet': self.packet_visible_check.isChecked(),
+            'show_screenshot': self.screenshot_visible_check.isChecked(),
+            'hprof_loop': self.hprof_enable_check.isChecked(),
+            'hprof_interval': self.hprof_interval_combo.currentText(),
+            'screenshot_loop': self.screenshot_enable_check.isChecked(),
+            'screenshot_interval': self.screenshot_interval_combo.currentText(),
+            'package': pkg,
+            'suite': self.suite_combo.currentText(),
+            'loop': self.loop_spin.value(),
+            'stop_on_fail': self.stop_on_fail_check.isChecked(),
+        }
+
+    def _save_perf_config(self, *_):
+        """任一相关控件改动即回写配置。恢复期间（_perf_cfg_ready=False）跳过。"""
+        if not getattr(self, '_perf_cfg_ready', False):
+            return
+        try:
+            Settings.set_perf_config(self._collect_perf_config())
+        except Exception as e:
+            print(f"[perf_view] 保存性能页配置失败: {e}")
+
+    def _restore_perf_config(self):
+        """把上次的配置套回各控件（在 setup_ui 之后、控制器接线之前调用一次）。
+
+        取值一律先校验存在性：下拉框 setCurrentText 一个不存在的文本会把
+        currentIndex 打成 -1、currentText 变成空串，反而把默认值也弄丢。
+        """
+        cfg = Settings.get_perf_config()
+        if not cfg:
+            return
+
+        def _pick(combo, text):
+            """下拉框有该项才选中（避免非法文本把 currentIndex 打成 -1）"""
+            if text and combo.findText(text) >= 0:
+                combo.setCurrentText(text)
+
+        _pick(self.interval_combo, cfg.get('interval'))
+        if cfg.get('mode') == 'scenario':
+            self.mode_combo.setCurrentIndex(1)
+        duration = cfg.get('duration_minutes')
+        if isinstance(duration, int):
+            self.duration_spin.setValue(duration)   # setValue 自带范围钳制
+
+        # 指标：CPU / 内存是互斥单选，先选主指标；FPS / 流量是独立复选
+        primary = cfg.get('metric')
+        if primary in self.metric_radios:
+            self.metric_radios[primary].setChecked(True)
+        if cfg.get('fps'):
+            self.metric_radios['fps'].setChecked(True)
+        if cfg.get('traffic'):
+            self.metric_radios['traffic'].setChecked(True)
+
+        # 卡片显隐
+        if cfg.get('show_hprof'):
+            self.hprof_visible_check.setChecked(True)
+        if cfg.get('show_packet'):
+            self.packet_visible_check.setChecked(True)
+        if cfg.get('show_screenshot'):
+            self.screenshot_visible_check.setChecked(True)
+
+        # 堆转储 / 截图的自动循环与间隔
+        if cfg.get('hprof_loop'):
+            self.hprof_enable_check.setChecked(True)
+        _pick(self.hprof_interval_combo, cfg.get('hprof_interval'))
+        if cfg.get('screenshot_loop'):
+            self.screenshot_enable_check.setChecked(True)
+        _pick(self.screenshot_interval_combo, cfg.get('screenshot_interval'))
+
+        # 场景化参数：套件列表要等 set_suite_model 才填，此刻 combo 是空的，
+        # 非可编辑下拉框 setCurrentText 不会生效 —— 先记下偏好，
+        # 由 _refresh_suite_combo 在列表就绪时回选
+        suite = cfg.get('suite')
+        if suite and suite != "(无套件)":
+            self._pref_suite = suite
+        loop = cfg.get('loop')
+        if isinstance(loop, int):
+            self.loop_spin.setValue(loop)
+        if cfg.get('stop_on_fail'):
+            self.stop_on_fail_check.setChecked(True)
+
+        # 应用包名：此刻应用列表多半还没加载，先写入文本并记下偏好；
+        # update_app_list 会保留 currentText 并在列表就绪后回选同一项
+        pkg = str(cfg.get('package') or '').strip()
+        if pkg:
+            self._pref_package = pkg
+            self.app_combo.setCurrentText(pkg)
 
     def _update_status_bar(self):
         # 空闲态：状态栏归位。显式写回（而不是直接 return）是为了清掉

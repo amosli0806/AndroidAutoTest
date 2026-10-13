@@ -18,6 +18,7 @@ from utils import tree_state
 # 快捷键 key -> 中文名映射
 _SHORTCUT_LABELS = {
     "help_center": "帮助中心",
+    "knowledge_base": "个人知识库",
     "open_settings": "打开设置",
     "refresh_devices": "刷新设备列表",
     "toggle_log_panel": "显示/隐藏日志面板",
@@ -1983,8 +1984,8 @@ class SettingsDialog(QDialog):
         self._shortcut_edits = {}
         # 分类展示
         groups = [
-            ("—— 全局 ——", ["help_center", "open_settings", "refresh_devices",
-                          "toggle_log_panel", "restore_ime"]),
+            ("—— 全局 ——", ["help_center", "knowledge_base", "open_settings",
+                          "refresh_devices", "toggle_log_panel", "restore_ime"]),
             ("—— 自动化编辑 ——", ["toggle_record", "generate_steps",
                                  "focus_step_search", "import_cases", "export_cases"]),
             ("—— 自动化执行 ——", ["execute_cases", "toggle_select_all",

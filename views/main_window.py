@@ -995,6 +995,7 @@ class MainWindow(QMainWindow):
             ("fa6s.gauge-high", "性能检测", "「性能检测」→ 选应用 → 开始监控"),
             ("fa6s.microphone", "语音播报", "「语音播报」→ 勾选语音用例 → 执行选中"),
             ("fa6s.plug", "接口自动化", "「接口自动化」→ 新建接口 → 发送 / 执行选中"),
+            ("fa6s.book", "个人知识库", "「个人知识库」→ 按项目记录差异点与踩过的坑"),
         ]
         for icon_name, label_text, desc_text in tips:
             row = QHBoxLayout()
@@ -1208,6 +1209,15 @@ class MainWindow(QMainWindow):
             lambda checked: self._on_nav_clicked(5, checked)
         )
         self.right_toolbar.addAction(self.help_action)
+
+        # 个人知识库：与帮助中心同构（右侧工具栏、占一整页），只是页面在最后
+        self.knowledge_action = QAction(qta.icon('fa6s.book', color='#a3a6b0'), "个人知识库", self)
+        self.knowledge_action.setCheckable(True)
+        self.knowledge_action.setToolTip("个人知识库：按项目记录差异点与踩过的坑")
+        self.knowledge_action.triggered.connect(
+            lambda checked: self._on_nav_clicked(self.KNOWLEDGE_PAGE_INDEX, checked)
+        )
+        self.right_toolbar.addAction(self.knowledge_action)
         # ---------- 为左侧和右侧工具栏按钮安装事件过滤器 ----------
         for action in self.left_toolbar.actions():
             btn = self.left_toolbar.widgetForAction(action)
@@ -1281,6 +1291,7 @@ class MainWindow(QMainWindow):
 
         # ============ 全局 ============
         register("help_center", lambda: self.switch_view(5))
+        register("knowledge_base", lambda: self.switch_view(self.KNOWLEDGE_PAGE_INDEX))
         register("open_settings", lambda: self.on_settings())
         register("refresh_devices", lambda: self.refresh_devices_signal.emit())
         register("toggle_log_panel", lambda: self.toggle_bottom_log(
@@ -2236,6 +2247,27 @@ class MainWindow(QMainWindow):
     # ---------- 视图切换 ----------
     # 主区域"欢迎页"在 stacked_widget 里的位置（setup_ui 里 insertWidget(6, ...)）
     WELCOME_PAGE_INDEX = 6
+    # 个人知识库页：0~9 已被占满（见 setup_ui 的 9 个占位 + 欢迎页），所以追加在末尾
+    KNOWLEDGE_PAGE_INDEX = 10
+
+    def _right_toolbar_pages(self):
+        """右侧工具栏上「点一下占一整页」的入口：页 index -> (action, 图标, 状态栏名称)。
+
+        帮助中心与个人知识库同构，之前 switch_view 里是把 help_action 的
+        选中态/图标颜色在三个分支里各抄一遍；再加一个入口就是 3 处 × 2 个动作。
+        收敛成这张表 + _sync_right_toolbar_pages，以后加第三个入口只改这里。
+        """
+        return {
+            5: (self.help_action, 'fa6s.circle-question', "帮助中心"),
+            self.KNOWLEDGE_PAGE_INDEX: (self.knowledge_action, 'fa6s.book', "个人知识库"),
+        }
+
+    def _sync_right_toolbar_pages(self, active_index):
+        """按当前页刷新右侧工具栏那几个整页入口的选中态与图标颜色"""
+        for idx, (action, icon, _name) in self._right_toolbar_pages().items():
+            on = (idx == active_index)
+            action.setChecked(on)
+            action.setIcon(qta.icon(icon, color='white' if on else '#a3a6b0'))
 
     def _on_nav_clicked(self, index, checked):
         """左侧/右侧功能按钮的点击处理。
@@ -2275,32 +2307,31 @@ class MainWindow(QMainWindow):
                 action.setIcon(qta.icon(self.nav_icons[i], color='white'))
             else:
                 action.setIcon(qta.icon(self.nav_icons[i], color='#a3a6b0'))
-        if index == 5:
+        toolbar_pages = self._right_toolbar_pages()
+        if index in toolbar_pages:
             for i, action in enumerate(self.nav_actions):
                 if i == 2:
                     continue
                 action.setChecked(False)
                 # 关键：图标颜色也同步改回灰色，否则会停留在白色
                 action.setIcon(qta.icon(self.nav_icons[i], color='#a3a6b0'))
-            self.help_action.setChecked(True)
-            self.help_action.setIcon(qta.icon('fa6s.circle-question', color='white'))
-            self.statusBar().showMessage("当前功能: 帮助中心", 2000)
+            self._sync_right_toolbar_pages(index)
+            self.statusBar().showMessage(
+                f"当前功能: {toolbar_pages[index][2]}", 2000)
         elif index == self.WELCOME_PAGE_INDEX:
             for i, action in enumerate(self.nav_actions):
                 if i == 2:
                     continue
                 action.setChecked(False)
                 action.setIcon(qta.icon(self.nav_icons[i], color='#a3a6b0'))
-            self.help_action.setChecked(False)
-            self.help_action.setIcon(qta.icon('fa6s.circle-question', color='#a3a6b0'))
+            self._sync_right_toolbar_pages(None)
             self.statusBar().showMessage("欢迎", 2000)
         else:
             for i, action in enumerate(self.nav_actions):
                 if i == 2:
                     continue
                 action.setChecked(self.nav_indices[i] == index)
-            self.help_action.setChecked(False)
-            self.help_action.setIcon(qta.icon('fa6s.circle-question', color='#a3a6b0'))
+            self._sync_right_toolbar_pages(None)
             # index 是 stacked_widget 的下标，nav_actions 是左侧工具栏的顺序，
             # 两套编号并不一致：接口自动化/性能检测/语音播报在下标 7/8/9，
             # 在工具栏里却是第 6/7/8 个（中间隔了帮助中心与欢迎页）。
@@ -2341,9 +2372,10 @@ class MainWindow(QMainWindow):
         # 例外：投屏 / 安装 APK / 推送文件在两种模式下都显示（迷你模式也能一键操作）
         for a in getattr(self, "_mini_keep_actions", []):
             a.setVisible(True)
-        # 右侧工具栏保留，只隐藏「帮助中心」（迷你模式留消息按钮）；
+        # 右侧工具栏保留，只隐藏「帮助中心 / 个人知识库」（迷你模式留消息按钮）；
         # 底部状态栏保留（用户要求迷你模式下也展示）
-        self.help_action.setVisible(not enabled)
+        for _idx, (action, _icon, _name) in self._right_toolbar_pages().items():
+            action.setVisible(not enabled)
 
         # 左上 8 个功能导航（迷你模式隐藏）。
         # 中间的弹性占位**两种模式都必须保留**：它没有视觉，只负责把下面那组
@@ -3562,6 +3594,27 @@ class MainWindow(QMainWindow):
         # 注册 help_view 以便主题切换时能更新其内部样式
         self.register_sub_view(help_view)
         # 显式应用主题，确保 help_view 内部两个容器获得正确的边框样式
+        self.apply_theme()
+
+    def set_knowledge_view(self, knowledge_view):
+        """个人知识库页（追加在 stacked_widget 末尾，与帮助中心同构）"""
+        knowledge_view.setObjectName("KnowledgeView")
+        container = QFrame()
+        container.setObjectName("KnowledgeContainer")
+        container.setStyleSheet(
+            "QFrame#KnowledgeContainer { background-color: transparent; border: none; }")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(knowledge_view)
+
+        if self.stacked_widget.count() > self.KNOWLEDGE_PAGE_INDEX:
+            old = self.stacked_widget.widget(self.KNOWLEDGE_PAGE_INDEX)
+            self.stacked_widget.removeWidget(old)
+            old.deleteLater()
+            self.stacked_widget.insertWidget(self.KNOWLEDGE_PAGE_INDEX, container)
+        else:
+            self.stacked_widget.addWidget(container)
+        self.register_sub_view(knowledge_view)
         self.apply_theme()
     # ---------- Weditor ----------
     def set_weditor_service(self, service):

@@ -28,6 +28,7 @@ SOURCE_AI = "ai"
 # 页面索引：与 views/main_window.py 里 stacked_widget 的布局保持一致
 #   0 ADB工具箱 / 1 自动化编辑 / 2 应用可视化(Dock) / 3 自动化执行
 #   4 应用元素库 / 5 帮助中心 / 6 欢迎页 / 7 接口自动化 / 8 性能检测
+#   9 语音播报 / 10 个人知识库
 PAGE_EXECUTE = 3
 PAGE_PERF = 8
 
