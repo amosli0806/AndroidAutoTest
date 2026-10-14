@@ -362,6 +362,36 @@ class PerfView(QWidget):
         if qss:
             self.start_btn.setStyleSheet(qss)
 
+    @staticmethod
+    def _tinted_icon(name: str, normal: str, disabled: str) -> QIcon:
+        """按主题给图标上色，并指定「禁用态」配色。
+
+        qtawesome 造的实色图标默认只有一种颜色，按钮禁用时 Qt 会照画原色：
+        白图标落到浅色禁用底上几乎看不见（2026-10-14 反馈）。这里用 color_disabled
+        让图标自带禁用态配色，Qt 按按钮状态自动切换，无需挂钩 enabledChanged。
+        （不用 QIcon.addPixmap：qtawesome 的图标引擎未实现 clone，会被 detach 打死。）
+        """
+        return qta.icon(name, color=normal, color_disabled=disabled)
+
+    def _refresh_icons(self, is_dark: bool, disabled_fg: str):
+        """按当前主题重刷本页图标：深色底用更亮的灰、浅色底用更深的灰"""
+        flat = '#c8ccd4' if is_dark else '#5a5f66'   # 纯图标按钮的本色
+        pairs = [
+            (self.packet_toggle_btn, 'fa6s.network-wired', '#ffffff'),
+            (self.packet_config_btn, 'fa6s.sliders', flat),
+            (self.hprof_once_btn, 'fa6s.database', '#ffffff'),
+            (self.screenshot_once_btn, 'fa6s.camera', '#ffffff'),
+            (self.app_refresh_btn, 'fa6s.rotate', '#ffffff'),
+            (self.threshold_btn, 'fa6s.sliders', '#ffffff'),
+            (self.baseline_btn, 'fa6s.bookmark', '#ffffff'),
+            (self.baseline_mgr_btn, 'fa6s.list-check', '#ffffff'),
+            (self.report_btn, 'fa6s.file-lines', '#ffffff'),
+            (self.export_csv_btn, 'fa6s.file-csv', '#ffffff'),
+            (self.clear_btn, 'fa6s.trash-can', '#ffffff'),
+        ]
+        for btn, name, color in pairs:
+            btn.setIcon(self._tinted_icon(name, color, disabled_fg))
+
     def _apply_state(self):
         state = self._state
         idle = state == self.STATE_IDLE
@@ -770,10 +800,12 @@ class PerfView(QWidget):
         packet_row.addWidget(self.packet_toggle_btn)
 
         # 参数入口：过滤表达式 / 网卡 / 单包长度 / 上限（此前这些全是写死的）
+        # 纯图标按钮：单列 objectName，避免被「通用按钮 QSS」套上 padding/min-height
+        # （那会把 28x26 撑成 30 高，比同排按钮低 2px 且底边被卡片裁掉）
         self.packet_config_btn = QPushButton()
+        self.packet_config_btn.setObjectName("PerfIconBtn")
         self.packet_config_btn.setIcon(qta.icon('fa6s.sliders', color='#8a8f98'))
         self.packet_config_btn.setToolTip("抓包参数：过滤表达式 / 网卡 / 单包长度 / 上限")
-        self.packet_config_btn.setFixedSize(28, 26)
         self.packet_config_btn.setFlat(True)
         self.packet_config_btn.clicked.connect(self.packet_config_requested.emit)
         packet_row.addWidget(self.packet_config_btn)
@@ -1355,6 +1387,12 @@ class PerfView(QWidget):
                 }}
             """)
 
+        # 禁用态配色：原先是「浅灰底 + 近白字 / 白图标」，浅色主题下几乎看不见
+        # （白图标落在 #b0b0b0 上对比度极低）。统一改成「灰底 + 中灰字」，
+        # 图标也用同一个中灰（见下方 _tinted_icon 的 Disabled 变体）。
+        disabled_bg = '#4a4a4a' if is_dark else '#d9d9d9'
+        disabled_fg = '#8f8f8f'
+
         btn_qss = f"""
             QPushButton {{
                 background-color: {primary_bg};
@@ -1372,8 +1410,8 @@ class PerfView(QWidget):
                 background-color: {'#0d47a1' if not is_dark else '#42a5f5'};
             }}
             QPushButton:disabled {{
-                background-color: {'#b0b0b0' if not is_dark else '#555'};
-                color: {'#e0e0e0' if not is_dark else '#888'};
+                background-color: {disabled_bg};
+                color: {disabled_fg};
             }}
         """
         # 危险语义（停止 / 清空）：红底。单独抽成变量，供「开始/停止」二合一按钮
@@ -1395,19 +1433,45 @@ class PerfView(QWidget):
                 background-color: {'#c62828' if is_dark else '#96281b'};
             }}
             QPushButton:disabled {{
-                background-color: {'#555' if is_dark else '#b0b0b0'};
-                color: {'#888' if is_dark else '#e0e0e0'};
+                background-color: {disabled_bg};
+                color: {disabled_fg};
             }}
         """
         # 记住两套外观，供运行按钮按状态切换
         self._run_btn_qss_normal = btn_qss
         self._run_btn_qss_danger = danger_qss
 
+        # 纯图标按钮（抓包参数等）：自带一套紧凑样式，不吃上面的通用按钮 QSS，
+        # 否则 padding/min-height 会把固定尺寸撑大、与同行按钮错位
+        icon_btn_qss = f"""
+            QPushButton#PerfIconBtn {{
+                background: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 4px;
+                min-width: 20px;  max-width: 20px;
+                min-height: 22px; max-height: 22px;
+            }}
+            QPushButton#PerfIconBtn:hover {{
+                background: {'rgba(255,255,255,0.12)' if is_dark else 'rgba(0,0,0,0.07)'};
+            }}
+            QPushButton#PerfIconBtn:pressed {{
+                background: {'rgba(255,255,255,0.20)' if is_dark else 'rgba(0,0,0,0.12)'};
+            }}
+        """
+
         for btn in self.findChildren(QPushButton):
-            if btn.objectName() == "dangerBtn":
+            name = btn.objectName()
+            if name == "PerfIconBtn":
+                btn.setStyleSheet(icon_btn_qss)
+            elif name == "dangerBtn":
                 btn.setStyleSheet(danger_qss)
             else:
                 btn.setStyleSheet(btn_qss)
+
+        # 图标随主题重算，并补上禁用态变体（白图标落在浅色禁用底上会看不见）
+        self._refresh_icons(is_dark, disabled_fg)
+
         # 主题换色后，运行按钮要按它「当前是开始还是停止」重新套一次
         self._refresh_run_btn()
 
