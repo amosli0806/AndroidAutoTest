@@ -188,11 +188,9 @@
       <a href="#s1">一、已实现功能</a>
       <a href="#s2">二、已知缺口</a>
       <a href="#s3">三、扩展方向</a>
-      <a href="#s4">四、优先级建议</a>
-      <a href="#s5">五、阶段规划</a>
-      <a href="#s6">六、速查表</a>
-      <a href="#s7">七、堆转储与抓包整合</a>
-      <a href="#s8">八、macOS 移植注意事项</a>
+      <a href="#s4">四、优先级速查表</a>
+      <a href="#s5">五、堆转储与抓包整合</a>
+      <a href="#s6">六、macOS 移植注意事项</a>
     </div>
   </nav>
 
@@ -341,7 +339,7 @@
         <div class="gap-item"><span class="tag plan">📋</span><div><b>性能检测采集维度不全</b> — 缺 GPU / 系统内存 / 整机 CPU 等采集维度（待并入 mapauto-perf-test）。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>诊断产物未接进会话</b> — 堆转储 / 抓包 / 截图的产物不归会话、报告无「诊断产物」段落、曲线无事件标记；抓包还缺未 root 前置置灰与分段存盘（详见第七章）。</div></div>
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>诊断产物未接进会话</b> — 堆转储 / 抓包 / 截图的产物不归会话、报告无「诊断产物」段落、曲线无事件标记；抓包还缺未 root 前置置灰与分段存盘（详见第五章）。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报待增强</b> — 唤醒词不能按用例切换；无法验证「真执行了」（如地图是否全屏）。</div></div>
@@ -357,11 +355,11 @@
 
   <!-- ============ 三、扩展方向 ============ -->
   <section class="chapter" id="s3">
-    <h2><span class="num">3</span>扩展方向（按优先级）</h2>
+    <h2><span class="num">3</span>扩展方向（按阶段与优先级）</h2>
 
-    <p class="small" style="margin-top:0">13 项规划按 <b>「改动小 → 改动大」</b> 四档重排：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
+    <p class="small" style="margin-top:0">13 项规划按 <b>「改动小 → 改动大」</b> 分四阶段：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 第一优先 · 改动小、见效快</h3>
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段一 · 改动小、见效快（目标 1 个版本周期，可立即穿插）</h3>
 
     <div class="card">
       <h3>1. 测试套件增强 <span class="tag plan">📋 规划中</span></h3>
@@ -377,7 +375,7 @@
       <div class="example">💡 <b>打个比方：</b>像 Word / PPT 模板——「启动 → 等待 → 点首页」这套成熟流程存成模板，新用例直接套用，不用每次从零搭。</div>
     </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 第二优先 · 改动适中、模块独立</h3>
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段二 · 改动适中、模块独立（目标 1~2 个版本周期）</h3>
 
     <div class="card">
         <h3>3. 语音播报增强 <span class="tag plan">📋 规划中</span></h3>
@@ -407,7 +405,7 @@
       <div class="example">💡 <b>打个比方：</b>知识库现在是本「随身笔记本」，得你自己去翻；这一步要把它变成「会提醒你的老搭档」——你刚踩到熟悉的坑，它先开口：「上次是这么解决的」。</div>
     </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 第三优先 · 改动较大，需先设计</h3>
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段三 · 改动较大，需先设计（目标 2~3 个版本周期）</h3>
 
     <div class="card">
       <h3>6. 执行健壮性增强 <span class="tag plan">📋 规划中</span></h3>
@@ -434,7 +432,7 @@
       <div class="example">💡 <b>打个比方：</b>像「人脸识别解锁」或玩「找不同」——游戏里的按钮是「画」出来的（不是代码控件，看不到元素树），靠截图比对把它认出来，从而覆盖游戏、视频、自绘界面。</div>
     </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 第四优先 · 改动大 / 影响面广（需专门排期）</h3>
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段四 · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
       <h3>9. 变量 / 参数化 <span class="tag plan">📋 规划中</span></h3>
@@ -469,92 +467,21 @@
     <div class="card">
       <h3>13. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
       <ul>
-        <li>把堆转储 / 抓包 / 截图<b>接进监控会话</b>——产物归会话、报告出「诊断产物」、曲线画事件标记（见第七章）</li>
+        <li>把堆转储 / 抓包 / 截图<b>接进监控会话</b>——产物归会话、报告出「诊断产物」、曲线画事件标记（见第五章）</li>
         <li>抓包防呆与保护补全：未 root 前置置灰并说明、设备剩余空间告警、超限改为分段存盘</li>
         <li>并入 mapauto-perf-test 的采集能力（GPU / 系统内存 / 整机 CPU 等，范围待定）</li>
       </ul>
-      <p class="small">堆转储（自动循环 + 一键转储）与抓包（参数 / 随监控自动开始 / 内置 tcpdump / pcap 修复）已于 v1.4.7 初步落地，剩余项见第七章。</p>
+      <p class="small">堆转储（自动循环 + 一键转储）与抓包（参数 / 随监控自动开始 / 内置 tcpdump / pcap 修复）已于 v1.4.7 初步落地，剩余项见第五章。</p>
       <div class="example">💡 <b>打个比方：</b>像「体检报告」升级——CT / 核磁的片子（堆转储、抓包）已经在拍了，还差给它们建归档、对回曲线上「发病那一刻」；同时再添几项体检项目（GPU / 整机 CPU 等）。</div>
     </div>
+
+    <div class="tip">⚠ <b>注意依赖</b>：「关键字驱动 / 测试数据管理 / 变量落地语音 / 接口链路编排」都依赖「变量 / 参数化」这个地基。它们排在最后，但真要做其中任何一项时，<b>必须先回来把变量 / 参数化做掉</b>，否则一定返工。</div>
   </section>
 
-  <!-- ============ 四、优先级建议 ============ -->
+  <!-- ============ 四、优先级速查表 ============ -->
   <section class="chapter" id="s4">
-    <h2><span class="num">4</span>优先级与实施建议</h2>
-    <p class="small" style="margin-top:0">排序原则：<b>改动越小、影响面越可控的越先做</b>；要动数据结构、核心执行链路或跨模块渲染的往后排。⭐ 越多 = 越建议先动。</p>
-    <div class="card">
-      <table>
-        <thead><tr><th>优先级</th><th>功能模块</th><th>理由</th></tr></thead>
-        <tbody>
-          <tr><td class="stars">⭐⭐⭐</td><td>测试套件增强</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
-          <tr><td class="stars">⭐⭐⭐</td><td>步骤模板</td><td>本质是「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
-          <tr><td class="stars">⭐⭐</td><td>语音播报增强</td><td>模块独立：唤醒词多套是数据 + UI；结果校验与用例互转稍大</td></tr>
-          <tr><td class="stars">⭐⭐</td><td>版本控制集成（Git）</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
-          <tr><td class="stars">⭐⭐</td><td>个人知识库增强</td><td>基础版已落地；在它之上做跨模块打通（异常一键沉淀 / 失败自动关联）与导入，需读侧对接崩溃、执行、接口等模块</td></tr>
-          <tr><td class="stars">⭐⭐</td><td>执行健壮性增强</td><td>价值高，但要动核心执行循环与步骤模型，影响所有用例的执行路径</td></tr>
-          <tr><td class="stars">⭐⭐</td><td>接口模块二期</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
-          <tr><td class="stars">⭐⭐</td><td>图像识别定位</td><td>纯新增定位方式、不改现有行为；但要引入 OpenCV，工作量较大</td></tr>
-          <tr><td class="stars">⭐</td><td>变量 / 参数化</td><td>地基级改动：步骤参数渲染、元素库、执行器、接口模块都要碰</td></tr>
-          <tr><td class="stars">⭐</td><td>测试数据管理</td><td>依赖「变量 / 参数化」，单独做会返工</td></tr>
-          <tr><td class="stars">⭐</td><td>变量 / 参数化落地到语音播报</td><td>同样依赖变量地基</td></tr>
-          <tr><td class="stars">⭐</td><td>关键字驱动</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
-          <tr><td class="stars">⭐</td><td>性能检测补全</td><td>要动会话模型与报告结构（产物归档、事件时间线）</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ============ 五、阶段规划 ============ -->
-  <section class="chapter" id="s5">
-    <h2><span class="num">5</span>下一阶段开发规划</h2>
-    <p class="small" style="margin-top:0">与第三章的四档一一对应：<b>改动小、影响面可控的先做</b>，动数据结构或核心执行链路的整块排期。每阶段可独立交付、独立验收，不做半成品。</p>
-
-    <div class="card">
-      <h3>阶段一 · 改动小、见效快 <span class="tag plan">📋 可立即穿插，目标 1 个版本周期</span></h3>
-      <ul>
-        <li>测试套件增强：套件级报告与通过率、链式执行（A→B）</li>
-        <li>步骤模板：保存常用步骤组合为模板（如「启动应用 → 等待 → 点击首页」），任意用例插入复用</li>
-      </ul>
-      <div class="example">💡 <b>打个比方：</b>「歌单出成绩单」+「Word 模板」——都是小改动、当场见效，随时可以插队做。</div>
-    </div>
-
-    <div class="card">
-      <h3>阶段二 · 改动适中、模块独立 <span class="tag plan">📋 目标 1~2 个版本周期</span></h3>
-      <ul>
-        <li>语音播报增强：唤醒词多套管理（按用例切换、多条候选轮播）、执行结果校验（除「被识别」再验「真执行了」）、语音用例 ↔ 自动化用例互转</li>
-        <li>版本控制集成（Git）：数据文件接入版本管理，支持版本回滚与差异对比</li>
-        <li>个人知识库增强：把已落地的知识库与执行 / 崩溃 / 接口打通（异常一键沉淀、失败自动关联），并支持从外部文档导入（详见第三章第 5 项）</li>
-      </ul>
-      <div class="example">💡 <b>打个比方：</b>「按用例换称呼」+「文档的修订记录」——都在自己模块里闭环，不牵动执行链路；知识库增强则是给它装上「自动提醒」的小助手。</div>
-    </div>
-
-    <div class="card">
-      <h3>阶段三 · 改动较大，需先设计 <span class="tag plan">📋 目标 2~3 个版本周期</span></h3>
-      <ul>
-        <li>执行健壮性增强：步骤级失败重试（次数 / 间隔 / 触发条件可配，默认关）、显式等待（元素出现 / 消失 / 可点击）、步骤间隔（全局 + 步骤级可配，替代散落的固定 sleep）</li>
-        <li>接口模块二期：前后置脚本（Python 钩子，处理签名 / 加解密 / 数据提取）、链路场景编排（上一步响应作为下一步入参）、数据驱动（CSV / JSON / Excel）</li>
-        <li>图像识别定位：模板匹配 + 相似度阈值，元素库可上传参考图</li>
-      </ul>
-      <div class="example">💡 <b>打个比方：</b>「网不好就重发」+「备菜与摆盘 / 接力赛」+「找不同」——都要先设计再动手，动的是执行器与元素模型。</div>
-    </div>
-
-    <div class="card">
-      <h3>阶段四 · 改动大 / 影响面广 <span class="tag plan">📋 需专门排期</span></h3>
-      <ul>
-        <li>变量 / 参数化（地基）：全局变量表 + 统一渲染层（元素库与步骤参数共用）+ 变量作用域三级（全局 → 用例 → 步骤）+ 数据驱动</li>
-        <li>测试数据管理：从 Excel / CSV 读数据，同一用例参数化跑多组（与「变量 / 参数化」合并实现更合理）</li>
-        <li>变量 / 参数化落地到语音播报：唤醒词、语速等提升为可参数化变量</li>
-        <li>关键字驱动：把「登录」「搜索」等组合封装为可传参关键字</li>
-        <li>性能检测补全：诊断产物接进监控会话（见第七章）、抓包防呆与分段存盘、并入 mapauto-perf-test 采集能力（GPU / 系统内存 / 整机 CPU 等）</li>
-      </ul>
-      <div class="example">💡 <b>打个比方：</b>「填表模板」+「快捷指令」+「体检报告升级」——动的是数据结构与核心执行链路，得整块排期、一次做透。</div>
-      <div class="tip">⚠ <b>注意依赖</b>：「关键字驱动 / 测试数据管理 / 变量落地语音 / 接口链路编排」都依赖「变量 / 参数化」这个地基。它们排在最后，但真要做其中任何一项时，<b>必须先回来把变量 / 参数化做掉</b>，否则一定返工。</div>
-    </div>
-  </section>
-
-  <!-- ============ 六、速查表 ============ -->
-  <section class="chapter" id="s6">
-    <h2><span class="num">6</span>实施优先级速查表</h2>
+    <h2><span class="num">4</span>实施优先级速查表</h2>
+    <p class="small" style="margin-top:0">排序原则：<b>改动越小、影响面越可控的越先做</b>；要动数据结构、核心执行链路或跨模块渲染的往后排。⭐ 越多 = 越建议先动；阶段与第三章四段一一对应。</p>
     <div class="card">
       <table>
         <thead><tr><th>阶段</th><th>能力</th><th>优先级</th><th>理由</th></tr></thead>
@@ -575,12 +502,12 @@
         </tbody>
       </table>
     </div>
-    <div class="tip">💡 建议从「阶段一 · 改动小、见效快」起步——套件增强 / 步骤模板都是小步快跑、影响面可控的活，可立即穿插。变量 / 参数化虽然是关键字驱动、数据驱动的共同地基，但它改动最大，等真正要做其中任何一项时再回来做，别提前动。</div>
+    <div class="tip">💡 建议从「阶段一 · 改动小、见效快」起步——套件增强 / 步骤模板都是小步快跑、影响面可控的活，可立即穿插；变量 / 参数化是共同地基，等真要做依赖它的项时再回来做，别提前动。</div>
   </section>
 
-  <!-- ============ 七、性能检测页：堆转储与抓包整合设计 ============ -->
-  <section class="chapter" id="s7">
-    <h2><span class="num">7</span>性能检测页 · 堆转储与抓包整合 <span class="tag plan">📋 待做</span></h2>
+  <!-- ============ 五、性能检测页：堆转储与抓包整合设计 ============ -->
+  <section class="chapter" id="s5">
+    <h2><span class="num">5</span>性能检测页 · 堆转储与抓包整合 <span class="tag plan">📋 待做</span></h2>
     <div class="card">
       <h3>待解决</h3>
       <ul>
@@ -618,9 +545,9 @@
     </div>
   </section>
 
-  <!-- ============ 八、macOS 移植注意事项 ============ -->
-  <section class="chapter" id="s8">
-    <h2><span class="num">8</span>macOS 移植注意事项 <span class="tag plan">📐 2026-10-10 评估 · 未开始</span></h2>
+  <!-- ============ 六、macOS 移植注意事项 ============ -->
+  <section class="chapter" id="s6">
+    <h2><span class="num">6</span>macOS 移植注意事项 <span class="tag plan">📐 2026-10-10 评估 · 未开始</span></h2>
     <p class="small" style="margin-top:0">目标：把虫师跑在 Mac 上，连车机做同样的测试。下面按「不改就跑不起来 / 能跑但行为不对 / 已经写好不用动」三类梳理，每条都标了确切文件。</p>
 
     <div class="card">
