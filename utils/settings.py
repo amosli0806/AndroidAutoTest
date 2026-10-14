@@ -423,3 +423,17 @@ class Settings:
         settings = cls.load()
         settings['perf_config'] = dict(cfg or {})
         cls.save(settings)
+
+    # ---------- 性能检测页：抓包参数 ----------
+    # 结构与默认值见 services/packet_capture.DEFAULT_CAPTURE_CONFIG
+    @classmethod
+    def get_capture_config(cls) -> dict:
+        settings = cls.load()
+        cfg = settings.get('capture_config')
+        return dict(cfg) if isinstance(cfg, dict) else {}
+
+    @classmethod
+    def set_capture_config(cls, cfg: dict):
+        settings = cls.load()
+        settings['capture_config'] = dict(cfg or {})
+        cls.save(settings)

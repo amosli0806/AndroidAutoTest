@@ -11,7 +11,19 @@ from PyQt6.QtGui import QColor
 from utils.theme import ThemeMode
 
 class TimeAxisItem(pg.AxisItem):
-    """横轴：把 Unix 时间戳格式化为相对起始时间的秒数（或 m s）"""
+    """横轴：把 Unix 时间戳格式化为相对起始时间的刻度。
+
+    分档规则（与 HTML 报告 utils/perf_report.py 的横轴保持一致）：
+      * < 1 分钟   -> "42s"
+      * < 1 小时   -> "5m30s"
+      * >= 1 小时  -> "11:37"（时:分）
+
+    为什么一小时以上要换「时:分」：长会话（默认时长就是 12 小时）跑到 700 多分钟时，
+    刻度会变成 "697m52s" 这种，一眼看不出到底跑了多久（用户 2026-10-13 反馈）。
+    """
+    # 一秒不差地对齐 HTML 报告的那两档阈值
+    _HOUR = 3600
+    _MINUTE = 60
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -30,12 +42,16 @@ class TimeAxisItem(pg.AxisItem):
         out = []
         for v in values:
             dt = max(0.0, v - self._t0)
-            if dt < 60:
+            if dt < self._MINUTE:
                 out.append(f"{dt:.0f}s")
-            else:
-                m = int(dt // 60)
-                s = int(dt % 60)
+            elif dt < self._HOUR:
+                m = int(dt // self._MINUTE)
+                s = int(dt % self._MINUTE)
                 out.append(f"{m}m{s}s")
+            else:
+                h = int(dt // self._HOUR)
+                m = int(dt % self._HOUR // self._MINUTE)
+                out.append(f"{h}:{m:02d}")
         return out
 
 class MetricCard(QFrame):

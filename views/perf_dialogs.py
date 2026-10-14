@@ -242,6 +242,203 @@ class PerfThresholdDialog(QDialog):
 
 
 # ============================================================
+# 抓包参数对话框
+# ============================================================
+class CaptureSettingsDialog(QDialog):
+    """网络抓包参数：过滤表达式 / 网卡 / 单包长度 / 时长与大小上限。
+
+    为什么要给上限也留入口：上限本来是「忘了停」的防呆（见 services/packet_capture
+    顶部常量），但抓包现在会随监控自动开始，长跑场景 10 分钟就自动停会让人以为坏了。
+    所以做成可配、0 = 不限。
+    """
+
+    def __init__(self, config, parent=None):
+        super().__init__(parent)
+        self.setObjectName("CaptureSettingsDialog")
+        self.setWindowTitle("抓包参数")
+        self.setModal(True)
+        self.setFixedSize(520, 380)
+        self._config = dict(config or {})
+
+        self.setup_ui()
+        self.load_data()
+        self.apply_theme()
+
+    def setup_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 20, 20, 20)
+        root.setSpacing(14)
+
+        title = QLabel("网络抓包参数")
+        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        root.addWidget(title)
+
+        subtitle = QLabel(
+            "抓包需设备已 root。过滤表达式留空表示抓全部流量；"
+            "上限填 0 表示不限（长跑时建议按需放宽）。")
+        subtitle.setStyleSheet("font-size: 12px; color: #999;")
+        subtitle.setWordWrap(True)
+        root.addWidget(subtitle)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("background-color: #e0e0e0; max-height: 1px;")
+        root.addWidget(line)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText("如：tcp port 443　/　host 10.0.0.5　（留空 = 全部）")
+        form.addRow("过滤表达式:", self.filter_edit)
+
+        self.interface_combo = QComboBox()
+        self.interface_combo.setEditable(True)
+        self.interface_combo.addItems(["any", "wlan0", "eth0", "rmnet0"])
+        self.interface_combo.setToolTip("tcpdump 的 -i 参数；不确定就保持 any（抓所有网卡）")
+        form.addRow("网卡:", self.interface_combo)
+
+        self.snaplen_spin = QSpinBox()
+        self.snaplen_spin.setRange(0, 65535)
+        self.snaplen_spin.setSuffix(" 字节")
+        self.snaplen_spin.setSpecialValueText("不限（完整包）")
+        self.snaplen_spin.setToolTip("tcpdump 的 -s 参数：每个包最多抓多少字节。0 = 抓完整包")
+        form.addRow("单包长度:", self.snaplen_spin)
+
+        self.seconds_spin = QSpinBox()
+        self.seconds_spin.setRange(0, 24 * 60)
+        self.seconds_spin.setSuffix(" 分钟")
+        self.seconds_spin.setSpecialValueText("不限")
+        self.seconds_spin.setToolTip("单次抓包最长多久，到点自动停止并保存已抓内容")
+        form.addRow("时长上限:", self.seconds_spin)
+
+        self.bytes_spin = QSpinBox()
+        self.bytes_spin.setRange(0, 10240)
+        self.bytes_spin.setSuffix(" MB")
+        self.bytes_spin.setSpecialValueText("不限")
+        self.bytes_spin.setToolTip("单次抓包文件最大多大，到点自动停止并保存已抓内容")
+        form.addRow("大小上限:", self.bytes_spin)
+
+        root.addLayout(form)
+        root.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        reset_btn = QPushButton("恢复默认")
+        reset_btn.setObjectName("resetBtn")
+        reset_btn.setFixedSize(100, 34)
+        reset_btn.clicked.connect(self._on_reset)
+
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setObjectName("cancelBtn")
+        cancel_btn.setFixedSize(100, 34)
+        cancel_btn.clicked.connect(self.reject)
+
+        ok_btn = QPushButton("确定")
+        ok_btn.setObjectName("okBtn")
+        ok_btn.setFixedSize(100, 34)
+        ok_btn.clicked.connect(self.accept)
+
+        btn_row.addWidget(reset_btn)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(ok_btn)
+        root.addLayout(btn_row)
+
+    def load_data(self):
+        cfg = self._config
+        self.filter_edit.setText(str(cfg.get('filter', '')))
+        self.interface_combo.setCurrentText(str(cfg.get('interface', 'any') or 'any'))
+        self.snaplen_spin.setValue(int(cfg.get('snaplen', 0) or 0))
+        self.seconds_spin.setValue(int(cfg.get('max_seconds', 0) or 0) // 60)
+        self.bytes_spin.setValue(int(cfg.get('max_bytes', 0) or 0) // 1024 // 1024)
+
+    def _on_reset(self):
+        from services.packet_capture import DEFAULT_CAPTURE_CONFIG as _D
+        self._config = dict(_D)
+        self.load_data()
+
+    def get_config(self) -> dict:
+        return {
+            'filter': self.filter_edit.text().strip(),
+            'interface': self.interface_combo.currentText().strip() or 'any',
+            'snaplen': self.snaplen_spin.value(),
+            'max_seconds': self.seconds_spin.value() * 60,
+            'max_bytes': self.bytes_spin.value() * 1024 * 1024,
+        }
+
+    def apply_theme(self, theme_mode=None):
+        if theme_mode is None:
+            theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
+
+        if theme_mode == ThemeMode.DARK:
+            bg = "#2d2d2d"
+            text = "#eeeeee"
+            input_bg = "#3c3c3c"
+            input_text = "#eeeeee"
+            input_border = "#555"
+            cancel_bg = "#555"
+            cancel_fg = "#eeeeee"
+            reset_bg = "#555"
+            reset_fg = "#eeeeee"
+        else:
+            bg = "#ffffff"
+            text = "#333333"
+            input_bg = "#ffffff"
+            input_text = "#333333"
+            input_border = "#d0d0d0"
+            cancel_bg = "#f0f0f0"
+            cancel_fg = "#333333"
+            reset_bg = "#f0f0f0"
+            reset_fg = "#333333"
+
+        self.setStyleSheet(f"""
+            #CaptureSettingsDialog {{
+                background-color: {bg};
+            }}
+            #CaptureSettingsDialog QLabel {{
+                color: {text};
+                background: transparent;
+            }}
+            #CaptureSettingsDialog QLineEdit,
+            #CaptureSettingsDialog QComboBox,
+            #CaptureSettingsDialog QSpinBox {{
+                background-color: {input_bg};
+                color: {input_text};
+                border: 1px solid {input_border};
+                border-radius: 4px;
+                padding: 4px 8px;
+                min-height: 22px;
+            }}
+            #CaptureSettingsDialog QPushButton#okBtn {{
+                background-color: #1976d2;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: 600;
+            }}
+            #CaptureSettingsDialog QPushButton#okBtn:hover {{
+                background-color: #1565c0;
+            }}
+            #CaptureSettingsDialog QPushButton#cancelBtn {{
+                background-color: {cancel_bg};
+                color: {cancel_fg};
+                border: none;
+                border-radius: 6px;
+                font-weight: 500;
+            }}
+            #CaptureSettingsDialog QPushButton#resetBtn {{
+                background-color: {reset_bg};
+                color: {reset_fg};
+                border: none;
+                border-radius: 6px;
+                font-weight: 500;
+            }}
+        """)
+
+
+# ============================================================
 # 基线管理对话框
 # ============================================================
 class PerfBaselineDialog(QDialog):

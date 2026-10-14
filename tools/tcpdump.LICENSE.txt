@@ -1,0 +1,42 @@
+tcpdump —— 随虫师分发的第三方可执行文件
+============================================
+
+文件：tools/tcpdump
+来源：从被测车机（arm64-v8a）的 /system/bin/tcpdump 取出，原样随包分发
+用途：性能检测页「网络抓包」功能。运行时由 adb push 到设备 /data/local/tmp 后执行，
+      不在这台 Windows 电脑上运行（所以它是 Android/ELF 二进制，不是 .exe）。
+架构：ELF 64-bit LSB executable, ARM aarch64。设备 CPU 架构不是 arm64 时，
+      程序会优先使用设备自带的那份 tcpdump（见 services/packet_capture.py）。
+
+如果设备既没有自带 tcpdump、架构也不是 arm64，请自行准备一份与设备架构匹配的
+tcpdump 放到 tools/tcpdump（arm / arm64 / x86 / x86_64 任选其一）。
+
+------------------------------------------------------------------------------
+以下为 tcpdump 的许可证（BSD 3-Clause）：
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+  1. Redistributions of source code must retain the above copyright
+     notice, this list of conditions and the following disclaimer.
+
+  2. Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+
+  3. Neither the name of the copyright holder nor the names of its
+     contributors may be used to endorse or promote products derived
+     from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

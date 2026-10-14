@@ -280,6 +280,11 @@ class PerfController(QObject):
         self._screenshot_busy = False
         # 抓包状态
         self._capture_worker = None
+        # 本次抓包是不是「随监控自动拉起」的（决定失败时弹模态还是轻提示）
+        self._capture_auto_started = False
+        # 部署 tcpdump 期间收到过「停止」：部署线程完成时不要再把抓包拉起来
+        # （自动拉起 + 用户秒停 时最容易撞上，否则会出现"监控已停、抓包还在跑"）
+        self._capture_stop_requested = False
 
         # 采样统计刷新定时器
         self._stats_timer = QTimer(self)
@@ -310,6 +315,7 @@ class PerfController(QObject):
         self.view.hprof_once_requested.connect(self._on_hprof_once)
         self.view.hprof_interval_changed.connect(self._on_hprof_interval_changed)
         self.view.packet_toggle_requested.connect(self._on_packet_toggle)
+        self.view.packet_config_requested.connect(self._on_capture_config)
         self.view.screenshot_toggle_requested.connect(self._on_screenshot_toggle)
         self.view.screenshot_once_requested.connect(self._take_screenshot_now)
         self.view.screenshot_interval_changed.connect(
@@ -491,6 +497,11 @@ class PerfController(QObject):
         # 截图自动循环：同堆转储口径
         if self.view.screenshot_enable_check.isChecked():
             self._start_screenshot_loop()
+
+        # 抓包：勾选了「抓包」卡片就随监控一起开始
+        # （停止那半边早就有了，见 _on_stop 里的 _stop_capture；此前只缺这半边，
+        #  所以界面看着像"抓包和监控没关系"，2026-10-14 用户反馈）
+        self._auto_start_capture_if_enabled()
 
         # 根据模式更新视图状态
         if mode == 'scenario':
@@ -944,23 +955,43 @@ class PerfController(QObject):
             show_toast(self.view, "截图失败", duration=4000)
 
     def _on_packet_toggle(self, capturing: bool):
-        """抓包开始/停止"""
+        """抓包开始/停止（卡片按钮的手动开关）"""
         if capturing:
             self._start_capture()
         else:
             self._stop_capture()
 
-    def _start_capture(self):
+    def _auto_start_capture_if_enabled(self):
+        """「开始监控」时按「抓包」勾选状态决定是否自动开始抓包。
+
+        单独成方法：这半边的联动是随监控启动走的，抽出来才好单测
+        （见 tools 里的自测思路：不启动完整监控会话也能验证"勾了就抓、没勾就不抓"）。
+        """
+        if self.view.packet_visible_check.isChecked():
+            self._start_capture(auto=True)
+
+    def _on_capture_config(self):
+        """打开「抓包参数」对话框；确定后落盘并刷新按钮提示"""
+        from views.perf_dialogs import CaptureSettingsDialog
+        from services.packet_capture import load_capture_config, save_capture_config
+        dialog = CaptureSettingsDialog(load_capture_config(), self.view)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        save_capture_config(dialog.get_config())
+        self.view.refresh_packet_tooltip()
+        show_toast(self.view, "抓包参数已保存")
+
+    def _start_capture(self, auto: bool = False):
+        """auto=True 表示随「开始监控」自动拉起（失败时用轻提示，不弹模态打断采集）"""
+        self._capture_auto_started = auto
+        self._capture_stop_requested = False
         if not self.device_service or not self.device_service.device:
             show_toast(self.view, "设备未连接")
             self.view.set_packet_capturing(False)
             return
-        from services.packet_capture import (
-            TcpdumpDeployThread, CaptureWorker)
-        from utils.settings import Settings as _Settings
+        from services.packet_capture import TcpdumpDeployThread
 
         serial = self.device_service.serial
-        output_dir = _Settings.get_output_dir()
 
         # 先部署 tcpdump（含 root 检测），就绪后再启动抓包
         from utils.adb_path import get_adb_path
@@ -976,22 +1007,39 @@ class PerfController(QObject):
         self.view.set_packet_status("准备 tcpdump…")
 
     def _on_capture_deployed(self, ok: bool, message: str):
-        from services.packet_capture import CaptureWorker
+        from services.packet_capture import CaptureWorker, load_capture_config
         from utils.settings import Settings as _Settings
+        auto = getattr(self, '_capture_auto_started', False)
+        if getattr(self, '_capture_stop_requested', False):
+            # 部署期间已经点过「停止」（或监控已结束）：不要拉起抓包
+            self._capture_stop_requested = False
+            self.view.set_packet_capturing(False)
+            self.view.set_packet_status("已停止")
+            return
         if not ok:
             self.view.set_packet_capturing(False)
             self.view.set_packet_status(f"无法抓包：{message}")
-            WarningDialog.show_warning(self.view, "抓包不可用", message)
+            if auto:
+                # 自动拉起失败：状态栏已经写清楚了，不再弹模态打断刚开始的采集
+                show_toast(self.view, f"抓包未开始：{message.splitlines()[0]}", duration=5000)
+            else:
+                WarningDialog.show_warning(self.view, "抓包不可用", message)
             return
         if self._capture_worker and self._capture_worker.isRunning():
             return
+        deploy = getattr(self, '_deploy_thread', None)
+        cfg = load_capture_config()
         self._capture_worker = CaptureWorker(
-            self.device_service.serial, _Settings.get_output_dir(), "")
+            self.device_service.serial, _Settings.get_output_dir(), cfg['filter'],
+            device_path=getattr(deploy, 'device_path', "/data/local/tmp/tcpdump"),
+            interface=cfg['interface'], snaplen=cfg['snaplen'],
+            max_seconds=cfg['max_seconds'], max_bytes=cfg['max_bytes'])
         self._capture_worker.finished_signal.connect(self._on_capture_finished)
         self._capture_worker.error_signal.connect(
             lambda m: self.view.set_packet_status(f"❌ {m}"))
         self._capture_worker.start()
-        self.view.set_packet_status("抓包中…")
+        # 自动拉起时按钮本来是未选中的，这里统一回写，保证按钮/状态与实际一致
+        self.view.set_packet_capturing(True)
 
     def _on_capture_finished(self, success: bool, result: str):
         from services.packet_capture import capture_limit_text
@@ -1015,8 +1063,10 @@ class PerfController(QObject):
     def _stop_capture(self):
         """停止抓包（用户手动点击 / 随监控结束自动收尾）。
 
-        在部署 tcpdump 阶段（worker 尚未创建）或已结束时，只把按钮与状态复位。
+        在部署 tcpdump 阶段（worker 尚未创建）或已结束时，只把按钮与状态复位；
+        同时立一个闸门，避免部署线程稍后完成又把抓包拉起来。
         """
+        self._capture_stop_requested = True
         if self._capture_worker and self._capture_worker.isRunning():
             self._capture_worker.stop()
             self.view.set_packet_status("正在停止…")

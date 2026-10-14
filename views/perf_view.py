@@ -118,6 +118,7 @@ class PerfView(QWidget):
     hprof_once_requested = pyqtSignal()            # 手动触发一次堆转储
     hprof_interval_changed = pyqtSignal()          # 堆转储间隔变更
     packet_toggle_requested = pyqtSignal(bool)     # 抓包开始/停止
+    packet_config_requested = pyqtSignal()         # 打开「抓包参数」对话框
     screenshot_toggle_requested = pyqtSignal(bool)  # 截图自动循环开关（性能工具卡片）
     screenshot_once_requested = pyqtSignal()        # 手动触发一次截图
     screenshot_interval_changed = pyqtSignal()      # 截图间隔变更
@@ -532,6 +533,8 @@ class PerfView(QWidget):
         metric_widgets.append(self.hprof_visible_check)
 
         self.packet_visible_check = BorderedCheckBox("抓包")
+        self.packet_visible_check.setToolTip(
+            "显示抓包卡片，并在「开始监控」时自动开始抓包（停止监控时一并收尾）")
         self.packet_visible_check.toggled.connect(self._on_card_visibility_changed)
         metric_widgets.append(self.packet_visible_check)
 
@@ -763,19 +766,24 @@ class PerfView(QWidget):
         self.packet_toggle_btn = QPushButton("开始抓包")
         self.packet_toggle_btn.setIcon(qta.icon('fa6s.network-wired', color='white'))
         self.packet_toggle_btn.setCheckable(True)
-        # 保护说明：单次抓包有时长/大小上限，到限自动停（值见 services/packet_capture 顶部常量）
-        from services.packet_capture import (
-            CAPTURE_MAX_SECONDS as _cap_sec, CAPTURE_MAX_BYTES as _cap_bytes)
-        self.packet_toggle_btn.setToolTip(
-            f"抓取设备网络流量存为 pcap（需 root）。单次最长 {_cap_sec // 60} 分钟 / "
-            f"{_cap_bytes // 1024 // 1024} MB，到限自动停止并保存；停止监控时会一并收尾")
         self.packet_toggle_btn.toggled.connect(self.packet_toggle_requested.emit)
         packet_row.addWidget(self.packet_toggle_btn)
+
+        # 参数入口：过滤表达式 / 网卡 / 单包长度 / 上限（此前这些全是写死的）
+        self.packet_config_btn = QPushButton()
+        self.packet_config_btn.setIcon(qta.icon('fa6s.sliders', color='#8a8f98'))
+        self.packet_config_btn.setToolTip("抓包参数：过滤表达式 / 网卡 / 单包长度 / 上限")
+        self.packet_config_btn.setFixedSize(28, 26)
+        self.packet_config_btn.setFlat(True)
+        self.packet_config_btn.clicked.connect(self.packet_config_requested.emit)
+        packet_row.addWidget(self.packet_config_btn)
+
         self.packet_status_label = QLabel("未开始")
         self.packet_status_label.setStyleSheet("font-size: 12px; color: #999999; background: transparent;")
         packet_row.addWidget(self.packet_status_label)
         packet_row.addStretch()
         self._packet_card.setFixedHeight(44)
+        self.refresh_packet_tooltip()
 
         # ---- 截图卡片 ----
         (self._screenshot_card, screenshot_row,
@@ -870,6 +878,27 @@ class PerfView(QWidget):
     def set_packet_status(self, text: str):
         """更新抓包状态文字（例如完成路径 / 失败原因）"""
         self.packet_status_label.setText(text)
+
+    def refresh_packet_tooltip(self):
+        """按当前抓包参数刷新按钮提示（参数对话框保存后由控制器调用）"""
+        try:
+            from services.packet_capture import load_capture_config
+            cfg = load_capture_config()
+        except Exception:
+            cfg = {}
+        lines = ["抓取设备网络流量存为 pcap（需 root）"]
+        if cfg.get('filter'):
+            lines.append(f"过滤：{cfg['filter']}")
+        if cfg.get('interface') and cfg['interface'] != 'any':
+            lines.append(f"网卡：{cfg['interface']}")
+        secs = int(cfg.get('max_seconds') or 0)
+        size = int(cfg.get('max_bytes') or 0)
+        lines.append("上限：" + " / ".join([
+            f"{secs // 60} 分钟" if secs else "不限时",
+            f"{size // 1024 // 1024} MB" if size else "不限大小",
+        ]))
+        lines.append("勾选「抓包」后随「开始监控」自动开始，停止监控时一并收尾")
+        self.packet_toggle_btn.setToolTip("\n".join(lines))
 
     def _on_card_visibility_changed(self, *_):
         """显隐开关变化：重新布局卡片"""
