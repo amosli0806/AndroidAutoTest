@@ -12,9 +12,9 @@ import qtawesome as qta
 from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QSpinBox, QDoubleSpinBox, QPushButton, QLabel,
-    QComboBox, QTextEdit, QGroupBox
+    QComboBox, QTextEdit, QGroupBox, QApplication
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QEvent
 
 from utils.adb_path import get_adb_path
 from utils.theme import ThemeMode
@@ -206,6 +206,37 @@ def build_tc_commands(iface: str, delay: int, loss: float, bandwidth: int,
     return commands, ""
 
 
+
+
+# ======================================================================
+# 临时诊断（排查「点确定要点好几下」，定位完即删）
+# 目的：回答两个问题 —— ① 是否同时叠了多个弹窗（点一个下面还有一个）；
+#       ② 鼠标按下到底落到了谁身上（有没有真的到弹窗/按钮上）。
+# ======================================================================
+_DIAG_ON = True
+_diag_state = {"shown": 0, "open": 0}
+
+
+class _MouseProbe(QObject):
+    """临时：弹窗存活期间，把每次鼠标按下落到谁身上记进虫师日志。"""
+
+    def __init__(self, sink):
+        super().__init__()
+        self._sink = sink
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseButtonPress:
+            p = event.globalPosition().toPoint()
+            w = QApplication.widgetAt(p)
+            name = "None"
+            if w is not None:
+                name = type(w).__name__
+                if isinstance(w, QPushButton):
+                    name += f'("{w.text()}")'
+                elif w.objectName():
+                    name += "#" + w.objectName()
+            self._sink(f"🔍 鼠标按下 @({p.x()},{p.y()}) → 命中 {name}")
+        return False
 
 
 class WeakNetworkPanel(QWidget):
@@ -830,13 +861,27 @@ class WeakNetworkPanel(QWidget):
             # 把已探到的「能否 root」结论一并带上：否则用户只知道"要 root"，
             # 却不知道这台机器压根没有可行路径（白折腾一轮）
             hint = ROOT_FEASIBILITY_MESSAGES.get(self._root_level or "", "")
-            WarningDialog.show_warning(
-                self,
-                "权限不足",
-                "设备未 root 或 ADB 无 root 权限，无法使用弱网模拟。\n"
-                "请确保设备已 root 并授予 ADB root 权限。"
-                + (f"\n\n{hint}" if hint else "")
-            )
+            message = ("设备未 root 或 ADB 无 root 权限，无法使用弱网模拟。\n"
+                       "请确保设备已 root 并授予 ADB root 权限。"
+                       + (f"\n\n{hint}" if hint else ""))
+            if not _DIAG_ON:
+                WarningDialog.show_warning(self, "权限不足", message)
+                return
+            # ---- 临时诊断（定位完即删）----
+            _diag_state["shown"] += 1
+            self.log_message.emit(
+                f"🔍 [诊断] 准备弹第 {_diag_state['shown']} 个「权限不足」弹窗，"
+                f"当前还开着 {_diag_state['open']} 个")
+            _diag_state["open"] += 1
+            probe = _MouseProbe(self.log_message.emit)
+            QApplication.instance().installEventFilter(probe)
+            try:
+                WarningDialog.show_warning(self, "权限不足", message)
+            finally:
+                QApplication.instance().removeEventFilter(probe)
+                _diag_state["open"] -= 1
+                self.log_message.emit(
+                    f"🔍 [诊断] 一个「权限不足」弹窗已关闭，还剩 {_diag_state['open']} 个没关")
         elif result == RESULT_NO_TC:
             WarningDialog.show_warning(
                 self, "缺少 tc",
