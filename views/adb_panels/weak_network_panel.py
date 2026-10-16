@@ -4,6 +4,7 @@
 原「弱网模拟对话框」的内嵌版：逻辑不变，去掉窗口相关代码，
 样式选择器由 QDialog 改为 #WeakNetworkPanel，避免影响页面内其它控件。
 """
+import os
 import subprocess
 import sys
 import threading
@@ -217,8 +218,33 @@ _DIAG_ON = True
 _diag_state = {"shown": 0, "open": 0}
 
 
+def _diag_write(line: str):
+    """临时诊断落盘。
+
+    为什么要单独写文件：埋点走 log_message 只进底部「虫师日志」面板，不落 app_debug.log
+    （那份日志还是 GBK 编码），排查时这边根本读不到 —— 所以自己写一份 UTF-8 的。
+    """
+    try:
+        import datetime
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), "click_diag.log")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.datetime.now():%m-%d %H:%M:%S} {line}\n")
+    except Exception:
+        pass
+
+
+def _diag(panel, line: str):
+    """临时诊断：面板日志 + 独立文件 双写"""
+    try:
+        panel.log_message.emit(line)
+    except Exception:
+        pass
+    _diag_write(line)
+
+
 class _MouseProbe(QObject):
-    """临时：弹窗存活期间，把每次鼠标按下落到谁身上记进虫师日志。"""
+    """临时：弹窗存活期间，把每次鼠标按下落到谁身上记下来。"""
 
     def __init__(self, sink):
         super().__init__()
@@ -235,7 +261,7 @@ class _MouseProbe(QObject):
                     name += f'("{w.text()}")'
                 elif w.objectName():
                     name += "#" + w.objectName()
-            self._sink(f"🔍 鼠标按下 @({p.x()},{p.y()}) → 命中 {name}")
+            self._sink(f"[诊断] 鼠标按下 @({p.x()},{p.y()}) → 命中 {name}")
         return False
 
 
@@ -869,19 +895,17 @@ class WeakNetworkPanel(QWidget):
                 return
             # ---- 临时诊断（定位完即删）----
             _diag_state["shown"] += 1
-            self.log_message.emit(
-                f"🔍 [诊断] 准备弹第 {_diag_state['shown']} 个「权限不足」弹窗，"
-                f"当前还开着 {_diag_state['open']} 个")
+            _diag(self, f"[诊断] 准备弹第 {_diag_state['shown']} 个「权限不足」弹窗，"
+                       f"当前还开着 {_diag_state['open']} 个")
             _diag_state["open"] += 1
-            probe = _MouseProbe(self.log_message.emit)
+            probe = _MouseProbe(lambda m: _diag(self, m))
             QApplication.instance().installEventFilter(probe)
             try:
                 WarningDialog.show_warning(self, "权限不足", message)
             finally:
                 QApplication.instance().removeEventFilter(probe)
                 _diag_state["open"] -= 1
-                self.log_message.emit(
-                    f"🔍 [诊断] 一个「权限不足」弹窗已关闭，还剩 {_diag_state['open']} 个没关")
+                _diag(self, f"[诊断] 一个「权限不足」弹窗已关闭，还剩 {_diag_state['open']} 个没关")
         elif result == RESULT_NO_TC:
             WarningDialog.show_warning(
                 self, "缺少 tc",
