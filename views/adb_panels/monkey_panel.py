@@ -49,6 +49,10 @@ class MonkeyPanel(QWidget):
         self._whitelist_remote = None  # 白名单文件方式时设备侧的文件路径
 
         self.setObjectName("MonkeyPanel")
+        # 让 QSS 里的 background-color / border / border-radius 真正生效。
+        # QWidget 子类默认**不画**样式表背景（Qt 只对 QFrame 之类自动处理），
+        # 漏了这句就会出现"面板没有自己的底和圆角边框、和页面糊成一整块"（2026-10-16 用户反馈）。
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         self.setup_ui()
         self.apply_theme()
@@ -735,7 +739,10 @@ class MonkeyPanel(QWidget):
             disabled_bg = "#444"
             disabled_fg = "#777"
         else:
-            bg = "rgba(255, 255, 255, 0.85)" if has_wallpaper else "#ffffff"
+            # 卡片底色取「次级表面色」而不是纯白：浅色主题下右栏分组本身就是 #ffffff，
+            # 面板再来个纯白就成了白对白、只能靠一条边框分辨（2026-10-16 用户反馈"像一整块"）。
+            # 与性能检测页的工具卡片（#e8eaed）保持同一套观感。
+            bg = "rgba(255, 255, 255, 0.85)" if has_wallpaper else "#e8eaed"
             text = "#333333"
             border = "#d0d0d0"
             input_bg = "#ffffff"
