@@ -87,15 +87,15 @@ ROOT_SU_UNGRANTED = "su"          # 装了 su / root 管理器，但当前 shell
 ROOT_NO_WAY = "no_way"            # 正式版且没发现 su：没有可行的 root 路径
 ROOT_UNKNOWN = "unknown"          # 通道异常，判断不了
 
+# 「点应用时报未 root」那个弹窗里的一句话：**必须短**（2026-10-17 用户反馈字太多）。
+# 想细看「为什么不可用 / 依据 / 下一步怎么做」，走面板上那个「详情」弹窗
+# （见 ROOT_DETAIL_SUMMARY / ROOT_DETAIL_STEP），别往提示里堆。
 ROOT_FEASIBILITY_MESSAGES = {
-    ROOT_ALREADY: "🔓 本设备已是 root，弱网模拟可直接使用",
-    ROOT_ADB_ROOT: ("🔓 本设备可以 root（调试版系统）：先执行一次 adb root，"
-                    "再点右边「重新检测」即可（注意会让设备短暂断连一下）"),
-    ROOT_SU_UNGRANTED: ("🔓 本设备装了 root（发现 su），只是当前没授权："
-                        "请在手机上允许本机 ADB 获取 root，再点「重新检测」"),
-    ROOT_NO_WAY: ("🔒 本设备是正式版（user）且未发现 su，没有现成的 root 路径："
-                  "弱网模拟需要 root，只能换台设备或先解锁刷机"),
-    ROOT_UNKNOWN: "❔ 判断不了本设备能否 root（设备通道异常），可点「重新检测」重试",
+    ROOT_ALREADY: "本设备已是 root",
+    ROOT_ADB_ROOT: "可以（调试版），执行 adb root 后重试",
+    ROOT_SU_UNGRANTED: "可以（已装 root），手机上授权后重试",
+    ROOT_NO_WAY: "不能（正式版且无 su），建议换台设备",
+    ROOT_UNKNOWN: "未探明，可点「重新检测」",
 }
 
 # ---- 状态行的一句话结论 ----
@@ -884,12 +884,11 @@ class WeakNetworkPanel(QWidget):
         if result == RESULT_OK:
             self.log_message.emit(f"✅ 弱网规则已生效：{self._rule_desc()}")
         elif result == RESULT_NO_ROOT:
-            # 把已探到的「能否 root」结论一并带上：否则用户只知道"要 root"，
-            # 却不知道这台机器压根没有可行路径（白折腾一轮）
+            # 文案压到两行（2026-10-17 用户反馈字太多）：一句为什么 + 一句能不能 root。
+            # 详细说明（原因 / 依据 / 下一步）在面板的「详情」按钮里。
             hint = ROOT_FEASIBILITY_MESSAGES.get(self._root_level or "", "")
-            message = ("设备未 root 或 ADB 无 root 权限，无法使用弱网模拟。\n"
-                       "请确保设备已 root 并授予 ADB root 权限。"
-                       + (f"\n\n{hint}" if hint else ""))
+            message = ("弱网模拟需要 root，本设备暂无 root 权限。"
+                       + (f"\n能否 root：{hint}" if hint else ""))
             if not _DIAG_ON:
                 WarningDialog.show_warning(self, "权限不足", message)
                 return
