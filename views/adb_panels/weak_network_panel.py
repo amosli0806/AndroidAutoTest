@@ -67,9 +67,33 @@ CAP_NO_NETEM = "no_netem"
 CAPABILITY_MESSAGES = {
     CAP_OK: "✅ 本设备支持 netem：延迟 / 丢包 / 带宽限制均可使用",
     CAP_NO_ROOT: ("⚠ 设备未 root（ADB 也没有 root 权限）：弱网模拟需要 root，"
-                  "延迟 / 丢包 / 带宽限制都不可用"),
+                  "延迟 / 丢包 / 带宽限制都不可用（本设备能不能 root 见下一行）"),
     CAP_NO_TC: "⚠ 设备上没有 tc 命令，无法做弱网模拟",
     CAP_NO_NETEM: "⚠ " + NETEM_MISSING_HINT,
+}
+
+# ---- root 可行性探测的结论 ----
+# 为什么要单独探：「已 root」和「能不能 root」是两回事。一台 userdebug 车机当场就能
+# `adb root` 拿到权限，而正式版（user）机型基本没戏 —— 提前说清楚，用户才不会在一台
+# 根本 root 不了的车机上白折腾（2026-10-16 实测过一台 user 版车机，面板只报「未 root」，
+# 让人以为"再 root 一下就行"，其实没有可行路径）。
+# 只用只读命令判断，**绝不顺手执行 `adb root`** —— 那会重启 adbd、让设备短暂断连，
+# 这种有副作用的动作要由用户自己决定（文案里告诉他怎么做）。
+ROOT_ALREADY = "already"          # 已经是 root，直接用
+ROOT_ADB_ROOT = "adb_root"        # userdebug / eng / 模拟器：adb root 就能拿到
+ROOT_SU_UNGRANTED = "su"          # 装了 su / root 管理器，但当前 shell 未被授权
+ROOT_NO_WAY = "no_way"            # 正式版且没发现 su：没有可行的 root 路径
+ROOT_UNKNOWN = "unknown"          # 通道异常，判断不了
+
+ROOT_FEASIBILITY_MESSAGES = {
+    ROOT_ALREADY: "🔓 本设备已是 root，弱网模拟可直接使用",
+    ROOT_ADB_ROOT: ("🔓 本设备可以 root（调试版系统）：先执行一次 adb root，"
+                    "再点右边「重新检测」即可（注意会让设备短暂断连一下）"),
+    ROOT_SU_UNGRANTED: ("🔓 本设备装了 root（发现 su），只是当前没授权："
+                        "请在手机上允许本机 ADB 获取 root，再点「重新检测」"),
+    ROOT_NO_WAY: ("🔒 本设备是正式版（user）且未发现 su，没有现成的 root 路径："
+                  "弱网模拟需要 root，只能换台设备或先解锁刷机"),
+    ROOT_UNKNOWN: "❔ 判断不了本设备能否 root（设备通道异常），可点「重新检测」重试",
 }
 
 
@@ -156,6 +180,8 @@ class WeakNetworkPanel(QWidget):
     _clear_finished = pyqtSignal(str, str)
     # 子线程 -> 主线程：弱网能力探测结果（CAP_* 常量之一）
     _capability_ready = pyqtSignal(str)
+    # 子线程 -> 主线程：root 可行性探测结果（结论 + 依据）
+    _root_ready = pyqtSignal(str, str)
 
     def __init__(self, device_service=None, parent=None):
         super().__init__(parent)
@@ -166,6 +192,7 @@ class WeakNetworkPanel(QWidget):
         # netem 可用性：None = 还没探测过
         self._netem_ok = None
         self._capability_reason = None
+        self._root_level = None
         self._probed_serial = None
 
         self.setObjectName("WeakNetworkPanel")
@@ -174,6 +201,7 @@ class WeakNetworkPanel(QWidget):
         self._apply_finished.connect(self._on_apply_finished)
         self._clear_finished.connect(self._on_clear_finished)
         self._capability_ready.connect(self._on_capability_ready)
+        self._root_ready.connect(self._on_root_ready)
         self.apply_theme()
         self._reset_network_rule()   # 静默清理可能残留的规则
         # 初始也要探一次：否则面板在「被显示」之前一直停在「正在检测…」，
@@ -285,10 +313,18 @@ class WeakNetworkPanel(QWidget):
         self.redetect_btn.setObjectName("helpBtn")   # 复用面板里已有的小按钮样式
         self.redetect_btn.setFixedHeight(26)
         self.redetect_btn.setMinimumWidth(80)
-        self.redetect_btn.setToolTip("设备刚连上 / 刚 root 完，点这里重新检测本机能力")
+        self.redetect_btn.setToolTip("设备刚连上 / 刚 root 完，点这里重新检测本机能力与能否 root")
         self.redetect_btn.clicked.connect(lambda: self._probe_capability(force=True))
         cap_row.addWidget(self.redetect_btn)
         layout.addLayout(cap_row)
+
+        # root 可行性：能力结论只说了"现在能不能用"，这里补上"能不能拿到 root"。
+        # 和设备能力同一次探测回传，只在有结论后显示（避免探测期间出现空行）。
+        self.root_label = QLabel("")
+        self.root_label.setObjectName("panelHint")
+        self.root_label.setWordWrap(True)
+        self.root_label.setVisible(False)
+        layout.addWidget(self.root_label)
 
         # 设备变更轮询：DeviceService 是个普通对象、没有变更信号，只能定时比一下 serial。
         # 只比字符串（不发 adb），发现变了才重探能力 —— 解决"连上设备后面板还写着未连接"。
@@ -323,33 +359,133 @@ class WeakNetworkPanel(QWidget):
         self._probe_capability(force=True)
 
     def _probe_capability(self, force: bool = False):
-        """后台探测弱网能力；同一个设备且已有结论时跳过（force=True 强制重探）。"""
+        """后台探测弱网能力 + root 可行性；同一设备且已有结论时跳过（force=True 强制重探）。"""
         serial = self._get_serial()
         if not serial:
             self.capability_label.setText("未连接设备，无法检测内核能力（连上后会自动检测）")
+            self.root_label.setVisible(False)
             return
         if not force and serial == self._probed_serial and self._netem_ok is not None:
             return
         self._probed_serial = serial
         self._netem_ok = None
         self.capability_label.setText("正在检测本机弱网能力…")
+        self.root_label.setVisible(False)   # 重新探测期间先收起旧结论
 
         def worker():
-            self._capability_ready.emit(self._probe_capability_reason())
+            # 一次探测两件事：能不能用（能力） + 能不能拿到 root（可行性）。
+            # `id` 只发一次，结果两次复用（root 判定是能力判定的前置条件）。
+            is_root = self._check_root()
+            self._capability_ready.emit(self._probe_capability_reason(is_root))
+            self._root_ready.emit(*self._probe_root_feasibility(is_root))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _probe_capability_reason(self) -> str:
+    def _probe_capability_reason(self, is_root: bool = None) -> str:
         """判断这台设备到底能不能做弱网，并**区分原因**。
 
         顺序很关键：先 root、再 tc、最后才是 netem。
         否则没 root 的设备会被误报成"内核没有 netem"，让人白折腾内核。
+
+        is_root 由调用方传入可省掉一次 `id`（弱网面板一次探测里能力与 root 可行性共用）。
         """
-        if not self._check_root():
+        if is_root is None:
+            is_root = self._check_root()
+        if not is_root:
             return CAP_NO_ROOT
         if not self._get_tc_path():
             return CAP_NO_TC
         return CAP_OK if self._probe_netem() else CAP_NO_NETEM
+
+    # ------------------------------------------------------------------
+    # root 可行性探测（只读，不执行 adb root）
+    # ------------------------------------------------------------------
+    def _probe_root_feasibility(self, is_root: bool = None):
+        """判断「这台设备能不能拿到 root」，返回 (结论, 依据)。
+
+        判据全部只读（id / getprop / 找 su），**不会真的去 root** ——
+        `adb root` 会重启 adbd、让设备短暂断连，这种有副作用的动作不能藏在"检测"里。
+        依据一并回传，用户能自己复核这个结论是怎么来的。
+        """
+        out, _, rc = self._run_adb_shell("id", timeout=5)
+        if rc != 0:
+            # 连 `id` 都跑不通：多半是通道异常/掉线，别硬给结论
+            return ROOT_UNKNOWN, ""
+        if is_root is None:
+            is_root = "uid=0" in out
+        if is_root or "uid=0" in out:
+            return ROOT_ALREADY, "adb shell id → " + (out.strip() or "uid=0")
+
+        props = self._get_props(("ro.build.type", "ro.debuggable",
+                                 "ro.secure", "ro.kernel.qemu"))
+        build_type = props.get("ro.build.type", "")
+        debuggable = props.get("ro.debuggable", "")
+        secure = props.get("ro.secure", "")
+        qemu = props.get("ro.kernel.qemu", "")
+
+        # 调试版系统：`adb root` 就能把 adbd 提成 root
+        if build_type in ("userdebug", "eng") or debuggable == "1" or secure == "0":
+            evidence = (f"build.type={build_type or '?'} / ro.debuggable={debuggable or '?'}"
+                        f" / ro.secure={secure or '?'}")
+            return ROOT_ADB_ROOT, evidence
+        # 模拟器通常自带 root 开关
+        if qemu == "1":
+            return ROOT_ADB_ROOT, "ro.kernel.qemu=1（模拟器）"
+
+        # 装了 Magisk / SuperSU 之类：有 su，但当前 shell 没被授权
+        su = self._find_su()
+        if su:
+            return ROOT_SU_UNGRANTED, f"发现 su：{su}"
+
+        return ROOT_NO_WAY, f"build.type={build_type or 'user'} / 未发现 su"
+
+    def _get_props(self, keys) -> dict:
+        """一次 `getprop` 读回关心的几个属性（逐条发 adb 太慢）。
+
+        解析用字符串切分而不是正则：getprop 的输出格式固定为 `[key]: [value]`，
+        切一刀就够，也省得为这点小事引入 re。
+        """
+        out, _, rc = self._run_adb_shell("getprop", timeout=8)
+        if rc != 0 or not out:
+            return {}
+        wanted = set(keys)
+        props = {}
+        for line in out.splitlines():
+            line = line.strip()
+            if not line.startswith("[") or "]: [" not in line:
+                continue
+            key, _, rest = line.partition("]: [")
+            key = key[1:].strip()
+            if key in wanted:
+                props[key] = rest[:-1].strip() if rest.endswith("]") else rest.strip()
+        return props
+
+    def _find_su(self) -> str:
+        """找 su 二进制（只看在不在，不尝试提权 —— 提权会在手机上弹授权框）。
+
+        为什么要找：有 su 说明设备装了 root 管理器，只是当前这条 ADB 通道没被授权，
+        和「正式版且无 su」是两种完全不同的处境，给的下一步建议也不一样。
+        """
+        for cand in ("su", "/system/bin/su", "/system/xbin/su", "/sbin/su",
+                     "/su/bin/su", "/debug_ramdisk/su"):
+            out, _, rc = self._run_adb_shell(f"command -v {cand} 2>/dev/null")
+            found = out.strip().splitlines()
+            if rc == 0 and found:
+                return found[0].strip()
+        return ""
+
+    def _on_root_ready(self, level: str, evidence: str):
+        """root 可行性结论回写到界面（与能力结论同一次探测的结果）"""
+        self._root_level = level
+        message = ROOT_FEASIBILITY_MESSAGES.get(level, "")
+        if not message:
+            self.root_label.setVisible(False)
+            return
+        self.root_label.setText(message + (f"　（依据：{evidence}）" if evidence else ""))
+        self.root_label.setVisible(True)
+        if level != ROOT_ALREADY:
+            # 已经是 root 是正常状态，不必刷日志；其余几种都给用户留个记录
+            self.log_message.emit(f"ℹ️ 弱网模拟 · root 检测：{message}")
 
     def _probe_netem(self) -> bool:
         """用 tc 实试一次，判断内核有没有 netem（前提：已经 root 且有 tc）。
@@ -597,11 +733,15 @@ class WeakNetworkPanel(QWidget):
         if result == RESULT_OK:
             self.log_message.emit(f"✅ 弱网规则已生效：{self._rule_desc()}")
         elif result == RESULT_NO_ROOT:
+            # 把已探到的「能否 root」结论一并带上：否则用户只知道"要 root"，
+            # 却不知道这台机器压根没有可行路径（白折腾一轮）
+            hint = ROOT_FEASIBILITY_MESSAGES.get(self._root_level or "", "")
             WarningDialog.show_warning(
                 self,
                 "权限不足",
                 "设备未 root 或 ADB 无 root 权限，无法使用弱网模拟。\n"
                 "请确保设备已 root 并授予 ADB root 权限。"
+                + (f"\n\n{hint}" if hint else "")
             )
         elif result == RESULT_NO_TC:
             WarningDialog.show_warning(
