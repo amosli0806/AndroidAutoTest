@@ -166,9 +166,9 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-14</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-16</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.4.7</span>
+      <span class="badge">当前版本 v1.5.0</span>
       <span class="badge">13 项扩展方向</span>
       <span class="badge">4 个开发阶段</span>
     </div>
@@ -341,7 +341,7 @@
         <li>抓包防呆与保护补全：未 root 前置置灰并说明、设备剩余空间告警、超限改为分段存盘</li>
         <li>并入 mapauto-perf-test 的采集能力（GPU / 系统内存 / 整机 CPU 等，范围待定）</li>
       </ul>
-      <p class="small">堆转储（自动循环 + 一键转储）与抓包（参数 / 随监控自动开始 / 内置 tcpdump / pcap 修复）已于 v1.4.7 初步落地，剩余项见第四章。</p>
+      <p class="small">堆转储（自动循环 + 一键转储）与抓包（参数 / 随监控自动开始 / 内置 tcpdump / pcap 修复）已于 v1.4.8 初步落地，剩余项见第四章。</p>
       <div class="example">💡 <b>打个比方：</b>像「体检报告」升级——CT / 核磁的片子（堆转储、抓包）已经在拍了，还差给它们建归档、对回曲线上「发病那一刻」；同时再添几项体检项目（GPU / 整机 CPU 等）。</div>
     </div>
 
@@ -382,7 +382,7 @@
       <h3>待解决</h3>
       <ul>
         <li><b>产物与会话脱节</b>：堆转储 / 抓包 / 截图三类产物只知道落在「设备号」目录下，不知道属于哪一次监控；报告里没有它们的位置，曲线上的关键时刻无法回溯。</li>
-        <li><b>抓包防呆仍偏薄</b>：参数框（过滤 / 网卡 / 单包长度 / 上限）已于 v1.4.7 补完，但未 root 仍缺前置置灰——要到点开才发现做不了。</li>
+        <li><b>抓包防呆仍偏薄</b>：参数框（过滤 / 网卡 / 单包长度 / 上限）已于 v1.4.8 补完，但未 root 仍缺前置置灰——要到点开才发现做不了。</li>
       </ul>
       <h3>设计原则（四条）</h3>
       <ul>
@@ -393,7 +393,7 @@
       </ul>
       <h3>分层方案（待做部分）</h3>
       <ul>
-        <li><b>A 入口层补完</b>：未 root 前置置灰并说明（抓包参数框已于 v1.4.7 完成）。</li>
+        <li><b>A 入口层补完</b>：未 root 前置置灰并说明（抓包参数框已于 v1.4.8 完成）。</li>
         <li><b>B 会话联动层</b>：PerfSession 新增 events 字段 [(时间戳, 类型, 文件路径, 备注)]；报告新增「诊断产物」章节按时间列出产物与相对秒，实时曲线在对应时刻画事件竖线；导出附带 events 清单。</li>
         <li><b>C 产物管理</b>：产物按会话分目录（<code>输出目录/perf/&lt;会话名&gt;/heap</code>、<code>capture</code>），并挂进报告清单。</li>
         <li><b>D 场景化联动（二期）</b>：场景化设置新增「用例前自动堆转储 / 用例期间自动抓包」，每用例一份产物，报告按用例分组。</li>
@@ -417,7 +417,7 @@
 
   <!-- ============ 五、macOS 移植注意事项 ============ -->
   <section class="chapter" id="s5">
-    <h2><span class="num">5</span>macOS 移植注意事项 <span class="tag plan">📐 2026-10-10 初评 · 2026-10-14 复核 · 未开始</span></h2>
+    <h2><span class="num">5</span>macOS 移植注意事项 <span class="tag plan">📐 2026-10-10 初评 · 2026-10-16 复核 · 未开始</span></h2>
     <p class="small" style="margin-top:0">目标：把虫师跑在 Mac 上，连车机做同样的测试。下面按「不改就跑不起来 / 能跑但行为不对 / 已经写好不用动」三类梳理，每条都标了确切文件；第五节为 2026-10-14 二次核查的新增发现。</p>
 
     <div class="card">
@@ -438,7 +438,7 @@
         <li><b>菜单栏托盘的平台差异不止提示语</b>：macOS 托盘在菜单栏，<code>setToolTip</code> 无效、<code>activated</code> 的 <code>Context</code> 语义与 Windows 不同（左键单击即弹菜单是常态）、没有「双击」；自绘快捷面板（<code>views/tray_controller.py</code>）需按平台调整，或干脆改用原生 QMenu。<b>注意</b>：托盘面板里的「打开输出目录」还踩了上面那条 <code>os.startfile</code> 的坑。</li>
         <li><b>系统级通知</b>：<code>controllers/notification_controller.py</code> 走 <code>QSystemTrayIcon.showMessage</code>（跨平台可用），但 macOS 的横幅通知需要用户授权、且「关闭最小化到托盘」的交互习惯不同（Mac 习惯关窗不退、由 Dock 收回），文案与默认行为都要重新考虑。</li>
         <li><b>单实例保护</b>：现在用 Windows 命名互斥体（<code>main.py::_acquire_single_instance</code>，非 win32 已直接放行）。macOS 上要换成 <code>QLocalServer</code> 或文件锁。</li>
-        <li><b>weditor 子进程的「父死子亡」</b>：<code>services/weditor_service.py::_bind_kill_on_close</code> 用 Windows Job Object，非 win32 直接 return。macOS 上要自己保证退出时杀掉 weditor（<code>os.setsid</code> + 记 pid + 退出时 kill）。</li>
+        <li><b>子进程「父死子亡」（weditor ＋ ADB 命令池）</b>：这条目前靠 Windows Job Object 兜底 —— 实现已抽到公共模块 <code>utils/win_job.py::bind_kill_on_close()</code>，由 <code>services/weditor_service.py</code>（应用可视化）与 <code>services/adb_command_pool.py</code>（ADB 指令）共用（v1.4.8 修「残留一堆 adb 孤儿进程」时并入）。<b>它在非 win32 直接返回 True（等于不绑）</b>，所以 macOS 上这层保护是空的：正常退出还能靠主动清理（<code>_kill_process_tree</code> / <code>stop_all</code> / atexit）收掉，但<b>被强杀或崩溃时收不住</b>（Windows 恰恰靠 Job Object 兜这两条路径）。macOS 没有等价的内核机制，只能把「进程组 + 退出时 kill」这条正常路径做扎实，或另找 launchd 之类的方案。</li>
         <li><b>字体</b>：<code>utils/theme.py</code> 写的是 <code>'Segoe UI', 'Microsoft YaHei'</code>，日志区与报告的等宽字体是 <code>Consolas</code> —— 这些在 macOS 上都不存在。中文会由系统挑 CJK 回退、不至于乱码，但等宽字体要补 <code>Menlo</code> / <code>SF Mono</code>。<code>views/splash_window.py</code> 的 <code>QFont('Microsoft YaHei')</code>、<code>utils/perf_report.py</code> 与 <code>views/help_view.py</code> 的 HTML 字体同理（<code>utils/api_report.py</code> 已经带了 <code>PingFang SC</code>，可照抄）。</li>
         <li><b>内置工具是 Windows 二进制</b>：<code>tools/</code> 下的 <code>scrcpy.exe</code> 与一堆 dll（<code>SDL2.dll</code>／<code>avcodec-61.dll</code>／<code>libusb-1.0.dll</code> 等）只能在 Windows 用，macOS 要换 mac 版 scrcpy（建议改走 <code>brew install scrcpy</code>，同时把 <code>tools/</code> 的 Windows 文件从 mac 包里排除）。（<code>tools/take_help_screenshots.py</code>、<code>import_*.py</code> 是开发脚本，不随包发布，可不管。）<code>utils/adb_path.py</code> 已按平台返回 <code>adb</code> / <code>adb.exe</code>，但 macOS 上得让用户 <code>brew install android-platform-tools</code>，帮助中心的安装指引（<code>views/help_view.py</code>「环境准备 → 安装 adb」）整段是 Windows 截图 + <code>D:\platform-tools</code> + 环境变量操作，需要一套 mac 版文案与截图。</li>
         <li><b>「打开所在文件夹」有四处是坏的</b>：<code>controllers/notification_controller.py</code>、<code>controllers/execution_controller.py</code>、<code>controllers/api_controller.py</code> 用的是 <code>os.name == 'nt' → os.startfile，否则 xdg-open</code>，而 macOS 上没有 <code>xdg-open</code>，点了会静默失败；<code>views/tray_controller.py::_open_output_dir</code>（托盘面板「打开输出目录」）更彻底 —— <b>直接 <code>os.startfile(p)</code>，连平台判断都没有</b>，macOS 上会抛 <code>AttributeError</code>。四处都应统一成 win32 / darwin / else 三分支 —— <code>controllers/perf_controller.py</code> 里已经是正确写法（<code>os.startfile</code> / <code>open</code> / <code>xdg-open</code>），照抄即可。</li>
@@ -453,8 +453,8 @@
         <li><code>subprocess.CREATE_NO_WINDOW</code>：全项目都写成 <code>if sys.platform == 'win32' else 0</code>，非 Windows 传 0。</li>
         <li><code>utils/adb_path.py</code>：<code>adb</code> / <code>adb.exe</code>、<code>scrcpy</code> / <code>scrcpy.exe</code> 已按平台取名。</li>
         <li><code>utils/wireless_manager.py</code>：ping 次数参数 <code>-n</code>（Windows）/ <code>-c</code>（其他）。</li>
-        <li><code>services/adb_command_pool.py</code>：<code>os.setsid</code> 只在非 win32 分支里用（POSIX 可用）。</li>
-        <li><code>utils/win_dark_title.py</code>、<code>weditor_service._bind_kill_on_close</code>、<code>main._acquire_single_instance</code>：都有非 win32 早退。</li>
+        <li><code>services/adb_command_pool.py</code> 的 <code>_kill_process_tree()</code>：Windows 走 <code>taskkill /PID /T /F</code>；<b>POSIX 走 <code>os.killpg(os.getpgid(pid), SIGTERM→SIGKILL)</code></b>（配 <code>preexec_fn=os.setsid</code> 让子进程自成一个进程组），两处都套了 <code>try/except</code> —— macOS 可用。</li>
+        <li><code>utils/win_dark_title.py</code>、<code>utils/win_job.py::bind_kill_on_close</code>（<code>weditor_service._bind_kill_on_close</code> 只是它的薄包装）、<code>main._acquire_single_instance</code>：都有非 win32 早退。</li>
         <li><code>main.py</code> 的 <code>_PopenNoConsole</code>（给子进程补 <code>CREATE_NO_WINDOW</code> 防黑窗）整段包在 <code>if sys.platform == 'win32'</code> 里，非 Windows 直接跳过 —— 正确（macOS 没有黑窗问题）。<code>updater.py</code> 是例外，见上面「能跑但行为不对」。</li>
         <li><code>services/voice_service.py</code> 的 <code>EdgeTtsEngine</code>（edge-tts 在线语音）本身跨平台，<code>miniaudio</code> 也支持 macOS —— 只要绕开 <code>WindowsSapiEngine</code>，语音播报主线可用。</li>
       </ul>
@@ -469,7 +469,7 @@
         <li><b>新增遗漏 ③</b>：字体遗漏点不止 <code>theme.py</code>／<code>splash_window.py</code>，还有 <code>utils/dialogs.py:512</code>、<code>main.py:750</code>、<code>views/logs_view.py:165</code>、<code>search_results_dialog.py</code>，以及 <code>report_generator.py</code>／<code>help_view.py</code> 的 HTML 字体。</li>
         <li><b>新增遗漏 ④</b>：<code>main.spec</code> 的 <code>_MANIFEST</code>（DPI 清单）在 macOS 分支必须整段去掉；<code>resources/icons/app_icon.icns</code> 已就绪，图标素材无需另做。</li>
         <li><b>新增遗漏 ⑤</b>：<code>updater.py</code> 无任何非 win32 早退（前文已并入自动更新条目）；主程序侧需按平台决定是否暴露「下载并更新」入口。</li>
-        <li><b>已确认无问题</b>：单实例（非 win32 放行）、托盘 kill-on-close（非 win32 return）、<code>CREATE_NO_WINDOW</code>（全项目已按平台取值）、<code>adb_path</code>／<code>scrcpy_path</code> 取名、<code>wireless_manager</code> 的 ping 次数、<code>adb_command_pool</code> 的 <code>os.setsid</code>（仅 POSIX 分支，macOS 可用）。</li>
+        <li><b>已确认无问题</b>：单实例（非 win32 放行）、托盘 kill-on-close（非 win32 return）、<code>CREATE_NO_WINDOW</code>（全项目已按平台取值）、<code>adb_path</code>／<code>scrcpy_path</code> 取名、<code>wireless_manager</code> 的 ping 次数、<code>adb_command_pool</code> 的进程组清理（POSIX 分支 <code>os.killpg</code> + <code>os.setsid</code>，macOS 可用）。</li>
       </ul>
     </div>
 
@@ -495,7 +495,7 @@
     <div class="example">💡 <b>打个比方：</b>这就像把一间按自家户型装修好的房子搬到另一栋楼 —— 家具（Qt 界面、adb / uiautomator2 那套逻辑）都能直接用，但门框尺寸（打包成 <code>.app</code>）、水电接口（路径规范）、门锁（签名 / 公证）都不一样；至于「自动更新」，它更像埋在墙里的暗线，到新楼只能整条重走。</div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-10-14 · v1.4.7</footer>
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-10-16 · v1.5.0</footer>
 </div>
 </body>
 </html>
