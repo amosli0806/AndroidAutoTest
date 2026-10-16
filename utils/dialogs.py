@@ -8,6 +8,15 @@ from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 
 
+# 对话框按钮的统一尺寸。
+# 为什么从 100×34 放大到 120×42：实测（2026-10-16）用户点「确定」的落点常偏下 1~2px
+# —— 鼠标箭头的热点在左上角、视觉箭身偏右下，而按钮只有 34 高、下方就是空白，
+# 结果点在按钮外的空白区、什么都没发生，看着像"点了没反应、要点好几下"。
+# 放大后同样的落点会落在按钮内，容错余量从 ~0 提到 8px 以上。
+DIALOG_BTN_W = 120
+DIALOG_BTN_H = 42
+
+
 class ConfirmDeleteDialog(QDialog):
     """美观的删除确认对话框（自适应高度 + 大阴影）"""
 
@@ -98,12 +107,12 @@ class ConfirmDeleteDialog(QDialog):
         btn_layout.setSpacing(12)
         cancel_btn = QPushButton("取消")
         cancel_btn.setObjectName("cancelBtn")
-        cancel_btn.setFixedSize(100, 34)
+        cancel_btn.setFixedSize(DIALOG_BTN_W, DIALOG_BTN_H)
         cancel_btn.clicked.connect(self.reject)
 
         confirm_btn = QPushButton("确定删除")
         confirm_btn.setObjectName("confirmBtn")
-        confirm_btn.setFixedSize(100, 34)
+        confirm_btn.setFixedSize(DIALOG_BTN_W, DIALOG_BTN_H)
         confirm_btn.clicked.connect(self.accept)
 
         btn_layout.addStretch()
@@ -183,12 +192,12 @@ class InputDialog(QDialog):
         btn_layout.setSpacing(12)
         cancel_btn = QPushButton("取消")
         cancel_btn.setObjectName("cancelBtn")
-        cancel_btn.setFixedSize(100, 34)
+        cancel_btn.setFixedSize(DIALOG_BTN_W, DIALOG_BTN_H)
         cancel_btn.clicked.connect(self.reject)
 
         confirm_btn = QPushButton("确定")
         confirm_btn.setObjectName("confirmBtn")
-        confirm_btn.setFixedSize(100, 34)
+        confirm_btn.setFixedSize(DIALOG_BTN_W, DIALOG_BTN_H)
         confirm_btn.clicked.connect(self.accept)
 
         btn_layout.addStretch()
@@ -314,7 +323,7 @@ class WarningDialog(QDialog):
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton("确定")
         ok_btn.setObjectName("okBtn")
-        ok_btn.setFixedSize(100, 34)
+        ok_btn.setFixedSize(DIALOG_BTN_W, DIALOG_BTN_H)
         ok_btn.clicked.connect(self.accept)
         btn_layout.addStretch()
         btn_layout.addWidget(ok_btn)
@@ -433,7 +442,7 @@ class ErrorDialog(QDialog):
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton("确定")
         ok_btn.setObjectName("okBtn")
-        ok_btn.setFixedSize(100, 34)
+        ok_btn.setFixedSize(DIALOG_BTN_W, DIALOG_BTN_H)
         ok_btn.clicked.connect(self.accept)
         btn_layout.addStretch()
         btn_layout.addWidget(ok_btn)
@@ -557,12 +566,12 @@ class QuestionDialog(QDialog):
 
         no_btn = QPushButton(no_text)
         no_btn.setObjectName("cancelBtn")
-        no_btn.setFixedSize(100, 34)
+        no_btn.setFixedSize(DIALOG_BTN_W, DIALOG_BTN_H)
         no_btn.clicked.connect(self._on_no)
 
         yes_btn = QPushButton(yes_text)
         yes_btn.setObjectName("confirmBtn")
-        yes_btn.setFixedSize(100, 34)
+        yes_btn.setFixedSize(DIALOG_BTN_W, DIALOG_BTN_H)
         yes_btn.clicked.connect(self._on_yes)
 
         btn_layout.addStretch()
