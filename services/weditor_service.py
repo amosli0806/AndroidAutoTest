@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QLabel
 from PyQt6.QtCore import Qt
 from utils.app_paths import get_app_dir
 from utils.theme import ThemeMode
+from utils.win_job import bind_kill_on_close
 
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
@@ -25,61 +26,13 @@ def _bind_kill_on_close(process):
     Job Object 是 Windows 的「父死子亡」系统机制：虫师进程退出时 Job 句柄
     随之关闭，系统自动杀掉绑定的 weditor.exe——无论主程序是正常退出、
     崩溃还是被强杀，物理上杜绝残留。
+
+    实现已抽到 utils/win_job.py 共用（ADB 命令池的 adb.exe 也需要同一套能力）；
+    这里保留薄封装只是为了不改动本文件里的调用点与日志前缀。
     """
-    if sys.platform != "win32":
-        return
-    try:
-        import ctypes
-
-        class _IO_COUNTERS(ctypes.Structure):
-            _fields_ = [
-                (n, ctypes.c_ulonglong)
-                for n in ("ReadOperationCount", "WriteOperationCount",
-                          "OtherOperationCount", "ReadTransferCount",
-                          "WriteTransferCount", "OtherTransferCount")
-            ]
-
-        class _BASIC_LIMITS(ctypes.Structure):
-            _fields_ = [
-                ("PerProcessUserTimeLimit", ctypes.c_int64),
-                ("PerJobUserTimeLimit", ctypes.c_int64),
-                ("LimitFlags", ctypes.c_uint32),
-                ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t),
-                ("ActiveProcessLimit", ctypes.c_uint32),
-                ("Affinity", ctypes.c_size_t),
-                ("PriorityClass", ctypes.c_uint32),
-                ("SchedulingClass", ctypes.c_uint32),
-            ]
-
-        class _EXTENDED_LIMITS(ctypes.Structure):
-            _fields_ = [
-                ("BasicLimitInformation", _BASIC_LIMITS),
-                ("IoInfo", _IO_COUNTERS),
-                ("ProcessMemoryLimit", ctypes.c_size_t),
-                ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                ("PeakJobMemoryUsed", ctypes.c_size_t),
-            ]
-
-        k32 = ctypes.windll.kernel32
-        job = k32.CreateJobObjectW(None, None)
-        if not job:
-            return
-        info = _EXTENDED_LIMITS()
-        info.BasicLimitInformation.LimitFlags = 0x2000   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        if not k32.SetInformationJobObject(
-                job, 9, ctypes.byref(info), ctypes.sizeof(info)):   # 9 = ExtendedLimitInformation
-            k32.CloseHandle(job)
-            return
-        if not k32.AssignProcessToJobObject(job, int(process._handle)):
-            k32.CloseHandle(job)
-            return
-        # 句柄故意不关：持有在当前进程，虫师退出时句柄关闭 -> 触发 KILL_ON_JOB_CLOSE
-        process._kill_on_close_job = job
-    except Exception as e:
+    if not bind_kill_on_close(process):
         # Job 绑定失败不影响正常功能，退出清理还有 atexit / aboutToQuit 兜底
-        print(f"[weditor] Job Object 绑定失败（退出清理降级为 atexit）: {e}")
+        print("[weditor] Job Object 绑定失败（退出清理降级为 atexit）")
 
 
 class WeditorService:

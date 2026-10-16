@@ -23,6 +23,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, QThreadPool, QRunnable
 
 from utils.adb_path import get_adb_path
 from utils import log_colors
+from utils.win_job import bind_kill_on_close
 
 # 并发上限
 MAX_CONCURRENT_TASKS = 10
@@ -31,6 +32,56 @@ MAX_CONCURRENT_TASKS = 10
 def _get_timestamp() -> str:
     """形如 14:23:05.123 的时间戳"""
     return datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+
+def _kill_process_tree(process, grace: float = 2.0):
+    """连子进程一起杀掉。
+
+    为什么不能只 terminate()：指令是用 `shell=True` 拉起的（见 _run_normal_commands），
+    `process` 其实是中间的 **cmd.exe**，真正的 adb.exe 是它的子进程。Windows 杀父不杀子，
+    只 terminate cmd.exe 会把 adb.exe 留成孤儿 —— 实测（2026-10-16）攒了 8 个
+    `adb logcat` 孤儿，父进程 PID 全部已退出，而它们还占着到设备的连接。
+
+    Windows 走 taskkill /T（连子进程）；POSIX 走进程组（Popen 那边已经 preexec_fn=os.setsid，
+    子进程自成一个进程组）。
+    """
+    if process is None or process.poll() is not None:
+        return
+    pid = process.pid
+    if sys.platform == 'win32':
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        except Exception:
+            pass
+    else:
+        import signal
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except Exception:
+            pass
+    try:
+        process.wait(timeout=grace)
+    except Exception:
+        pass
+    if process.poll() is None:
+        # 兜底：进程组/树没杀掉，至少把主进程强杀
+        if sys.platform != 'win32':
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except Exception:
+                pass
+        try:
+            process.kill()
+        except Exception:
+            pass
+        try:
+            process.wait(timeout=1)
+        except Exception:
+            pass
 
 
 # ============================================================
@@ -209,26 +260,15 @@ class AdbCommandRunnable(QRunnable):
             self.output_file = None
 
         if self.process and self.process.poll() is None:
-            try:
-                self.process.terminate()
-                if not self.process.wait(timeout=2):
-                    self.process.kill()
-                    self.process.wait(timeout=1)
-            except Exception:
-                if self.process.poll() is None:
-                    self.process.kill()
+            # 必须杀整棵进程树：process 是 shell 拉起的 cmd.exe，光杀它会把 adb.exe 留成孤儿
+            _kill_process_tree(self.process)
 
         if "logcat" in self.command.name.lower():
             threading.Thread(target=self._clean_remote_process, daemon=True).start()
 
         if self.is_screenrecord and self._device_video_path and not self._video_pulled:
             self._stop_screenrecord_gracefully()
-            if self.process and self.process.poll() is None:
-                try:
-                    self.process.terminate()
-                    self.process.wait(timeout=2)
-                except Exception:
-                    pass
+            _kill_process_tree(self.process)
             threading.Thread(
                 target=self._pull_video,
                 args=(self._device_video_path, self._local_video_path),
@@ -305,16 +345,10 @@ class AdbCommandRunnable(QRunnable):
             except Exception:
                 break
 
-        # 循环是因 stop()/退出而结束的：把进程收掉，别留个野进程继续占着管道
+        # 循环是因 stop()/退出而结束的：把整棵进程树收掉，别留个野进程继续占着管道
+        # （只杀 shell 会留下 adb.exe 孤儿，见 _kill_process_tree）
         if self.process.poll() is None:
-            try:
-                self.process.terminate()
-                self.process.wait(timeout=2)
-            except Exception:
-                try:
-                    self.process.kill()
-                except Exception:
-                    pass
+            _kill_process_tree(self.process)
 
     def run(self):
         success = True
@@ -426,6 +460,10 @@ class AdbCommandRunnable(QRunnable):
                     encoding='utf-8', errors='backslashreplace',
                     preexec_fn=os.setsid,
                 )
+
+            # 「父死子亡」兜底：虫师被强杀/崩溃时，系统会连 cmd.exe 带 adb.exe 一起收掉
+            # （正常停止走 _kill_process_tree，这条兜的是来不及跑清理的路径）
+            bind_kill_on_close(self.process)
 
             def read_stream(stream, is_stderr):
                 for line in iter(stream.readline, ''):
@@ -678,6 +716,9 @@ class AdbCommandRunnable(QRunnable):
                     preexec_fn=os.setsid,
                 )
 
+            # 「父死子亡」兜底（同 _run_screenrecord）
+            bind_kill_on_close(self.process)
+
             stdout_lines = []
             stderr_lines = []
             self._output_lines = []
@@ -903,6 +944,16 @@ class AdbCommandPool(QObject):
                 )
                 return
 
+        # 同一条指令被重复执行：先把旧实例收掉再登记新的。
+        # 否则下面那行赋值会覆盖 running_commands 里的引用，旧实例（连同它的 adb 子进程）
+        # 就再也停不掉了 —— 2026-10-16 实测：ADB 工具箱里反复执行 logcat 攒了 8 个孤儿。
+        previous = self.running_commands.get(command_obj.id)
+        if previous is not None:
+            try:
+                previous.stop()
+            except Exception:
+                pass
+
         signals = CommandSignals()
         signals.started.connect(self._on_signals_started)
         signals.output.connect(self._on_signals_output)
@@ -911,6 +962,9 @@ class AdbCommandPool(QObject):
         signals.stopped.connect(self._on_signals_stopped)
 
         runnable = AdbCommandRunnable(command_obj, device_serial, output_dir, signals, tag)
+        # 让回调认出「是哪个实例」发来的信号：同一条指令的新旧实例共用同一个 cmd_id，
+        # 旧实例晚到的 finished 不能把新实例的登记摘掉（见 _unregister_if_current）
+        signals._runnable = runnable
         self.running_commands[command_obj.id] = runnable
         self.threadpool.start(runnable)
 
@@ -949,8 +1003,20 @@ class AdbCommandPool(QObject):
             f"<span style='color:{log_colors.log_color(log_colors.ERROR)};'>{text}</span>", tag)
 
     def _on_signals_finished(self, cmd_id, cmd_name, success, tag):
-        self.running_commands.pop(cmd_id, None)
+        self._unregister_if_current(cmd_id)
         self.command_finished.emit(cmd_id, cmd_name, success, tag)
 
     def _on_signals_stopped(self, cmd_id, cmd_name, tag):
         self.command_stopped.emit(cmd_id, cmd_name, tag)
+
+    def _unregister_if_current(self, cmd_id):
+        """只有「当前登记的那个实例」结束时才摘牌。
+
+        同一条指令可能被重复执行：execute_command 会先 stop 旧实例、再登记新实例，
+        而旧实例晚到的 finished 与新实例共用同一个 cmd_id —— 不认人就会把新实例摘掉，
+        新实例随即变成"池子里找不到"的孤儿。
+        """
+        runnable = getattr(self.sender(), '_runnable', None)
+        current = self.running_commands.get(cmd_id)
+        if runnable is None or current is runnable:
+            self.running_commands.pop(cmd_id, None)
