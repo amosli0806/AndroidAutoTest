@@ -867,7 +867,7 @@ class AdbCommandRunnable(QRunnable):
 
         # 多命令汇总
         if self._is_multi_command and sub_results and not self._stopped and not self.is_monkey:
-            if self.command.name not in ["截图", "权限获取"]:
+            if self.command.name not in ["截图", "root权限获取"]:
                 success_count = sum(1 for _, ok in sub_results if ok)
                 total = len(sub_results)
                 if success_count == total:
@@ -904,7 +904,7 @@ class AdbCommandPool(QObject):
     # 主项目正在执行用例时，这些命令会改动设备状态、或把正在跑的用例顶掉，必须挡住。
     # 「只读采集」类**不要**放进来：logcat / 录屏 / 截图 / pull 导出日志 恰恰是用例
     # 执行期间最需要的 —— 跑到一半发现问题，就要现场把日志和视频捞出来。
-    # 注：remount 对应预设「权限获取」（root; remount），它会 remount /system，
+    # 注：remount 对应预设「root权限获取」（root; remount），它会 remount /system，
     # 直接把设备状态改掉，正在跑的用例必挂，所以必须留在名单里。
     HIGH_IMPACT_KEYWORDS = (
         'monkey', 'tcpdump', 'meminfo', 'dumpsys', 'reboot',

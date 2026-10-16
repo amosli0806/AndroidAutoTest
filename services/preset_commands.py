@@ -6,7 +6,7 @@
 PRESET_COMMANDS = [
     {
         "id": 1,  # 命令的唯一标识符，预设命令 ID 固定为 1-4
-        "name": "权限获取",  # 命令名称
+        "name": "root权限获取",  # 命令名称
         "command_text": "root; remount",  # ADB 命令内容，多条命令用分号分隔
         "description": "获取root权限并remount",  # 命令描述
         "show_stop_button": True,  # 是否显示“停止”按钮（该命令可能持续运行）
