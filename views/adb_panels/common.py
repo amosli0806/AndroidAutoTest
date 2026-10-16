@@ -8,6 +8,23 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QCheckBox
 
 
+# 面板内按钮的统一尺寸：按「场景说明」按钮定（宽 88 / 高 32，高度与同行输入框一致）。
+# 为什么统一：同一块面板里原来按钮有的 110x30、有的 88x32、有的 56x26，大小参差、
+# 看着像临时拼的（2026-10-16 用户反馈）。所有面板按钮都走 apply_panel_btn_size()。
+PANEL_BTN_W = 88
+PANEL_BTN_H = 32
+
+
+def apply_panel_btn_size(*buttons):
+    """把面板里的按钮统一成同一尺寸（与「场景说明」一致）。
+
+    只对传入的按钮生效 —— 弹窗里的按钮（如选包名的「确定」）不归这里管。
+    """
+    for btn in buttons:
+        if btn is not None:
+            btn.setFixedSize(PANEL_BTN_W, PANEL_BTN_H)
+
+
 def panel_header(title: str, hint: str) -> QHBoxLayout:
     """面板标题行：加粗标题 + 一行灰色说明"""
     row = QHBoxLayout()

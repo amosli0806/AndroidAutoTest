@@ -22,7 +22,8 @@ from utils.settings import Settings, THEME_MODE_DARK
 from utils.toast import show_toast
 from utils.dialogs import WarningDialog, ConfirmDeleteDialog
 from views.adb_panels.common import (form_label, panel_chrome_qss, panel_header,
-                                     panel_separator, disable_context_menus)
+                                     panel_separator, disable_context_menus,
+                                     apply_panel_btn_size)
 
 
 # 预设场景
@@ -265,15 +266,11 @@ class WeakNetworkPanel(QWidget):
         # 应用 / 清除按钮放在标题行右侧（说明文字 stretch=1 会自动把它们推到最右）
         self.apply_btn = QPushButton("应用")
         self.apply_btn.setObjectName("applyBtn")
-        self.apply_btn.setFixedHeight(30)
-        self.apply_btn.setMinimumWidth(110)
         self.apply_btn.clicked.connect(self._apply_limit)
         header_row.addWidget(self.apply_btn)
 
         self.clear_btn = QPushButton("清除")
         self.clear_btn.setObjectName("clearBtn")
-        self.clear_btn.setFixedHeight(30)
-        self.clear_btn.setMinimumWidth(110)
         self.clear_btn.clicked.connect(self._clear_limit)
         header_row.addWidget(self.clear_btn)
 
@@ -304,8 +301,6 @@ class WeakNetworkPanel(QWidget):
         scene_row.addWidget(self.scene_combo, 1)
         self.help_btn = QPushButton("场景说明")
         self.help_btn.setObjectName("helpBtn")
-        self.help_btn.setFixedHeight(32)  # 与同行输入框等高
-        self.help_btn.setMinimumWidth(88)
         self.help_btn.clicked.connect(self._show_scene_help)
         scene_row.addWidget(self.help_btn)
         grid.addWidget(form_label("场景模板:"), 0, 2)
@@ -354,8 +349,6 @@ class WeakNetworkPanel(QWidget):
         # 而"为什么不可用 / 下一步怎么做"其实是低频、需要时再看的内容。
         self.detail_btn = QPushButton("详情")
         self.detail_btn.setObjectName("helpBtn")     # 复用面板里已有的小按钮样式
-        self.detail_btn.setFixedHeight(26)
-        self.detail_btn.setMinimumWidth(56)
         self.detail_btn.setToolTip(DETAIL_BTN_TIP)
         self.detail_btn.clicked.connect(self._show_detail)
         self.detail_btn.setVisible(False)
@@ -364,8 +357,6 @@ class WeakNetworkPanel(QWidget):
         # 定时器看不出来），给用户一个手动刷新的入口
         self.redetect_btn = QPushButton("重新检测")
         self.redetect_btn.setObjectName("helpBtn")   # 复用面板里已有的小按钮样式
-        self.redetect_btn.setFixedHeight(26)
-        self.redetect_btn.setMinimumWidth(80)
         self.redetect_btn.setToolTip("设备刚连上 / 刚 root 完，点这里重新检测本机能力与能否 root")
         self.redetect_btn.clicked.connect(lambda: self._probe_capability(force=True))
         cap_row.addWidget(self.redetect_btn)
@@ -383,6 +374,11 @@ class WeakNetworkPanel(QWidget):
         self.delay_spin.valueChanged.connect(self._reset_to_custom)
         self.loss_spin.valueChanged.connect(self._reset_to_custom)
         self.bandwidth_spin.valueChanged.connect(self._reset_to_custom)
+
+        # 面板内按钮统一尺寸（与「场景说明」一致）：集中在此处设置，
+        # 新增按钮时补进这一行即可，别在各处零散写 setFixedHeight/MinimumWidth
+        apply_panel_btn_size(self.apply_btn, self.clear_btn, self.help_btn,
+                             self.detail_btn, self.redetect_btn)
 
         # 面板里所有输入控件禁用右键编辑菜单
         disable_context_menus(self)

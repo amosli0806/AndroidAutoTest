@@ -27,7 +27,8 @@ from utils.settings import Settings, THEME_MODE_DARK
 from utils.toast import show_toast
 from views.adb_panels.common import (form_label, panel_chrome_qss, panel_header,
                                      panel_separator, thin_scrollbar_qss,
-                                     disable_context_menus, BorderedCheckBox)
+                                     disable_context_menus, BorderedCheckBox,
+                                     apply_panel_btn_size)
 from utils.dialogs import WarningDialog, ErrorDialog
 from utils.wheel_guard import WheelScrollGuard
 
@@ -82,15 +83,11 @@ class MonkeyPanel(QWidget):
         # 由 _start_monkey 里的探活 + 提示兜住（不会重复启动）。
         self.start_btn = QPushButton("开始")
         self.start_btn.setObjectName("startBtn")
-        self.start_btn.setFixedHeight(30)
-        self.start_btn.setMinimumWidth(110)
         self.start_btn.clicked.connect(self._start_monkey)
         header_row.addWidget(self.start_btn)
 
         self.stop_btn = QPushButton("停止")
         self.stop_btn.setObjectName("stopBtn")
-        self.stop_btn.setFixedHeight(30)
-        self.stop_btn.setMinimumWidth(110)
         # 「停止」**始终可点**，不置灰：设备上可能跑着一个不是虫师启动的 monkey
         # （连上来之前它就在跑 / 上一次会话残留），置灰的话用户就没法停了。
         # 点击时再探测真实进程，没有就只提示一句（见 _stop_monkey）。
@@ -125,8 +122,6 @@ class MonkeyPanel(QWidget):
 
         self.select_pkg_btn = QPushButton("选择")
         self.select_pkg_btn.setObjectName("selectBtn")
-        self.select_pkg_btn.setFixedHeight(32)  # 与同行输入框等高
-        self.select_pkg_btn.setMinimumWidth(72)
         self.select_pkg_btn.clicked.connect(self._choose_packages)
 
         pkg_cell = QWidget()
@@ -257,6 +252,10 @@ class MonkeyPanel(QWidget):
         # 所以内层滚到头后滚轮会顺势交给外层，不会卡住（见 utils/wheel_guard.py）。
         self._wheel_guard = WheelScrollGuard(self)
         self._wheel_guard.watch(self)
+
+        # 面板内按钮统一尺寸（与「场景说明」一致）：集中在此处设置，
+        # 新增按钮时补进这一行即可，别在各处零散写 setFixedHeight/MinimumWidth
+        apply_panel_btn_size(self.start_btn, self.stop_btn, self.select_pkg_btn)
 
         # 面板里所有输入控件禁用右键编辑菜单
         disable_context_menus(self)
