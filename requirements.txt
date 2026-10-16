@@ -15,7 +15,7 @@ DateTime==6.0
 decorator==5.3.1
 Deprecated==1.2.18
 deprecation==2.1.0
-edge-tts==7.2.8
+edge-tts==7.3.1
 et_xmlfile==2.0.0
 facebook-wda==1.5.4
 frozenlist==1.8.0
