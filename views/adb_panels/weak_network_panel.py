@@ -406,6 +406,7 @@ class WeakNetworkPanel(QWidget):
             self._root_level = None
             self._root_evidence = ""
             self.detail_btn.setVisible(False)
+            self.detail_btn.setEnabled(True)
             return
         if not force and serial == self._probed_serial and self._netem_ok is not None:
             return
@@ -416,7 +417,10 @@ class WeakNetworkPanel(QWidget):
         self._root_evidence = ""
         self.capability_label.setText("正在检测本机弱网能力…")
         self.detail_btn.setToolTip(DETAIL_BTN_TIP)
-        self.detail_btn.setVisible(False)   # 重新探测期间先收起旧结论的入口
+        # 探测期间**只置灰、不隐藏**：隐藏会让整行重排（「详情」「重新检测」一起左右跳），
+        # 看起来就是在闪 —— 2026-10-17 用户反馈。置灰同时也能挡住"点开后看到空详情"
+        # （此刻结论刚被清空，弹出来只有主因、没有内容）。
+        self.detail_btn.setEnabled(False)
 
         def worker():
             # 一次探测两件事：能不能用（能力） + 能不能拿到 root（可行性）。
@@ -601,6 +605,7 @@ class WeakNetworkPanel(QWidget):
         # 状态行只放一句话结论；完整说明（原因 / 依据 / 下一步）去「详情」弹窗
         self.capability_label.setText(self._short_status())
         self.detail_btn.setVisible(reason != CAP_OK)
+        self.detail_btn.setEnabled(True)   # 探测期间被置灰，结论回来就得恢复可点
 
         if self._netem_ok:
             for spin in (self.delay_spin, self.loss_spin):
@@ -998,6 +1003,13 @@ class WeakNetworkPanel(QWidget):
             }}
             #WeakNetworkPanel QPushButton#helpBtn:pressed {{
                 background-color: #216692;
+            }}
+            /* 探测期间「详情」会被置灰（不隐藏，免得整行重排闪烁）——
+               必须给禁用态一个明显不同的底色，否则看着还是可点的蓝按钮，
+               点上去没反应又要被当成 bug。 */
+            #WeakNetworkPanel QPushButton#helpBtn:disabled {{
+                background-color: {disabled_bg};
+                color: {disabled_fg};
             }}
             #WeakNetworkPanel QPushButton#applyBtn {{
                 background-color: {apply_bg};
