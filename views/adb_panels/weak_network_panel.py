@@ -42,6 +42,91 @@ RESULT_ERROR = "error"
 RESULT_NO_ROOT = "no_root"
 RESULT_NO_TC = "no_tc"
 
+# netem 缺失时的统一话术（错误提示与面板提示共用，避免两处说法不一致）。
+# 注意：**绝不能写成「请把延迟/丢包调成 0」** —— 面板会把这两项禁用，用户根本调不了，
+# 那是个死循环（2026-10-16 用户指出）。所以由程序置 0，文案只说结果。
+NETEM_MISSING_HINT = (
+    "本设备内核没有 netem 模块（sch_netem）：延迟 / 丢包无法模拟"
+    "（两项已置 0 并禁用），只能用「带宽限制」"
+)
+# netem 缺失、且连带宽也没填时的提示
+NETEM_MISSING_NO_BW_HINT = (
+    "本设备内核没有 netem 模块，延迟 / 丢包不可用；请填「带宽限制」后重试"
+)
+
+
+def friendly_tc_error(raw: str) -> str:
+    """把 tc 的原始报错翻成人话。
+
+    为什么需要：`RTNETLINK answers: No such file or directory` 这句话，
+    用户（和当初的我们）第一反应都是"网络/文件问题"，实际含义是**内核不认识这个
+    qdisc 类型** —— 在 Android 车机上十有八九是内核没编 netem（2026-10-16 实测：
+    一台 Android 11 车机内核 5.4.147-qgki 上，lo 上加 netem 也报这句，
+    /proc/modules、/sys/module、全盘 find 都找不到 sch_netem）。
+    """
+    text = (raw or "").strip()
+    low = text.lower()
+    if "rtnetlink" in low and ("no such file or directory" in low
+                               or "operation not supported" in low):
+        return NETEM_MISSING_HINT
+    if "cannot find device" in low:
+        return f"网卡不存在，请改成设备上真实存在的网卡（设备返回：{text}）"
+    if "not permitted" in low:
+        return "权限不足，弱网模拟需要 root"
+    if "exclusivity flag on" in low or "file exists" in low:
+        return "该网卡上已有队列规则，请先点「清除」再应用"
+    return text
+
+
+def _netem_qdisc(iface: str, parent: str, delay: int, loss: float) -> str:
+    """组装一条 netem 规则；parent 是 "root" 或 "parent 1:11 handle 10:" """
+    cmd = f"qdisc add dev {iface} {parent} netem"
+    if delay > 0:
+        cmd += f" delay {delay}ms"
+    if loss > 0:
+        cmd += f" loss {loss}%"
+    return cmd
+
+
+def build_tc_commands(iface: str, delay: int, loss: float, bandwidth: int,
+                      netem_ok: bool):
+    """按参数与内核能力组装 tc 命令，返回 (命令列表, 错误文案)。
+
+    抽成纯函数（不碰界面、不发 adb）是为了能单测：内核有没有 netem 会走不同分支。
+
+    两条路径：
+      * 要限带宽 -> htb 做限速；**只有需要延迟/丢包时才在 htb 类下挂 netem 子队列**
+        （htb 的类自带 pfifo 叶子，所以纯限带宽不需要任何额外 qdisc ——
+         这样没有 netem 的内核上「限带宽」照样能用）
+      * 不限带宽 -> 直接 root 上挂 netem
+
+    内核没有 netem 时：**延迟/丢包直接忽略**（做不到，报错只会把用户卡死），
+    按带宽下发；连带宽都没填才提示。界面上那两项此时已被置 0 并禁用，正常走不到这里。
+    """
+    needs_netem = delay > 0 or loss > 0
+    if needs_netem and not netem_ok:
+        needs_netem = False
+
+    if not needs_netem and bandwidth <= 0:
+        # 区分"什么都没填"和"填了但本机做不到"，提示不一样
+        return [], (NETEM_MISSING_NO_BW_HINT
+                    if (delay > 0 or loss > 0) else "请至少填一项：延迟 / 丢包率 / 带宽限制")
+
+    commands = []
+    if bandwidth > 0:
+        commands.append(f"qdisc add dev {iface} root handle 1: htb default 11")
+        commands.append(
+            f"class add dev {iface} parent 1: classid 1:1 htb rate {bandwidth}kbit")
+        commands.append(
+            f"class add dev {iface} parent 1:1 classid 1:11 htb rate {bandwidth}kbit")
+        if needs_netem:
+            commands.append(_netem_qdisc(iface, "parent 1:11 handle 10:", delay, loss))
+    else:
+        commands.append(_netem_qdisc(iface, "root", delay, loss))
+    return commands, ""
+
+
+
 
 class WeakNetworkPanel(QWidget):
     """弱网模拟（tc netem）"""
@@ -51,6 +136,8 @@ class WeakNetworkPanel(QWidget):
     # 子线程 -> 主线程：应用/清除完成（不做跨线程 UI 操作）
     _apply_finished = pyqtSignal(str, str)   # (结果, 详情)
     _clear_finished = pyqtSignal(str, str)
+    # 子线程 -> 主线程：netem 能力探测结果
+    _capability_ready = pyqtSignal(bool)
 
     def __init__(self, device_service=None, parent=None):
         super().__init__(parent)
@@ -58,12 +145,16 @@ class WeakNetworkPanel(QWidget):
         self._theme_mode = ThemeMode.LIGHT
         self.tc_path = None
         self._processing = False
+        # netem 可用性：None = 还没探测过
+        self._netem_ok = None
+        self._probed_serial = None
 
         self.setObjectName("WeakNetworkPanel")
 
         self.setup_ui()
         self._apply_finished.connect(self._on_apply_finished)
         self._clear_finished.connect(self._on_clear_finished)
+        self._capability_ready.connect(self._on_capability_ready)
         self.apply_theme()
         self._reset_network_rule()   # 静默清理可能残留的规则
 
@@ -157,6 +248,13 @@ class WeakNetworkPanel(QWidget):
         grid.setColumnStretch(3, 1)
         layout.addLayout(grid)
 
+        # 内核能力提示：进面板时探测一次 netem，把"这台设备能不能做延迟/丢包"直接写出来，
+        # 而不是等用户填好参数点了应用才报错（2026-10-16 加）
+        self.capability_label = QLabel("正在检测内核是否支持 netem…")
+        self.capability_label.setObjectName("panelHint")
+        self.capability_label.setWordWrap(True)
+        layout.addWidget(self.capability_label)
+
         # 状态/结果不在这里显示：应用/清除结果写进"虫师日志"
         self.delay_spin.valueChanged.connect(self._reset_to_custom)
         self.loss_spin.valueChanged.connect(self._reset_to_custom)
@@ -166,10 +264,74 @@ class WeakNetworkPanel(QWidget):
         disable_context_menus(self)
 
     # ------------------------------------------------------------------
+    # netem 能力探测
+    # ------------------------------------------------------------------
+    def showEvent(self, event):
+        """面板每次显示时确认一次能力（切设备后回到本面板要重新判定）"""
+        super().showEvent(event)
+        self._probe_capability()
+
+    def _probe_capability(self, force: bool = False):
+        """后台探测 netem 是否可用；同一个设备只探一次。"""
+        serial = self._get_serial()
+        if not serial:
+            self.capability_label.setText("未连接设备，无法检测内核能力")
+            return
+        if not force and serial == self._probed_serial and self._netem_ok is not None:
+            return
+        self._probed_serial = serial
+        self._netem_ok = None
+        self.capability_label.setText("正在检测内核是否支持 netem…")
+
+        def worker():
+            self._capability_ready.emit(self._probe_netem())
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _probe_netem(self) -> bool:
+        """用 tc 实试一次，判断内核有没有 netem。
+
+        为什么不查 /proc/modules 或 /sys/module：netem 可以是**编译进内核**的
+        （不是模块），查模块会把"支持"误判成"不支持"。而 tc 加不上就是真的加不上。
+
+        为什么在 lo 上试：回环一定存在，且不带任何参数（不加延迟/丢包）、试完立即删除，
+        对业务网卡零影响。先 del 一次是为了避免 lo 上已有队列导致 add 报 EEXIST 而误判。
+        """
+        if not self._get_tc_path():
+            return False
+        self._run_tc_cmd("qdisc del dev lo root 2>/dev/null")
+        out, err, rc = self._run_tc_cmd("qdisc add dev lo root netem 2>&1")
+        ok = rc == 0 and "RTNETLINK" not in (out + err)
+        self._run_tc_cmd("qdisc del dev lo root 2>/dev/null")
+        return ok
+
+    def _on_capability_ready(self, netem_ok: bool):
+        self._netem_ok = netem_ok
+        if netem_ok:
+            for spin in (self.delay_spin, self.loss_spin):
+                spin.setEnabled(True)
+                spin.setToolTip("")
+            self.capability_label.setText(
+                "✅ 本设备支持 netem：延迟 / 丢包 / 带宽限制均可使用")
+            return
+
+        # 不支持 netem：把两项**置 0 再禁用**。
+        # 顺序不能反 —— 只禁用不置 0，界面会停在"20% 丢包但改不了"的状态，
+        # 而提示又让人去调成 0，等于让用户去点一个点不动的控件（2026-10-16 用户指出）。
+        for spin in (self.delay_spin, self.loss_spin):
+            spin.setValue(0)
+            spin.setEnabled(False)
+            spin.setToolTip(NETEM_MISSING_HINT)
+        self.capability_label.setText("⚠ " + NETEM_MISSING_HINT)
+        self.log_message.emit(f"ℹ️ 弱网模拟：{NETEM_MISSING_HINT}")
+
+    # ------------------------------------------------------------------
     def set_device_service(self, device_service):
         """面板先构建、后注入设备服务（视图先于控制器创建）"""
         self.device_service = device_service
         self._reset_network_rule()   # 与原对话框一致：打开时静默清理残留规则
+        # 换了设备要重新判定内核能力（可能是另一台车机）
+        self._probe_capability(force=True)
 
     def _get_serial(self):
         return self.device_service.serial if self.device_service else None
@@ -228,13 +390,24 @@ class WeakNetworkPanel(QWidget):
         self.loss_spin.blockSignals(True)
         self.bandwidth_spin.blockSignals(True)
 
-        self.delay_spin.setValue(preset.get("delay", 0))
-        self.loss_spin.setValue(preset.get("loss", 0.0))
+        delay = preset.get("delay", 0)
+        loss = preset.get("loss", 0.0)
+        self.delay_spin.setValue(delay)
+        self.loss_spin.setValue(loss)
         self.bandwidth_spin.setValue(preset.get("bandwidth", 0))
 
         self.delay_spin.blockSignals(False)
         self.loss_spin.blockSignals(False)
         self.bandwidth_spin.blockSignals(False)
+
+        # 本设备没有 netem：预设里的延迟/丢包做不到。这里必须再置一次 0 ——
+        # 上面的 setValue 会往"已禁用"的控件里塞值，界面就会显示"20% 丢包但改不了"，
+        # 用户既调不动也不知道它其实不生效（2026-10-16 用户指出）。
+        if self._netem_ok is False and (delay or loss):
+            self.delay_spin.setValue(0)
+            self.loss_spin.setValue(0)
+            self.log_message.emit(
+                f"ℹ️ 场景「{name}」的延迟/丢包已忽略（本设备无 netem），只保留带宽限制")
 
     def _reset_to_custom(self):
         if self.scene_combo.currentText() != "自定义":
@@ -321,44 +494,33 @@ class WeakNetworkPanel(QWidget):
         loss = self.loss_spin.value()
         bandwidth = self.bandwidth_spin.value()
 
-        # 组装命令
-        commands = []
-        if bandwidth > 0:
-            commands.append(f"qdisc add dev {iface} root handle 1: htb default 11")
-            commands.append(f"class add dev {iface} parent 1: classid 1:1 htb rate {bandwidth}kbit")
-            commands.append(f"class add dev {iface} parent 1:1 classid 1:11 htb rate {bandwidth}kbit")
-            netem = f"qdisc add dev {iface} parent 1:11 handle 10: netem"
-            if delay > 0:
-                netem += f" delay {delay}ms"
-            if loss > 0:
-                netem += f" loss {loss}%"
-            commands.append(netem)
-        else:
-            netem = f"qdisc add dev {iface} root netem"
-            if delay > 0:
-                netem += f" delay {delay}ms"
-            if loss > 0:
-                netem += f" loss {loss}%"
-            commands.append(netem)
-
         self._processing = True
         self.apply_btn.setEnabled(False)
 
         def worker():
             """根/ tc 预检 + 下发全在子线程：这些也是 adb 调用，放主线程会卡界面；
-            界面更新一律通过信号回主线程（跨线程碰控件/Toast 会卡死界面）"""
+            界面更新一律通过信号回主线回传（跨线程碰控件/Toast 会卡死界面）"""
             if not self._check_root():
                 self._apply_finished.emit(RESULT_NO_ROOT, "")
                 return
             if not self._get_tc_path():
                 self._apply_finished.emit(RESULT_NO_TC, "")
                 return
+            # 组装命令放在子线程里：可能要先探一次 netem（也是 adb 调用）
+            netem_ok = self._netem_ok
+            if netem_ok is None:
+                netem_ok = self._probe_netem()
+                self._capability_ready.emit(netem_ok)
+            commands, error = build_tc_commands(iface, delay, loss, bandwidth, netem_ok)
+            if error:
+                self._apply_finished.emit(RESULT_ERROR, error)
+                return
             # 清理旧规则
             self._run_tc_cmd(f"qdisc del dev {iface} root 2>/dev/null")
             for cmd in commands:
                 out, err, rc = self._run_tc_cmd(cmd)
                 if rc != 0:
-                    self._apply_finished.emit(RESULT_ERROR, err or out)
+                    self._apply_finished.emit(RESULT_ERROR, friendly_tc_error(err or out))
                     return
             self._apply_finished.emit(RESULT_OK, "")
 
@@ -444,6 +606,9 @@ class WeakNetworkPanel(QWidget):
             parts.append(f"带宽 {bandwidth}kbit")
         else:
             parts.append("带宽 不限")
+        if self._netem_ok is False:
+            # 说清这条规则是"降级"来的，免得用户以为延迟/丢包也生效了
+            parts.append("（本设备无 netem，仅按带宽限速）")
         return "，".join(parts)
 
     # ------------------------------------------------------------------
