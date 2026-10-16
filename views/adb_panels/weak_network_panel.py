@@ -67,7 +67,7 @@ CAP_NO_NETEM = "no_netem"
 CAPABILITY_MESSAGES = {
     CAP_OK: "✅ 本设备支持 netem：延迟 / 丢包 / 带宽限制均可使用",
     CAP_NO_ROOT: ("⚠ 设备未 root（ADB 也没有 root 权限）：弱网模拟需要 root，"
-                  "延迟 / 丢包 / 带宽限制都不可用（本设备能不能 root 见下一行）"),
+                  "延迟 / 丢包 / 带宽限制都不可用"),
     CAP_NO_TC: "⚠ 设备上没有 tc 命令，无法做弱网模拟",
     CAP_NO_NETEM: "⚠ " + NETEM_MISSING_HINT,
 }
@@ -95,6 +95,43 @@ ROOT_FEASIBILITY_MESSAGES = {
                   "弱网模拟需要 root，只能换台设备或先解锁刷机"),
     ROOT_UNKNOWN: "❔ 判断不了本设备能否 root（设备通道异常），可点「重新检测」重试",
 }
+
+# ---- 状态行的一句话结论 ----
+# 面板是窄栏：原来两行长文案要占掉两行高度，太浪费（2026-10-16 用户反馈）。
+# 现在只在一行里给结论，「为什么 / 依据 / 下一步」全部收进「详情」弹窗。
+CAP_SHORT = {
+    CAP_OK: "✅ 弱网可用",
+    CAP_NO_TC: "⚠ 不可用 · 设备里没有 tc 命令",
+    CAP_NO_NETEM: "⚠ 延迟 / 丢包不可用（内核没有 netem）· 仍可限带宽",
+}
+# 未 root 时补一句处境：用户一眼就能看出还有没有戏（能不能 root 差别很大）
+ROOT_SHORT_TAIL = {
+    ROOT_ADB_ROOT: "可 adb root 后重试",
+    ROOT_SU_UNGRANTED: "手机上授权 root 后重试",
+    ROOT_NO_WAY: "本机无法 root",
+    ROOT_UNKNOWN: "能否 root 未探明",
+}
+
+# 「详情」弹窗里的紧凑两行：结论 / 下一步。
+# 为什么这么短：WarningDialog 的详情区高度是固定的（实测视口只有 40~60px，约两行），
+# 超了会出现滚动条、末行被切掉。所以原始依据（build.type=user 这类）挪到「详情」
+# 按钮的悬停提示里，弹窗正文只留"能不能 root + 下一步"两句人话。
+ROOT_DETAIL_SUMMARY = {
+    ROOT_ALREADY: "已是 root",
+    ROOT_ADB_ROOT: "可以（调试版系统）",
+    ROOT_SU_UNGRANTED: "可以（检测到 su，待授权）",
+    ROOT_NO_WAY: "不能（正式版且无 su）",
+    ROOT_UNKNOWN: "未探明（设备通道异常）",
+}
+ROOT_DETAIL_STEP = {
+    ROOT_ADB_ROOT: "adb root 后点「重新检测」",
+    ROOT_SU_UNGRANTED: "手机上授权 root 后点「重新检测」",
+    ROOT_NO_WAY: "换台设备，或先解锁刷机后再试",
+    ROOT_UNKNOWN: "确认设备在线后点「重新检测」",
+}
+
+# 「详情」按钮的基础提示（探测到依据后会在后面追加一行"判断依据"）
+DETAIL_BTN_TIP = "查看不可用的原因与下一步怎么做"
 
 
 def friendly_tc_error(raw: str) -> str:
@@ -193,6 +230,7 @@ class WeakNetworkPanel(QWidget):
         self._netem_ok = None
         self._capability_reason = None
         self._root_level = None
+        self._root_evidence = ""
         self._probed_serial = None
 
         self.setObjectName("WeakNetworkPanel")
@@ -307,6 +345,17 @@ class WeakNetworkPanel(QWidget):
         self.capability_label.setObjectName("panelHint")
         self.capability_label.setWordWrap(True)
         cap_row.addWidget(self.capability_label, 1)
+        # 「详情」按钮：只在不做延迟/丢包时出现，点开是完整说明（原因 / 依据 / 下一步）。
+        # 为什么要收进弹窗：面板是窄栏，两行长文案实打实占掉两行高度（2026-10-16 用户反馈），
+        # 而"为什么不可用 / 下一步怎么做"其实是低频、需要时再看的内容。
+        self.detail_btn = QPushButton("详情")
+        self.detail_btn.setObjectName("helpBtn")     # 复用面板里已有的小按钮样式
+        self.detail_btn.setFixedHeight(26)
+        self.detail_btn.setMinimumWidth(56)
+        self.detail_btn.setToolTip(DETAIL_BTN_TIP)
+        self.detail_btn.clicked.connect(self._show_detail)
+        self.detail_btn.setVisible(False)
+        cap_row.addWidget(self.detail_btn)
         # 「重新检测」按钮：设备刚连上、或刚 root 完，探测结论会变（serial 没变，
         # 定时器看不出来），给用户一个手动刷新的入口
         self.redetect_btn = QPushButton("重新检测")
@@ -317,14 +366,6 @@ class WeakNetworkPanel(QWidget):
         self.redetect_btn.clicked.connect(lambda: self._probe_capability(force=True))
         cap_row.addWidget(self.redetect_btn)
         layout.addLayout(cap_row)
-
-        # root 可行性：能力结论只说了"现在能不能用"，这里补上"能不能拿到 root"。
-        # 和设备能力同一次探测回传，只在有结论后显示（避免探测期间出现空行）。
-        self.root_label = QLabel("")
-        self.root_label.setObjectName("panelHint")
-        self.root_label.setWordWrap(True)
-        self.root_label.setVisible(False)
-        layout.addWidget(self.root_label)
 
         # 设备变更轮询：DeviceService 是个普通对象、没有变更信号，只能定时比一下 serial。
         # 只比字符串（不发 adb），发现变了才重探能力 —— 解决"连上设备后面板还写着未连接"。
@@ -363,14 +404,21 @@ class WeakNetworkPanel(QWidget):
         serial = self._get_serial()
         if not serial:
             self.capability_label.setText("未连接设备，无法检测内核能力（连上后会自动检测）")
-            self.root_label.setVisible(False)
+            self._capability_reason = None
+            self._root_level = None
+            self._root_evidence = ""
+            self.detail_btn.setVisible(False)
             return
         if not force and serial == self._probed_serial and self._netem_ok is not None:
             return
         self._probed_serial = serial
         self._netem_ok = None
+        self._capability_reason = None
+        self._root_level = None          # 换设备/重探时先清掉旧结论，免得状态行显示过时处境
+        self._root_evidence = ""
         self.capability_label.setText("正在检测本机弱网能力…")
-        self.root_label.setVisible(False)   # 重新探测期间先收起旧结论
+        self.detail_btn.setToolTip(DETAIL_BTN_TIP)
+        self.detail_btn.setVisible(False)   # 重新探测期间先收起旧结论的入口
 
         def worker():
             # 一次探测两件事：能不能用（能力） + 能不能拿到 root（可行性）。
@@ -475,17 +523,61 @@ class WeakNetworkPanel(QWidget):
         return ""
 
     def _on_root_ready(self, level: str, evidence: str):
-        """root 可行性结论回写到界面（与能力结论同一次探测的结果）"""
+        """root 可行性结论（与能力结论同一次探测回传）。
+
+        不再单独占一行：结论并进状态行（「未 root（本机无法 root）」），
+        完整说明进「详情」弹窗 —— 面板是窄栏，一行能说清就不占两行。
+        """
         self._root_level = level
-        message = ROOT_FEASIBILITY_MESSAGES.get(level, "")
-        if not message:
-            self.root_label.setVisible(False)
-            return
-        self.root_label.setText(message + (f"　（依据：{evidence}）" if evidence else ""))
-        self.root_label.setVisible(True)
-        if level != ROOT_ALREADY:
-            # 已经是 root 是正常状态，不必刷日志；其余几种都给用户留个记录
-            self.log_message.emit(f"ℹ️ 弱网模拟 · root 检测：{message}")
+        self._root_evidence = evidence
+        # 原始依据（build.type=user 这类）不进弹窗正文（放不下），挂到按钮悬停提示上：
+        # 弹窗说人话，排障要看细节时悬停即可。
+        self.detail_btn.setToolTip(
+            DETAIL_BTN_TIP + (f"\n判断依据：{evidence}" if evidence else ""))
+        if self._capability_reason is not None:
+            self.capability_label.setText(self._short_status())
+
+    def _short_status(self) -> str:
+        """状态行的一句话结论（详情走「详情」弹窗）"""
+        reason = self._capability_reason
+        if reason == CAP_NO_ROOT:
+            tail = ROOT_SHORT_TAIL.get(self._root_level or "", "")
+            return "⚠ 不可用 · 设备未 root" + (f"（{tail}）" if tail else "")
+        return CAP_SHORT.get(reason, CAPABILITY_MESSAGES.get(reason or "", ""))
+
+    def _show_detail(self):
+        """「详情」：把原因、依据、下一步一次说清，面板因此只留一行结论"""
+        WarningDialog.show_warning(
+            self,
+            "弱网模拟不可用",
+            CAPABILITY_MESSAGES.get(self._capability_reason or "",
+                                    "本设备当前无法做弱网模拟"),
+            self._detail_text(),
+        )
+
+    def _detail_text(self) -> str:
+        """「详情」弹窗的展开内容：能否 root + 下一步，紧凑两行。
+
+        用短句是刻意的：弹窗详情区高度固定（约两行），长句会被切成滚动条。
+        原始依据不进正文，放在「详情」按钮的悬停提示里（见 _on_root_ready）。
+        """
+        level = self._root_level or ""
+        lines = []
+        summary = ROOT_DETAIL_SUMMARY.get(level, "")
+        if summary:
+            lines.append("能否 root：" + summary)
+        step = ROOT_DETAIL_STEP.get(level, "") or self._next_step_hint()
+        if step:
+            lines.append("下一步：" + step)
+        return "\n".join(lines)
+
+    def _next_step_hint(self) -> str:
+        """纯设备侧问题（tc / netem）的下一步；root 相关的建议见 ROOT_DETAIL_STEP"""
+        if self._capability_reason == CAP_NO_TC:
+            return "该设备系统里没有 tc 命令"
+        if self._capability_reason == CAP_NO_NETEM:
+            return "延迟 / 丢包内核不支持，只能用「带宽限制」"
+        return ""
 
     def _probe_netem(self) -> bool:
         """用 tc 实试一次，判断内核有没有 netem（前提：已经 root 且有 tc）。
@@ -508,7 +600,9 @@ class WeakNetworkPanel(QWidget):
         self._capability_reason = reason
         self._netem_ok = (reason == CAP_OK)
         message = CAPABILITY_MESSAGES.get(reason, reason)
-        self.capability_label.setText(message)
+        # 状态行只放一句话结论；完整说明（原因 / 依据 / 下一步）去「详情」弹窗
+        self.capability_label.setText(self._short_status())
+        self.detail_btn.setVisible(reason != CAP_OK)
 
         if self._netem_ok:
             for spin in (self.delay_spin, self.loss_spin):
@@ -522,7 +616,7 @@ class WeakNetworkPanel(QWidget):
         for spin in (self.delay_spin, self.loss_spin):
             spin.setValue(0)
             spin.setEnabled(False)
-            spin.setToolTip(message)
+            spin.setToolTip(message)   # 悬停也能看到完整原因，不必非得点「详情」
         self.log_message.emit(f"ℹ️ 弱网模拟：{message}")
 
     # ------------------------------------------------------------------
