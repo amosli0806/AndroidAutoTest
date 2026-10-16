@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QPushButton, QLabel,
     QComboBox, QTextEdit, QGroupBox
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 from utils.adb_path import get_adb_path
 from utils.theme import ThemeMode
@@ -53,6 +53,24 @@ NETEM_MISSING_HINT = (
 NETEM_MISSING_NO_BW_HINT = (
     "本设备内核没有 netem 模块，延迟 / 丢包不可用；请填「带宽限制」后重试"
 )
+
+# ---- 能力探测的结论 ----
+# 为什么要分这么细：一开始只判"netem 能不能加"，结果在**没 root**的设备上也报
+# 「内核没有 netem」——原因说错了，用户会去折腾内核（2026-10-16 实测：
+# 一台 Android 12 车机 adb 是 uid=2000(shell)，所有 qdisc 都报 Operation not permitted，
+# 跟 netem 一点关系没有）。
+CAP_OK = "ok"
+CAP_NO_ROOT = "no_root"
+CAP_NO_TC = "no_tc"
+CAP_NO_NETEM = "no_netem"
+
+CAPABILITY_MESSAGES = {
+    CAP_OK: "✅ 本设备支持 netem：延迟 / 丢包 / 带宽限制均可使用",
+    CAP_NO_ROOT: ("⚠ 设备未 root（ADB 也没有 root 权限）：弱网模拟需要 root，"
+                  "延迟 / 丢包 / 带宽限制都不可用"),
+    CAP_NO_TC: "⚠ 设备上没有 tc 命令，无法做弱网模拟",
+    CAP_NO_NETEM: "⚠ " + NETEM_MISSING_HINT,
+}
 
 
 def friendly_tc_error(raw: str) -> str:
@@ -136,8 +154,8 @@ class WeakNetworkPanel(QWidget):
     # 子线程 -> 主线程：应用/清除完成（不做跨线程 UI 操作）
     _apply_finished = pyqtSignal(str, str)   # (结果, 详情)
     _clear_finished = pyqtSignal(str, str)
-    # 子线程 -> 主线程：netem 能力探测结果
-    _capability_ready = pyqtSignal(bool)
+    # 子线程 -> 主线程：弱网能力探测结果（CAP_* 常量之一）
+    _capability_ready = pyqtSignal(str)
 
     def __init__(self, device_service=None, parent=None):
         super().__init__(parent)
@@ -147,6 +165,7 @@ class WeakNetworkPanel(QWidget):
         self._processing = False
         # netem 可用性：None = 还没探测过
         self._netem_ok = None
+        self._capability_reason = None
         self._probed_serial = None
 
         self.setObjectName("WeakNetworkPanel")
@@ -157,6 +176,9 @@ class WeakNetworkPanel(QWidget):
         self._capability_ready.connect(self._on_capability_ready)
         self.apply_theme()
         self._reset_network_rule()   # 静默清理可能残留的规则
+        # 初始也要探一次：否则面板在「被显示」之前一直停在「正在检测…」，
+        # 而 serial 从 None 到 None 不算变化，定时器不会替它纠正（2026-10-16）
+        self._probe_capability()
 
     # ------------------------------------------------------------------
     def setup_ui(self):
@@ -250,10 +272,31 @@ class WeakNetworkPanel(QWidget):
 
         # 内核能力提示：进面板时探测一次 netem，把"这台设备能不能做延迟/丢包"直接写出来，
         # 而不是等用户填好参数点了应用才报错（2026-10-16 加）
-        self.capability_label = QLabel("正在检测内核是否支持 netem…")
+        cap_row = QHBoxLayout()
+        cap_row.setContentsMargins(0, 0, 0, 0)
+        cap_row.setSpacing(6)
+        self.capability_label = QLabel("正在检测本机弱网能力…")
         self.capability_label.setObjectName("panelHint")
         self.capability_label.setWordWrap(True)
-        layout.addWidget(self.capability_label)
+        cap_row.addWidget(self.capability_label, 1)
+        # 「重新检测」按钮：设备刚连上、或刚 root 完，探测结论会变（serial 没变，
+        # 定时器看不出来），给用户一个手动刷新的入口
+        self.redetect_btn = QPushButton("重新检测")
+        self.redetect_btn.setObjectName("helpBtn")   # 复用面板里已有的小按钮样式
+        self.redetect_btn.setFixedHeight(26)
+        self.redetect_btn.setMinimumWidth(80)
+        self.redetect_btn.setToolTip("设备刚连上 / 刚 root 完，点这里重新检测本机能力")
+        self.redetect_btn.clicked.connect(lambda: self._probe_capability(force=True))
+        cap_row.addWidget(self.redetect_btn)
+        layout.addLayout(cap_row)
+
+        # 设备变更轮询：DeviceService 是个普通对象、没有变更信号，只能定时比一下 serial。
+        # 只比字符串（不发 adb），发现变了才重探能力 —— 解决"连上设备后面板还写着未连接"。
+        self._last_seen_serial = self._get_serial()
+        self._serial_watch = QTimer(self)
+        self._serial_watch.setInterval(2000)
+        self._serial_watch.timeout.connect(self._watch_serial)
+        self._serial_watch.start()
 
         # 状态/结果不在这里显示：应用/清除结果写进"虫师日志"
         self.delay_spin.valueChanged.connect(self._reset_to_custom)
@@ -271,25 +314,45 @@ class WeakNetworkPanel(QWidget):
         super().showEvent(event)
         self._probe_capability()
 
+    def _watch_serial(self):
+        """设备连接状态变了就重探能力（只比字符串，不发 adb）"""
+        serial = self._get_serial()
+        if serial == self._last_seen_serial:
+            return
+        self._last_seen_serial = serial
+        self._probe_capability(force=True)
+
     def _probe_capability(self, force: bool = False):
-        """后台探测 netem 是否可用；同一个设备只探一次。"""
+        """后台探测弱网能力；同一个设备且已有结论时跳过（force=True 强制重探）。"""
         serial = self._get_serial()
         if not serial:
-            self.capability_label.setText("未连接设备，无法检测内核能力")
+            self.capability_label.setText("未连接设备，无法检测内核能力（连上后会自动检测）")
             return
         if not force and serial == self._probed_serial and self._netem_ok is not None:
             return
         self._probed_serial = serial
         self._netem_ok = None
-        self.capability_label.setText("正在检测内核是否支持 netem…")
+        self.capability_label.setText("正在检测本机弱网能力…")
 
         def worker():
-            self._capability_ready.emit(self._probe_netem())
+            self._capability_ready.emit(self._probe_capability_reason())
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _probe_capability_reason(self) -> str:
+        """判断这台设备到底能不能做弱网，并**区分原因**。
+
+        顺序很关键：先 root、再 tc、最后才是 netem。
+        否则没 root 的设备会被误报成"内核没有 netem"，让人白折腾内核。
+        """
+        if not self._check_root():
+            return CAP_NO_ROOT
+        if not self._get_tc_path():
+            return CAP_NO_TC
+        return CAP_OK if self._probe_netem() else CAP_NO_NETEM
+
     def _probe_netem(self) -> bool:
-        """用 tc 实试一次，判断内核有没有 netem。
+        """用 tc 实试一次，判断内核有没有 netem（前提：已经 root 且有 tc）。
 
         为什么不查 /proc/modules 或 /sys/module：netem 可以是**编译进内核**的
         （不是模块），查模块会把"支持"误判成"不支持"。而 tc 加不上就是真的加不上。
@@ -305,25 +368,26 @@ class WeakNetworkPanel(QWidget):
         self._run_tc_cmd("qdisc del dev lo root 2>/dev/null")
         return ok
 
-    def _on_capability_ready(self, netem_ok: bool):
-        self._netem_ok = netem_ok
-        if netem_ok:
+    def _on_capability_ready(self, reason: str):
+        self._capability_reason = reason
+        self._netem_ok = (reason == CAP_OK)
+        message = CAPABILITY_MESSAGES.get(reason, reason)
+        self.capability_label.setText(message)
+
+        if self._netem_ok:
             for spin in (self.delay_spin, self.loss_spin):
                 spin.setEnabled(True)
                 spin.setToolTip("")
-            self.capability_label.setText(
-                "✅ 本设备支持 netem：延迟 / 丢包 / 带宽限制均可使用")
             return
 
-        # 不支持 netem：把两项**置 0 再禁用**。
+        # 不能做延迟/丢包：把两项**置 0 再禁用**。
         # 顺序不能反 —— 只禁用不置 0，界面会停在"20% 丢包但改不了"的状态，
         # 而提示又让人去调成 0，等于让用户去点一个点不动的控件（2026-10-16 用户指出）。
         for spin in (self.delay_spin, self.loss_spin):
             spin.setValue(0)
             spin.setEnabled(False)
-            spin.setToolTip(NETEM_MISSING_HINT)
-        self.capability_label.setText("⚠ " + NETEM_MISSING_HINT)
-        self.log_message.emit(f"ℹ️ 弱网模拟：{NETEM_MISSING_HINT}")
+            spin.setToolTip(message)
+        self.log_message.emit(f"ℹ️ 弱网模拟：{message}")
 
     # ------------------------------------------------------------------
     def set_device_service(self, device_service):
@@ -506,11 +570,12 @@ class WeakNetworkPanel(QWidget):
             if not self._get_tc_path():
                 self._apply_finished.emit(RESULT_NO_TC, "")
                 return
-            # 组装命令放在子线程里：可能要先探一次 netem（也是 adb 调用）
+            # 组装命令放在子线程里：可能要先探一次能力（也是 adb 调用）
             netem_ok = self._netem_ok
             if netem_ok is None:
-                netem_ok = self._probe_netem()
-                self._capability_ready.emit(netem_ok)
+                reason = self._probe_capability_reason()
+                netem_ok = (reason == CAP_OK)
+                self._capability_ready.emit(reason)
             commands, error = build_tc_commands(iface, delay, loss, bandwidth, netem_ok)
             if error:
                 self._apply_finished.emit(RESULT_ERROR, error)
