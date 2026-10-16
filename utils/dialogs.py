@@ -1,8 +1,8 @@
 # utils/dialogs.py
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QFrame, QLineEdit, QGraphicsDropShadowEffect,
-                             QScrollArea)
-from PyQt6.QtCore import Qt, QPoint
+                             QScrollArea, QWidget)
+from PyQt6.QtCore import Qt, QPoint, QObject, QEvent, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QBrush, QFont
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
@@ -15,6 +15,45 @@ from utils.settings import Settings, THEME_MODE_DARK
 # 放大后同样的落点会落在按钮内，容错余量从 ~0 提到 8px 以上。
 DIALOG_BTN_W = 120
 DIALOG_BTN_H = 42
+
+
+class _ButtonHotZone(QObject):
+    """给「唯一动作」按钮外加一圈热区：点在按钮外一点点，也算点中它。
+
+    为什么需要：鼠标箭头的热点在左上角、视觉箭身偏右下，人手瞄按钮时落点常偏下几像素
+    —— 实测（2026-10-16，用户复现 + 埋点日志）点「确定」的落点稳定偏下 2~4px，落在按钮
+    外的容器空白上，什么都没发生，看着就像"点了没反应、要点好几下"；光标也因此没进按钮，
+    连悬停色都不亮。Qt 的命中测试按控件矩形走，点在外面的事件根本到不了按钮，所以在容器
+    上装过滤器把这一圈补回来。
+
+    **只给只有一个按钮的提示弹窗用**（确定/关闭这类唯一动作），有"取消/确定"两个按钮的
+    弹窗不装 —— 免得瞄「取消」偏一点反而触发了「确定」。
+    """
+
+    MARGIN = 14
+
+    def __init__(self, container: QWidget, button: QPushButton, margin: int = MARGIN):
+        super().__init__(container)          # 挂在容器上，随弹窗一起销毁
+        self._container = container
+        self._button = button
+        self._margin = margin
+        container.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() != QEvent.Type.MouseButtonPress:
+            return False
+        if event.button() != Qt.MouseButton.LeftButton or not self._button.isEnabled():
+            return False
+        pos = event.position().toPoint()     # 容器坐标系
+        rect = QRect(self._button.mapTo(self._container, QPoint(0, 0)),
+                     self._button.size())
+        if rect.contains(pos):
+            return False                     # 在按钮上，交给按钮自己处理
+        if rect.adjusted(-self._margin, -self._margin,
+                         self._margin, self._margin).contains(pos):
+            self._button.click()             # 落在按钮外的热区里 → 等价于点中按钮
+            return True
+        return False
 
 
 class ConfirmDeleteDialog(QDialog):
@@ -328,6 +367,8 @@ class WarningDialog(QDialog):
         btn_layout.addStretch()
         btn_layout.addWidget(ok_btn)
         container_layout.addLayout(btn_layout)
+        # 唯一动作的按钮：外面再套一圈热区，点偏几像素也算点中（见 _ButtonHotZone）
+        _ButtonHotZone(container, ok_btn)
 
         main_layout.addWidget(container)
 
@@ -447,6 +488,8 @@ class ErrorDialog(QDialog):
         btn_layout.addStretch()
         btn_layout.addWidget(ok_btn)
         container_layout.addLayout(btn_layout)
+        # 唯一动作的按钮：外面再套一圈热区，点偏几像素也算点中（见 _ButtonHotZone）
+        _ButtonHotZone(container, ok_btn)
 
         main_layout.addWidget(container)
         self.container = container
