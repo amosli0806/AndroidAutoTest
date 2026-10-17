@@ -341,8 +341,8 @@ class ActionCardView(QScrollArea):
                 # 用例里第一句通常就是唤醒词，省得每次手打一遍
                 {'key': 'voiceText', 'label': '播报文案：', 'type': 'line', 'required': True,
                  'default': wake_word},
-                {'key': 'afterDelay', 'label': '播后等待：', 'type': 'spin', 'default': 2,
-                 'estimate': True}
+                {'key': 'afterDelay', 'label': '播后等待：', 'type': 'spin', 'decimals': 1,
+                 'default': 2.0, 'estimate': True}
             ]}
         ]
 
@@ -739,8 +739,15 @@ class ActionCard(QGroupBox):
                     self._capture_btns['locationValue'] = cap_btn
                 widget = container
         elif field['type'] == 'spin':
-            widget = QSpinBox()
-            widget.setRange(-999999, 999999)
+            # decimals 有值就用小数框（如「播后等待」1 位小数，与语音播报页一致）
+            if field.get('decimals') is not None:
+                widget = QDoubleSpinBox()
+                widget.setRange(-999999.0, 999999.0)
+                widget.setDecimals(int(field['decimals']))
+                widget.setSingleStep(10 ** -int(field['decimals']))
+            else:
+                widget = QSpinBox()
+                widget.setRange(-999999, 999999)
             if 'default' in field:
                 widget.setValue(field['default'])
             # 语音播报的「播后等待」旁加一个估算按钮：按文案+语速自动填建议值
@@ -862,17 +869,19 @@ class ActionCard(QGroupBox):
             show_toast(self, "先填播报文案")
             return
         from services.voice_service import estimate_post_delay
-        est = max(0, int(round(estimate_post_delay(text))))
+        est = max(0.0, round(estimate_post_delay(text), 1))
         spin = self._spin_of(self.fields.get('afterDelay'))
         if spin is not None:
             spin.setValue(est)
 
     @staticmethod
     def _spin_of(widget):
-        if isinstance(widget, QSpinBox):
+        if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
             return widget
         if isinstance(widget, QWidget):
             for child in widget.findChildren(QSpinBox):
+                return child
+            for child in widget.findChildren(QDoubleSpinBox):
                 return child
         return None
 
