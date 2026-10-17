@@ -33,7 +33,7 @@ class StepController(QObject):
     steps_preview = pyqtSignal(list)
 
     FIELD_OPTIONS = {
-        'locationType': ['资源ID', '坐标', '文本', '描述', 'XPath'],
+        'locationType': ['资源ID', '坐标', '文本', '描述', 'XPath', '图像'],
         'fromLocationType': ['资源ID', '坐标', '文本', '描述', 'XPath'],
         'toLocationType': ['资源ID', '坐标', '文本', '描述', 'XPath'],
         'keyName': ['返回', '主页', '菜单', '音量+', '音量-', '电源', '相机'],

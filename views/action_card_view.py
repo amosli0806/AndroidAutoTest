@@ -6,7 +6,7 @@ import qtawesome as qta
 from PyQt6.QtWidgets import (QScrollArea, QWidget, QGridLayout, QGroupBox,
                              QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
                              QLineEdit, QSpinBox, QDoubleSpinBox, QPushButton,
-                             QSizePolicy, QMessageBox, QToolButton,
+                             QSizePolicy, QMessageBox, QToolButton, QDialog,
                              QWIDGETSIZE_MAX)
 from PyQt6.QtCore import pyqtSignal, Qt, QPoint
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPolygon
@@ -105,6 +105,13 @@ class ActionCardView(QScrollArea):
         # 一样要能选元素，所以控制器得给它装上
         for card in self._cards:
             card.set_element_controller(controller)
+
+    def set_device_service(self, service):
+        """注入设备服务（图像定位的「截屏取图」要用）"""
+        self.device_service = service
+        for card in self._cards:
+            if hasattr(card, 'set_device_service'):
+                card.set_device_service(service)
 
     def apply_theme(self, theme_mode: ThemeMode):
         """应用主题到所有动作卡片（保留彩色标题）"""
@@ -427,7 +434,8 @@ class ActionCard(QGroupBox):
         '坐标': '例如：100,200',
         '文本': '输入要匹配的文本内容',
         '描述': '输入 content-description 内容',
-        'XPath': '例如：//android.widget.Button[@text="确定"]'
+        'XPath': '例如：//android.widget.Button[@text="确定"]',
+        '图像': '点右侧相机按钮截屏取图',
     }
 
     def __init__(self, config, parent=None):
@@ -604,7 +612,11 @@ class ActionCard(QGroupBox):
     def set_element_controller(self, controller):
         self.element_controller = controller
 
+    def set_device_service(self, service):
+        self.device_service = service
+
     def setup_ui(self):
+        self._capture_btns = {}      # 定位方式=图像 时显示的「截屏取图」按钮
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(6, 6, 6, 6)
@@ -641,6 +653,35 @@ class ActionCard(QGroupBox):
                     row_layout.addLayout(self._create_field_row(f))
                 form_layout.addLayout(row_layout)
         main_layout.addLayout(form_layout)
+        self._wire_image_capture()
+
+    def _wire_image_capture(self):
+        """定位方式=图像 时，才显示定位值旁的「截屏取图」按钮。"""
+        combo = self.fields.get('locationType')
+        btn = self._capture_btns.get('locationValue')
+        if combo is None or btn is None:
+            return
+        combo.currentTextChanged.connect(lambda text: btn.setVisible(text == '图像'))
+        btn.setVisible(combo.currentText() == '图像')
+
+    def _on_capture_image(self):
+        """直接截屏取图：不用先跑去元素库建图像元素，这里框一块就能当定位值。"""
+        btn = self.sender()
+        value_widget = btn.property('value_widget') if btn else None
+        if value_widget is None:
+            return
+        device_service = getattr(self, 'device_service', None)
+        if not device_service or not getattr(device_service, 'device', None):
+            WarningDialog.show_warning(self, "无法截屏", "请先在顶部工具栏连接设备")
+            return
+        from views.dialogs.image_crop_dialog import ImageCropDialog
+        try:
+            dlg = ImageCropDialog(device_service, self)
+        except Exception as e:
+            WarningDialog.show_warning(self, "截屏失败", str(e))
+            return
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_path:
+            value_widget.setText(dlg.result_path)
 
     def _create_field_row(self, field):
         layout = QHBoxLayout()
@@ -676,6 +717,19 @@ class ActionCard(QGroupBox):
                 select_btn.setProperty('value_widget', widget)
                 select_btn.clicked.connect(self._on_select_element)
                 container_layout.addWidget(select_btn)
+                # 图像定位：定位值旁直接给个「截屏取图」，不必先去元素库建元素
+                if field['key'] == 'locationValue':
+                    cap_btn = QToolButton()
+                    cap_btn.setObjectName("ImageCaptureBtn")
+                    cap_btn.setIcon(qta.icon('fa6s.camera', color='#1976d2'))
+                    cap_btn.setFixedSize(24, 24)
+                    cap_btn.setStyleSheet("border: none; background: transparent;")
+                    cap_btn.setToolTip("截屏取图：框选设备当前画面的一块区域作为参考图")
+                    cap_btn.setProperty('value_widget', widget)
+                    cap_btn.clicked.connect(self._on_capture_image)
+                    cap_btn.setVisible(False)
+                    container_layout.addWidget(cap_btn)
+                    self._capture_btns['locationValue'] = cap_btn
                 widget = container
         elif field['type'] == 'spin':
             widget = QSpinBox()

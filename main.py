@@ -604,6 +604,7 @@ def main():
 
     step_controller.set_element_controller(element_controller)
     action_card.set_element_controller(element_controller)
+    action_card.set_device_service(device_svc)
     step_list.set_element_controller(element_controller)
     element_manager.element_changed.connect(step_list.on_element_changed)
 
