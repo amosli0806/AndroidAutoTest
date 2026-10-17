@@ -505,7 +505,6 @@ class StepController(QObject):
                     cap_btn.setIcon(qta.icon('fa6s.camera', color=_sel_icon_color))
                     cap_btn.setFixedSize(24, 24)
                     cap_btn.setStyleSheet("border: none; background: transparent;")
-                    cap_btn.setToolTip("截屏取图（图像定位用）")
                     cap_btn.setProperty('value_widget', widget)
                     cap_btn.clicked.connect(self._on_update_capture_image)
                     cap_btn.setVisible(False)

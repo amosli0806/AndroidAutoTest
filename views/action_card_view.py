@@ -731,7 +731,6 @@ class ActionCard(QGroupBox):
                     cap_btn.setIcon(qta.icon('fa6s.camera', color='#555555'))
                     cap_btn.setFixedSize(24, 24)
                     cap_btn.setStyleSheet("border: none; background: transparent;")
-                    cap_btn.setToolTip("截屏取图：框选设备当前画面的一块区域作为参考图")
                     cap_btn.setProperty('value_widget', widget)
                     cap_btn.clicked.connect(self._on_capture_image)
                     cap_btn.setVisible(False)
