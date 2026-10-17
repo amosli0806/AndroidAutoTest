@@ -36,6 +36,7 @@ PARAM_LABELS = {
     'instance': '实例序号',
     'fallbackType': '备用定位方式', 'fallbackValue': '备用定位值',
     'voiceText': '播报文案', 'afterDelay': '播后等待(秒)',
+    'wait_type': '等待方式',
 }
 
 # 「定位方式」类字段：取值是固定枚举
@@ -43,7 +44,7 @@ LOCATION_TYPE_KEYS = {
     'locationType', 'fromLocationType', 'toLocationType', 'fallbackType',
 }
 
-LOCATION_TYPE_OPTIONS = ['资源ID', '坐标', '文本', '描述', 'XPath']
+LOCATION_TYPE_OPTIONS = ['资源ID', '坐标', '文本', '描述', 'XPath', '图像']
 
 # 绑定了元素库（element_id）的步骤，运行时 device_service.execute_step 会调
 # element_controller.resolve_element() 用**元素库里的定位方式/定位值覆盖**这两个字段，

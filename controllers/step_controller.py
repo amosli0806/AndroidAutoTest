@@ -39,6 +39,8 @@ class StepController(QObject):
         'keyName': ['返回', '主页', '菜单', '音量+', '音量-', '电源', '相机'],
         'gestureType': ['捏合（缩小）', '放大'],
         'assert_type': ['元素存在', '元素不存在', '文本等于', '文本包含'],
+        # 「显式等待」的等待方式：不加进来会渲染成英文 key 的文本框
+        'wait_type': ['元素出现', '元素消失', '元素可点击'],
     }
 
     ACTION_OPTIONS = {
@@ -414,6 +416,7 @@ class StepController(QObject):
             param_widgets = {}
             loc_type_widgets = {}
             loc_value_widgets = {}
+            capture_btns = {}          # 定位值旁「截屏取图」按钮（定位方式=图像 时显示）
 
             # 内部字段：不在 UI 上展示，提交时透传
             INTERNAL_KEYS = {
@@ -497,6 +500,17 @@ class StepController(QObject):
                     select_btn.setProperty('value_widget', widget)
                     select_btn.clicked.connect(self._on_update_select_element)
                     container_layout_widget.addWidget(select_btn)
+                    # 图像定位：这里也给个「截屏取图」，与动作卡一致
+                    cap_btn = QToolButton()
+                    cap_btn.setIcon(qta.icon('fa6s.camera', color=_sel_icon_color))
+                    cap_btn.setFixedSize(24, 24)
+                    cap_btn.setStyleSheet("border: none; background: transparent;")
+                    cap_btn.setToolTip("截屏取图（图像定位用）")
+                    cap_btn.setProperty('value_widget', widget)
+                    cap_btn.clicked.connect(self._on_update_capture_image)
+                    cap_btn.setVisible(False)
+                    container_layout_widget.addWidget(cap_btn)
+                    capture_btns[key] = cap_btn
                     widget = container_layout_widget
                 elif isinstance(value, int):
                     widget = QSpinBox()
@@ -524,6 +538,17 @@ class StepController(QObject):
                 elif key == 'fallbackValue':
                     widget.setToolTip("备用定位值：与备用定位方式配套使用")
                 form.addRow(f"{label_text}:", widget)
+
+            # 定位方式=图像 时才显示「截屏取图」按钮。放在循环之后统一连线：
+            # params 字典顺序不保证 locationType 先出现，循环内取可能取不到 combo。
+            for value_key, cap_btn in capture_btns.items():
+                loc_type_widget = loc_type_widgets.get(value_key.replace('Value', 'Type'))
+                if loc_type_widget is None:
+                    cap_btn.setVisible(False)
+                    continue
+                cap_btn.setVisible(loc_type_widget.currentText() == '图像')
+                loc_type_widget.currentTextChanged.connect(
+                    lambda text, b=cap_btn: b.setVisible(text == '图像'))
 
             # 元素操作步骤（点击/双击/长按/输入）补一个「超时(秒)」控件：
             # 老步骤/录制步骤的 params 里没有 timeout 字段，遍历时不会生成该控件，
@@ -656,6 +681,25 @@ class StepController(QObject):
             lambda elem: self._apply_selected_element(elem, loc_type_widget, value_widget)
         )
         dialog.exec()
+
+    def _on_update_capture_image(self):
+        """「更新步骤」对话框里直接截屏取图（定位方式=图像）。"""
+        btn = self.sender()
+        value_widget = btn.property('value_widget') if btn else None
+        if value_widget is None:
+            return
+        device_service = getattr(self, 'device_service', None)
+        if not device_service or not getattr(device_service, 'device', None):
+            WarningDialog.show_warning(self.step_view, "无法截屏", "请先在顶部工具栏连接设备")
+            return
+        from views.dialogs.image_crop_dialog import ImageCropDialog
+        try:
+            dlg = ImageCropDialog(device_service, self.step_view)
+        except Exception as e:
+            WarningDialog.show_warning(self.step_view, "截屏失败", str(e))
+            return
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_path:
+            value_widget.setText(dlg.result_path)
 
     def _apply_selected_element(self, elem, loc_type_widget, value_widget):
         index = loc_type_widget.findText(elem.loc_type)
