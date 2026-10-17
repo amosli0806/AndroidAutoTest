@@ -67,11 +67,11 @@ def _create_toast(parent, message, duration):
                 parent = widget
                 break
 
-    # 传入的父控件若当前不可见，通常是一个还没显示过的功能页：它还没被布局撑开
-    # （尺寸仍是 640x480 之类的默认值），坐标也还是旧的，以它为基准算出来的
-    # toast 位置会飘到界面上奇怪的地方。这种情况改挂到顶层窗口上，落点才稳定。
-    # 注意只在"不可见"时才改，可见父控件的定位结果保持不变。
-    if parent is not None and not parent.isVisible():
+    # 定位基准统一改为**顶层窗口**：调用方传上来的 parent 往往是某个子页面/子控件
+    # （左侧项目树、某个输入框……），按它居中会让提示偏到窗口一角 —— 用户要的是
+    # 全局左右居中（类文档写的「底部居中」也是这个意思）。所以不再区分 parent
+    # 可见与否，一律改挂到顶层窗口上；顶层窗口不可见时才保持原 parent（老兜底）。
+    if parent is not None:
         top_level = parent.window()
         if top_level is not None and top_level.isVisible():
             parent = top_level
