@@ -153,11 +153,7 @@ class KbImportDialog(QDialog):
         self.warn_label.setObjectName("hintLabel")
         self.warn_label.setWordWrap(True)
         action_row.addWidget(self.warn_label, 1)
-        self.cancel_btn = QPushButton("取消")
-        self.cancel_btn.setObjectName("plainBtn")
-        self.cancel_btn.setMinimumWidth(90)
-        self.cancel_btn.clicked.connect(self.reject)
-        action_row.addWidget(self.cancel_btn)
+        # 不放「取消」：标题栏已有 ×（Esc 也能关），底部只留唯一主操作
         self.import_btn = QPushButton("开始导入")
         self.import_btn.setObjectName("okBtn")
         self.import_btn.setMinimumWidth(130)
