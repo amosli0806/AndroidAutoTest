@@ -13,14 +13,19 @@
 **不冲突**：这里只认 `$` 开头的占位符。
 
 本文件只管"算"，不碰界面；用户变量从 models/var_model.py 读（带 mtime 缓存）。
+
+名字规则：`${...}` 里的名字取「到下一个 `}` 为止的非空串」，**允许中文** —— 因为数据驱动的
+表头 = 变量名，而 CSV 表头用中文很常见（如 `${账号}`）。全局变量表那边仍是 ASCII 命名
+（设置页里有意约束，避免日志里中文变量名和正文糊在一起），两者互不影响。
 """
 import os
 import re
 from datetime import datetime
 from typing import Dict, List, Tuple
 
-# `$$`（转义） 或 `${name}` / `${name:默认值}`
-_VAR_RE = re.compile(r"\$(?:\$|\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\})")
+# `$$`（转义） 或 `${name}` / `${name:默认值}`；name 允许中文（数据驱动表头），
+# 非贪婪，取到第一个 `}`；`:默认值` 可选。不支持嵌套（`${a${b}}` 会因内层 `{` 而整体不匹配）。
+_VAR_RE = re.compile(r"\$(?:\$|\{([^{}]+?)(?::([^}]*))?\})")
 
 
 def builtin_values(serial: str = "") -> Dict[str, str]:
@@ -100,14 +105,32 @@ def user_values() -> Dict[str, str]:
 
 
 def current_values(serial: str = "") -> Dict[str, str]:
-    """当前生效的变量：用户变量 + 内置变量。
+    """当前生效的变量：用户变量 + 内置变量 + 数据驱动这一行的值。
 
     内置变量**最后覆盖**：即使用户表里存了同名项（老版本文件 / 手工改过 JSON），
     也不会让 `${serial}` 变成别的东西（模型层已经拦了，这里是最后一道）。
+    数据驱动的行级值在**最最外层**：它只在某一组数据执行期间存在，优先级最高。
     """
     values = dict(user_values())
     values.update(builtin_values(serial))
+    values.update(_row_override)
     return values
+
+
+# 数据驱动：当前这一组数据的变量值。执行 worker 在每组数据前 set_row_values、
+# 跑完 clear_row_values；只由执行线程写、perform() 在同一线程里读，无需加锁。
+_row_override: Dict[str, str] = {}
+
+
+def set_row_values(values) -> None:
+    """设当前数据组的变量值（数据驱动执行用，覆盖用户变量/内置变量）。"""
+    global _row_override
+    _row_override = dict(values or {})
+
+
+def clear_row_values() -> None:
+    global _row_override
+    _row_override = {}
 
 
 def invalidate_cache():

@@ -14,6 +14,8 @@ from views.execute_view import ExecuteView
 from views.logs_view import LogsView
 from services.device_service import DeviceService
 from utils.report_generator import ReportGenerator
+from utils.test_data import read_file
+from utils.vars import set_row_values, clear_row_values
 from utils.theme import ThemeMode
 
 
@@ -109,99 +111,145 @@ class ExecutionWorker(QObject):
                     break
                 case_node = self.project_model.get_node_by_id(case_id)
                 case_name = case_node.name if case_node else f"用例{case_id}"
-                self.progress.emit(f"▶ [{idx + 1}/{len(self.case_ids)}] 用例 \"{case_name}\" 开始执行", "info")
+                self.progress.emit(
+                    f"▶ [{idx + 1}/{len(self.case_ids)}] 用例 \"{case_name}\" 开始执行", "info")
 
-                # 用显式标志记录本用例结果，避免依赖异常穿透——
-                # 只要有一处 except 吞掉了异常，"用例通过"就会被错误地打出来
-                case_failed = False
-
+                # 数据驱动：用例绑了数据文件时，以数据行为准、忽略「循环次数」
+                # （第 1 轮之外不再重复跑）。读取失败按该用例失败处理，不拖垮整轮。
                 try:
-                    steps = self.step_model.get_steps_for_case(case_id)
-                    if not steps:
-                        self.progress.emit(f"  ⚠ 用例 \"{case_name}\" 没有步骤，跳过", "warning")
-                        continue
-
-                    for step_idx, step in enumerate(steps, 1):
-                        if self._abort:
-                            break
-                        try:
-                            self.device.perform(step)
-                            # 变量替换是"未定义就原样保留"，所以要在这里点出来：
-                            # 否则用户只会在失败信息里看到一个没被替换的 ${xxx}，很难定位。
-                            missing_vars = getattr(self.device, 'last_var_missing', None)
-                            if missing_vars:
-                                names = "、".join(f"${{{m}}}" for m in missing_vars)
-                                self.progress.emit(
-                                    f"  ⚠ 步骤 {step_idx} 有未定义变量：{names}"
-                                    f"（已按原样保留，请在「设置 → 变量」里补上）",
-                                    "warning")
-                            if step.type == 'assert':
-                                self.progress.emit(f"  ✅ 断言：{step.name} 通过", "success")
-                        except Exception as e:
-                            # 截图（如果设备服务支持）
-                            shot_path = None
-                            if hasattr(self.device, 'last_screenshot') and self.device.last_screenshot:
-                                shot_path = self.device.last_screenshot
-                                self.exec_model.screenshot_paths.append(shot_path)
-                                self.device.last_screenshot = None
-
-                            step_info = f"步骤 {step_idx} \"{step.name}\""
-                            error_msg = self._format_error(e)
-                            self.progress.emit(f"  ✗ {step_info} 失败：{error_msg}", "error")
-
-                            # 收集失败上下文（不调 AI，只留数据；AI 由用户按需触发）
-                            try:
-                                self.exec_model.failure_contexts.append(FailureContext(
-                                    case_id=case_id,
-                                    case_name=case_name,
-                                    step_index=step_idx,
-                                    step_type=step.type,
-                                    step_name=step.name,
-                                    step_params=dict(step.params or {}),
-                                    prev_steps=[
-                                        {"type": s.type, "name": s.name,
-                                         "params": dict(s.params or {})}
-                                        for s in steps[max(0, step_idx - 3):step_idx - 1]
-                                    ],
-                                    error_msg=error_msg,
-                                    screenshot_path=shot_path,
-                                    loop_index=loop_idx,
-                                    timestamp=datetime.now().strftime("%H:%M:%S"),
-                                ))
-                            except Exception:
-                                # 上下文收集失败不能影响主流程
-                                pass
-
-                            # 关键：显式标记失败并终止当前用例，不再执行后续步骤
-                            case_failed = True
-                            break
+                    data_rows = self._load_data_rows(case_node)
                 except Exception as e:
-                    # 兜底：获取步骤等外层环节出错（例如模型层异常）
-                    self.progress.emit(
-                        f"  ✗ 用例 \"{case_name}\" 执行失败：{self._format_error(e)}",
-                        "error",
-                    )
-                    case_failed = True
-
-                # 中途被停止：这个用例没跑完，既不算通过也不算失败 —— 半截用例记成
-                # 「执行通过」会直接骗人。已经失败的用例照常走下面的失败记账。
-                if self._abort and not case_failed:
-                    self.progress.emit(
-                        f"  ⏹ 用例 \"{case_name}\" 未执行完（已停止）", "warning")
-                    break
-
-                if case_failed:
+                    self.progress.emit(f"  ✗ 数据文件加载失败：{self._format_error(e)}", "error")
                     self.progress.emit(f"  ✗ 用例 \"{case_name}\" 执行失败", "error")
                     if self.stop_on_fail:
                         self.progress.emit("  ⛔ 因失败停止标志，终止后续执行", "warning")
                         self._abort = True
                         break
+                    continue
+
+                if data_rows is None:
+                    self._run_case(case_id, case_name, loop_idx, None)
+                elif loop_idx > 0:
+                    continue            # 数据驱动只在第 1 轮跑
                 else:
-                    self.progress.emit(f"  ✓ 用例 \"{case_name}\" 执行通过", "success")
+                    total_groups = len(data_rows)
+                    for g, row in enumerate(data_rows, 1):
+                        if self._abort:
+                            break
+                        self.progress.emit(f"  · 数据 {g}/{total_groups}", "info")
+                        set_row_values(row)
+                        try:
+                            self._run_case(case_id, case_name, loop_idx,
+                                           f"[数据 {g}/{total_groups}]")
+                        finally:
+                            clear_row_values()
 
         if self._aborted_by_user:
             self.progress.emit("⏹ 已按你的请求停止本轮执行", "warning")
         self.finished.emit()
+
+    def _load_data_rows(self, case_node):
+        """读该用例的数据文件 → [{表头: 值}, ...]；没绑数据文件返回 None。"""
+        path = (case_node.data_file or "").strip() if case_node else ""
+        if not path:
+            return None
+        if not os.path.exists(path):
+            raise ValueError(f"数据文件不存在：{path}")
+        rows = read_file(path)
+        if not rows:
+            raise ValueError("数据文件里没有数据行")
+        return rows
+
+    def _run_case(self, case_id, case_name, loop_idx, group_label):
+        """跑一个用例（或数据驱动里的某一组）。group_label 如 '[数据 2/3]'，None 表示普通用例。"""
+        display_name = case_name + ((" " + group_label) if group_label else "")
+
+        # 用显式标志记录本用例结果，避免依赖异常穿透——
+        # 只要有一处 except 吞掉了异常，"用例通过"就会被错误地打出来
+        case_failed = False
+
+        try:
+            steps = self.step_model.get_steps_for_case(case_id)
+            if not steps:
+                self.progress.emit(f"  ⚠ 用例 \"{display_name}\" 没有步骤，跳过", "warning")
+                return
+
+            for step_idx, step in enumerate(steps, 1):
+                if self._abort:
+                    break
+                try:
+                    self.device.perform(step)
+                    # 变量替换是"未定义就原样保留"，所以要在这里点出来：
+                    # 否则用户只会在失败信息里看到一个没被替换的 ${xxx}，很难定位。
+                    missing_vars = getattr(self.device, 'last_var_missing', None)
+                    if missing_vars:
+                        names = "、".join(f"${{{m}}}" for m in missing_vars)
+                        self.progress.emit(
+                            f"  ⚠ 步骤 {step_idx} 有未定义变量：{names}"
+                            f"（已按原样保留，请在「设置 → 变量」里补上）",
+                            "warning")
+                    if step.type == 'assert':
+                        self.progress.emit(f"  ✅ 断言：{step.name} 通过", "success")
+                except Exception as e:
+                    # 截图（如果设备服务支持）
+                    shot_path = None
+                    if hasattr(self.device, 'last_screenshot') and self.device.last_screenshot:
+                        shot_path = self.device.last_screenshot
+                        self.exec_model.screenshot_paths.append(shot_path)
+                        self.device.last_screenshot = None
+
+                    step_info = f"步骤 {step_idx} \"{step.name}\""
+                    error_msg = self._format_error(e)
+                    self.progress.emit(f"  ✗ {step_info} 失败：{error_msg}", "error")
+
+                    # 收集失败上下文（不调 AI，只留数据；AI 由用户按需触发）
+                    try:
+                        self.exec_model.failure_contexts.append(FailureContext(
+                            case_id=case_id,
+                            case_name=display_name,
+                            step_index=step_idx,
+                            step_type=step.type,
+                            step_name=step.name,
+                            step_params=dict(step.params or {}),
+                            prev_steps=[
+                                {"type": s.type, "name": s.name,
+                                 "params": dict(s.params or {})}
+                                for s in steps[max(0, step_idx - 3):step_idx - 1]
+                            ],
+                            error_msg=error_msg,
+                            screenshot_path=shot_path,
+                            loop_index=loop_idx,
+                            timestamp=datetime.now().strftime("%H:%M:%S"),
+                        ))
+                    except Exception:
+                        # 上下文收集失败不能影响主流程
+                        pass
+
+                    # 关键：显式标记失败并终止当前用例，不再执行后续步骤
+                    case_failed = True
+                    break
+        except Exception as e:
+            # 兜底：获取步骤等外层环节出错（例如模型层异常）
+            self.progress.emit(
+                f"  ✗ 用例 \"{display_name}\" 执行失败：{self._format_error(e)}",
+                "error",
+            )
+            case_failed = True
+
+        # 中途被停止：这个用例没跑完，既不算通过也不算失败 —— 半截用例记成
+        # 「执行通过」会直接骗人。已经失败的用例照常走下面的失败记账。
+        if self._abort and not case_failed:
+            self.progress.emit(f"  ⏹ 用例 \"{display_name}\" 未执行完（已停止）", "warning")
+            return
+
+        if case_failed:
+            self.progress.emit(f"  ✗ 用例 \"{display_name}\" 执行失败", "error")
+            if self.stop_on_fail:
+                self.progress.emit("  ⛔ 因失败停止标志，终止后续执行", "warning")
+                self._abort = True
+        else:
+            self.progress.emit(f"  ✓ 用例 \"{display_name}\" 执行通过", "success")
+
 
 
 class ExecutionController(QObject):

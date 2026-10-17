@@ -36,6 +36,7 @@ class TreeNode:
     children: List['TreeNode'] = field(default_factory=list)
     expanded: bool = True
     selected: bool = False
+    data_file: str = ""   # 用例的数据驱动文件（csv/xlsx 绝对路径）；空 = 无数据驱动
 
     def to_dict(self):
         return {
@@ -44,7 +45,8 @@ class TreeNode:
             'type': self.type,
             'children': [c.to_dict() for c in self.children],
             'expanded': self.expanded,
-            'selected': self.selected
+            'selected': self.selected,
+            'data_file': self.data_file,
         }
 
     @classmethod
@@ -54,7 +56,8 @@ class TreeNode:
             name=data['name'],
             type=data['type'],
             expanded=data.get('expanded', True),
-            selected=data.get('selected', False)
+            selected=data.get('selected', False),
+            data_file=data.get('data_file', ''),
         )
         for child_data in data.get('children', []):
             node.children.append(cls.from_dict(child_data))
@@ -176,6 +179,15 @@ class ProjectModel:
             self.save()
             return True
         return False
+
+    def set_data_file(self, node_id: str, path: str) -> bool:
+        """给用例绑定数据驱动文件（csv/xlsx 绝对路径）。空串 = 清除绑定。"""
+        node = self.get_node_by_id(node_id)
+        if node is None or node.type != 'case':
+            return False
+        node.data_file = str(path or "").strip()
+        self.save()
+        return True
 
     def get_all_cases(self) -> List[TreeNode]:
         cases = []

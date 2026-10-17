@@ -164,7 +164,11 @@ class ProjectTreeView(QTreeView):
         elif node.type == 'folder':
             icon = qta.icon("fa6s.folder", color=ICON_COLOR_GROUP)
         else:
-            icon = qta.icon("fa6s.comment-dots", color=ICON_COLOR_CASE)
+            # 用例绑了数据文件 → 用表格图标提示（数据驱动）
+            if node.data_file:
+                icon = qta.icon("fa6s.table", color=ICON_COLOR_CASE)
+            else:
+                icon = qta.icon("fa6s.comment-dots", color=ICON_COLOR_CASE)
         item.setIcon(icon)
         if node.children:
             for child in node.children:
@@ -239,6 +243,15 @@ class ProjectTreeView(QTreeView):
             copy_case = menu.addAction(icon_copy, "复制用例")
             copy_case.triggered.connect(lambda: self._copy_case(node_id))
             menu.addSeparator()
+            # 数据驱动：绑定 / 清除数据文件
+            if node.data_file:
+                bind_data = menu.addAction(icon_delete, "清除数据绑定")
+                bind_data.triggered.connect(
+                    lambda: self.context_menu_signal.emit(node_id, "clear_data_file"))
+            else:
+                bind_data = menu.addAction(icon_add, "绑定数据文件…")
+                bind_data.triggered.connect(
+                    lambda: self.context_menu_signal.emit(node_id, "bind_data_file"))
 
         # 重命名和删除（对所有类型都可用）
         rename_action = menu.addAction(icon_rename, "重命名")

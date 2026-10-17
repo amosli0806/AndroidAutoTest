@@ -1,5 +1,7 @@
 # controllers/project_controller.py
-from PyQt6.QtWidgets import QMessageBox, QInputDialog
+import os
+
+from PyQt6.QtWidgets import QMessageBox, QInputDialog, QFileDialog
 from PyQt6.QtCore import Qt
 from models.project_model import ProjectModel, TreeNode, new_node_id
 from views.project_tree_view import ProjectTreeView
@@ -77,6 +79,22 @@ class ProjectController:
                     self.step_controller.refresh_steps()
                     if self.execute_view:
                         self.execute_view.refresh()
+        elif action == "bind_data_file":
+            node = self.model.get_node_by_id(node_id)
+            if not node:
+                return
+            path, _ = QFileDialog.getOpenFileName(
+                self.view, f"为「{node.name}」选择数据文件",
+                "", "测试数据 (*.csv *.xlsx)")
+            if not path:
+                return
+            self.model.set_data_file(node_id, path)
+            show_toast(self.view, f"已绑定数据文件：{os.path.basename(path)}", duration=2500)
+            self.view.refresh()
+        elif action == "clear_data_file":
+            self.model.set_data_file(node_id, "")
+            show_toast(self.view, "已清除数据绑定", duration=2000)
+            self.view.refresh()
         elif action == "delete":
             node = self.model.get_node_by_id(node_id)
             if not node:
