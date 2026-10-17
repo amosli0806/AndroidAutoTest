@@ -3,7 +3,7 @@
 
 界面结构（为什么这么分）：
 
-    顶部   [全库搜索] [新建项目] [新建条目] [导出]
+    顶部   [全库搜索] [新建项目] [新建条目] [导入] [导出]
     左栏   项目 / 分类 / 条目 三级树（分类固定四类，见 knowledge_model.CATEGORIES）
     右栏   ① 速查卡片带（当前项目置顶，点卡片直接跳）
            ② 标题 / 分类 / 标签
@@ -28,7 +28,7 @@ from PyQt6.QtGui import (QFont, QImage, QKeySequence, QShortcut, QTextBlockForma
                          QTextCharFormat, QTextCursor, QTextFormat, QTextImageFormat,
                          QTextListFormat)
 from PyQt6.QtWidgets import (
-    QComboBox, QCompleter, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QComboBox, QCompleter, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMenu, QPlainTextEdit, QPushButton, QSplitter,
     QStackedWidget, QTabWidget, QTextEdit, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
 from models.knowledge_model import CATEGORIES
 from utils import tree_state
 from utils.dialogs import ConfirmDeleteDialog, InputDialog, QuestionDialog, WarningDialog
+from views.dialogs.kb_import_dialog import KbImportDialog
 from utils.flow_layout import FlowLayout
 from utils.settings import Settings, THEME_MODE_DARK
 from utils.theme import ThemeMode
@@ -659,6 +660,13 @@ class KnowledgeView(QFrame):
         row.addWidget(self.new_note_btn)
         self._icon_buttons.append((self.new_note_btn, 'fa6s.file-circle-plus', 'button'))
 
+        self.import_btn = QPushButton("导入")
+        self.import_btn.setToolTip("把已有的 .md / .txt 文档批量导入"
+                                   "（语雀 / 飞书 / Obsidian 导出的目录也能直接选）")
+        self.import_btn.clicked.connect(self._on_import)
+        row.addWidget(self.import_btn)
+        self._icon_buttons.append((self.import_btn, 'fa6s.file-import', 'button'))
+
         self.export_btn = QPushButton("导出")
         self.export_btn.setToolTip("把整个知识库导出为 Markdown 目录（含图片）")
         self.export_btn.clicked.connect(self._on_export)
@@ -1265,8 +1273,31 @@ class KnowledgeView(QFrame):
         self.body_edit.insert_link()
 
     # ------------------------------------------------------------------
-    # 导出
+    # 导入 / 导出
     # ------------------------------------------------------------------
+    def _on_import(self):
+        """从 .md / .txt 批量导入：对话框里先扫描预览，确认后才落库"""
+        self.flush()          # 先把正在编辑的内容落盘，免得导入后被覆盖
+        dlg = KbImportDialog(self.model, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        stats = dlg.stats
+        self.refresh_tree()
+        if not stats["notes"] and not stats["skipped"]:
+            return
+        detail = []
+        if stats["skipped"]:
+            detail.append(f"跳过 {stats['skipped']} 条同名条目")
+        if stats["images"]:
+            detail.append(f"图片 {stats['images']} 张已一并导入")
+        if stats["missing_images"]:
+            detail.append(f"{stats['missing_images']} 张图片在源目录里没找到，"
+                          f"正文里的图片链接会显示不出来")
+        WarningDialog.show_warning(
+            self, "导入完成",
+            f"已导入 {stats['notes']} 条笔记，新建 {stats['projects']} 个项目。",
+            "；".join(detail) if detail else "")
+
     def _on_export(self):
         if not self.model.get_projects():
             WarningDialog.show_warning(self, "提示", "知识库还是空的，先记两条再导出。")

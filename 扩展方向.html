@@ -166,9 +166,9 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-16</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-17</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.5.0</span>
+      <span class="badge">当前版本 v1.5.1</span>
       <span class="badge">13 项扩展方向</span>
       <span class="badge">4 个开发阶段</span>
     </div>
@@ -266,19 +266,10 @@
       <div class="example">💡 <b>打个比方：</b>像文档的「修订记录 / 历史版本」——用例改乱了，一键回到昨天的版本，还能看看到底改了哪几行。</div>
     </div>
 
-    <div class="card">
-      <h3>5. 个人知识库增强 <span class="tag plan">📋 规划中</span></h3>
-      <p><b>基础版已在 v1.4.7 落地</b>（右工具栏「帮助中心」下方）：项目 / 分类 / 标签、所见即所得 Markdown、截图粘贴、全库搜索、速查卡片、整库导出。这一项只补<b>「导入」</b>——把已有的笔记搬进来。</p>
-      <ul>
-        <li><b>从现有文档批量导入</b>：支持 md、飞书 / 语雀等导出的文档，按约定（标题 / 目录名）落到对应项目与分类下，避免从零重建</li>
-      </ul>
-      <div class="example">💡 <b>打个比方：</b>知识库现在是个新笔记本，只能一页页手写；「导入」就是让你把旧本子的内容整摞搬过来，不用再抄一遍。</div>
-    </div>
-
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段三 · 改动较大，需先设计（目标 2~3 个版本周期）</h3>
 
     <div class="card">
-      <h3>6. 执行健壮性增强 <span class="tag plan">📋 规划中</span></h3>
+      <h3>5. 执行健壮性增强 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>步骤级失败重试（次数 + 间隔 + 触发条件可配）</li>
         <li>显式等待（等元素出现 / 消失 / 可点击，替代固定 sleep）</li>
@@ -287,7 +278,7 @@
     </div>
 
     <div class="card">
-      <h3>7. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
+      <h3>6. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>前后置脚本（Python 钩子，处理签名 / 加解密 / 数据提取）</li>
         <li>链路场景编排（接口串联，上一步响应作为下一步入参）</li>
@@ -297,7 +288,7 @@
     </div>
 
     <div class="card">
-      <h3>8. 图像识别定位 <span class="tag plan">📋 规划中</span></h3>
+      <h3>7. 图像识别定位 <span class="tag plan">📋 规划中</span></h3>
       <p>新增「图像」定位方式（模板匹配 + 相似度阈值），元素库可上传参考图，执行时截图比对。</p>
       <div class="example">💡 <b>打个比方：</b>像「人脸识别解锁」或玩「找不同」——游戏里的按钮是「画」出来的（不是代码控件，看不到元素树），靠截图比对把它认出来，从而覆盖游戏、视频、自绘界面。</div>
     </div>
@@ -305,7 +296,7 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段四 · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
-      <h3>9. 变量 / 参数化 <span class="tag plan">📋 规划中</span></h3>
+      <h3>8. 变量 / 参数化 <span class="tag plan">📋 规划中</span></h3>
       <p>定义全局变量（设备序列号、测试账号、环境地址），步骤参数里用 <code>${变量}</code> 引用；同一用例可循环跑多组数据（数据驱动）。</p>
       <ul>
         <li>全局变量表，元素库与步骤参数统一走一层变量替换</li>
@@ -315,13 +306,13 @@
     </div>
 
     <div class="card">
-      <h3>10. 测试数据管理 <span class="tag plan">📋 规划中</span></h3>
+      <h3>9. 测试数据管理 <span class="tag plan">📋 规划中</span></h3>
       <p>从 Excel / CSV 读取测试数据，参数化执行同一用例多组数据（与「变量 / 参数化」合并实现更合理）。</p>
       <div class="example">💡 <b>打个比方：</b>像「同一张答题卡批不同试卷」——用例就是那张答题卡，数据就是试卷，套上账号 A、账号 B、账号 C 各跑一遍，批量出结果。</div>
     </div>
 
     <div class="card">
-      <h3>11. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
+      <h3>10. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把唤醒词、语速等提升为可参数化变量，用例内可覆盖</li>
       </ul>
@@ -329,13 +320,13 @@
     </div>
 
     <div class="card">
-      <h3>12. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
+      <h3>11. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
       <div class="example">💡 <b>打个比方：</b>像手机「快捷指令 / 宏」——把「打开 App → 输账号 → 输密码 → 点登录」这 5 步打包成一个「登录」关键字，以后任何用例点一下就好，不用重复拖 5 个步骤。</div>
     </div>
 
     <div class="card">
-      <h3>13. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <h3>12. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把堆转储 / 抓包 / 截图<b>接进监控会话</b>——产物归会话、报告出「诊断产物」、曲线画事件标记（见第四章）</li>
         <li>抓包防呆与保护补全：未 root 前置置灰并说明、设备剩余空间告警、超限改为分段存盘</li>
@@ -360,7 +351,6 @@
           <tr><td>阶段一</td><td>步骤模板</td><td class="stars">⭐⭐⭐</td><td>「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
           <tr><td>阶段二</td><td>语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；结果校验与用例互转稍大</td></tr>
           <tr><td>阶段二</td><td>版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
-          <tr><td>阶段二</td><td>个人知识库增强</td><td class="stars">⭐⭐</td><td>基础版已落地，只补「导入」：把已有的 md / 飞书 / 语雀 文档批量搬进来；纯新增读写逻辑，不碰现有数据结构</td></tr>
           <tr><td>阶段三</td><td>执行健壮性增强</td><td class="stars">⭐⭐</td><td>价值高，但要动核心执行循环与步骤模型，影响所有用例的执行路径</td></tr>
           <tr><td>阶段三</td><td>接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
           <tr><td>阶段三</td><td>图像识别定位</td><td class="stars">⭐⭐</td><td>纯新增定位方式、不改现有行为；但要引入 OpenCV，工作量较大</td></tr>

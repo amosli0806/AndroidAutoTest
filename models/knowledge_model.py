@@ -60,6 +60,26 @@ ASSETS_DIR_NAME = "knowledge_assets"
 # 正文里引用图片的相对路径前缀，导出时也用它
 ASSET_LINK_PREFIX = "assets/"
 
+# ---- 导入相关 ----
+# 认得的源文件后缀：Markdown 为主；.txt 按 Markdown 正文处理（老笔记常见）
+IMPORT_SUFFIXES = (".md", ".markdown", ".txt")
+# 图片目录名（导出/导入都按 <md 所在目录>/assets/<名> 找图）
+ASSET_DIR_REF = ASSET_LINK_PREFIX.rstrip("/")
+# 正文里 `assets/xxx.png` 的引用（捕获文件名）
+ASSET_REF_RE = re.compile(r"assets/([^\s)\"'<>]+)")
+
+
+def _value_after_key(seg: str, key: str) -> str:
+    """从「项目：X」这种片段里取值 X（全角 / 半角冒号都认；不是该键就返回空串）。"""
+    if not seg.startswith(key):
+        return ""
+    rest = seg[len(key):].strip()
+    for ch in ("：", ":"):
+        if rest.startswith(ch):
+            return rest[1:].strip()
+    return rest
+
+
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -139,6 +159,33 @@ class SearchHit:
     project_name: str
     matched: str      # 'title' / 'body' / 'tag'
     snippet: str
+
+
+@dataclass
+class ImportItem:
+    """一条待导入的笔记（扫描阶段的产物，还没写库）。"""
+    source: str                                              # 源文件绝对路径
+    title: str
+    body: str
+    category: str
+    project_name: str                                        # 解析后的目标项目名
+    tags: List[str] = field(default_factory=list)
+    asset_names: List[str] = field(default_factory=list)     # 源目录里确实存在的图片
+    missing_assets: List[str] = field(default_factory=list)  # 正文引用了但没找到的图片
+    duplicate: bool = False                                  # 目标项目 + 标题已存在
+
+
+@dataclass
+class ImportPlan:
+    """一次导入的完整计划：给界面做预览，也直接喂给 apply_import。"""
+    items: List[ImportItem]
+    projects_to_create: List[str] = field(default_factory=list)
+
+    def new_items(self) -> List[ImportItem]:
+        return [it for it in self.items if not it.duplicate]
+
+    def count(self, duplicate: bool = False) -> int:
+        return sum(1 for it in self.items if it.duplicate is duplicate)
 
 
 class KnowledgeModel:
@@ -490,3 +537,211 @@ class KnowledgeModel:
     def _write_text(path: str, text: str):
         with open(path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(text)
+
+    # ------------------------------------------------------------------
+    # 导入（export_markdown 的逆操作）
+    # ------------------------------------------------------------------
+    # 为什么要做成「导出的逆操作」：export_markdown 已经把库落成
+    #   <项目>/<标题>.md + 头部「> 项目：X ｜ 分类：Y」「> 标签：#a」
+    # 的约定，导入按同一套规则反解，于是
+    #   ① 自己导出的库能原样导回来（换机器 / 备份恢复）；
+    #   ② 语雀、飞书、Obsidian 导出的 Markdown 目录也走同一条路 ——
+    #      它们没有头部元信息，就靠「一级子目录名 = 项目」和用户选的默认分类兜住。
+    def plan_import(self, paths, by_dir: bool = True, default_project: str = "",
+                    default_category: str = CATEGORY_DIFF,
+                    fallback_project: str = "导入") -> tuple:
+        """扫描 md / txt，返回 (ImportPlan, warnings)；**不写库、不改源文件**。
+
+        落位优先级：文件头声明的项目 > 一级子目录名（by_dir=True）> default_project
+        > fallback_project。分类只能落在四个固定分类里，认不出就用 default_category。
+        重名判定：**目标项目 + 标题**相同即视为重复（分类不参与 —— 否则换个默认分类
+        就会把同一篇文档再导一遍，与界面上「跳过同名」的说法也对不上；本批内部同样去重）。
+        """
+        if default_category not in CATEGORIES:
+            default_category = CATEGORY_DIFF
+        existing_projects = {p.name: p for p in self.projects}
+        taken = set()
+        for n in self.notes:
+            proj = self.get_project(n.project_id)
+            if proj is not None:
+                taken.add((proj.name, (n.title or "").strip()))
+
+        items, warnings = [], []
+        for path, sub in self._iter_source_files(paths):
+            text = self._read_text(path)
+            if text is None:
+                warnings.append(f"{os.path.basename(path)}：读不出来（编码不支持或文件被占用）")
+                continue
+            title, body, proj_hint, cat_hint, tags = self._parse_md_text(text)
+            base = os.path.splitext(os.path.basename(path))[0]
+            if self._looks_like_export_index(title, body):
+                warnings.append(f"{os.path.basename(path)}：目录页，已跳过")
+                continue
+            title = (title or base).strip() or "未命名条目"
+            project_name = (proj_hint or (sub if by_dir else "")
+                            or default_project or fallback_project).strip()
+            category = cat_hint if cat_hint in CATEGORIES else default_category
+            names, missing = self._scan_assets(path, body)
+            key = (project_name, title)
+            duplicate = key in taken
+            if not duplicate:
+                taken.add(key)
+            items.append(ImportItem(
+                source=path, title=title, body=body, category=category, tags=tags,
+                project_name=project_name, asset_names=names,
+                missing_assets=missing, duplicate=duplicate,
+            ))
+        to_create = sorted({it.project_name for it in items
+                            if it.project_name not in existing_projects})
+        return ImportPlan(items=items, projects_to_create=to_create), warnings
+
+    def apply_import(self, plan, skip_duplicates: bool = True) -> Dict[str, int]:
+        """把计划落库：按需建项目 → 逐条追加笔记 → 复制图片 → **最后只写一次盘**。
+
+        批量导入可能上百条，逐条 save() 会把整个 JSON 重写上百遍（越写越慢），
+        所以这里直接 append 到内存集合，结束时统一 save()。
+        """
+        stats = {"projects": 0, "notes": 0, "skipped": 0, "images": 0, "missing_images": 0}
+        by_name = {p.name: p for p in self.projects}
+        order = max([p.order for p in self.projects], default=-1)
+        ids = {n.id for n in self.notes}
+        stamp = _now()
+        for it in plan.items:
+            if skip_duplicates and it.duplicate:
+                stats["skipped"] += 1
+                continue
+            project = by_name.get(it.project_name)
+            if project is None:
+                order += 1
+                project = KbProject(
+                    id=self._generate_id("kbproj", {p.id for p in self.projects}),
+                    name=it.project_name, order=order, created=stamp)
+                self.projects.append(project)
+                by_name[project.name] = project
+                stats["projects"] += 1
+            note = KbNote(id=self._generate_id("kbnote", ids),
+                          project_id=project.id, category=it.category,
+                          title=it.title, body=it.body, tags=list(it.tags),
+                          created=stamp, updated=stamp)
+            ids.add(note.id)
+            self.notes.append(note)
+            stats["notes"] += 1
+            stats["images"] += self._copy_import_assets(note.id, it.source, it.asset_names)
+            stats["missing_images"] += len(it.missing_assets)
+        self.save()
+        return stats
+
+    @staticmethod
+    def _iter_source_files(paths):
+        """展开导入源 → [(文件绝对路径, 一级子目录名)]；目录递归，跳过隐藏目录与 assets/。"""
+        out = []
+        for raw in paths or []:
+            p = os.path.abspath(str(raw))
+            if os.path.isfile(p):
+                if p.lower().endswith(IMPORT_SUFFIXES):
+                    out.append((p, ""))
+                continue
+            if not os.path.isdir(p):
+                continue
+            for root, dirs, files in os.walk(p):
+                dirs[:] = [d for d in dirs
+                           if not d.startswith(".") and d != ASSET_DIR_REF]
+                rel = os.path.relpath(root, p)
+                sub = "" if rel in (".", "") else rel.split(os.sep)[0]
+                for name in sorted(files):
+                    if name.lower().endswith(IMPORT_SUFFIXES):
+                        out.append((os.path.join(root, name), sub))
+        return out
+
+    @staticmethod
+    def _read_text(path: str) -> Optional[str]:
+        """读文本：UTF-8（含 BOM）优先，失败退回 GBK（老 Windows 写的 md 常见）。"""
+        for enc in ("utf-8-sig", "gbk"):
+            try:
+                with open(path, "r", encoding=enc) as f:
+                    return f.read()
+            except UnicodeDecodeError:
+                continue
+            except OSError:
+                return None
+        return None
+
+    @staticmethod
+    def _parse_md_text(text: str) -> tuple:
+        """拆出 (title, body, project_hint, category_hint, tags)。
+
+        只在前 12 行找头部；`>` 行必须带「项目/分类/标签/更新时间」这类已知键才算元信息，
+        否则当正文（正文以引用开头很常见，不能吃掉）。
+        """
+        title, project, category, tags = "", "", "", []
+        lines = text.splitlines()
+        i = 0
+        while i < len(lines) and i < 12:
+            s = lines[i].strip()
+            if not s:
+                i += 1
+                continue
+            if not title and s.startswith("# "):
+                title = s[2:].strip()
+                i += 1
+                continue
+            if s.startswith(">") and re.match(r"^(项目|分类|标签|更新时间)", s.lstrip(">").strip()):
+                for seg in re.split(r"[｜|]", s.lstrip(">").strip()):
+                    seg = seg.strip()
+                    if seg.startswith("项目"):
+                        project = _value_after_key(seg, "项目") or project
+                    elif seg.startswith("分类"):
+                        category = _value_after_key(seg, "分类") or category
+                    elif seg.startswith("标签"):
+                        tags = re.findall(r"#([^\s#]+)", seg)
+                i += 1
+                continue
+            break
+        return title, "\n".join(lines[i:]).strip("\n"), project, category, tags
+
+    @staticmethod
+    def _looks_like_export_index(title: str, body: str) -> bool:
+        """认出 export_markdown 生成的目录页（根 index：`# 个人知识库`；
+        项目 index：正文首行 `共 N 条`），导入时跳过它们。"""
+        if (title or "").strip() == "个人知识库":
+            return True
+        first = next((ln.strip() for ln in (body or "").splitlines() if ln.strip()), "")
+        return bool(re.match(r"^共\s*\d+\s*条$", first))
+
+    @staticmethod
+    def _scan_assets(md_path: str, body: str) -> tuple:
+        """找出正文引用的 `assets/<名>`，分成「源目录里有」和「缺失」两组。"""
+        names, missing = [], []
+        src_dir = os.path.join(os.path.dirname(md_path), ASSET_DIR_REF)
+        for name in dict.fromkeys(ASSET_REF_RE.findall(body or "")):
+            name = name.strip()
+            if not name:
+                continue
+            if os.path.isfile(os.path.join(src_dir, name)):
+                names.append(name)
+            else:
+                missing.append(name)
+        return names, missing
+
+    def _copy_import_assets(self, note_id: str, md_path: str, names) -> int:
+        """把源文档旁边的 assets/<名> 复制进条目资源目录，**文件名保持原样**。
+
+        改名的后果是正文里的 `assets/<名>` 直接失效 —— 导出时靠"文件名全局唯一"
+        做到不改写正文，导入这边必须对称地保持原名（每个条目有独立目录，不会撞）。
+        """
+        if not names:
+            return 0
+        src_dir = os.path.join(os.path.dirname(md_path), ASSET_DIR_REF)
+        dst_dir = self.note_asset_dir(note_id)
+        os.makedirs(dst_dir, exist_ok=True)
+        copied = 0
+        for name in names:
+            src = os.path.join(src_dir, name)
+            if not os.path.isfile(src):
+                continue
+            try:
+                shutil.copy2(src, os.path.join(dst_dir, name))
+                copied += 1
+            except OSError:
+                pass
+        return copied
