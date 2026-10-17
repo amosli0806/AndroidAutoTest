@@ -920,10 +920,12 @@ class MainWindow(QMainWindow):
         self.menu_btn.setMenu(self.main_menu)
         self._toolbar_hide_actions.append(toolbar.addWidget(self.menu_btn))
 
-        # 菜单按钮右侧留白，让悬停效果不贴右边缘
+        # 菜单按钮右侧留白，让悬停效果不贴右边缘。
+        # **不要放进 _toolbar_hide_actions**：迷你模式下最右边的是「推送文件」，
+        # 留白被隐藏后按钮就会贴死窗口右边缘（2026-10-18 用户反馈）。
         right_spacer = QWidget()
         right_spacer.setFixedWidth(8)
-        self._toolbar_hide_actions.append(toolbar.addWidget(right_spacer))
+        toolbar.addWidget(right_spacer)
 
         # ---------- 主区域垂直分割器 ----------
         self.main_splitter = QSplitter(Qt.Vertical)
