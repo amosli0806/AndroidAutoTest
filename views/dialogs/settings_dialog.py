@@ -1404,6 +1404,9 @@ class SettingsDialog(QDialog):
         outer_layout.addWidget(scroll, 1)
 
         page = QWidget()
+        # 内层 widget 不命名的话会吃 QSS 默认白底，把对话框的深色底盖住
+        # （与壁纸页 WallpaperGridContainer / 快捷键页 SettingsShortcutContainer 同一套做法）
+        page.setObjectName("NotifyPage")
         scroll.setWidget(page)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(28, 24, 28, 24)
@@ -2075,7 +2078,8 @@ class SettingsDialog(QDialog):
 
             /* ---------- 通知页滚动区（跟随主题背景） ---------- */
             #NotifyScroll,
-            #NotifyScroll > QWidget#qt_scrollarea_viewport {{
+            #NotifyScroll > QWidget#qt_scrollarea_viewport,
+            #NotifyPage {{
                 background-color: {content_bg};
                 border: none;
             }}
