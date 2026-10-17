@@ -572,9 +572,16 @@ class EdgeTtsEngine(WindowsSapiEngine):
         try:
             _run_async(_collect(), timeout=self._SYNTH_TIMEOUT)
         except Exception as e:
+            msg = str(e)
+            # 403 = 服务端拒绝握手，不是网络问题：微软会定期升级校验规则，
+            # 内置的 edge-tts 版本一旧就被拒。这时让用户"检查网络"是误导。
+            if "403" in msg:
+                raise VoiceError(
+                    "在线语音服务拒绝了请求（403）：通常是内置的在线语音组件版本过旧，"
+                    "请更新到最新版虫师；临时可切换「Windows 内置语音」") from e
             raise VoiceError(
-                f"在线语音合成失败（{str(e)[:60]}）—— 请检查网络，"
-                "或在设置里切换回「Windows 内置语音」")
+                f"在线语音合成失败（{msg[:60]}）—— 请检查网络，"
+                "或在设置里切换回「Windows 内置语音」") from e
         if not mp3:
             raise VoiceError("在线语音合成失败（服务未返回音频，请检查网络）")
         _decode_mp3_to_wav(bytes(mp3), wav_path)
