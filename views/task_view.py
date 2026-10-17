@@ -484,15 +484,15 @@ class TaskView(QWidget):
             return
         task = widget.task
         menu = QMenu()
-        toggle_action = QAction("启用" if not task.enabled else "禁用", self)
+        toggle_action = QAction("启用" if not task.enabled else "禁用")
         toggle_action.triggered.connect(lambda: self.task_toggle_enabled.emit(task.id, not task.enabled))
         menu.addAction(toggle_action)
         menu.addSeparator()
-        run_action = QAction("立即执行", self)
+        run_action = QAction("立即执行")
         run_action.triggered.connect(lambda: self.task_run_now.emit(task.id))
         menu.addAction(run_action)
         menu.addSeparator()
-        edit_action = QAction("编辑", self)
+        edit_action = QAction("编辑")
         edit_action.triggered.connect(lambda: self.task_updated.emit(task.id))
         menu.addAction(edit_action)
         menu.addAction("删除", lambda: self._on_delete_task())

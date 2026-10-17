@@ -21,6 +21,7 @@ from PyQt6.QtGui import QColor, QBrush
 from PyQt6.QtCore import Qt
 
 from models.knowledge_model import CATEGORIES, CATEGORY_DIFF
+from utils.dialogs import AutoFreeDialog
 from utils.theme import ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 
@@ -28,7 +29,7 @@ from utils.settings import Settings, THEME_MODE_DARK
 PREVIEW_LIMIT = 500
 
 
-class KbImportDialog(QDialog):
+class KbImportDialog(AutoFreeDialog):
     """选源 → 预览 → 落库。关闭后由调用方读 `dialog.stats` 拿统计结果。"""
 
     def __init__(self, model, parent=None):

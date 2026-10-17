@@ -1167,7 +1167,7 @@ class KnowledgeView(QFrame):
 
     def _on_tree_context_menu(self, pos):
         item = self.tree.itemAt(pos)
-        menu = QMenu(self)
+        menu = QMenu()
         if item is None:
             menu.addAction(qta.icon('fa6s.folder-plus', color=self._icon_color('menu')), "新建项目",
                            self._on_new_project)

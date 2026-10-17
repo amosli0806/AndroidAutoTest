@@ -56,7 +56,25 @@ class _ButtonHotZone(QObject):
         return False
 
 
-class ConfirmDeleteDialog(QDialog):
+class AutoFreeDialog(QDialog):
+    """项目自定义弹窗的公共父类：关闭后自动 deleteLater 释放。
+
+    为什么之前会泄漏：这些弹窗都是 `XxxDialog(parent)` + `exec()`，PyQt 里带 parent
+    的 QObject 丢引用后不会被销毁，而是常驻父窗口（实测 ≈170KB/个，见 2026-10-17
+    内存审计）。这里重写 done()，关闭时调度一次 deleteLater，随开随回收。
+
+    为什么用 deleteLater 而不是 WA_DeleteOnClose：exec() 返回后调用方往往还要读
+    对话框上的值（如 InputDialog.get_text 读输入框文本），deleteLater 是**延迟**删除
+    （回到事件循环才真正删），所以 exec() 这一帧里的读取都安全；WA_DeleteOnClose 是
+    关闭瞬间删 C++ 对象，紧接着读 `dialog.xxx` 会抛「底层对象已删除」。
+    """
+
+    def done(self, result):
+        super().done(result)
+        self.deleteLater()
+
+
+class ConfirmDeleteDialog(AutoFreeDialog):
     """美观的删除确认对话框（自适应高度 + 大阴影）"""
 
     def __init__(self, parent, title="确认删除", message="确定要删除吗？", detail=None):
@@ -185,7 +203,7 @@ class ConfirmDeleteDialog(QDialog):
         return dialog.exec() == QDialog.DialogCode.Accepted
 
 
-class InputDialog(QDialog):
+class InputDialog(AutoFreeDialog):
     """美观的输入对话框（大阴影）"""
 
     def __init__(self, parent, title="输入", label="请输入名称:", default_text="", placeholder=""):
@@ -274,7 +292,7 @@ class InputDialog(QDialog):
         return "", False
 
 
-class WarningDialog(QDialog):
+class WarningDialog(AutoFreeDialog):
     """美观的警告提示对话框（仅确定按钮 + 大阴影）"""
 
     def __init__(self, parent, title="提示", message="", detail=None):
@@ -395,7 +413,7 @@ class WarningDialog(QDialog):
         dialog.exec()
 
 
-class ErrorDialog(QDialog):
+class ErrorDialog(AutoFreeDialog):
     """美观的错误提示对话框（仅确定按钮 + 大阴影，红色图标）"""
 
     def __init__(self, parent, title="错误", message="", detail=None):
@@ -517,7 +535,7 @@ class ErrorDialog(QDialog):
         dialog = ErrorDialog(parent, title, message, detail)
         dialog.exec()
 
-class QuestionDialog(QDialog):
+class QuestionDialog(AutoFreeDialog):
     """通用的是/否询问对话框，风格与项目其它对话框一致，跟随主题。"""
 
     def __init__(self, parent, title="请选择", message="", detail=None,

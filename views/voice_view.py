@@ -1099,7 +1099,7 @@ class VoiceView(QWidget):
         kind = item.data(0, self.ROLE_KIND) if item is not None else None
         node_id = item.data(0, self.ROLE_ID) if item is not None else None
 
-        menu = QMenu(self)
+        menu = QMenu()
 
         # 图标颜色跟主题走：qta 生成的是位图，QSS 改不了颜色，只能在这里按主题选。
         # 取色与「语音管理 ▾」下拉菜单（_apply_voice_menu_theme）保持一致。
@@ -1851,8 +1851,7 @@ class VoiceView(QWidget):
         else:
             feedback, verify_block = None, ""
         self._worker = _PlaybackWorker(self.service, items, loop_count,
-                                       feedback=feedback, verify_block=verify_block,
-                                       parent=self)
+                                       feedback=feedback, verify_block=verify_block)
         self._worker.progress.connect(self._on_progress)
         self._worker.round_changed.connect(self._on_round_changed)
         self._worker.done.connect(self._on_playback_done)

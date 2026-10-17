@@ -279,7 +279,7 @@ class LogsView(QWidget):
         self.ai_btn.setEnabled(False)
         self.ai_btn.setText("分析中…")
 
-        self._ai_worker = AIAnalyzeWorker(self.model.failure_contexts, self)
+        self._ai_worker = AIAnalyzeWorker(self.model.failure_contexts)
         self._ai_worker.one_ready.connect(self._on_one_suggestion)
         self._ai_worker.all_done.connect(self._on_analysis_done)
         self._ai_worker.start()
@@ -295,6 +295,7 @@ class LogsView(QWidget):
         self._append_suggestion_block(index, suggestion)
 
     def _on_analysis_done(self, ok, total):
+        self._ai_worker = None   # 线程结束，放引用（无 parent，随引用释放）
         self.ai_btn.setEnabled(True)
         if ok == 0:
             self.ai_btn.setText("✨ AI 分析失败")

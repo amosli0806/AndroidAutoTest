@@ -360,11 +360,11 @@ class ElementManagerView(QWidget):
             return
         menu = QMenu()
         if len(selected_ids) == 1:
-            verify_action = QAction("验证元素", self)
+            verify_action = QAction("验证元素")
             verify_action.triggered.connect(lambda: self.verify_element_signal.emit(selected_ids[0]))
             menu.addAction(verify_action)
             menu.addSeparator()
-        delete_action = QAction(f"删除选中的 {len(selected_ids)} 个元素", self)
+        delete_action = QAction(f"删除选中的 {len(selected_ids)} 个元素")
         delete_action.triggered.connect(lambda: self._batch_delete_elements(selected_ids))
         menu.addAction(delete_action)
         menu.exec(self.table.viewport().mapToGlobal(pos))

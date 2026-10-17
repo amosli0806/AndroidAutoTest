@@ -86,7 +86,7 @@ class ApiController(QObject):
         self._start(cases)
 
     def _start(self, cases):
-        self._worker = _ApiRunWorker(self.service, cases, self.model.get_env(), self)
+        self._worker = _ApiRunWorker(self.service, cases, self.model.get_env())
         self._worker.result_ready.connect(self.view.show_result)
         self._worker.finished_all.connect(self._on_finished)
         self.view.set_running(True)

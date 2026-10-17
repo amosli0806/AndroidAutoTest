@@ -873,7 +873,7 @@ class ApiView(QWidget):
 
     def _on_tree_menu(self, pos):
         item = self.tree.itemAt(pos)
-        menu = QMenu(self)
+        menu = QMenu()
         if item is None:
             menu.addAction("新建分组", self._on_add_group)
         else:
@@ -987,7 +987,7 @@ class ApiView(QWidget):
     # 中栏交互
     # ==================================================================
     def _on_table_menu(self, pos):
-        menu = QMenu(self)
+        menu = QMenu()
         menu.addAction("新建接口", lambda: self._on_add_case(self._current_group_id))
         menu.addAction("复制接口", lambda: self._on_copy_selected("copy"))
         menu.addAction("删除接口", lambda: self._on_copy_selected("delete"))

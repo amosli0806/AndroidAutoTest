@@ -784,7 +784,7 @@ class ExecuteView(QWidget):
         if self._executing:
             return
         name = self.suite_combo.currentText()
-        menu = QMenu(self)
+        menu = QMenu()
         edit_action = menu.addAction("编辑套件内容 / 执行顺序…")
         edit_action.setEnabled(bool(name) and name != "(无套件)")
         chosen = menu.exec(self.suite_combo.mapToGlobal(pos))

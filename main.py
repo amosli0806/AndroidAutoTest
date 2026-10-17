@@ -1029,10 +1029,19 @@ def main():
                 _verify_thread.cancel()
                 _verify_thread.quit()
                 _verify_thread.wait()
-            _verify_thread = VerifyWorker(device_svc.device, elem, main_window, device_svc)
-            _verify_thread.result_ready.connect(handle_verify_result)
-            _verify_thread.finished.connect(lambda: setattr(_verify_thread, 'deleteLater', None))
-            _verify_thread.start()
+            worker = VerifyWorker(device_svc.device, elem, None, device_svc)
+            _verify_thread = worker
+
+            def _on_verify_finished():
+                global _verify_thread
+                # 结束即释放：清全局引用（避免下次点到已删对象）+ 调度销毁
+                if _verify_thread is worker:
+                    _verify_thread = None
+                worker.deleteLater()
+
+            worker.result_ready.connect(handle_verify_result)
+            worker.finished.connect(_on_verify_finished)
+            worker.start()
 
     element_manager.verify_element_signal.connect(verify_element)
 

@@ -281,7 +281,7 @@ class StepListView(QListWidget):
         ids = self._selected_steps()
         if not ids:
             return
-        menu = QMenu(self)
+        menu = QMenu()
         # 图标用 menu_icon()：这个菜单没有自己的样式表，会走全局 Fusion 调色板的
         # 「蓝底白字」悬浮效果，本色图标（蓝 / 深红）在蓝底上会糊掉，
         # menu_icon 让图标在悬浮时自动转白。
