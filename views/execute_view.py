@@ -278,6 +278,20 @@ class ExecuteView(QWidget):
                 QPushButton#ToolIconBtn:hover { background-color: #4a4a4a; }
                 QPushButton#ToolIconBtn:disabled { background-color: #333; }
             """
+            # 文字版工具按钮（保存套件 / 删除套件 / 报告）：宽度自适应文字
+            text_btn_style = """
+                QPushButton#ToolTextBtn {
+                    background-color: #3c3c3c;
+                    border: 1px solid #555;
+                    border-radius: 4px;
+                    padding: 2px 9px;
+                    min-height: 22px; max-height: 22px;
+                    font-size: 12px;
+                    color: #e0e0e0;
+                }
+                QPushButton#ToolTextBtn:hover { background-color: #4a4a4a; }
+                QPushButton#ToolTextBtn:disabled { background-color: #333; color: #777; }
+            """
             # 主操作（执行）：禁用时与其他工具按钮一致，启用后蓝底白图标突出
             self._primary_btn_style = """
                 QPushButton#ExecIconBtn {
@@ -305,6 +319,19 @@ class ExecuteView(QWidget):
                 QPushButton#ToolIconBtn:hover { background-color: #e8eaee; }
                 QPushButton#ToolIconBtn:disabled { background-color: #eee; }
             """
+            text_btn_style = """
+                QPushButton#ToolTextBtn {
+                    background-color: #f5f6f8;
+                    border: 1px solid #d0d0d0;
+                    border-radius: 4px;
+                    padding: 2px 9px;
+                    min-height: 22px; max-height: 22px;
+                    font-size: 12px;
+                    color: #333;
+                }
+                QPushButton#ToolTextBtn:hover { background-color: #e8eaee; }
+                QPushButton#ToolTextBtn:disabled { background-color: #eee; color: #aaa; }
+            """
             self._primary_btn_style = """
                 QPushButton#ExecIconBtn {
                     background-color: #f5f6f8;
@@ -325,6 +352,8 @@ class ExecuteView(QWidget):
                 btn.setStyleSheet(icon_btn_style)
             elif btn.objectName() == "ExecIconBtn":
                 btn.setStyleSheet(self._primary_btn_style)
+            elif btn.objectName() == "ToolTextBtn":
+                btn.setStyleSheet(text_btn_style)
             elif btn.objectName() not in ("reportBtn", "save_suite_btn", "del_suite_btn"):
                 btn.setStyleSheet(btn_style)
         for combo in self.findChildren(QComboBox):
@@ -363,9 +392,7 @@ class ExecuteView(QWidget):
         self.toggle_select_btn_icon_none = qta.icon('fa6s.square-minus', color=c)
         self.execute_icon_enabled = qta.icon('fa6s.play', color='white')   # 启用：蓝底白
         self.execute_icon_disabled = qta.icon('fa6s.play', color=c)        # 禁用：灰底深
-        self.save_suite_btn.setIcon(qta.icon('fa6s.floppy-disk', color=c))
-        self.del_suite_btn.setIcon(qta.icon('fa6s.trash-can', color=c))
-        self.report_btn.setIcon(qta.icon('fa6s.file-lines', color=c))
+        # 保存套件 / 删除套件 / 报告 已改成文字按钮，不再重建图标
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -417,15 +444,19 @@ class ExecuteView(QWidget):
         self.retry_spin = QSpinBox()
         self.retry_spin.setRange(0, 5)
         self.retry_spin.setValue(1)
-        self.retry_spin.setFixedWidth(48)
+        self.retry_spin.setFixedWidth(60)
         self.retry_spin.setFixedHeight(28)
         self.retry_spin.setToolTip("失败重试次数（0 = 不重试）")
         self.retry_delay_spin = QSpinBox()
         self.retry_delay_spin.setRange(0, 30)
         self.retry_delay_spin.setValue(2)
-        self.retry_delay_spin.setFixedWidth(48)
+        self.retry_delay_spin.setFixedWidth(60)
         self.retry_delay_spin.setFixedHeight(28)
         self.retry_delay_spin.setToolTip("重试间隔（秒）")
+        # 单位标签（原来只有 tooltip，鼠标不悬停就看不出这两个数字是什么）
+        self.retry_unit_label = QLabel("次")
+        self.retry_interval_label = QLabel("间隔")
+        self.retry_delay_unit_label = QLabel("秒")
         self.retry_cond_combo = QComboBox()
         self.retry_cond_combo.addItems(["仅超时类", "所有失败"])
         self.retry_cond_combo.setFixedHeight(28)
@@ -443,28 +474,22 @@ class ExecuteView(QWidget):
         self.suite_combo.customContextMenuRequested.connect(self._on_suite_menu)
         self.suite_combo.setToolTip("选择套件；右键可编辑套件内容与执行顺序")
 
-        self.save_suite_btn = QPushButton()
-        self.save_suite_btn.setIcon(qta.icon('fa6s.floppy-disk', color=self._icon_color))
-        self.save_suite_btn.setIconSize(QSize(15, 15))
-        self.save_suite_btn.setFixedSize(34, 28)
-        self.save_suite_btn.setObjectName("ToolIconBtn")
-        self.save_suite_btn.setToolTip("保存套件")
+        self.save_suite_btn = QPushButton("保存套件")
+        self.save_suite_btn.setFixedHeight(28)
+        self.save_suite_btn.setObjectName("ToolTextBtn")
+        self.save_suite_btn.setToolTip("把当前选中的用例保存为套件")
         self.save_suite_btn.clicked.connect(self._save_current_as_suite)
 
-        self.del_suite_btn = QPushButton()
-        self.del_suite_btn.setIcon(qta.icon('fa6s.trash-can', color=self._icon_color))
-        self.del_suite_btn.setIconSize(QSize(15, 15))
-        self.del_suite_btn.setFixedSize(34, 28)
-        self.del_suite_btn.setObjectName("ToolIconBtn")
-        self.del_suite_btn.setToolTip("删除套件")
+        self.del_suite_btn = QPushButton("删除套件")
+        self.del_suite_btn.setFixedHeight(28)
+        self.del_suite_btn.setObjectName("ToolTextBtn")
+        self.del_suite_btn.setToolTip("删除选中的套件")
         self.del_suite_btn.clicked.connect(self._delete_selected_suite)
 
-        self.report_btn = QPushButton()
-        self.report_btn.setIcon(qta.icon('fa6s.file-lines', color=self._icon_color))
-        self.report_btn.setIconSize(QSize(15, 15))
-        self.report_btn.setFixedSize(34, 28)
-        self.report_btn.setObjectName("ToolIconBtn")
-        self.report_btn.setToolTip("测试报告")
+        self.report_btn = QPushButton("报告")
+        self.report_btn.setFixedHeight(28)
+        self.report_btn.setObjectName("ToolTextBtn")
+        self.report_btn.setToolTip("生成测试报告")
         self.report_btn.setEnabled(False)
         self.report_btn.clicked.connect(self._on_report_clicked)
 
@@ -482,7 +507,11 @@ class ExecuteView(QWidget):
         toolbar.addSpacing(6)
         toolbar.addWidget(self.retry_label)
         toolbar.addWidget(self.retry_spin)
+        toolbar.addWidget(self.retry_unit_label)
+        toolbar.addSpacing(4)
+        toolbar.addWidget(self.retry_interval_label)
         toolbar.addWidget(self.retry_delay_spin)
+        toolbar.addWidget(self.retry_delay_unit_label)
         toolbar.addWidget(self.retry_cond_combo)
         toolbar.addStretch()
 

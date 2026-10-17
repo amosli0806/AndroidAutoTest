@@ -126,6 +126,8 @@ class LogsView(QWidget):
         self.level_combo = QComboBox()
         self.level_combo.addItems(["全部类型", "错误", "成功", "警告", "信息"])
         self.level_combo.setFixedHeight(28)
+        # 下拉面板宽度跟着控件走：太窄会把「全部类型」截成「全部类…」
+        self.level_combo.setMinimumWidth(112)
         self.level_combo.setToolTip("按日志类型快速筛选")
         self.level_combo.currentIndexChanged.connect(self._on_filter_changed)
         top_bar.addWidget(self.level_combo)
@@ -375,7 +377,7 @@ class DonutWidget(QWidget):
         self.fail_count = 0
         self._text_color = QColor(50, 50, 50)  # 默认亮色
         # 日志面板挪到底部后是横条，圆环要小一号；绘制按控件尺寸算，改大小不用改画法
-        self.setFixedSize(78, 78)
+        self.setFixedSize(104, 104)      # 底部横条里也要看得清，别太小
 
     def set_text_color(self, color):
         self._text_color = QColor(color)
