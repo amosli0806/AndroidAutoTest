@@ -169,7 +169,7 @@
     <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-17</div>
     <div class="badges">
       <span class="badge">当前版本 v1.5.1</span>
-      <span class="badge">13 项扩展方向</span>
+      <span class="badge">8 项扩展方向</span>
       <span class="badge">4 个开发阶段</span>
     </div>
   </header>
@@ -197,7 +197,7 @@
 
     <div class="grid2">
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无流程控制</b> — 没有 if/else 分支、循环、失败重试。</div></div>
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>无分支与步骤级循环</b> — 没有 if/else，也没有「这段步骤重复 N 次」（执行页的「循环次数」只是整轮重复）。失败重试与显式等待已落地。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>无关键字复用</b> — 「登录」「搜索」等常用组合无法封装复用。</div></div>
@@ -212,10 +212,13 @@
         <div class="gap-item"><span class="tag plan">📋</span><div><b>诊断产物未接进会话</b> — 堆转储 / 抓包 / 截图的产物不归会话、报告无「诊断产物」段落、曲线无事件标记；抓包还缺未 root 前置置灰与分段存盘（详见第四章）。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报待增强</b> — 唤醒词不能按用例切换；无法验证「真执行了」（如地图是否全屏）。</div></div>
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报待增强</b> — 唤醒词不能按用例切换；「回执验证」只能确认车机听懂了，还验不了界面真的变了（如地图是否全屏）。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>无工程化配套</b> — 无 Git 集成（用例数据没有版本管理与回滚）。</div></div>
+      </div>
+      <div class="card">
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>数据与参考图按绝对路径绑定</b> — 数据驱动绑定的 CSV / Excel、图像定位的参考图存的都是绝对路径，换机器或挪动工程目录后要重新绑定。</div></div>
       </div>
     </div>
   </section>
@@ -224,7 +227,7 @@
   <section class="chapter" id="s2">
     <h2><span class="num">2</span>扩展方向（按阶段与优先级）</h2>
 
-    <p class="small" style="margin-top:0">13 项规划按 <b>「改动小 → 改动大」</b> 分四阶段：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
+    <p class="small" style="margin-top:0">8 项规划按 <b>「改动小 → 改动大」</b> 分四阶段：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段一 · 改动小、见效快（目标 1 个版本周期，可立即穿插）</h3>
 
@@ -248,7 +251,7 @@
         <h3>3. 语音播报增强 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>唤醒词多套管理（按用例切换、多条候选轮播）</li>
-        <li>执行结果校验（除「被识别」，再验「真执行了」，如地图是否全屏）</li>
+        <li>「真执行了」校验：回执验证已能确认「被正确识别」，但如果界面是否真的变了（如地图是否全屏）还没有手段</li>
         <li>语音用例 ↔ 自动化用例互转</li>
       </ul>
       <div class="example">💡 <b>打个比方：</b>换车已经能整套套用（车型模板）；这一步要再细到「按用例切换唤醒词、多条候选轮播」，并验明正身 —— 确认「地图真的切成全屏了没有」，而不只是「车机听懂了没有」。</div>
@@ -262,8 +265,6 @@
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段三 · 改动较大，需先设计（目标 2~3 个版本周期）</h3>
 
-    </div>
-
     <div class="card">
       <h3>5. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
       <ul>
@@ -273,13 +274,7 @@
       <div class="example">💡 <b>打个比方：</b>前后置脚本像「做饭前的备菜 + 上桌前的摆盘」——请求前先签名、加密，响应后把数据提炼出来；链路编排像「接力赛」——上一个接口的返回，直接变成下一个接口的入参。</div>
     </div>
 
-    </div>
-
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段四 · 改动大 / 影响面广（需专门排期）</h3>
-
-    </div>
-
-    </div>
 
     <div class="card">
       <h3>6. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
@@ -319,7 +314,7 @@
         <tbody>
           <tr><td>阶段一</td><td>测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
           <tr><td>阶段一</td><td>步骤模板</td><td class="stars">⭐⭐⭐</td><td>「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
-          <tr><td>阶段二</td><td>语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；结果校验与用例互转稍大</td></tr>
+          <tr><td>阶段二</td><td>语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
           <tr><td>阶段二</td><td>版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
           <tr><td>阶段三</td><td>接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
           <tr><td>阶段四</td><td>变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>变量地基已落地（v1，语音文案已可用 <code>${变量}</code>）；剩下把唤醒词 / 语速等语音参数也做成变量</td></tr>
@@ -373,7 +368,7 @@
 
   <!-- ============ 五、macOS 移植注意事项 ============ -->
   <section class="chapter" id="s5">
-    <h2><span class="num">5</span>macOS 移植注意事项 <span class="tag plan">📐 2026-10-10 初评 · 2026-10-16 复核 · 未开始</span></h2>
+    <h2><span class="num">5</span>macOS 移植注意事项 <span class="tag plan">📐 2026-10-10 初评 · 2026-10-17 复核 · 未开始</span></h2>
     <p class="small" style="margin-top:0">目标：把虫师跑在 Mac 上，连车机做同样的测试。下面按「不改就跑不起来 / 能跑但行为不对 / 已经写好不用动」三类梳理，每条都标了确切文件；第五节为 2026-10-14 二次核查的新增发现。</p>
 
     <div class="card">
@@ -413,6 +408,7 @@
         <li><code>utils/win_dark_title.py</code>、<code>utils/win_job.py::bind_kill_on_close</code>（<code>weditor_service._bind_kill_on_close</code> 只是它的薄包装）、<code>main._acquire_single_instance</code>：都有非 win32 早退。</li>
         <li><code>main.py</code> 的 <code>_PopenNoConsole</code>（给子进程补 <code>CREATE_NO_WINDOW</code> 防黑窗）整段包在 <code>if sys.platform == 'win32'</code> 里，非 Windows 直接跳过 —— 正确（macOS 没有黑窗问题）。<code>updater.py</code> 是例外，见上面「能跑但行为不对」。</li>
         <li><code>services/voice_service.py</code> 的 <code>EdgeTtsEngine</code>（edge-tts 在线语音）本身跨平台，<code>miniaudio</code> 也支持 macOS —— 只要绕开 <code>WindowsSapiEngine</code>，语音播报主线可用。</li>
+        <li><b>2026-10-17 新增的模块同样跨平台</b>：<code>utils/vars.py</code>（变量替换）、<code>utils/test_data.py</code>（CSV / XLSX 数据驱动）、<code>models/var_model.py</code>、<code>utils/no_context_menu.py</code>（纯 Qt 事件过滤）、<code>utils/image_match.py</code>（OpenCV 模板匹配，<code>opencv-python-headless</code> 三平台通用）—— 都是纯 Python / 跨平台库，没有 Windows 专属调用；只需在 mac 上照常 <code>pip install opencv-python-headless</code>。</li>
       </ul>
     </div>
 
@@ -451,7 +447,7 @@
     <div class="example">💡 <b>打个比方：</b>这就像把一间按自家户型装修好的房子搬到另一栋楼 —— 家具（Qt 界面、adb / uiautomator2 那套逻辑）都能直接用，但门框尺寸（打包成 <code>.app</code>）、水电接口（路径规范）、门锁（签名 / 公证）都不一样；至于「自动更新」，它更像埋在墙里的暗线，到新楼只能整条重走。</div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-10-16 · v1.5.0</footer>
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-10-17 · v1.5.1</footer>
 </div>
 </body>
 </html>
