@@ -604,7 +604,6 @@ def main():
 
     step_controller.set_element_controller(element_controller)
     action_card.set_element_controller(element_controller)
-    action_card.set_device_service(device_svc)
     step_list.set_element_controller(element_controller)
     element_manager.element_changed.connect(step_list.on_element_changed)
 
@@ -617,6 +616,8 @@ def main():
     device_svc.set_element_controller(element_controller)
     device_svc.set_step_interval(2)
     step_controller.set_device_service(device_svc)
+    # 动作卡的「截屏取图」（图像定位）需要设备；必须放在 device_svc 创建之后
+    action_card.set_device_service(device_svc)
 
     # ---------- 执行控制器 ----------
     exec_controller = ExecutionController(
