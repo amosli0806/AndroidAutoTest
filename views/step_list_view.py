@@ -320,7 +320,7 @@ class StepListView(QListWidget):
             'swipe': '滑动', 'drag_drop': '拖拽', 'multi_swipe': '多点滑动',
             'gesture_zoom': '手势缩放', 'flick': '飞掠', 'gesture_seq': '复杂手势',
             'physical_key': '物理按键', 'screen_ctrl': '屏幕控制', 'app_mgr': '应用管理',
-            'screenshot': '截图', 'input': '输入', 'wait': '等待',
+            'screenshot': '截图', 'input': '输入', 'wait': '等待', 'wait_for': '显式等待',
             'assert': '断言', 'voice': '语音播报'
         }
         filtered = []
@@ -439,6 +439,7 @@ class StepCardWidget(QWidget):
         'screenshot': '#e91e63',
         'input': '#f39c12',
         'wait': '#95a5a6',
+        'wait_for': '#78909c',
         'assert': '#ff9800',
         'voice': '#00bcd4',
     }
@@ -733,7 +734,7 @@ class StepCardWidget(QWidget):
             'swipe': '滑动', 'drag_drop': '拖拽', 'multi_swipe': '多点滑动',
             'gesture_zoom': '手势缩放', 'flick': '飞掠', 'gesture_seq': '复杂手势',
             'physical_key': '物理按键', 'screen_ctrl': '屏幕控制', 'app_mgr': '应用管理',
-            'screenshot': '截图', 'input': '输入', 'wait': '等待',
+            'screenshot': '截图', 'input': '输入', 'wait': '等待', 'wait_for': '显式等待',
             'assert': '断言', 'voice': '语音播报'
         }
         self.type_label.setText(type_names.get(self.step.type, self.step.type))

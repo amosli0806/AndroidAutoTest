@@ -412,6 +412,25 @@ class ExecuteView(QWidget):
 
         self.stop_on_fail_check = BorderedCheckBox("失败停止")
 
+        # 失败重试：次数 / 间隔 / 触发条件（全局，对所有步骤生效）
+        self.retry_label = QLabel("重试")
+        self.retry_spin = QSpinBox()
+        self.retry_spin.setRange(0, 5)
+        self.retry_spin.setValue(1)
+        self.retry_spin.setFixedWidth(48)
+        self.retry_spin.setFixedHeight(28)
+        self.retry_spin.setToolTip("失败重试次数（0 = 不重试）")
+        self.retry_delay_spin = QSpinBox()
+        self.retry_delay_spin.setRange(0, 30)
+        self.retry_delay_spin.setValue(2)
+        self.retry_delay_spin.setFixedWidth(48)
+        self.retry_delay_spin.setFixedHeight(28)
+        self.retry_delay_spin.setToolTip("重试间隔（秒）")
+        self.retry_cond_combo = QComboBox()
+        self.retry_cond_combo.addItems(["仅超时类", "所有失败"])
+        self.retry_cond_combo.setFixedHeight(28)
+        self.retry_cond_combo.setToolTip("重试触发条件：仅超时类（等待/连接超时）或所有失败")
+
         # 套件与报告相关控件（图标化，悬停见 tooltip）
         self.suite_combo = QComboBox()
         from utils.widget_helpers import prepare_combo_view
@@ -460,6 +479,11 @@ class ExecuteView(QWidget):
         toolbar.addWidget(self.loop_label)
         toolbar.addWidget(self.loop_spin)
         toolbar.addWidget(self.stop_on_fail_check)
+        toolbar.addSpacing(6)
+        toolbar.addWidget(self.retry_label)
+        toolbar.addWidget(self.retry_spin)
+        toolbar.addWidget(self.retry_delay_spin)
+        toolbar.addWidget(self.retry_cond_combo)
         toolbar.addStretch()
 
         layout.addLayout(toolbar)
@@ -685,6 +709,9 @@ class ExecuteView(QWidget):
 
         self.loop_spin.setEnabled(not self._executing)
         self.stop_on_fail_check.setEnabled(not self._executing)
+        self.retry_spin.setEnabled(not self._executing)
+        self.retry_delay_spin.setEnabled(not self._executing)
+        self.retry_cond_combo.setEnabled(not self._executing)
         self.suite_combo.setEnabled(not self._executing)
         self.save_suite_btn.setEnabled(not self._executing)
         is_suite_selected = self.suite_combo.currentText() != "(无套件)" and self.suite_combo.count() > 1

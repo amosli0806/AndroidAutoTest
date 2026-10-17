@@ -212,7 +212,7 @@ class DeviceService:
             raise ValueError(f"不支持的动作类型: {step.type}")
 
         # 步骤后间隔（wait / voice 自带等待语义，不再叠加默认间隔）
-        if step.type not in ('wait', 'voice') and self.step_interval > 0:
+        if step.type not in ('wait', 'voice', 'wait_for') and self.step_interval > 0:
             time.sleep(self.step_interval)
 
     def _apply_vars(self, params: dict) -> dict:
@@ -471,6 +471,42 @@ class DeviceService:
     def _perform_wait(self, params):
         duration = params.get('duration', 4)
         time.sleep(duration)
+
+    def _perform_wait_for(self, params):
+        """显式等待：等元素出现 / 消失 / 可点击，到点就继续、超时才判失败。
+
+        与「等待」（固定秒数）的区别：不确定要等多久时用它 —— 页面一准备好就继续，
+        比拍脑袋 sleep 更稳也更快。复用 uiautomator2 的 exists()/info 轮询。
+        """
+        wait_type = params.get('wait_type', '元素出现')
+        loc_type = params.get('locationType')
+        loc_value = params.get('locationValue')
+        timeout = params.get('timeout', 10)
+        if not isinstance(timeout, (int, float)) or timeout <= 0:
+            timeout = 10
+        if loc_type == '坐标':
+            raise ValueError("显式等待不支持坐标定位，请用资源ID、文本、描述或XPath")
+
+        obj = self._get_ui_object(loc_type, loc_value)
+        if obj is None:
+            raise ValueError(f"不支持的定位方式: {loc_type}")
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                if wait_type == '元素出现':
+                    ok = obj.exists(timeout=0.5)
+                elif wait_type == '元素消失':
+                    ok = not obj.exists(timeout=0.5)
+                else:  # 元素可点击
+                    info = obj.info
+                    ok = bool(info and info.get('clickable'))
+            except Exception:
+                ok = False
+            if ok:
+                return
+            time.sleep(0.5)
+        raise RuntimeError(f"等待超时（{wait_type}，{loc_type}='{loc_value}'，{timeout} 秒）")
 
     def _perform_voice(self, params):
         """语音播报：把文案用电脑扬声器读出来，车机麦克风拾取后交给它的语音助手。

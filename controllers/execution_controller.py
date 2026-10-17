@@ -2,6 +2,7 @@
 import os
 import re
 import subprocess
+import time
 from datetime import datetime
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import QMessageBox
@@ -24,7 +25,8 @@ class ExecutionWorker(QObject):
     finished = pyqtSignal()
 
     def __init__(self, case_ids, project_model, step_model, device_service, exec_model,
-                 loop_count=1, stop_on_fail=False):
+                 loop_count=1, stop_on_fail=False,
+                 retry_count=0, retry_delay=0, retry_only_timeout=True):
         super().__init__()
         self.case_ids = case_ids
         self.project_model = project_model
@@ -33,6 +35,9 @@ class ExecutionWorker(QObject):
         self.exec_model = exec_model
         self.loop_count = loop_count
         self.stop_on_fail = stop_on_fail
+        self.retry_count = max(0, int(retry_count or 0))
+        self.retry_delay = max(0, int(retry_delay or 0))
+        self.retry_only_timeout = bool(retry_only_timeout)
         self._abort = False
         # 区分「用户点了停止」和「失败停止标志触发」：收尾时只给前者打一条停止日志
         self._aborted_by_user = False
@@ -148,6 +153,12 @@ class ExecutionWorker(QObject):
             self.progress.emit("⏹ 已按你的请求停止本轮执行", "warning")
         self.finished.emit()
 
+    def _should_retry(self, error_msg: str) -> bool:
+        """这个失败要不要重试。仅超时类时：等待/连接超时重试；点不到元素不算（白等）。"""
+        if not self.retry_only_timeout:
+            return True
+        return ('超时' in error_msg) or ('timeout' in error_msg.lower())
+
     def _load_data_rows(self, case_node):
         """读该用例的数据文件 → [{表头: 值}, ...]；没绑数据文件返回 None。"""
         path = (case_node.data_file or "").strip() if case_node else ""
@@ -177,55 +188,71 @@ class ExecutionWorker(QObject):
             for step_idx, step in enumerate(steps, 1):
                 if self._abort:
                     break
-                try:
-                    self.device.perform(step)
-                    # 变量替换是"未定义就原样保留"，所以要在这里点出来：
-                    # 否则用户只会在失败信息里看到一个没被替换的 ${xxx}，很难定位。
-                    missing_vars = getattr(self.device, 'last_var_missing', None)
-                    if missing_vars:
-                        names = "、".join(f"${{{m}}}" for m in missing_vars)
-                        self.progress.emit(
-                            f"  ⚠ 步骤 {step_idx} 有未定义变量：{names}"
-                            f"（已按原样保留，请在「设置 → 变量」里补上）",
-                            "warning")
-                    if step.type == 'assert':
-                        self.progress.emit(f"  ✅ 断言：{step.name} 通过", "success")
-                except Exception as e:
-                    # 截图（如果设备服务支持）
-                    shot_path = None
-                    if hasattr(self.device, 'last_screenshot') and self.device.last_screenshot:
-                        shot_path = self.device.last_screenshot
-                        self.exec_model.screenshot_paths.append(shot_path)
-                        self.device.last_screenshot = None
-
-                    step_info = f"步骤 {step_idx} \"{step.name}\""
-                    error_msg = self._format_error(e)
-                    self.progress.emit(f"  ✗ {step_info} 失败：{error_msg}", "error")
-
-                    # 收集失败上下文（不调 AI，只留数据；AI 由用户按需触发）
+                attempt = 0
+                step_failed = False
+                while True:
+                    attempt += 1
                     try:
-                        self.exec_model.failure_contexts.append(FailureContext(
-                            case_id=case_id,
-                            case_name=display_name,
-                            step_index=step_idx,
-                            step_type=step.type,
-                            step_name=step.name,
-                            step_params=dict(step.params or {}),
-                            prev_steps=[
-                                {"type": s.type, "name": s.name,
-                                 "params": dict(s.params or {})}
-                                for s in steps[max(0, step_idx - 3):step_idx - 1]
-                            ],
-                            error_msg=error_msg,
-                            screenshot_path=shot_path,
-                            loop_index=loop_idx,
-                            timestamp=datetime.now().strftime("%H:%M:%S"),
-                        ))
-                    except Exception:
-                        # 上下文收集失败不能影响主流程
-                        pass
+                        self.device.perform(step)
+                        # 变量替换是"未定义就原样保留"，所以要在这里点出来：
+                        # 否则用户只会在失败信息里看到一个没被替换的 ${xxx}，很难定位。
+                        missing_vars = getattr(self.device, 'last_var_missing', None)
+                        if missing_vars:
+                            names = "、".join(f"${{{m}}}" for m in missing_vars)
+                            self.progress.emit(
+                                f"  ⚠ 步骤 {step_idx} 有未定义变量：{names}"
+                                f"（已按原样保留，请在「设置 → 变量」里补上）",
+                                "warning")
+                        if step.type == 'assert':
+                            self.progress.emit(f"  ✅ 断言：{step.name} 通过", "success")
+                        break
+                    except Exception as e:
+                        error_msg = self._format_error(e)
+                        # 失败重试：仅超时类（或所有失败）才重试；点不到元素重试
+                        # 多半还是点不到，白等，默认不重试。
+                        if attempt <= self.retry_count and self._should_retry(error_msg):
+                            self.progress.emit(
+                                f"  ↻ 步骤 {step_idx} 失败，{self.retry_delay} 秒后第 {attempt} 次重试"
+                                f"（{error_msg[:36]}…）", "warning")
+                            time.sleep(self.retry_delay)
+                            continue
 
-                    # 关键：显式标记失败并终止当前用例，不再执行后续步骤
+                        # 最终失败
+                        shot_path = None
+                        if hasattr(self.device, 'last_screenshot') and self.device.last_screenshot:
+                            shot_path = self.device.last_screenshot
+                            self.exec_model.screenshot_paths.append(shot_path)
+                            self.device.last_screenshot = None
+
+                        step_info = f"步骤 {step_idx} \"{step.name}\""
+                        self.progress.emit(f"  ✗ {step_info} 失败：{error_msg}", "error")
+
+                        # 收集失败上下文（不调 AI，只留数据；AI 由用户按需触发）
+                        try:
+                            self.exec_model.failure_contexts.append(FailureContext(
+                                case_id=case_id,
+                                case_name=display_name,
+                                step_index=step_idx,
+                                step_type=step.type,
+                                step_name=step.name,
+                                step_params=dict(step.params or {}),
+                                prev_steps=[
+                                    {"type": s.type, "name": s.name,
+                                     "params": dict(s.params or {})}
+                                    for s in steps[max(0, step_idx - 3):step_idx - 1]
+                                ],
+                                error_msg=error_msg,
+                                screenshot_path=shot_path,
+                                loop_index=loop_idx,
+                                timestamp=datetime.now().strftime("%H:%M:%S"),
+                            ))
+                        except Exception:
+                            pass
+
+                        step_failed = True
+                        break
+                if step_failed:
+                    # 显式标记失败并终止当前用例，不再执行后续步骤
                     case_failed = True
                     break
         except Exception as e:
@@ -338,7 +365,10 @@ class ExecutionController(QObject):
             self.device,
             self.exec_model,
             loop_count=loop_count,
-            stop_on_fail=stop_on_fail
+            stop_on_fail=stop_on_fail,
+            retry_count=self.exec_view.retry_spin.value(),
+            retry_delay=self.exec_view.retry_delay_spin.value(),
+            retry_only_timeout=(self.exec_view.retry_cond_combo.currentText() == "仅超时类"),
         )
         self.worker.moveToThread(self.thread)
 

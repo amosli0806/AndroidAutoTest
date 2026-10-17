@@ -312,6 +312,14 @@ class ActionCardView(QScrollArea):
             {'type': 'wait', 'title': '等待', 'fields': [
                 {'key': 'duration', 'label': '  秒  数  ：', 'type': 'spin', 'default': 3, 'required': True}
             ]},
+            {'type': 'wait_for', 'title': '显式等待', 'fields': [
+                {'key': 'wait_type', 'label': '等待方式：', 'type': 'select',
+                 'options': ['元素出现', '元素消失', '元素可点击']},
+                {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
+                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath']},
+                {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
+                {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 10}
+            ]},
             {'type': 'assert', 'title': '断言', 'fields': [
                 {'key': 'assert_type', 'label': '断言类型：', 'type': 'select',
                  'options': ['元素存在', '元素不存在', '文本等于', '文本包含']},
@@ -334,7 +342,7 @@ class ActionCardView(QScrollArea):
         # 按用户指定的固定顺序排列（每行两个卡片）
         ordered_types = [
             # 第一行
-            'wait', 'click',
+            'wait', 'wait_for', 'click',
             # 第二行
             'app_mgr', 'input',
             # 第三行
@@ -409,6 +417,7 @@ class ActionCard(QGroupBox):
         'screenshot': '#e91e63',
         'input': '#f39c12',
         'wait': '#95a5a6',
+        'wait_for': '#78909c',
         'assert': '#ff9800',
         'voice': '#00bcd4',
     }

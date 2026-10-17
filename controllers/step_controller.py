@@ -1653,7 +1653,7 @@ class StepController(QObject):
             row_border_hover = "#1976d2"
 
         type_names = {'click': '点击', 'double_click': '双击', 'long_press': '长按',
-                      'input': '输入', 'swipe': '滑动', 'wait': '等待',
+                      'input': '输入', 'swipe': '滑动', 'wait': '等待', 'wait_for': '显式等待',
                       'assert': '断言', 'voice': '语音'}
 
         dlg = QDialog(self.step_view)
