@@ -460,6 +460,8 @@ class ExecuteView(QWidget):
         self.retry_cond_combo = QComboBox()
         self.retry_cond_combo.addItems(["仅超时类", "所有失败"])
         self.retry_cond_combo.setFixedHeight(28)
+        # 下拉面板宽度跟着控件走：太窄会把「仅超时类 / 所有失败」截成「仅… / 所…」
+        self.retry_cond_combo.setMinimumWidth(104)
         self.retry_cond_combo.setToolTip("重试触发条件：仅超时类（等待/连接超时）或所有失败")
 
         # 套件与报告相关控件（图标化，悬停见 tooltip）
