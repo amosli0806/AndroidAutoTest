@@ -470,16 +470,20 @@ class _PhraseRow(QFrame):
         self.style().polish(self)
 
     def apply_theme(self, theme_mode):
-        """按主题刷新两个图标按钮的图标颜色。"""
+        """刷新行内图标颜色。
+
+        估算 / 播放 / 复制 统一用灰阶，**与自动化编辑页「步骤卡片」的复制按钮同色**
+        （2026-10-17 用户要求对齐）；删除仍用红色，避免误点。
+        """
         if theme_mode == ThemeMode.DARK:
-            play_color = "#90caf9"  # 亮蓝：深色底上有足够对比度
-            del_color = "#ff6b6b"  # 亮红
+            icon_color = "#bbbbbb"   # 深色底：中亮灰
+            del_color = "#ff6b6b"    # 亮红
         else:
-            play_color = "#1976d2"  # 主题蓝
-            del_color = "#e74c3c"  # 主题红
-        self.play_btn.setIcon(qta.icon('fa6s.play', color=play_color))
-        self.copy_btn.setIcon(qta.icon('fa6s.copy', color=play_color))
-        self.estimate_btn.setIcon(qta.icon('fa6s.calculator', color=play_color))
+            icon_color = "#555555"   # 浅色底：中深灰
+            del_color = "#e74c3c"    # 主题红
+        self.play_btn.setIcon(qta.icon('fa6s.play', color=icon_color))
+        self.copy_btn.setIcon(qta.icon('fa6s.copy', color=icon_color))
+        self.estimate_btn.setIcon(qta.icon('fa6s.calculator', color=icon_color))
         self.del_btn.setIcon(qta.icon('fa6s.trash-can', color=del_color))
 
 
@@ -556,11 +560,12 @@ class _VerifyRow(QFrame):
         pass   # 检测步骤不发声，无播放高亮
 
     def apply_theme(self, theme_mode):
+        # 复制按钮与播报行、步骤卡片保持一致（灰阶）
         if theme_mode == ThemeMode.DARK:
-            color = "#90caf9"
+            color = "#bbbbbb"
             del_color = "#ff6b6b"
         else:
-            color = "#1976d2"
+            color = "#555555"
             del_color = "#e74c3c"
         self.copy_btn.setIcon(qta.icon('fa6s.copy', color=color))
         self.del_btn.setIcon(qta.icon('fa6s.trash-can', color=del_color))
