@@ -451,6 +451,11 @@ def main():
 
     app = _APP or QApplication(sys.argv)
 
+    # 下拉框 / 输入框 / 数字框禁用原生右键菜单（撤销、复制、粘贴那一套），
+    # 键盘快捷键不受影响；细节见 utils/no_context_menu.py
+    from utils.no_context_menu import install as _install_no_ctx_menu
+    _install_no_ctx_menu(app)
+
     # ---------- 启动封面：必须在做任何耗时的事之前 ----------
     # 自绘封面是启动时用户看到的第一个东西，得在 QApplication 一建好就出现 ——
     # 放到后面（模型初始化 / MainWindow 之后）会有肉眼可感的「点了没反应」。
