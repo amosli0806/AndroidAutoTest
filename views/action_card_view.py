@@ -603,11 +603,18 @@ class ActionCard(QGroupBox):
         for sb in self.findChildren(QDoubleSpinBox):
             sb.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
 
-        # 更新"选择元素"按钮的图标颜色（夜间模式下需要更亮的颜色才看得清）
-        select_icon_color = "#bbbbbb" if theme_mode == ThemeMode.DARK else "#555555"
+        # 三个小图标按钮（选元素 / 截屏取图 / 估算）统一配色，跟主题走：
+        # qta 出的是位图，QSS 改不了颜色，只能在建按钮和应用主题时按主题选色。
+        small_icon_color = "#bbbbbb" if theme_mode == ThemeMode.DARK else "#555555"
+        icon_of = {
+            "ElementSelectBtn": "fa6s.folder-open",
+            "ImageCaptureBtn": "fa6s.camera",
+            "DelayEstimateBtn": "fa6s.calculator",
+        }
         for btn in self.findChildren(QToolButton):
-            if btn.objectName() == "ElementSelectBtn":
-                btn.setIcon(qta.icon('fa6s.folder-open', color=select_icon_color))
+            icon_name = icon_of.get(btn.objectName())
+            if icon_name:
+                btn.setIcon(qta.icon(icon_name, color=small_icon_color))
 
     def set_element_controller(self, controller):
         self.element_controller = controller
@@ -721,7 +728,7 @@ class ActionCard(QGroupBox):
                 if field['key'] == 'locationValue':
                     cap_btn = QToolButton()
                     cap_btn.setObjectName("ImageCaptureBtn")
-                    cap_btn.setIcon(qta.icon('fa6s.camera', color='#1976d2'))
+                    cap_btn.setIcon(qta.icon('fa6s.camera', color='#555555'))
                     cap_btn.setFixedSize(24, 24)
                     cap_btn.setStyleSheet("border: none; background: transparent;")
                     cap_btn.setToolTip("截屏取图：框选设备当前画面的一块区域作为参考图")
@@ -744,11 +751,13 @@ class ActionCard(QGroupBox):
                 cl.setSpacing(4)
                 cl.addWidget(widget)
                 est_btn = QToolButton()
+                est_btn.setObjectName("DelayEstimateBtn")
                 est_btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 est_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-                est_btn.setFixedSize(26, 26)
+                est_btn.setFixedSize(24, 24)
                 est_btn.setAutoRaise(True)
-                est_btn.setIcon(qta.icon('fa6s.calculator', color='#1976d2'))
+                est_btn.setStyleSheet("border: none; background: transparent;")
+                est_btn.setIcon(qta.icon('fa6s.calculator', color='#555555'))
                 est_btn.clicked.connect(self._on_estimate_delay)
                 cl.addWidget(est_btn)
                 widget = container
