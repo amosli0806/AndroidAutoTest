@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from utils.app_paths import data_path
 
 # 定位方式。界面下拉、表格导入校验都认这一份 —— 多处硬编码迟早走样。
-LOC_TYPES = ["资源ID", "坐标", "文本", "描述", "XPath"]
+LOC_TYPES = ["资源ID", "坐标", "文本", "描述", "XPath", "图像"]
 
 
 @dataclass

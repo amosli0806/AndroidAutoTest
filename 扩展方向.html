@@ -203,9 +203,6 @@
         <div class="gap-item"><span class="tag plan">📋</span><div><b>无关键字复用</b> — 「登录」「搜索」等常用组合无法封装复用。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无图像识别定位</b> — 对游戏 / 视频 / 自绘控件无能为力。</div></div>
-      </div>
-      <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>套件能力不完整</b> — 无套件级报告、无链式执行（A→B）。</div></div>
       </div>
       <div class="card">
@@ -265,17 +262,10 @@
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段三 · 改动较大，需先设计（目标 2~3 个版本周期）</h3>
 
-    <div class="card">
-      <h3>5. 执行健壮性增强 <span class="tag plan">📋 规划中</span></h3>
-      <ul>
-        <li>步骤级失败重试（次数 + 间隔 + 触发条件可配）</li>
-        <li>显式等待（等元素出现 / 消失 / 可点击，替代固定 sleep）</li>
-      </ul>
-      <div class="example">💡 <b>打个比方：</b>失败重试像「网不好就重发消息」——点一下没反应，自动再试两次；显式等待像「等人都到齐了再开饭」，而不是「干等 5 分钟」——页面一加载好就继续，又稳又省时间。</div>
     </div>
 
     <div class="card">
-      <h3>6. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
+      <h3>5. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>前后置脚本（Python 钩子，处理签名 / 加解密 / 数据提取）</li>
         <li>链路场景编排（接口串联，上一步响应作为下一步入参）</li>
@@ -283,10 +273,6 @@
       <div class="example">💡 <b>打个比方：</b>前后置脚本像「做饭前的备菜 + 上桌前的摆盘」——请求前先签名、加密，响应后把数据提炼出来；链路编排像「接力赛」——上一个接口的返回，直接变成下一个接口的入参。</div>
     </div>
 
-    <div class="card">
-      <h3>7. 图像识别定位 <span class="tag plan">📋 规划中</span></h3>
-      <p>新增「图像」定位方式（模板匹配 + 相似度阈值），元素库可上传参考图，执行时截图比对。</p>
-      <div class="example">💡 <b>打个比方：</b>像「人脸识别解锁」或玩「找不同」——游戏里的按钮是「画」出来的（不是代码控件，看不到元素树），靠截图比对把它认出来，从而覆盖游戏、视频、自绘界面。</div>
     </div>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段四 · 改动大 / 影响面广（需专门排期）</h3>
@@ -296,7 +282,7 @@
     </div>
 
     <div class="card">
-      <h3>8. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
+      <h3>6. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把唤醒词、语速等提升为可参数化变量，用例内可覆盖</li>
       </ul>
@@ -304,13 +290,13 @@
     </div>
 
     <div class="card">
-      <h3>9. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
+      <h3>7. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
       <div class="example">💡 <b>打个比方：</b>像手机「快捷指令 / 宏」——把「打开 App → 输账号 → 输密码 → 点登录」这 5 步打包成一个「登录」关键字，以后任何用例点一下就好，不用重复拖 5 个步骤。</div>
     </div>
 
     <div class="card">
-      <h3>10. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <h3>8. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把堆转储 / 抓包 / 截图<b>接进监控会话</b>——产物归会话、报告出「诊断产物」、曲线画事件标记（见第四章）</li>
         <li>抓包防呆与保护补全：未 root 前置置灰并说明、设备剩余空间告警、超限改为分段存盘</li>
@@ -335,9 +321,7 @@
           <tr><td>阶段一</td><td>步骤模板</td><td class="stars">⭐⭐⭐</td><td>「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
           <tr><td>阶段二</td><td>语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；结果校验与用例互转稍大</td></tr>
           <tr><td>阶段二</td><td>版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
-          <tr><td>阶段三</td><td>执行健壮性增强</td><td class="stars">⭐⭐</td><td>价值高，但要动核心执行循环与步骤模型，影响所有用例的执行路径</td></tr>
           <tr><td>阶段三</td><td>接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
-          <tr><td>阶段三</td><td>图像识别定位</td><td class="stars">⭐⭐</td><td>纯新增定位方式、不改现有行为；但要引入 OpenCV，工作量较大</td></tr>
           <tr><td>阶段四</td><td>变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>变量地基已落地（v1，语音文案已可用 <code>${变量}</code>）；剩下把唤醒词 / 语速等语音参数也做成变量</td></tr>
           <tr><td>阶段四</td><td>关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
           <tr><td>阶段四</td><td>性能检测补全</td><td class="stars">⭐</td><td>要动会话模型与报告结构（产物归档、事件时间线）</td></tr>

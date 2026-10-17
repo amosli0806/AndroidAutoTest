@@ -235,19 +235,19 @@ class ActionCardView(QScrollArea):
         configs = [
             {'type': 'click', 'title': '点击', 'fields': [
                 {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
-                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath']},
+                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath', '图像']},
                 {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
                 {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 10}
             ]},
             {'type': 'double_click', 'title': '双击', 'fields': [
                 {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
-                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath']},
+                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath', '图像']},
                 {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
                 {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 10}
             ]},
             {'type': 'long_press', 'title': '长按', 'fields': [
                 {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
-                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath']},
+                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath', '图像']},
                 {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
                 {'key': 'longPressMs', 'label': '长按毫秒：', 'type': 'spin', 'default': 1000},
                 {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 10}
@@ -304,7 +304,7 @@ class ActionCardView(QScrollArea):
             ]},
             {'type': 'input', 'title': '输入', 'fields': [
                 {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
-                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath']},
+                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath', '图像']},
                 {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
                 {'key': 'text', 'label': '输入文字：', 'type': 'line', 'required': True},
                 {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 10}
@@ -316,7 +316,7 @@ class ActionCardView(QScrollArea):
                 {'key': 'wait_type', 'label': '等待方式：', 'type': 'select',
                  'options': ['元素出现', '元素消失', '元素可点击']},
                 {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
-                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath']},
+                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath', '图像']},
                 {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
                 {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 10}
             ]},
@@ -324,7 +324,7 @@ class ActionCardView(QScrollArea):
                 {'key': 'assert_type', 'label': '断言类型：', 'type': 'select',
                  'options': ['元素存在', '元素不存在', '文本等于', '文本包含']},
                 {'key': 'locationType', 'label': '定位方式：', 'type': 'select',
-                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath']},
+                 'options': ['资源ID', '坐标', '文本', '描述', 'XPath', '图像']},
                 {'key': 'locationValue', 'label': '定 位 值 ：', 'type': 'line', 'required': True},
                 {'key': 'expected_value', 'label': '预 期 值 ：', 'type': 'line'},
                 {'key': 'timeout', 'label': '超时秒数：', 'type': 'spin', 'default': 5}

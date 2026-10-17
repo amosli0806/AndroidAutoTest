@@ -420,53 +420,83 @@ class DeviceService:
 
         raise ValueError(f"等待元素出现超时：{loc_type} = {loc_value}")
 
-    def _perform_click(self, params):
+    def _capture_screenshot(self) -> str:
+        """截图到临时文件（图像匹配用），返回路径；失败抛异常。"""
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".png", prefix="imgmatch_")
+        os.close(fd)
+        try:
+            self.device.screenshot(path)
+        except Exception as e:
+            raise ValueError(f"截图失败：{e}")
+        return path
+
+    def _image_center(self, params):
+        """图像定位：截图 → 模板匹配 → 中心坐标。找不到抛异常。"""
+        from utils.image_match import match, ImageNotFoundError
+        template = params.get('locationValue', '')
+        threshold = params.get('imageThreshold', 0.8)
+        if not template or not os.path.isfile(template):
+            raise ValueError(f"参考图不存在：{template}")
+        shot = self._capture_screenshot()
+        try:
+            x, y, _ = match(shot, template, threshold=threshold)
+        except ImageNotFoundError as e:
+            raise ValueError(f"图像未匹配到：{e}") from e
+        finally:
+            try:
+                os.remove(shot)
+            except OSError:
+                pass
+        return x, y
+
+    def _resolve_click_target(self, params):
+        """返回点击目标：True 表示坐标 (x, y)，False 表示 uiautomator2 对象。
+        图像定位走截图匹配 → 坐标，这样点击族动作就不用各自判断。"""
         loc_type = params.get('locationType')
-        loc_value = params.get('locationValue')
         if loc_type == '坐标':
             x, y = self._resolve_coord(params)
-            self.device.click(x, y)
+            return True, x, y
+        if loc_type == '图像':
+            x, y = self._image_center(params)
+            return True, x, y
+        return False, self._resolve_ui_object(params), None
+
+    def _perform_click(self, params):
+        is_coord, target, y = self._resolve_click_target(params)
+        if is_coord:
+            self.device.click(target, y)
         else:
-            obj = self._resolve_ui_object(params)
-            obj.click()
+            target.click()
 
     def _perform_double_click(self, params):
-        loc_type = params.get('locationType')
-        loc_value = params.get('locationValue')
-        if loc_type == '坐标':
-            x, y = self._resolve_coord(params)
-            self.device.click(x, y)
+        is_coord, target, y = self._resolve_click_target(params)
+        if is_coord:
+            self.device.click(target, y)
             time.sleep(0.05)
-            self.device.click(x, y)
+            self.device.click(target, y)
         else:
-            obj = self._resolve_ui_object(params)
-            obj.click()
+            target.click()
             time.sleep(0.05)
-            obj.click()
+            target.click()
 
     def _perform_long_press(self, params):
-        loc_type = params.get('locationType')
-        loc_value = params.get('locationValue')
         ms = params.get('longPressMs', 1000)
-        if loc_type == '坐标':
-            x, y = self._resolve_coord(params)
-            self.device.long_click(x, y, duration=ms / 1000)
+        is_coord, target, y = self._resolve_click_target(params)
+        if is_coord:
+            self.device.long_click(target, y, duration=ms / 1000)
         else:
-            obj = self._resolve_ui_object(params)
-            obj.long_click(duration=ms / 1000)
+            target.long_click(duration=ms / 1000)
 
     def _perform_input(self, params):
-        loc_type = params.get('locationType')
-        loc_value = params.get('locationValue')
         text = params.get('text', '')
-        if loc_type == '坐标':
-            x, y = self._resolve_coord(params)
-            self.device.click(x, y)
+        is_coord, target, y = self._resolve_click_target(params)
+        if is_coord:
+            self.device.click(target, y)
             time.sleep(0.5)
             self.device.send_keys(text)
         else:
-            obj = self._resolve_ui_object(params)
-            obj.set_text(text)
+            target.set_text(text)
 
     def _perform_wait(self, params):
         duration = params.get('duration', 4)
@@ -486,6 +516,24 @@ class DeviceService:
             timeout = 10
         if loc_type == '坐标':
             raise ValueError("显式等待不支持坐标定位，请用资源ID、文本、描述或XPath")
+
+        if loc_type == '图像':
+            # 图像显式等待只支持「元素出现 / 元素消失」（图像没有"可点击"概念）
+            if wait_type not in ('元素出现', '元素消失'):
+                raise ValueError("图像定位只支持「元素出现 / 元素消失」显式等待")
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                try:
+                    self._image_center(params)
+                    found = True
+                except Exception:
+                    found = False
+                if wait_type == '元素出现' and found:
+                    return
+                if wait_type == '元素消失' and not found:
+                    return
+                time.sleep(1.0)   # 截图较慢，图像轮询间隔放宽到 1s
+            raise RuntimeError(f"等待超时（{wait_type}，图像='{loc_value}'，{timeout} 秒）")
 
         obj = self._get_ui_object(loc_type, loc_value)
         if obj is None:
@@ -736,6 +784,34 @@ class DeviceService:
 
         if loc_type == '坐标':
             raise ValueError("坐标定位不支持断言，请使用资源ID、文本、描述或XPath")
+
+        if loc_type == '图像':
+            # 图像断言只支持「存在 / 不存在」：截图匹配判定
+            if assert_type not in ('元素存在', '元素不存在'):
+                raise ValueError("图像定位只支持「元素存在 / 元素不存在」断言")
+            shot_dir = "screenshots"
+            os.makedirs(shot_dir, exist_ok=True)
+
+            def img_shot():
+                fp = os.path.join(shot_dir, f"assert_fail_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]}.png")
+                try:
+                    self.device.screenshot(fp)
+                    return fp
+                except Exception:
+                    return None
+
+            try:
+                self._image_center(params)
+                found = True
+            except Exception:
+                found = False
+            if assert_type == '元素存在' and not found:
+                p = img_shot()
+                raise AssertionError(f"断言失败：图像未匹配到（{loc_value}）" + (f"\n截图已保存：{p}" if p else ""))
+            if assert_type == '元素不存在' and found:
+                p = img_shot()
+                raise AssertionError(f"断言失败：图像不应存在，但匹配到了（{loc_value}）" + (f"\n截图已保存：{p}" if p else ""))
+            return
 
         obj = self._get_ui_object(loc_type, loc_value)
         if obj is None:

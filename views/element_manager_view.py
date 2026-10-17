@@ -14,6 +14,7 @@ from utils.toast import show_toast
 from utils.dialogs import ConfirmDeleteDialog, ErrorDialog, WarningDialog
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
+from views.dialogs.image_crop_dialog import ImageCropDialog
 
 
 class ElementManagerView(QWidget):
@@ -397,7 +398,7 @@ class ElementManagerView(QWidget):
         show_toast(message=f"成功删除 {deleted} 个元素")
 
     def _on_add(self):
-        dialog = ElementEditDialog(self)
+        dialog = ElementEditDialog(self, device_service=self.device_service)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
             elem = Element(
@@ -420,7 +421,7 @@ class ElementManagerView(QWidget):
         elem = self.element_model.get_element_by_id(elem_ids[0])
         if not elem:
             return
-        dialog = ElementEditDialog(self, elem)
+        dialog = ElementEditDialog(self, elem, device_service=self.device_service)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             data = dialog.get_data()
             self.element_model.update_element(
@@ -615,10 +616,11 @@ class ElementManagerView(QWidget):
 class ElementEditDialog(QDialog):
     """美观的新增/编辑元素对话框"""
 
-    def __init__(self, parent=None, element: Element = None):
+    def __init__(self, parent=None, element: Element = None, device_service=None):
         super().__init__(parent)
         self.setObjectName("ElementEditDialog")
         self.element = element
+        self.device_service = device_service
         self.setWindowTitle("编辑元素" if element else "新增元素")
         self.setModal(True)
         self.setFixedSize(480, 420)
@@ -687,9 +689,21 @@ class ElementEditDialog(QDialog):
         prepare_combo_view(self.loc_type_combo)
         self.loc_type_combo.addItems(LOC_TYPES)
         self.loc_type_combo.setObjectName("locTypeCombo")
+        self.loc_type_combo.currentTextChanged.connect(self._on_loc_type_changed)
 
         self.loc_value_edit = QLineEdit()
         self.loc_value_edit.setPlaceholderText("例如：com.example.app:id/btn")
+
+        # 定位方式=图像 时，定位值旁边给个「截屏取图」入口
+        self.capture_btn = QPushButton("截屏取图…")
+        self.capture_btn.setObjectName("browseBtn")
+        self.capture_btn.setFixedSize(100, 30)
+        self.capture_btn.setVisible(False)
+        self.capture_btn.clicked.connect(self._on_capture_image)
+        loc_row = QHBoxLayout()
+        loc_row.setSpacing(8)
+        loc_row.addWidget(self.loc_value_edit, 1)
+        loc_row.addWidget(self.capture_btn)
 
         self.remark_edit = QLineEdit()
         self.remark_edit.setPlaceholderText("可选备注信息")
@@ -698,7 +712,7 @@ class ElementEditDialog(QDialog):
         form_layout.addRow("所属模块:", self.module_edit)
         form_layout.addRow("元素名称:", self.name_edit)
         form_layout.addRow("定位方式:", self.loc_type_combo)
-        form_layout.addRow("定位值:", self.loc_value_edit)
+        form_layout.addRow("定位值:", loc_row)
         form_layout.addRow("备注:", self.remark_edit)
 
         container_layout.addLayout(form_layout)
@@ -738,6 +752,21 @@ class ElementEditDialog(QDialog):
             self.loc_type_combo.setCurrentIndex(index)
         self.loc_value_edit.setText(element.loc_value)
         self.remark_edit.setText(element.remark)
+
+    def _on_loc_type_changed(self, text):
+        self.capture_btn.setVisible(text == "图像")
+
+    def _on_capture_image(self):
+        if not self.device_service or not self.device_service.device:
+            WarningDialog.show_warning(self, "无法截屏", "请先在顶部工具栏连接设备")
+            return
+        try:
+            dlg = ImageCropDialog(self.device_service, self)
+        except Exception as e:
+            WarningDialog.show_warning(self, "截屏失败", str(e))
+            return
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_path:
+            self.loc_value_edit.setText(dlg.result_path)
 
     def get_data(self):
         return {

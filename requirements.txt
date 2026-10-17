@@ -64,3 +64,4 @@ weditor==0.7.3
 wrapt==1.17.3
 yarl==1.25.1
 zope.interface==8.5
+opencv-python-headless
