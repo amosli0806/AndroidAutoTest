@@ -119,22 +119,28 @@ class LogsView(QWidget):
         # 留出边距让圆角边框可见
         layout.setContentsMargins(8, 8, 8, 8)
 
-        stats_layout = QHBoxLayout()
-        stats_layout.addStretch()
+        # 顶栏一行搞定：左「小圆环 + 三个数字」，右「类型筛选 / 搜索 / AI 分析」。
+        # 日志面板已挪到页面底部，原来竖着堆（160px 圆环 + 独立筛选行）会把日志区
+        # 挤到只剩 52px，所以这里压成一行。
+        header_row = QHBoxLayout()
+        header_row.setSpacing(10)
+
         self.donut = DonutWidget()
-        stats_layout.addWidget(self.donut)
+        header_row.addWidget(self.donut)
 
         legend_layout = QVBoxLayout()
+        legend_layout.setSpacing(2)
         self.pass_label = QLabel("通过: 0")
         self.fail_label = QLabel("失败: 0")
         self.rate_label = QLabel("通过率: 0%")
-
+        legend_layout.addStretch()
         legend_layout.addWidget(self.pass_label)
         legend_layout.addWidget(self.fail_label)
         legend_layout.addWidget(self.rate_label)
-        stats_layout.addLayout(legend_layout)
-        stats_layout.addStretch()
-        layout.addLayout(stats_layout)
+        legend_layout.addStretch()
+        header_row.addLayout(legend_layout)
+
+        header_row.addSpacing(10)
 
         # AI 分析按钮 + 日志过滤/搜索：同一行，AI 按钮常驻
         ai_row = QHBoxLayout()
@@ -159,11 +165,14 @@ class LogsView(QWidget):
         self.ai_btn.setMinimumWidth(120)
         self.ai_btn.clicked.connect(self._on_ai_analyze)
         ai_row.addWidget(self.ai_btn)
-        layout.addLayout(ai_row)
+        header_row.addLayout(ai_row, 1)
+        layout.addLayout(header_row)
+
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setFont(QFont("Consolas", 10))
-        layout.addWidget(self.log_text)
+        self.log_text.setMinimumHeight(80)      # 别让分割条把日志区压没
+        layout.addWidget(self.log_text, 1)
 
     def set_model(self, model: ExecutionModel):
         self.model = model
@@ -355,7 +364,8 @@ class DonutWidget(QWidget):
         self.pass_count = 0
         self.fail_count = 0
         self._text_color = QColor(50, 50, 50)  # 默认亮色
-        self.setFixedSize(160, 160)
+        # 日志面板挪到底部后是横条，圆环要小一号；绘制按控件尺寸算，改大小不用改画法
+        self.setFixedSize(78, 78)
 
     def set_text_color(self, color):
         self._text_color = QColor(color)
@@ -369,23 +379,27 @@ class DonutWidget(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = QRectF(20, 20, 120, 120)
+        # 按控件尺寸算：原来写死 160px 的坐标，放进底部横条后要能跟着缩放
+        side = min(self.width(), self.height())
+        margin = side * 0.125
+        rect = QRectF(margin, margin, side - 2 * margin, side - 2 * margin)
+        pen_w = max(3.0, side * 0.1)
         total = self.pass_count + self.fail_count
 
         # 灰色背景圆环
-        painter.setPen(QPen(QColor(220, 220, 220), 16))
+        painter.setPen(QPen(QColor(220, 220, 220), pen_w))
         painter.drawEllipse(rect)
 
         if total > 0:
             # 通过 (绿色)
             start_angle = -90 * 16
             pass_angle = int(self.pass_count / total * 360 * 16)
-            painter.setPen(QPen(QColor(39, 174, 96), 16))
+            painter.setPen(QPen(QColor(39, 174, 96), pen_w))
             painter.drawArc(rect, start_angle, pass_angle)
 
             # 失败 (红色)
             fail_angle = int(self.fail_count / total * 360 * 16)
-            painter.setPen(QPen(QColor(231, 76, 60), 16))
+            painter.setPen(QPen(QColor(231, 76, 60), pen_w))
             painter.drawArc(rect, start_angle + pass_angle, fail_angle)
 
             rate = round(self.pass_count / total * 100)
@@ -395,5 +409,5 @@ class DonutWidget(QWidget):
 
         # 中心文字颜色跟随主题
         painter.setPen(QPen(self._text_color))
-        painter.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        painter.setFont(QFont("Arial", max(8, int(side * 0.16)), QFont.Weight.Bold))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)

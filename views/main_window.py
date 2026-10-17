@@ -3106,12 +3106,13 @@ class MainWindow(QMainWindow):
         container = QWidget()
         container.setObjectName("ExecutePageContainer")
         container.setStyleSheet("")
-        layout = QHBoxLayout(container)
+        # 整体上下两段：上半「执行区 | 定时计划」左右分栏，下半整宽「日志」
+        layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setStyleSheet("""
+        # 分割条透明（横 / 纵共用；handle 的 width/height 各管一个方向）
+        splitter_qss = """
             QSplitter {
                 background: transparent;
                 border: none;
@@ -3120,19 +3121,13 @@ class MainWindow(QMainWindow):
                 background: transparent;
                 border: none;
                 width: 4px;
+                height: 4px;
             }
-            QSplitter::handle:hover {
-                background: transparent;
-            }
+            QSplitter::handle:hover,
             QSplitter::handle:pressed {
                 background: transparent;
             }
-        """)
-        splitter.setHandleWidth(4)
-        splitter.setChildrenCollapsible(False)
-
-        splitter.addWidget(logs_view)
-        splitter.addWidget(execute_view)
+        """
 
         task_frame = QFrame()
         task_frame.setObjectName("TaskFrame")
@@ -3150,14 +3145,29 @@ class MainWindow(QMainWindow):
             placeholder.setStyleSheet("color: #999; background: transparent;")
             task_frame_layout.addWidget(placeholder)
 
-        splitter.addWidget(task_frame)
+        # 上半：左「执行区」右「定时计划」
+        top_splitter = QSplitter(Qt.Orientation.Horizontal)
+        top_splitter.setStyleSheet(splitter_qss)
+        top_splitter.setHandleWidth(4)
+        top_splitter.setChildrenCollapsible(False)
+        top_splitter.addWidget(execute_view)
+        top_splitter.addWidget(task_frame)
+        top_splitter.setStretchFactor(0, 2)
+        top_splitter.setStretchFactor(1, 1)
+        top_splitter.setSizes([800, 400])
 
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 1)
-        splitter.setChildrenCollapsible(False)
+        # 下半：整宽日志
+        page_splitter = QSplitter(Qt.Orientation.Vertical)
+        page_splitter.setStyleSheet(splitter_qss)
+        page_splitter.setHandleWidth(4)
+        page_splitter.setChildrenCollapsible(False)
+        page_splitter.addWidget(top_splitter)
+        page_splitter.addWidget(logs_view)
+        page_splitter.setStretchFactor(0, 3)
+        page_splitter.setStretchFactor(1, 1)
+        page_splitter.setSizes([560, 300])   # 约 65:35：日志区默认能看到 8~9 行
 
-        layout.addWidget(splitter)
+        layout.addWidget(page_splitter)
         old = self.stacked_widget.widget(3)
         self.stacked_widget.removeWidget(old)
         old.deleteLater()
