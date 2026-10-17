@@ -695,7 +695,7 @@ class ElementEditDialog(QDialog):
         self.loc_value_edit.setPlaceholderText("例如：com.example.app:id/btn")
 
         # 定位方式=图像 时，定位值旁边给个「截屏取图」入口
-        self.capture_btn = QPushButton("截屏取图…")
+        self.capture_btn = QPushButton("截屏取图")
         self.capture_btn.setObjectName("browseBtn")
         self.capture_btn.setFixedSize(100, 30)
         self.capture_btn.setVisible(False)
