@@ -119,37 +119,16 @@ class LogsView(QWidget):
         # 留出边距让圆角边框可见
         layout.setContentsMargins(8, 8, 8, 8)
 
-        # 顶栏一行搞定：左「小圆环 + 三个数字」，右「类型筛选 / 搜索 / AI 分析」。
-        # 日志面板已挪到页面底部，原来竖着堆（160px 圆环 + 独立筛选行）会把日志区
-        # 挤到只剩 52px，所以这里压成一行。
-        header_row = QHBoxLayout()
-        header_row.setSpacing(10)
+        # 顶部栏：类型筛选 / 搜索 / AI 分析（整宽，压在统计与日志之上）
+        top_bar = QHBoxLayout()
+        top_bar.setSpacing(8)
 
-        self.donut = DonutWidget()
-        header_row.addWidget(self.donut)
-
-        legend_layout = QVBoxLayout()
-        legend_layout.setSpacing(2)
-        self.pass_label = QLabel("通过: 0")
-        self.fail_label = QLabel("失败: 0")
-        self.rate_label = QLabel("通过率: 0%")
-        legend_layout.addStretch()
-        legend_layout.addWidget(self.pass_label)
-        legend_layout.addWidget(self.fail_label)
-        legend_layout.addWidget(self.rate_label)
-        legend_layout.addStretch()
-        header_row.addLayout(legend_layout)
-
-        header_row.addSpacing(10)
-
-        # AI 分析按钮 + 日志过滤/搜索：同一行，AI 按钮常驻
-        ai_row = QHBoxLayout()
         self.level_combo = QComboBox()
         self.level_combo.addItems(["全部类型", "错误", "成功", "警告", "信息"])
         self.level_combo.setFixedHeight(28)
         self.level_combo.setToolTip("按日志类型快速筛选")
         self.level_combo.currentIndexChanged.connect(self._on_filter_changed)
-        ai_row.addWidget(self.level_combo)
+        top_bar.addWidget(self.level_combo)
 
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("🔍 搜索日志内容…")
@@ -157,22 +136,53 @@ class LogsView(QWidget):
         self.search_edit.setFixedHeight(28)
         self.search_edit.setToolTip("按关键字过滤日志，命中内容高亮")
         self.search_edit.textChanged.connect(self._on_filter_changed)
-        ai_row.addWidget(self.search_edit, 1)
+        top_bar.addWidget(self.search_edit, 1)
 
         self.ai_btn = QPushButton("✨ AI 分析失败")
         self.ai_btn.setObjectName("aiAnalyzeBtn")
         self.ai_btn.setFixedHeight(28)
         self.ai_btn.setMinimumWidth(120)
         self.ai_btn.clicked.connect(self._on_ai_analyze)
-        ai_row.addWidget(self.ai_btn)
-        header_row.addLayout(ai_row, 1)
-        layout.addLayout(header_row)
+        top_bar.addWidget(self.ai_btn)
+        layout.addLayout(top_bar)
+
+        # 下面左右分：左侧统计（圆环 + 通过/失败/通过率），右侧日志正文
+        body_row = QHBoxLayout()
+        body_row.setSpacing(10)
+
+        stats_col = QWidget()
+        stats_col.setObjectName("LogStatsCol")
+        stats_col_layout = QHBoxLayout(stats_col)
+        stats_col_layout.setContentsMargins(0, 0, 0, 0)
+        stats_col_layout.setSpacing(6)
+
+        self.donut = DonutWidget()
+        stats_col_layout.addWidget(self.donut, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        # 三个数字放在圆环右边（竖排），统计块高度就只由圆环决定 ——
+        # 这样日志条还能被拖得更薄，不至于被统计区卡住。
+        # 用独立 widget + AlignVCenter 包一层，数字块和圆环才能垂直对齐
+        # （直接 addLayout + stretch 会把数字顶到上面，与圆环错行）
+        legend_widget = QWidget()
+        legend_layout = QVBoxLayout(legend_widget)
+        legend_layout.setContentsMargins(0, 0, 0, 0)
+        legend_layout.setSpacing(2)
+        self.pass_label = QLabel("通过: 0")
+        self.fail_label = QLabel("失败: 0")
+        self.rate_label = QLabel("通过率: 0%")
+        for lbl in (self.pass_label, self.fail_label, self.rate_label):
+            lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            legend_layout.addWidget(lbl)
+        stats_col_layout.addWidget(legend_widget, 0, Qt.AlignmentFlag.AlignVCenter)
+        body_row.addWidget(stats_col, 0)
 
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setFont(QFont("Consolas", 10))
         self.log_text.setMinimumHeight(80)      # 别让分割条把日志区压没
-        layout.addWidget(self.log_text, 1)
+        body_row.addWidget(self.log_text, 1)
+
+        layout.addLayout(body_row, 1)
 
     def set_model(self, model: ExecutionModel):
         self.model = model
