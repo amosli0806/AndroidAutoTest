@@ -7,12 +7,15 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLineEdit, QPushButton, QFileDialog, QSlider, QLabel,
     QComboBox, QWidget, QStackedWidget, QTreeWidget, QTreeWidgetItem,
-    QFrame, QScrollArea, QKeySequenceEdit, QCheckBox, QToolButton
+    QFrame, QScrollArea, QKeySequenceEdit, QCheckBox, QToolButton,
+    QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QKeySequence, QIcon, QPixmap, QImageReader
 
+from models.var_model import VarModel, name_error
 from utils import tree_state
+from utils import vars as var_utils
 
 
 # 快捷键 key -> 中文名映射
@@ -61,7 +64,7 @@ _SHORTCUT_LABELS = {
 }
 import qtawesome as qta
 from utils.settings import Settings, THEME_MODE_SYSTEM, THEME_MODE_LIGHT, THEME_MODE_DARK
-from utils.dialogs import InputDialog, QuestionDialog, ConfirmDeleteDialog
+from utils.dialogs import InputDialog, QuestionDialog, ConfirmDeleteDialog, WarningDialog
 from utils.toast import show_toast
 
 logger = logging.getLogger(__name__)
@@ -290,6 +293,17 @@ class SettingsDialog(QDialog):
         data_item.setData(0, Qt.ItemDataRole.UserRole, idx)
         data_root.addChild(data_item)
         self.content_stack.addWidget(self._build_data_page())
+        idx += 1
+
+        # ========== 分类：变量 ==========
+        var_root = QTreeWidgetItem(["变量"])
+        var_root.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.nav_tree.addTopLevelItem(var_root)
+
+        var_item = QTreeWidgetItem(["全局变量"])
+        var_item.setData(0, Qt.ItemDataRole.UserRole, idx)
+        var_root.addChild(var_item)
+        self.content_stack.addWidget(self._build_vars_page())
         idx += 1
 
         # ========== 分类：通知 ==========
@@ -1216,6 +1230,165 @@ class SettingsDialog(QDialog):
         else:
             self.cleanup_result.setText(f"当前缓存 {self._fmt_size(size)}")
 
+    # ------------------------------------------------------------------
+    # 全局变量页
+    # ------------------------------------------------------------------
+    def _build_vars_page(self):
+        """全局变量表：步骤参数里用 ${变量} 引用（语法见 utils/vars.py）。
+
+        交互约定：表格里改完就落盘（与设置里其它项"改完即生效"一致）。
+        改名走模型层的 rename（值 / 说明保留），并会做合法性校验。
+        """
+        self.var_model = VarModel()
+        self._var_loading = False          # 填表期间屏蔽 itemChanged，避免自我触发
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(12)
+
+        title = QLabel("全局变量")
+        title.setObjectName("SettingsPageTitle")
+        layout.addWidget(title)
+
+        subtitle = QLabel("在步骤参数里写 ${变量名} 就会替换成这里的值 —— "
+                          "换设备、换账号只改变量值，不用去改每一处参数。")
+        subtitle.setObjectName("SettingsPageSubtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        builtin = QLabel("内置变量（只读）：${serial} 设备序列号 · ${date} 年-月-日 · "
+                         "${time} 时:分:秒 · ${timestamp} 20261017_113108")
+        builtin.setObjectName("SettingsPageSubtitle")
+        builtin.setWordWrap(True)
+        layout.addWidget(builtin)
+
+        hint = QLabel("未定义的变量会原样保留，执行时在「虫师日志」里提示；"
+                      "想留兜底值可写 ${变量名:默认值}。改了名字之后，"
+                      "步骤里引用旧名的地方需要自己改过来。")
+        hint.setObjectName("SettingsPageSubtitle")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.var_table = QTableWidget(0, 3)
+        self.var_table.setObjectName("VarTable")
+        self.var_table.setHorizontalHeaderLabels(["变量名", "值", "说明"])
+        header = self.var_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        self.var_table.setColumnWidth(0, 170)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.var_table.verticalHeader().setVisible(False)
+        self.var_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.var_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.var_table.itemChanged.connect(self._on_var_item_changed)
+        layout.addWidget(self.var_table, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        add_btn = QPushButton("新增变量")
+        add_btn.setObjectName("okBtn")
+        add_btn.setMinimumWidth(110)
+        add_btn.clicked.connect(self._on_add_var)
+        btn_row.addWidget(add_btn)
+        del_btn = QPushButton("删除选中")
+        del_btn.setObjectName("dangerBtn")
+        del_btn.setMinimumWidth(110)
+        del_btn.clicked.connect(self._on_del_var)
+        btn_row.addWidget(del_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        self._reload_var_table()
+        return page
+
+    def _reload_var_table(self):
+        self._var_loading = True
+        try:
+            self.var_table.setRowCount(0)
+            for v in self.var_model.get_all():
+                self._append_var_row(v.name, v.value, v.note)
+        finally:
+            self._var_loading = False
+
+    def _append_var_row(self, name: str, value: str, note: str):
+        row = self.var_table.rowCount()
+        self.var_table.insertRow(row)
+        for col, text in enumerate((name, value, note)):
+            item = QTableWidgetItem(text)
+            if col == 0:
+                # 记住"原来的名字"：改名时要用它去 match 模型（用当前 text 会找不到）
+                item.setData(Qt.ItemDataRole.UserRole, name)
+            self.var_table.setItem(row, col, item)
+
+    def _on_add_var(self):
+        existing = {v.name for v in self.var_model.get_all()}
+        n = 1
+        while f"var_{n}" in existing:
+            n += 1
+        name = f"var_{n}"
+        self.var_model.upsert(name, "", "")
+        self._reload_var_table()
+        names = [v.name for v in self.var_model.get_all()]
+        if name in names:
+            row = names.index(name)
+            self.var_table.setCurrentCell(row, 1)
+            # 直接进编辑态，省一次双击
+            self.var_table.editItem(self.var_table.item(row, 1))
+
+    def _on_del_var(self):
+        row = self.var_table.currentRow()
+        if row < 0:
+            return
+        item = self.var_table.item(row, 0)
+        name = item.data(Qt.ItemDataRole.UserRole) if item else ""
+        if not name:
+            return
+        if not ConfirmDeleteDialog.ask(
+                self, "删除变量", f"删除变量「{name}」？",
+                "步骤里引用 ${%s} 的地方会变成未定义（执行时日志会提示）。" % name):
+            return
+        self.var_model.remove(name)
+        var_utils.invalidate_cache()
+        self._reload_var_table()
+
+    def _on_var_item_changed(self, item: QTableWidgetItem):
+        """任一单元格改完就落盘；改名走 rename（值 / 说明保留）并做校验。"""
+        if self._var_loading:
+            return
+        row = item.row()
+        name_item = self.var_table.item(row, 0)
+        if name_item is None:
+            return
+        value_item = self.var_table.item(row, 1)
+        note_item = self.var_table.item(row, 2)
+        old_name = str(name_item.data(Qt.ItemDataRole.UserRole) or "")
+        new_name = name_item.text().strip()
+        value = value_item.text() if value_item else ""
+        note = note_item.text() if note_item else ""
+
+        if item.column() == 0 and new_name != old_name:
+            err = name_error(new_name)
+            if err:
+                WarningDialog.show_warning(self, "变量名不合法", err)
+                self._revert_var_name(name_item, old_name)
+                return
+            if not self.var_model.rename(old_name, new_name):
+                WarningDialog.show_warning(
+                    self, "变量名重复", f"已经有一个叫「{new_name}」的变量了")
+                self._revert_var_name(name_item, old_name)
+                return
+            name_item.setData(Qt.ItemDataRole.UserRole, new_name)
+        else:
+            self.var_model.upsert(old_name or new_name, value, note)
+        var_utils.invalidate_cache()
+
+    def _revert_var_name(self, name_item: QTableWidgetItem, old_name: str):
+        """名字不合法 / 重名时退回原值，别在表格里留半截状态。"""
+        self._var_loading = True
+        name_item.setText(old_name)
+        self._var_loading = False
+
     def _build_notify_page(self):
         """系统托盘页：托盘通知 + 最小化到托盘。"""
         outer = QWidget()
@@ -1930,6 +2103,32 @@ class SettingsDialog(QDialog):
             #SettingsBottomLine {{
                 background-color: {bottom_border};
                 border: none;
+            }}
+
+            /* ---------- 变量表（设置 → 变量） ---------- */
+            #SettingsDialog QTableWidget#VarTable {{
+                background-color: {input_bg};
+                alternate-background-color: {content_bg};
+                color: {input_text};
+                border: 1px solid {input_border};
+                border-radius: 6px;
+                gridline-color: {input_border};
+                font-size: 13px;
+            }}
+            #SettingsDialog QTableWidget#VarTable::item {{
+                padding: 4px 8px;
+            }}
+            #SettingsDialog QTableWidget#VarTable::item:selected {{
+                background-color: {nav_sel_bg};
+                color: {nav_sel_text};
+            }}
+            #SettingsDialog QTableWidget#VarTable QHeaderView::section {{
+                background-color: {nav_bg};
+                color: {sub_color};
+                border: none;
+                border-bottom: 1px solid {input_border};
+                padding: 6px 8px;
+                font-size: 12px;
             }}
         """)
         # 从 palette 层把 Highlight 设为透明，彻底干掉左侧 branch 区域的蓝色方块

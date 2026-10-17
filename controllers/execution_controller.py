@@ -126,6 +126,15 @@ class ExecutionWorker(QObject):
                             break
                         try:
                             self.device.perform(step)
+                            # 变量替换是"未定义就原样保留"，所以要在这里点出来：
+                            # 否则用户只会在失败信息里看到一个没被替换的 ${xxx}，很难定位。
+                            missing_vars = getattr(self.device, 'last_var_missing', None)
+                            if missing_vars:
+                                names = "、".join(f"${{{m}}}" for m in missing_vars)
+                                self.progress.emit(
+                                    f"  ⚠ 步骤 {step_idx} 有未定义变量：{names}"
+                                    f"（已按原样保留，请在「设置 → 变量」里补上）",
+                                    "warning")
                             if step.type == 'assert':
                                 self.progress.emit(f"  ✅ 断言：{step.name} 通过", "success")
                         except Exception as e:

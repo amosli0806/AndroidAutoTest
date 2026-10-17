@@ -11,6 +11,7 @@ from services.perf_compat import GUI_TIMEOUT, shell_text
 from utils.adb_path import get_adb_path
 from utils.settings import Settings
 from utils.theme import ThemeMode
+from utils.vars import current_values as var_values, resolve_params
 
 
 class DeviceService:
@@ -28,6 +29,8 @@ class DeviceService:
         self.serial = serial
         self.element_controller = None
         self.step_interval = 2
+        # 上一步里出现过、但变量表里没有的 ${变量} 名（由 perform 填，执行层读它告警）
+        self.last_var_missing: List[str] = []
         if serial:
             self.connect(serial)
 
@@ -192,6 +195,10 @@ class DeviceService:
             except Exception as e:
                 raise Exception(f"元素解析失败: {e}")
 
+        # 变量替换：**必须放在元素解析之后**（元素库里的定位值也可能写 ${变量}），
+        # 且在这一层做（而不是各个 _perform_* 里）—— 一处生效，覆盖全部步骤类型。
+        params = self._apply_vars(params)
+
         method_name = f"_perform_{step.type}"
         method = getattr(self, method_name, None)
         if method:
@@ -207,6 +214,22 @@ class DeviceService:
         # 步骤后间隔（wait / voice 自带等待语义，不再叠加默认间隔）
         if step.type not in ('wait', 'voice') and self.step_interval > 0:
             time.sleep(self.step_interval)
+
+    def _apply_vars(self, params: dict) -> dict:
+        """把参数里的 `${变量}` 换成值，未定义的**原样保留**并记进 last_var_missing。
+
+        为什么未定义不报错：静默变空会让用例莫名失败、还查不出原因；直接抛异常又会
+        因为一个手误把整轮用例打断。原样保留 + 交给执行层在日志里点出来，最好排查。
+        变量表本身读不出来时也只是跳过替换（不能因为变量表坏了就执行不了步骤）。
+        """
+        self.last_var_missing = []
+        try:
+            resolved, missing = resolve_params(params, var_values(serial=self.serial or ""))
+        except Exception as e:
+            print(f"[vars] 变量替换已跳过（{type(e).__name__}: {e}）")
+            return params
+        self.last_var_missing = missing
+        return resolved
 
     # ---------- 错误信息格式化 ----------
     def _format_execution_error(self, error, step):

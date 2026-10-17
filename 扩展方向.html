@@ -197,7 +197,7 @@
 
     <div class="grid2">
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无变量 / 参数化</b> — 步骤参数写死，同一用例无法跑多组数据。</div></div>
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>数据驱动（同一用例循环跑多组数据）</b> — 全局变量已落地（步骤参数 / 元素库都能写 <code>${变量}</code>），但还不能按 CSV / Excel 循环执行。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>无流程控制</b> — 没有 if/else 分支、循环、失败重试。</div></div>
@@ -296,11 +296,10 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段四 · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
-      <h3>8. 变量 / 参数化 <span class="tag plan">📋 规划中</span></h3>
-      <p>定义全局变量（设备序列号、测试账号、环境地址），步骤参数里用 <code>${变量}</code> 引用；同一用例可循环跑多组数据（数据驱动）。</p>
+      <h3>8. 变量 / 参数化 <span class="tag plan">📋 数据驱动待做</span></h3>
+      <p><b>全局变量已落地</b>（设置 → 变量）：步骤参数与元素库定位值里写 <code>${变量}</code> 就会被替换，内置 <code>${serial}</code> / <code>${date}</code> / <code>${time}</code> / <code>${timestamp}</code>，未定义的会原样保留并在日志里提示。这一项只剩<b>数据驱动</b>。</p>
       <ul>
-        <li>全局变量表，元素库与步骤参数统一走一层变量替换</li>
-        <li>从 CSV / Excel 读测试数据，同一用例循环执行多组数据</li>
+        <li>从 CSV / Excel 读测试数据，同一用例循环执行多组数据（要动执行主循环与报告结构，单独做）</li>
       </ul>
       <div class="example">💡 <b>打个比方：</b>就像「填表模板」——表格里姓名、电话留成空格，谁来用就填谁的信息，不用为每个人重做一张表。同理，用例里把账号、设备号留成 <code>${占位符}</code>，换账号换设备只改变量值，不必复制整份用例。</div>
     </div>
@@ -354,9 +353,9 @@
           <tr><td>阶段三</td><td>执行健壮性增强</td><td class="stars">⭐⭐</td><td>价值高，但要动核心执行循环与步骤模型，影响所有用例的执行路径</td></tr>
           <tr><td>阶段三</td><td>接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
           <tr><td>阶段三</td><td>图像识别定位</td><td class="stars">⭐⭐</td><td>纯新增定位方式、不改现有行为；但要引入 OpenCV，工作量较大</td></tr>
-          <tr><td>阶段四</td><td>变量 / 参数化</td><td class="stars">⭐</td><td>地基级改动：步骤参数渲染、元素库、执行器、接口模块都要碰</td></tr>
+          <tr><td>阶段四</td><td>变量 / 参数化</td><td class="stars">⭐⭐</td><td>全局变量替换已落地（v1）；剩下的数据驱动仍要动执行主循环、每轮上下文与报告结构</td></tr>
           <tr><td>阶段四</td><td>测试数据管理</td><td class="stars">⭐</td><td>依赖「变量 / 参数化」，单独做会返工</td></tr>
-          <tr><td>阶段四</td><td>变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>同样依赖变量地基</td></tr>
+          <tr><td>阶段四</td><td>变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>变量地基已落地（v1，语音文案已可用 <code>${变量}</code>）；剩下把唤醒词 / 语速等语音参数也做成变量</td></tr>
           <tr><td>阶段四</td><td>关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
           <tr><td>阶段四</td><td>性能检测补全</td><td class="stars">⭐</td><td>要动会话模型与报告结构（产物归档、事件时间线）</td></tr>
         </tbody>
