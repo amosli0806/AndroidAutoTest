@@ -8,22 +8,26 @@ import os
 from datetime import datetime
 
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                             QPushButton, QRubberBand)
-from PyQt6.QtCore import Qt, QRect, QSize
-from PyQt6.QtGui import QPixmap, QImage
+                             QPushButton)
+from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen
 
 from utils.app_paths import get_data_dir
 
 
 class _CropLabel(QLabel):
-    """显示缩放后的截图，处理框选；缩放宽高比与原图一致，label 尺寸 = 缩放图尺寸。"""
+    """显示缩放后的截图 + 框选高亮。
+
+    松手后**保留标记**（选区外压暗、选区画蓝框）—— 之前的做法是松手就隐藏
+    QRubberBand，用户看不出来到底选没选中（2026-10-17 用户反馈）。
+    缩放宽高比与原图一致，label 尺寸 = 缩放图尺寸。
+    """
 
     def __init__(self, scale: float):
         super().__init__()
         self._scale = scale
-        self._band = QRubberBand(QRubberBand.Shape.Rectangle, self)
         self._origin = None
-        self._rect = None                 # 缩放坐标下的框选矩形
+        self._rect = None                 # 缩放坐标下的框选矩形（松手后仍保留）
         self.on_region = None             # 框选完成回调（传缩放坐标下的 QRect）
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMouseTracking(True)
@@ -34,23 +38,43 @@ class _CropLabel(QLabel):
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
             self._origin = e.position().toPoint()
-            self._band.setGeometry(QRect(self._origin, QSize()))
-            self._band.show()
+            self._rect = QRect(self._origin, self._origin)   # 空选区：清掉旧高亮
+            self.update()
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
         if self._origin is not None:
-            self._band.setGeometry(QRect(self._origin, e.position().toPoint()).normalized())
+            self._rect = QRect(self._origin, e.position().toPoint()).normalized()
+            self.update()
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
         if self._origin is not None:
             self._rect = QRect(self._origin, e.position().toPoint()).normalized()
-            self._band.hide()
             self._origin = None
+            self.update()                  # 关键：松手后保留标记，不隐藏
             if self.on_region:
                 self.on_region(self._rect)
         super().mouseReleaseEvent(e)
+
+    def paintEvent(self, e):
+        super().paintEvent(e)              # 先画截图
+        rect = self._rect
+        if rect is None or rect.width() < 2 or rect.height() < 2:
+            return
+        painter = QPainter(self)
+        # 选区外压暗，让框出来的那块一眼就能看清
+        mask = QColor(0, 0, 0, 120)
+        painter.fillRect(QRect(0, 0, self.width(), rect.top()), mask)
+        painter.fillRect(QRect(0, rect.bottom() + 1, self.width(),
+                               self.height() - rect.bottom() - 1), mask)
+        painter.fillRect(QRect(0, rect.top(), rect.left(), rect.height()), mask)
+        painter.fillRect(QRect(rect.right() + 1, rect.top(),
+                               self.width() - rect.right() - 1, rect.height()), mask)
+        # 蓝色边框
+        painter.setPen(QPen(QColor("#1976d2"), 2))
+        painter.drawRect(rect)
+        painter.end()
 
 
 class ImageCropDialog(QDialog):
@@ -86,9 +110,11 @@ class ImageCropDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        hint = QLabel("在画面上按住左键拖动，框选要识别的区域")
-        hint.setStyleSheet("color:#888888;")
-        layout.addWidget(hint)
+        self.hint_label = QLabel("在画面上按住左键拖动，框选要识别的区域"
+                                 "（松手后会保留蓝色框，可重新拖一次改选）")
+        self.hint_label.setStyleSheet("color:#888888;")
+        self.hint_label.setWordWrap(True)
+        layout.addWidget(self.hint_label)
 
         self.crop_label = _CropLabel(self._scale)
         self.crop_label.setPixmap(scaled)
@@ -114,8 +140,17 @@ class ImageCropDialog(QDialog):
         self.resize(scaled.width() + 30, scaled.height() + 116)
 
     def _on_region(self, rect):
-        # 框选有效（够大）才允许确定
-        self.ok_btn.setEnabled(rect is not None and rect.width() >= 5 and rect.height() >= 5)
+        # 框选有效（够大）才允许确定；同时把"选了多大"写回提示，给明确反馈
+        valid = rect is not None and rect.width() >= 5 and rect.height() >= 5
+        self.ok_btn.setEnabled(valid)
+        if valid:
+            ow = int(rect.width() * self._scale)
+            oh = int(rect.height() * self._scale)
+            self.hint_label.setText(f"已框选 {ow} × {oh} 像素（按原图算），点「确定」保存")
+            self.hint_label.setStyleSheet("color:#1976d2;")
+        else:
+            self.hint_label.setText("框选区域太小，请重新拖一个（至少 5×5）")
+            self.hint_label.setStyleSheet("color:#e74c3c;")
 
     def _confirm(self):
         rect = self.crop_label.region()
