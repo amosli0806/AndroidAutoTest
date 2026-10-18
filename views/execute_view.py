@@ -111,13 +111,13 @@ class ExecuteView(QWidget):
         QPushButton {
             background-color: #e74c3c;
             border: none;
-            padding: 2px;
+            padding: 2px 10px;
             border-radius: 4px;
-            min-width: 34px;
-            max-width: 34px;
             /* 内容盒 24 + padding 2x2 = 总高 28，与套件下拉框一致（无边框） */
             min-height: 24px;
             max-height: 24px;
+            font-size: 12px;
+            color: #ffffff;
         }
         QPushButton:hover { background-color: #f05a4a; }
         QPushButton:pressed { background-color: #c0392b; }
@@ -294,17 +294,18 @@ class ExecuteView(QWidget):
             """
             # 主操作（执行）：禁用时与其他工具按钮一致，启用后蓝底白图标突出
             self._primary_btn_style = """
-                QPushButton#ExecIconBtn {
+                QPushButton#ExecTextBtn {
                     background-color: #3c3c3c;
                     border: 1px solid #555;
                     border-radius: 4px;
-                    padding: 2px;
-                    min-width: 34px; max-width: 34px;
+                    padding: 2px 10px;
                     min-height: 22px; max-height: 22px;
+                    font-size: 12px;
+                    color: #999999;
                 }
-                QPushButton#ExecIconBtn:enabled { background-color: #1976d2; border: 1px solid transparent; }
-                QPushButton#ExecIconBtn:enabled:hover { background-color: #1565c0; }
-                QPushButton#ExecIconBtn:disabled { background-color: #333; }
+                QPushButton#ExecTextBtn:enabled { background-color: #1976d2; border: 1px solid transparent; color: #ffffff; }
+                QPushButton#ExecTextBtn:enabled:hover { background-color: #1565c0; }
+                QPushButton#ExecTextBtn:disabled { background-color: #333; color: #777777; }
             """
         else:
             icon_btn_style = """
@@ -333,24 +334,25 @@ class ExecuteView(QWidget):
                 QPushButton#ToolTextBtn:disabled { background-color: #eee; color: #aaa; }
             """
             self._primary_btn_style = """
-                QPushButton#ExecIconBtn {
+                QPushButton#ExecTextBtn {
                     background-color: #f5f6f8;
                     border: 1px solid #d0d0d0;
                     border-radius: 4px;
-                    padding: 2px;
-                    min-width: 34px; max-width: 34px;
+                    padding: 2px 10px;
                     min-height: 22px; max-height: 22px;
+                    font-size: 12px;
+                    color: #aaaaaa;
                 }
-                QPushButton#ExecIconBtn:enabled { background-color: #1976d2; border: 1px solid transparent; }
-                QPushButton#ExecIconBtn:enabled:hover { background-color: #1565c0; }
-                QPushButton#ExecIconBtn:disabled { background-color: #eee; }
+                QPushButton#ExecTextBtn:enabled { background-color: #1976d2; border: 1px solid transparent; color: #ffffff; }
+                QPushButton#ExecTextBtn:enabled:hover { background-color: #1565c0; }
+                QPushButton#ExecTextBtn:disabled { background-color: #eeeeee; color: #aaaaaa; }
             """
 
         # 应用样式到各控件（使用 findChildren 或直接设置）
         for btn in self.findChildren(QPushButton):
             if btn.objectName() == "ToolIconBtn":
                 btn.setStyleSheet(icon_btn_style)
-            elif btn.objectName() == "ExecIconBtn":
+            elif btn.objectName() == "ExecTextBtn":
                 btn.setStyleSheet(self._primary_btn_style)
             elif btn.objectName() == "ToolTextBtn":
                 btn.setStyleSheet(text_btn_style)
@@ -387,11 +389,7 @@ class ExecuteView(QWidget):
 
     def _rebuild_icons(self):
         """主题切换后按当前主题色重建工具栏图标（图标-only 按钮的可见性命脉）。"""
-        c = self._icon_color
-        self.toggle_select_btn_icon_all = qta.icon('fa6s.check-double', color=c)
-        self.toggle_select_btn_icon_none = qta.icon('fa6s.square-minus', color=c)
-        self.execute_icon_enabled = qta.icon('fa6s.play', color='white')   # 启用：蓝底白
-        self.execute_icon_disabled = qta.icon('fa6s.play', color=c)        # 禁用：灰底深
+        # 全选 / 执行 已改成文字按钮，这里不需要重建图标（配色由 apply_theme 的 QSS 负责）
         # 保存套件 / 删除套件 / 报告 已改成文字按钮，不再重建图标
 
     def setup_ui(self):
@@ -408,23 +406,17 @@ class ExecuteView(QWidget):
         toolbar.setContentsMargins(8, 8, 8, 0)
         toolbar.setSpacing(6)
 
-        self.toggle_select_btn = QPushButton()
-        self.toggle_select_btn_icon_all = qta.icon('fa6s.check-double', color=self._icon_color)
-        self.toggle_select_btn_icon_none = qta.icon('fa6s.square-minus', color=self._icon_color)
-        self.toggle_select_btn.setIcon(self.toggle_select_btn_icon_all)
-        self.toggle_select_btn.setIconSize(QSize(15, 15))
-        self.toggle_select_btn.setFixedSize(34, 28)
-        self.toggle_select_btn.setObjectName("ToolIconBtn")
+        self.toggle_select_btn = QPushButton("全选")
+        self.toggle_select_btn.setObjectName("ToolTextBtn")
+        self.toggle_select_btn.setFixedHeight(28)
+        self.toggle_select_btn.setFixedWidth(72)   # 按「取消全选」预留，切换时不抖动
         self.toggle_select_btn.setToolTip("全选")
         self.toggle_select_btn.clicked.connect(self._on_toggle_select)
 
-        self.execute_btn = QPushButton()
-        self.execute_icon_enabled = qta.icon('fa6s.play', color='white')          # 启用：蓝底白
-        self.execute_icon_disabled = qta.icon('fa6s.play', color=self._icon_color)  # 禁用：灰底深
-        self.execute_btn.setIcon(self.execute_icon_disabled)
-        self.execute_btn.setIconSize(QSize(15, 15))
-        self.execute_btn.setFixedSize(34, 28)
-        self.execute_btn.setObjectName("ExecIconBtn")
+        self.execute_btn = QPushButton("执行")
+        self.execute_btn.setFixedHeight(28)
+        self.execute_btn.setFixedWidth(60)
+        self.execute_btn.setObjectName("ExecTextBtn")
         self.execute_btn.setToolTip("执行")
         self.execute_btn.setEnabled(False)
         self.execute_btn.clicked.connect(self._execute)
@@ -731,10 +723,10 @@ class ExecuteView(QWidget):
         all_checked = (total_checkable > 0 and checked_count == total_checkable)
         # 全选/取消全选是一个切换按钮：按当前勾选状态切图标与 tooltip
         if all_checked:
-            self.toggle_select_btn.setIcon(self.toggle_select_btn_icon_none)
+            self.toggle_select_btn.setText("取消全选")
             self.toggle_select_btn.setToolTip("取消全选")
         else:
-            self.toggle_select_btn.setIcon(self.toggle_select_btn_icon_all)
+            self.toggle_select_btn.setText("全选")
             self.toggle_select_btn.setToolTip("全选")
         self.toggle_select_btn.setEnabled(total_checkable > 0 and not self._executing)
 
@@ -752,17 +744,14 @@ class ExecuteView(QWidget):
         """「执行」按钮的两种样子：有勾选 = 蓝底白播放图标，执行中 = 红底白停止图标；
         无勾选禁用时与其他工具按钮一致（浅灰底深图标），不再突兀。"""
         if self._executing:
-            self.execute_btn.setIcon(qta.icon('fa6s.stop', color='white'))
+            self.execute_btn.setText("停止")
             self.execute_btn.setToolTip("停止")
             self.execute_btn.setStyleSheet(self.STOP_BTN_QSS)
             return
+        self.execute_btn.setText("执行")
         self.execute_btn.setToolTip("执行")
         if self._primary_btn_style:
             self.execute_btn.setStyleSheet(self._primary_btn_style)
-        if can_execute:
-            self.execute_btn.setIcon(self.execute_icon_enabled)      # 白：蓝底
-        else:
-            self.execute_btn.setIcon(self.execute_icon_disabled)     # 深色：灰底
 
     def _get_checked_ids(self):
         ids = []
