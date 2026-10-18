@@ -244,7 +244,10 @@ class TaskView(QWidget):
 
         # 为三个按钮应用样式（无论是否有壁纸都要设）
         # 删除按钮单独一份：悬停 / 按下换成红色，提示这是破坏性操作
-        del_btn_style = btn_style.replace("#1565c0", "#e74c3c").replace("#0d47a1", "#c0392b")
+        del_btn_style = (btn_style
+                         .replace("background-color: #1976d2", "background-color: #e74c3c")
+                         .replace("#1565c0", "#c0392b")
+                         .replace("#0d47a1", "#a93226"))
         for btn in (self.add_btn, self.delete_btn, self.run_btn):
             btn.setStyleSheet(del_btn_style if btn is self.delete_btn else btn_style)
             if btn is self.add_btn:

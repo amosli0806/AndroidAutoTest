@@ -140,10 +140,21 @@ class ExecuteView(QWidget):
         QPushButton:pressed { background-color: #0d47a1; }
         QPushButton:disabled { background-color: #b0b0b0; color: #e0e0e0; }
     """
-    # 删除类按钮：悬停 / 按下换成红色，提前警示这是破坏性操作
-    DEL_HOVER_QSS = """
-        QPushButton:hover { background-color: #e74c3c; }
-        QPushButton:pressed { background-color: #c0392b; }
+    # 删除类按钮：**默认就是红底白字**（一眼看出是破坏性操作），悬停/按下加深
+    DEL_BTN_QSS = """
+        QPushButton {
+            background-color: #e74c3c;
+            color: #ffffff;
+            border: none;
+            border-radius: 4px;
+            padding: 2px 10px;
+            font-size: 12px;
+            font-weight: 500;
+            min-height: 22px; max-height: 22px;
+        }
+        QPushButton:hover { background-color: #c0392b; }
+        QPushButton:pressed { background-color: #a93226; }
+        QPushButton:disabled { background-color: #b0b0b0; color: #e0e0e0; }
     """
 
     def __init__(self, parent=None):
@@ -317,7 +328,7 @@ class ExecuteView(QWidget):
         # 五个工具栏按钮统一成「定时计划」的观感（蓝底白字 / 禁用灰底灰字），
         # 不分深浅主题 —— 与 task_view 的按钮同款（2026-10-18 用户要求）
         text_btn_style = self.TOOL_BTN_QSS
-        del_btn_style = self.TOOL_BTN_QSS + self.DEL_HOVER_QSS
+        del_btn_style = self.DEL_BTN_QSS
         self._primary_btn_style = self.TOOL_BTN_QSS
 
         # 应用样式到各控件（使用 findChildren 或直接设置）
