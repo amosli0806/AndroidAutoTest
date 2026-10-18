@@ -349,6 +349,7 @@ class ExecuteView(QWidget):
             """
 
         # 应用样式到各控件（使用 findChildren 或直接设置）
+        self._equalize_tool_btn_widths()
         for btn in self.findChildren(QPushButton):
             if btn.objectName() == "ToolIconBtn":
                 btn.setStyleSheet(icon_btn_style)
@@ -387,6 +388,24 @@ class ExecuteView(QWidget):
         self._rebuild_icons()
         self._update_buttons()
 
+    def _equalize_tool_btn_widths(self):
+        """把「全选 / 执行 / 保存套件 / 删除套件 / 报告」五个按钮设成同一宽度。
+
+        宽度按**最长文案 + 当前字体**现算，而不是写死像素：高 DPI 下字体变大会跟着
+        变宽，写死会裁字（本项目在高 DPI 固定宽度上吃过亏）。
+        """
+        btns = (self.toggle_select_btn, self.execute_btn,
+                self.save_suite_btn, self.del_suite_btn, self.report_btn)
+        fm = self.save_suite_btn.fontMetrics()
+        longest = max(fm.horizontalAdvance(t) for t in
+                      ("取消全选", "保存套件", "删除套件", "报告", "执行", "停止"))
+        # 按「最长文案 + 内边距(9*2) + 边框」算，不再取 sizeHint ——
+        # sizeHint 里含全局 QSS 的 min-width(60)，会把 5 个按钮都撑到 81px，
+        # 进而把主窗口最小宽度顶到 1265（小屏笔记本会放不下）
+        width = longest + 24
+        for b in btns:
+            b.setFixedWidth(width)
+
     def _rebuild_icons(self):
         """主题切换后按当前主题色重建工具栏图标（图标-only 按钮的可见性命脉）。"""
         # 全选 / 执行 已改成文字按钮，这里不需要重建图标（配色由 apply_theme 的 QSS 负责）
@@ -409,13 +428,11 @@ class ExecuteView(QWidget):
         self.toggle_select_btn = QPushButton("全选")
         self.toggle_select_btn.setObjectName("ToolTextBtn")
         self.toggle_select_btn.setFixedHeight(28)
-        self.toggle_select_btn.setFixedWidth(72)   # 按「取消全选」预留，切换时不抖动
         self.toggle_select_btn.setToolTip("全选")
         self.toggle_select_btn.clicked.connect(self._on_toggle_select)
 
         self.execute_btn = QPushButton("执行")
         self.execute_btn.setFixedHeight(28)
-        self.execute_btn.setFixedWidth(60)
         self.execute_btn.setObjectName("ExecTextBtn")
         self.execute_btn.setToolTip("执行")
         self.execute_btn.setEnabled(False)
@@ -425,7 +442,7 @@ class ExecuteView(QWidget):
         self.loop_spin = QSpinBox()
         self.loop_spin.setRange(1, 999)
         self.loop_spin.setValue(1)
-        self.loop_spin.setFixedWidth(62)
+        self.loop_spin.setFixedWidth(56)
         self.loop_spin.setFixedHeight(28)   # 与图标按钮同高，避免撑高工具栏行
         self.loop_spin.setToolTip("循环次数")
 
@@ -436,13 +453,13 @@ class ExecuteView(QWidget):
         self.retry_spin = QSpinBox()
         self.retry_spin.setRange(0, 5)
         self.retry_spin.setValue(1)
-        self.retry_spin.setFixedWidth(60)
+        self.retry_spin.setFixedWidth(54)
         self.retry_spin.setFixedHeight(28)
         self.retry_spin.setToolTip("失败重试次数（0 = 不重试）")
         self.retry_delay_spin = QSpinBox()
         self.retry_delay_spin.setRange(0, 30)
         self.retry_delay_spin.setValue(2)
-        self.retry_delay_spin.setFixedWidth(60)
+        self.retry_delay_spin.setFixedWidth(54)
         self.retry_delay_spin.setFixedHeight(28)
         self.retry_delay_spin.setToolTip("重试间隔（秒）")
         # 单位标签（原来只有 tooltip，鼠标不悬停就看不出这两个数字是什么）
@@ -453,7 +470,7 @@ class ExecuteView(QWidget):
         self.retry_cond_combo.addItems(["仅超时类", "所有失败"])
         self.retry_cond_combo.setFixedHeight(28)
         # 下拉面板宽度跟着控件走：太窄会把「仅超时类 / 所有失败」截成「仅… / 所…」
-        self.retry_cond_combo.setMinimumWidth(104)
+        self.retry_cond_combo.setMinimumWidth(96)
         self.retry_cond_combo.setToolTip("重试触发条件：仅超时类（等待/连接超时）或所有失败")
 
         # 套件与报告相关控件（图标化，悬停见 tooltip）
