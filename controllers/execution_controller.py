@@ -438,10 +438,22 @@ class ExecutionController(QObject):
             if hasattr(self.logs_view, "set_ai_available"):
                 self.logs_view.set_ai_available(True)
 
-    def generate_report(self):
-        # 报告存到「设置 → 输出目录」（与截图/ADB 导出等一致），不再是项目下的 reports/
+    def _report_output_dir(self) -> str:
+        """报告输出目录：**设置里的输出目录 / 设备序列号**。
+
+        与性能检测的截图归档同一套约定（`{输出目录}/{序列号}/screenshots`）——
+        多台设备都往一个目录里丢报告，事后根本分不清哪份是哪台车的。
+        未连接设备（没有序列号）时退回输出目录本身。
+        """
         from utils.settings import Settings
-        output_dir = Settings.get_output_dir()
+        from utils.serial_helper import safe_serial
+        base = Settings.get_output_dir()
+        serial = (getattr(self.device, "serial", "") or "").strip()
+        return os.path.join(base, safe_serial(serial)) if serial else base
+
+    def generate_report(self):
+        # 报告存到「设置 → 输出目录 / 设备序列号」（与截图/ADB 导出等一致），不再是项目下的 reports/
+        output_dir = self._report_output_dir()
         os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         file_path = os.path.join(output_dir, f"TestReport_{timestamp}.html")
