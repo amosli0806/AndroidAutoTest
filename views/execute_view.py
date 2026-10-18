@@ -123,6 +123,29 @@ class ExecuteView(QWidget):
         QPushButton:pressed { background-color: #c0392b; }
     """
 
+    # 工具栏文字按钮：与「定时计划」面板同一套观感（用户要求统一）
+    # 蓝底白字；禁用时灰底灰字，与 task_view 的按钮完全一致
+    TOOL_BTN_QSS = """
+        QPushButton {
+            background-color: #1976d2;
+            color: #ffffff;
+            border: none;
+            border-radius: 4px;
+            padding: 2px 10px;
+            font-size: 12px;
+            font-weight: 500;
+            min-height: 22px; max-height: 22px;
+        }
+        QPushButton:hover { background-color: #1565c0; }
+        QPushButton:pressed { background-color: #0d47a1; }
+        QPushButton:disabled { background-color: #b0b0b0; color: #e0e0e0; }
+    """
+    # 删除类按钮：悬停 / 按下换成红色，提前警示这是破坏性操作
+    DEL_HOVER_QSS = """
+        QPushButton:hover { background-color: #e74c3c; }
+        QPushButton:pressed { background-color: #c0392b; }
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("ExecuteView")
@@ -278,35 +301,6 @@ class ExecuteView(QWidget):
                 QPushButton#ToolIconBtn:hover { background-color: #4a4a4a; }
                 QPushButton#ToolIconBtn:disabled { background-color: #333; }
             """
-            # 文字版工具按钮（保存套件 / 删除套件 / 报告）：宽度自适应文字
-            text_btn_style = """
-                QPushButton#ToolTextBtn {
-                    background-color: #3c3c3c;
-                    border: 1px solid #555;
-                    border-radius: 4px;
-                    padding: 2px 9px;
-                    min-height: 22px; max-height: 22px;
-                    font-size: 12px;
-                    color: #e0e0e0;
-                }
-                QPushButton#ToolTextBtn:hover { background-color: #4a4a4a; }
-                QPushButton#ToolTextBtn:disabled { background-color: #333; color: #777; }
-            """
-            # 主操作（执行）：禁用时与其他工具按钮一致，启用后蓝底白图标突出
-            self._primary_btn_style = """
-                QPushButton#ExecTextBtn {
-                    background-color: #3c3c3c;
-                    border: 1px solid #555;
-                    border-radius: 4px;
-                    padding: 2px 10px;
-                    min-height: 22px; max-height: 22px;
-                    font-size: 12px;
-                    color: #999999;
-                }
-                QPushButton#ExecTextBtn:enabled { background-color: #1976d2; border: 1px solid transparent; color: #ffffff; }
-                QPushButton#ExecTextBtn:enabled:hover { background-color: #1565c0; }
-                QPushButton#ExecTextBtn:disabled { background-color: #333; color: #777777; }
-            """
         else:
             icon_btn_style = """
                 QPushButton#ToolIconBtn {
@@ -320,33 +314,11 @@ class ExecuteView(QWidget):
                 QPushButton#ToolIconBtn:hover { background-color: #e8eaee; }
                 QPushButton#ToolIconBtn:disabled { background-color: #eee; }
             """
-            text_btn_style = """
-                QPushButton#ToolTextBtn {
-                    background-color: #f5f6f8;
-                    border: 1px solid #d0d0d0;
-                    border-radius: 4px;
-                    padding: 2px 9px;
-                    min-height: 22px; max-height: 22px;
-                    font-size: 12px;
-                    color: #333;
-                }
-                QPushButton#ToolTextBtn:hover { background-color: #e8eaee; }
-                QPushButton#ToolTextBtn:disabled { background-color: #eee; color: #aaa; }
-            """
-            self._primary_btn_style = """
-                QPushButton#ExecTextBtn {
-                    background-color: #f5f6f8;
-                    border: 1px solid #d0d0d0;
-                    border-radius: 4px;
-                    padding: 2px 10px;
-                    min-height: 22px; max-height: 22px;
-                    font-size: 12px;
-                    color: #aaaaaa;
-                }
-                QPushButton#ExecTextBtn:enabled { background-color: #1976d2; border: 1px solid transparent; color: #ffffff; }
-                QPushButton#ExecTextBtn:enabled:hover { background-color: #1565c0; }
-                QPushButton#ExecTextBtn:disabled { background-color: #eeeeee; color: #aaaaaa; }
-            """
+        # 五个工具栏按钮统一成「定时计划」的观感（蓝底白字 / 禁用灰底灰字），
+        # 不分深浅主题 —— 与 task_view 的按钮同款（2026-10-18 用户要求）
+        text_btn_style = self.TOOL_BTN_QSS
+        del_btn_style = self.TOOL_BTN_QSS + self.DEL_HOVER_QSS
+        self._primary_btn_style = self.TOOL_BTN_QSS
 
         # 应用样式到各控件（使用 findChildren 或直接设置）
         self._equalize_tool_btn_widths()
@@ -357,6 +329,8 @@ class ExecuteView(QWidget):
                 btn.setStyleSheet(self._primary_btn_style)
             elif btn.objectName() == "ToolTextBtn":
                 btn.setStyleSheet(text_btn_style)
+            elif btn.objectName() == "ToolDelBtn":
+                btn.setStyleSheet(del_btn_style)
             elif btn.objectName() not in ("reportBtn", "save_suite_btn", "del_suite_btn"):
                 btn.setStyleSheet(btn_style)
         for combo in self.findChildren(QComboBox):
@@ -493,11 +467,11 @@ class ExecuteView(QWidget):
 
         self.del_suite_btn = QPushButton("删除套件")
         self.del_suite_btn.setFixedHeight(28)
-        self.del_suite_btn.setObjectName("ToolTextBtn")
+        self.del_suite_btn.setObjectName("ToolDelBtn")   # 悬停变红：破坏性操作提醒
         self.del_suite_btn.setToolTip("删除选中的套件")
         self.del_suite_btn.clicked.connect(self._delete_selected_suite)
 
-        self.report_btn = QPushButton("报告")
+        self.report_btn = QPushButton("测试报告")
         self.report_btn.setFixedHeight(28)
         self.report_btn.setObjectName("ToolTextBtn")
         self.report_btn.setToolTip("生成测试报告")
@@ -619,10 +593,6 @@ class ExecuteView(QWidget):
 
     def set_report_enabled(self, enabled: bool):
         self.report_btn.setEnabled(enabled)
-        if enabled:
-            self.report_btn.setIcon(qta.icon('fa6s.file-lines', color=self._icon_color))
-        else:
-            self.report_btn.setIcon(QIcon())
 
     def set_model(self, model: ProjectModel):
         self.project_model = model
