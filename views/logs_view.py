@@ -186,6 +186,26 @@ class LogsView(QWidget):
 
         layout.addLayout(body_row, 1)
 
+    # 圆环尺寸区间：窄横条时不至于挤没，大窗口时足够醒目
+    DONUT_MIN = 88
+    DONUT_MAX = 168
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_donut_size()
+
+    def _fit_donut_size(self):
+        """圆环跟着日志区高度走：有空间就放大（上限 168），窄了自动收小。
+
+        顶部栏（筛选/搜索/AI）约 28px，加边距与间距按 88px 预留；
+        这样默认高度下约 150px，大窗口拉高后到 168px 封顶。
+        """
+        if not hasattr(self, 'donut'):
+            return
+        side = max(self.DONUT_MIN, min(self.DONUT_MAX, self.height() - 88))
+        if self.donut.width() != side or self.donut.height() != side:
+            self.donut.setFixedSize(side, side)
+
     def set_model(self, model: ExecutionModel):
         self.model = model
         self.model.logs_changed = self._on_logs_changed
@@ -377,7 +397,9 @@ class DonutWidget(QWidget):
         self.fail_count = 0
         self._text_color = QColor(50, 50, 50)  # 默认亮色
         # 日志面板挪到底部后是横条，圆环要小一号；绘制按控件尺寸算，改大小不用改画法
-        self.setFixedSize(104, 104)      # 底部横条里也要看得清，别太小
+        # 尺寸由 LogsView._fit_donut_size() 按日志区高度动态设置：
+        # 写死 104px 在 1920 宽的大窗口里还是显得小（2026-10-18 反馈）
+        self.resize(120, 120)
 
     def set_text_color(self, color):
         self._text_color = QColor(color)
