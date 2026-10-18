@@ -773,6 +773,20 @@ class DeviceService:
             print(f"shell 截图失败: {e3}")
         raise Exception("截图失败，所有可用方法均无效")
 
+    def _screenshot_dir(self) -> str:
+        """断言失败截图的落地目录：`{输出目录}/{设备序列号}/screenshots`。
+
+        与「测试报告」「性能检测截图」同一套约定。原来写的是相对路径 `screenshots/`，
+        跟着进程 CWD 走 —— 换个启动方式就找不到图，报告里也会显示"截图文件不存在"。
+        """
+        from utils.settings import Settings
+        from utils.serial_helper import safe_serial
+        base = Settings.get_output_dir()
+        serial = (getattr(self, "serial", "") or "").strip()
+        if serial:
+            base = os.path.join(base, safe_serial(serial))
+        return os.path.join(base, "screenshots")
+
     def _perform_assert(self, params):
         assert_type = params.get('assert_type', '元素存在')
         loc_type = params.get('locationType')
@@ -789,7 +803,7 @@ class DeviceService:
             # 图像断言只支持「存在 / 不存在」：截图匹配判定
             if assert_type not in ('元素存在', '元素不存在'):
                 raise ValueError("图像定位只支持「元素存在 / 元素不存在」断言")
-            shot_dir = "screenshots"
+            shot_dir = self._screenshot_dir()
             os.makedirs(shot_dir, exist_ok=True)
 
             def img_shot():
@@ -817,7 +831,7 @@ class DeviceService:
         if obj is None:
             raise ValueError(f"不支持的定位方式: {loc_type} 用于断言")
 
-        screenshot_dir = "screenshots"
+        screenshot_dir = self._screenshot_dir()
         os.makedirs(screenshot_dir, exist_ok=True)
 
         def take_screenshot():
