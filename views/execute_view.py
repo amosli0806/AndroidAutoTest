@@ -166,6 +166,9 @@ class ExecuteView(QWidget):
         self.suite_model = SuiteModel()
         self._suppress_suite_signal = False
         self._task_view = None
+        # 工具栏文字按钮的统一宽度（_equalize_tool_btn_widths 按当前字体现算），
+        # 定时计划的「新增 / 删除」也按它对齐
+        self._tool_btn_width = None
         # 主题里的主按钮样式，「执行/停止」来回切时要用它把蓝色恢复回来
         self._primary_btn_style = None
         # 工具栏图标颜色：跟随主题（亮色深图标 / 暗色浅图标），apply_theme 时刷新
@@ -390,6 +393,16 @@ class ExecuteView(QWidget):
         width = longest + 24
         for b in btns:
             b.setFixedWidth(width)
+        # 「定时计划」的新增 / 删除也按这个宽度对齐（2026-10-16 用户要求）。
+        # 宽度只在这一处算，推过去而不是让那边自己再算一遍 —— 两处各算一份，
+        # 字体或文案一改就会对不上。
+        self._tool_btn_width = width
+        self._sync_task_btn_width()
+
+    def _sync_task_btn_width(self):
+        """把工具栏统一宽度推给「定时计划」；任务视图还没挂上时静默跳过。"""
+        if self._task_view is not None and self._tool_btn_width:
+            self._task_view.set_tool_btn_width(self._tool_btn_width)
 
     def _rebuild_icons(self):
         """主题切换后按当前主题色重建工具栏图标（图标-only 按钮的可见性命脉）。"""
@@ -587,6 +600,8 @@ class ExecuteView(QWidget):
     def set_task_view(self, task_view):
         """保存定时任务视图引用"""
         self._task_view = task_view
+        # 任务视图可能晚于主题应用才挂上来，这里补推一次统一宽度
+        self._sync_task_btn_width()
 
     def get_task_view(self):
         """返回定时任务视图"""

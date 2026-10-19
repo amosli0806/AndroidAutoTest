@@ -759,22 +759,23 @@ class Theme:
             background: transparent;
         }
         #TaskView QLabel { color: #333; }
-        #TaskView #taskAddBtn, #TaskView #taskDeleteBtn, #TaskView #taskRunBtn {
+        /* 宽度由执行区按当前字体现算后推过来（见 task_view.set_tool_btn_width），
+           这里再写死 min-width 会把 setFixedWidth 盖掉 */
+        #TaskView #taskAddBtn, #TaskView #taskDeleteBtn {
             background-color: #1976d2;
             color: white;
             border: none;
             padding: 5px 12px;
             border-radius: 4px;
             font-weight: 500;
-            min-width: 90px;
         }
-        #TaskView #taskAddBtn:hover, #TaskView #taskDeleteBtn:hover, #TaskView #taskRunBtn:hover {
+        #TaskView #taskAddBtn:hover, #TaskView #taskDeleteBtn:hover {
             background-color: #1565c0;
         }
-        #TaskView #taskAddBtn:pressed, #TaskView #taskDeleteBtn:pressed, #TaskView #taskRunBtn:pressed {
+        #TaskView #taskAddBtn:pressed, #TaskView #taskDeleteBtn:pressed {
             background-color: #0d47a1;
         }
-        #TaskView #taskAddBtn:disabled, #TaskView #taskDeleteBtn:disabled, #TaskView #taskRunBtn:disabled {
+        #TaskView #taskAddBtn:disabled, #TaskView #taskDeleteBtn:disabled {
             background-color: #b0b0b0;
             color: #e0e0e0;
         }
@@ -821,22 +822,23 @@ class Theme:
             background: transparent;
         }
         #TaskView QLabel { color: #eee; }
-        #TaskView #taskAddBtn, #TaskView #taskDeleteBtn, #TaskView #taskRunBtn {
+        /* 宽度由执行区按当前字体现算后推过来（见 task_view.set_tool_btn_width），
+           这里再写死 min-width 会把 setFixedWidth 盖掉 */
+        #TaskView #taskAddBtn, #TaskView #taskDeleteBtn {
             background-color: #1976d2;
             color: white;
             border: none;
             padding: 5px 12px;
             border-radius: 4px;
             font-weight: 500;
-            min-width: 90px;
         }
-        #TaskView #taskAddBtn:hover, #TaskView #taskDeleteBtn:hover, #TaskView #taskRunBtn:hover {
+        #TaskView #taskAddBtn:hover, #TaskView #taskDeleteBtn:hover {
             background-color: #1565c0;
         }
-        #TaskView #taskAddBtn:pressed, #TaskView #taskDeleteBtn:pressed, #TaskView #taskRunBtn:pressed {
+        #TaskView #taskAddBtn:pressed, #TaskView #taskDeleteBtn:pressed {
             background-color: #0d47a1;
         }
-        #TaskView #taskAddBtn:disabled, #TaskView #taskDeleteBtn:disabled, #TaskView #taskRunBtn:disabled {
+        #TaskView #taskAddBtn:disabled, #TaskView #taskDeleteBtn:disabled {
             background-color: #555;
             color: #888;
         }

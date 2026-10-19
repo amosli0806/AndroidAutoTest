@@ -544,7 +544,7 @@ class HelpView(QFrame):
                     {'image': 'task_2_fill_form.png', 'desc': '填写任务名称、关联套件、执行频率（不重复/每天/每周/每月）'},
                     {'image': 'task_3_set_time.png', 'desc': '设置执行时间和循环次数，选择是否失败停止'},
                     {'image': 'task_4_save.png', 'desc': '点击保存，任务出现在列表中'},
-                    {'image': 'task_5_manual_run.png', 'desc': '选中任务点击"执行"可立即触发（不影响下次定时）'},
+                    {'image': 'task_5_manual_run.png', 'desc': '在任务上右键 → "立即执行"可立即触发（不影响下次定时）'},
                     {'image': 'task_6_toggle_disable.png', 'desc': '通过开关启用/禁用任务，禁用后不触发执行'},
                 ])}
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">

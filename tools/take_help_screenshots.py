@@ -779,16 +779,26 @@ def step_task_dialog_close():
 def step_task_list_shots():
     # task_4 列表（含任务）
     grab_widget(task_view, "task_4_save.png")
-    # task_5 执行按钮（顶部区域）
-    crop_shot(task_view, "task_5_manual_run.png",
-              targets=[task_view.run_btn],
-              rect=QRect(0, 0, task_view.width(), 80), pad=20)
-    # task_6 启用/禁用开关（第一行的 enable_check）
     item = None
     for c in task_view.findChildren(QWidget):
         if c.objectName() == "TaskListItem":
             item = c
             break
+    # task_5 立即执行：顶部「执行」按钮已去掉，改由任务上右键触发（2026-10-16），
+    # 所以这里抓的是右键菜单本身。菜单定义复用 task_view 自己的那份
+    # （_build_context_menu），免得两处各写一遍、菜单一改截图就失真
+    if item is not None and hasattr(item, "task"):
+        menu = task_view._build_context_menu(item.task)
+        menu.setObjectName("TempCtxMenu")
+        # 显式样式：应用级 QSS 会让临时菜单文字消失，这里固定浅色样式
+        menu.setStyleSheet(
+            "QMenu { background: #ffffff; color: #333333; border: 1px solid #d0d0d0; }"
+            "QMenu::item { padding: 6px 24px 6px 12px; }"
+            "QMenu::item:selected { background: #1976d2; color: #ffffff; }"
+        )
+        run_action = next((a for a in menu.actions() if a.text() == "立即执行"), None)
+        popup_menu_shot(menu, item, "task_5_manual_run.png", arrow_action=run_action)
+    # task_6 启用/禁用开关（第一行的 enable_check）
     if item is not None:
         chk = item.findChild(QWidget)  # fallback
         from PyQt6.QtWidgets import QCheckBox as _QC

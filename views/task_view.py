@@ -106,6 +106,9 @@ class TaskView(QWidget):
         self._current_task_id = None
         self._refreshing = False
         self._current_theme = ThemeMode.LIGHT
+        # 新增 / 删除按钮的统一宽度：由执行区推过来（见 set_tool_btn_width），
+        # None = 还没收到，按钮先按自然尺寸显示
+        self._tool_btn_width = None
         self.setup_ui()
         self.refresh_list()
 
@@ -141,6 +144,8 @@ class TaskView(QWidget):
             pass
 
         # 定时计划功能按钮：日夜模式统一使用白天模式的深蓝样式
+        # 注意这里**不写 min-width**：宽度由执行区按当前字体现算后推过来
+        # （见 set_tool_btn_width），写死像素在高 DPI 下会和实际字体对不上
         btn_style = """
             QPushButton {
                 background-color: #1976d2;
@@ -149,7 +154,6 @@ class TaskView(QWidget):
                 padding: 5px 12px;
                 border-radius: 4px;
                 font-weight: 500;
-                min-width: 90px;
             }
             QPushButton:hover {
                 background-color: #1565c0;
@@ -200,22 +204,21 @@ class TaskView(QWidget):
                     background-color: transparent;
                 }}
                 #TaskView QLabel {{ color: {text_color}; background: transparent; }}
-                #TaskView #taskAddBtn, #TaskView #taskDeleteBtn, #TaskView #taskRunBtn {{
+                #TaskView #taskAddBtn, #TaskView #taskDeleteBtn {{
                     background-color: #1976d2;
                     color: white;
                     border: none;
                     padding: 5px 12px;
                     border-radius: 4px;
                     font-weight: 500;
-                    min-width: 90px;
                 }}
-                #TaskView #taskAddBtn:hover, #TaskView #taskDeleteBtn:hover, #TaskView #taskRunBtn:hover {{
+                #TaskView #taskAddBtn:hover, #TaskView #taskDeleteBtn:hover {{
                     background-color: #1565c0;
                 }}
-                #TaskView #taskAddBtn:pressed, #TaskView #taskDeleteBtn:pressed, #TaskView #taskRunBtn:pressed {{
+                #TaskView #taskAddBtn:pressed, #TaskView #taskDeleteBtn:pressed {{
                     background-color: #0d47a1;
                 }}
-                                #TaskView #taskAddBtn:disabled, #TaskView #taskDeleteBtn:disabled, #TaskView #taskRunBtn:disabled {{
+                                #TaskView #taskAddBtn:disabled, #TaskView #taskDeleteBtn:disabled {{
                     background-color: #b0b0b0;
                     color: #e0e0e0;
                 }}
@@ -242,20 +245,21 @@ class TaskView(QWidget):
                 }}
             """)
 
-        # 为三个按钮应用样式（无论是否有壁纸都要设）
+        # 为两个按钮应用样式（无论是否有壁纸都要设）
         # 删除按钮单独一份：悬停 / 按下换成红色，提示这是破坏性操作
         del_btn_style = (btn_style
                          .replace("background-color: #1976d2", "background-color: #e74c3c")
                          .replace("#1565c0", "#c0392b")
                          .replace("#0d47a1", "#a93226"))
-        for btn in (self.add_btn, self.delete_btn, self.run_btn):
+        for btn in (self.add_btn, self.delete_btn):
             btn.setStyleSheet(del_btn_style if btn is self.delete_btn else btn_style)
             if btn is self.add_btn:
                 btn.setIcon(qta.icon('fa6s.plus', color='white'))
-            elif btn is self.delete_btn:
+            else:
                 btn.setIcon(qta.icon('fa6s.trash-can', color='white'))
-            elif btn is self.run_btn:
-                btn.setIcon(qta.icon('fa6s.play', color='white'))
+
+        # 宽度必须在设完 QSS 之后再套：QSS 的 padding 参与尺寸计算，先设会被冲掉
+        self._apply_tool_btn_width()
 
         # 刷新列表以更新 TaskListItem
         self.refresh_list()
@@ -284,15 +288,10 @@ class TaskView(QWidget):
         self.delete_btn.clicked.connect(self._on_delete_task)
         self.delete_btn.setEnabled(False)
 
-        self.run_btn = QPushButton("执行")
-        self.run_btn.setObjectName("taskRunBtn")
-        self.run_btn.setIcon(qta.icon('fa6s.play', color='white'))
-        self.run_btn.clicked.connect(self._on_run_now)
-        self.run_btn.setEnabled(False)
-
+        # 「执行」按钮已去掉（2026-10-16 用户要求）：立即执行改由任务上右键菜单触发，
+        # 见 _build_context_menu 里的「立即执行」——能力没丢，只是不再占标题行
         top_layout.addWidget(self.add_btn)
         top_layout.addWidget(self.delete_btn)
-        top_layout.addWidget(self.run_btn)
         layout.addLayout(top_layout)
 
         # ---------- 任务列表 ----------
@@ -399,6 +398,24 @@ class TaskView(QWidget):
         finally:
             self._refreshing = False
 
+    def set_tool_btn_width(self, width: int):
+        """接收执行区算好的工具栏按钮统一宽度（新增 / 删除与「全选」等宽）。
+
+        为什么是"被推"而不是自己再算一遍：宽度要按当前字体现算（写死像素在高 DPI
+        下会裁字），只有执行区算一处，两边才不会因为字体或文案改动而对不上
+        —— 见 execute_view._equalize_tool_btn_widths。
+        """
+        self._tool_btn_width = int(width)
+        self._apply_tool_btn_width()
+
+    def _apply_tool_btn_width(self):
+        """把存下来的统一宽度套到按钮上；还没收到宽度时保持自然尺寸。"""
+        width = self._tool_btn_width
+        if not width:
+            return
+        for btn in (self.add_btn, self.delete_btn):
+            btn.setFixedWidth(width)
+
     def _update_buttons(self):
         current = self.task_list.currentItem()
         has_selection = current is not None
@@ -407,18 +424,6 @@ class TaskView(QWidget):
             self.delete_btn.setIcon(qta.icon('fa6s.trash-can', color='white'))
         else:
             self.delete_btn.setIcon(QIcon())
-
-        run_enabled = False
-        if has_selection:
-            widget = self.task_list.itemWidget(current)
-            if widget and hasattr(widget, 'task'):
-                task = widget.task
-                run_enabled = task.enabled and task.last_result != "device_offline"
-        self.run_btn.setEnabled(run_enabled)
-        if run_enabled:
-            self.run_btn.setIcon(qta.icon('fa6s.play', color='white'))
-        else:
-            self.run_btn.setIcon(QIcon())
 
     def _on_item_selected(self, current, previous):
         if self._refreshing:
@@ -466,17 +471,29 @@ class TaskView(QWidget):
         task_id = widget.task.id
         self.task_deleted.emit(task_id)
 
-    def _on_run_now(self):
-        if self._refreshing:
-            return
-        item = self.task_list.currentItem()
-        if not item:
-            return
-        widget = self.task_list.itemWidget(item)
-        if not widget or not hasattr(widget, 'task'):
-            return
-        task_id = widget.task.id
-        self.task_run_now.emit(task_id)
+    def _build_context_menu(self, task) -> QMenu:
+        """构造任务右键菜单。
+
+        单独抽成方法是为了让帮助文档的截图脚本复用同一份菜单定义
+        （见 tools/take_help_screenshots.py 的 task_5）：那边若自己再拼一遍，
+        菜单一改，截图就和真实界面对不上了。
+        """
+        menu = QMenu(self)
+        # 每个 QAction 都要挂到 menu 上：菜单**不接管**无父 action 的所有权，
+        # 本方法返回后局部变量一死，action 就被回收、菜单里只剩「删除」一项
+        toggle_action = QAction("启用" if not task.enabled else "禁用", menu)
+        toggle_action.triggered.connect(lambda: self.task_toggle_enabled.emit(task.id, not task.enabled))
+        menu.addAction(toggle_action)
+        menu.addSeparator()
+        run_action = QAction("立即执行", menu)
+        run_action.triggered.connect(lambda: self.task_run_now.emit(task.id))
+        menu.addAction(run_action)
+        menu.addSeparator()
+        edit_action = QAction("编辑", menu)
+        edit_action.triggered.connect(lambda: self.task_updated.emit(task.id))
+        menu.addAction(edit_action)
+        menu.addAction("删除", lambda: self._on_delete_task())
+        return menu
 
     def _show_context_menu(self, pos):
         if self._refreshing:
@@ -487,21 +504,8 @@ class TaskView(QWidget):
         widget = self.task_list.itemWidget(item)
         if not widget or not hasattr(widget, 'task'):
             return
-        task = widget.task
-        menu = QMenu()
-        toggle_action = QAction("启用" if not task.enabled else "禁用")
-        toggle_action.triggered.connect(lambda: self.task_toggle_enabled.emit(task.id, not task.enabled))
-        menu.addAction(toggle_action)
-        menu.addSeparator()
-        run_action = QAction("立即执行")
-        run_action.triggered.connect(lambda: self.task_run_now.emit(task.id))
-        menu.addAction(run_action)
-        menu.addSeparator()
-        edit_action = QAction("编辑")
-        edit_action.triggered.connect(lambda: self.task_updated.emit(task.id))
-        menu.addAction(edit_action)
-        menu.addAction("删除", lambda: self._on_delete_task())
-        menu.exec(self.task_list.viewport().mapToGlobal(pos))
+        self._build_context_menu(widget.task).exec(
+            self.task_list.viewport().mapToGlobal(pos))
 
 
 class TaskListItem(QWidget):
