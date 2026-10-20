@@ -1,9 +1,50 @@
 # utils/perf_report.py
 """性能检测 HTML 报告生成器"""
 import os
+import sys
 import base64
 from datetime import datetime
 from models.perf_model import PerfSession, compare_stats, MEM_CATEGORIES
+
+
+# 图表库（离线内嵌，见 _chart_js_tags 的说明）
+_CHART_JS_FILES = (
+    ("chart.umd.min.js",
+     "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"),
+    ("hammer.min.js",
+     "https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"),
+    ("chartjs-plugin-zoom.min.js",
+     "https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"),
+)
+
+
+def _resource_base() -> str:
+    """开发环境取项目根目录；打包后取 PyInstaller 解包目录。"""
+    if getattr(sys, "frozen", False):
+        return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _chart_js_tags() -> str:
+    """把三个图表库**内嵌**进报告，而不是从 CDN 外链加载。
+
+    为什么：报告经常要发给别人看，对方网络（尤其国内）访问 jsDelivr 常常失败，
+    结果就是曲线区域一片空白（2026-10-20 用户反馈）。内嵌后报告是单文件自包含的，
+    断网、换台电脑、直接发微信都能正常看图。三个库合计约 240KB，可接受。
+    找不到本地文件时退回 CDN 外链（老版本资源缺失时不至于整页没图）。
+    """
+    js_dir = os.path.join(_resource_base(), "resources", "js")
+    parts = []
+    for name, url in _CHART_JS_FILES:
+        try:
+            with open(os.path.join(js_dir, name), "r", encoding="utf-8") as f:
+                code = f.read()
+            # 避免库代码里偶然出现 </script> 提前闭合标签
+            code = code.replace("</script", "<\\/script")
+            parts.append(f"<script>\n{code}\n</script>")
+        except OSError:
+            parts.append(f'<script src="{url}"></script>')
+    return "\n    ".join(parts)
 
 
 # 各指标的 Chart.js 绘图脚本（普通字符串，非 f-string，花括号无需转义）
@@ -455,9 +496,7 @@ class PerfReportGenerator:
 <head>
     <meta charset="UTF-8">
     <title>性能报告 - {session.name}</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    {_chart_js_tags()}
     <style>
         * {{ box-sizing: border-box; }}
         body {{
