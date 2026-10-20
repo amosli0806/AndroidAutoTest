@@ -15,8 +15,12 @@ PRESET_COMMANDS = [
     {
         "id": 2,
         "name": "logcat日志",
-        # 先清除旧日志，然后开始抓取新日志并显示时间
-        "command_text": "shell logcat -c; logcat -v time",
+        # 先清除旧日志，然后开始抓取新日志并显示时间。
+        # 格式必须用 threadtime（`MM-DD HH:MM:SS.mmm PID TID 级别 标签: 内容`）：
+        # 它和原生 `adb logcat` 的默认输出一致。**不要改回 `-v time`** ——
+        # 那个格式是 `D/Tag( 975): 内容`，进程号带括号、也没有线程号，
+        # 导出的日志文件跟直接用 adb 抓的对不上（2026-10-20 用户反馈）
+        "command_text": "shell logcat -c; logcat -v threadtime",
         "description": "清除旧日志并开始抓取新日志",
         "show_stop_button": True,
         "is_preset": True,
