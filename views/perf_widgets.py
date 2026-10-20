@@ -252,9 +252,12 @@ class MetricCard(QFrame):
             )
 
     def set_alert(self, alert: bool):
-        """设置告警状态：曲线变红 + 显示 ⚠ + peak 标签染红"""
-        if self._alert == alert:
-            return
+        """设置告警状态：曲线变红 + 显示 ⚠ + peak 标签染红。
+
+        **不因状态未变而提前返回**：笔色是"上次设置"的，标志位可能与它不同步
+        （例如 clear_data 曾经直接置 _alert=False 却留着红笔），提前 return 会让
+        红线再也恢复不了。这里无条件重设，代价可以忽略（只在状态切换/清空时调用）。
+        """
         self._alert = alert
         self.alert_icon.setVisible(alert)
         for data in self._curves.values():
@@ -273,8 +276,9 @@ class MetricCard(QFrame):
             data['x'].clear()
             data['y'].clear()
             data['curve'].setData([], [])
-        self._alert = False
-        self.alert_icon.setVisible(False)
+        # 必须走 set_alert(False) 把笔色恢复成原色 —— 直接置 _alert=False 会留着
+        # 红色笔，清空后新数据继续画成红色（2026-10-20 用户反馈的"没超阈值也变红"）
+        self.set_alert(False)
         # 重置横轴起点
         if self._time_axis is not None:
             self._time_axis.reset_t0()
