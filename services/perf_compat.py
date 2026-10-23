@@ -120,21 +120,27 @@ class AndroidCompat:
 
     # ---------- 包名 & UID ----------
     def get_package_uid(self, package: str) -> int:
-        """获取应用 UID（用于流量采集）"""
-        if package in self._pkg_uid:
-            return self._pkg_uid[package]
+        """获取应用 UID（用于流量采集）。
+
+        入参可能是 `包名:子进程`（性能页下拉现在按进程列），而 `dumpsys package`
+        只认包名，所以先切掉 ":" 后面那截。流量本来就按 UID 统计，子进程与主进程
+        同 UID，切掉不影响结果。
+        """
+        base = package.split(":", 1)[0].strip()
+        if base in self._pkg_uid:
+            return self._pkg_uid[base]
         try:
-            out = shell_text(self.device, f"dumpsys package {package}",
+            out = shell_text(self.device, f"dumpsys package {base}",
                              timeout=GUI_TIMEOUT_HEAVY)
             match = re.search(
-                rf"Package\s+\[{re.escape(package)}\].*?userId=(\d+)",
+                rf"Package\s+\[{re.escape(base)}\].*?userId=(\d+)",
                 out, re.DOTALL,
             )
             if not match:
                 match = re.search(r"userId=(\d+)", out)
             if match:
                 uid = int(match.group(1))
-                self._pkg_uid[package] = uid
+                self._pkg_uid[base] = uid
                 return uid
         except Exception as e:
             logger.warning(f"[AndroidCompat] 获取 UID 失败: {e}")
@@ -189,6 +195,55 @@ class AndroidCompat:
                     if name:
                         packages.add(name)
         return ok, sorted(packages)
+
+    def list_app_processes_checked(self) -> tuple:
+        """返回 (ok, 进程名列表)，口径对齐 Android Studio Profiler 的进程列表。
+
+        为什么要换数据源：`pm list packages` 给的是**全部已安装应用**（这台车机
+        105 个），而 AS 的进程列表来自 AMS，只含**正在运行**的应用进程，并且把
+        `pkg:子进程` 单列一行（同一台设备 70 个）。两者数量对不上，用户会以为
+        应用少了（2026-10-22 反馈）。
+
+        三级取数（都失败才算 ok=False）：
+          1) `dumpsys activity processes` 的 ProcessRecord —— 与 AS 同源
+          2) 退回 `ps -A` ∩ 已安装包名
+          3) 再退回 `pm list packages`（只有包名，但功能不至于不可用）
+        """
+        # 1) AMS。只 grep 出 ProcessRecord 行：整段 dump 有 370KB，
+        #    过滤后只有 15KB，adbd 传输量差一个数量级
+        _ok, out = shell_text_checked(
+            self.device, "dumpsys activity processes | grep 'ProcessRecord{'",
+            timeout=GUI_TIMEOUT_HEAVY)
+        if out:
+            names = []
+            seen = set()
+            for m in re.finditer(r"ProcessRecord\{[0-9a-f]+\s+\d+:([^/]+)/", out):
+                name = m.group(1).strip()
+                # "system" 是纯系统进程，AS 的列表里也没有它
+                if not name or name == "system" or name in seen:
+                    continue
+                seen.add(name)
+                names.append(name)
+            if names:
+                return True, sorted(names)
+
+        # 2) ps -A ∩ 已安装包名（进程名与包名对得上的那些）
+        ok_pkg, packages = self.list_all_packages_checked()
+        if not ok_pkg:
+            return False, []
+        pkg_set = set(packages)
+        _ok_ps, ps_out = shell_text_checked(self.device, "ps -A",
+                                            timeout=GUI_TIMEOUT_HEAVY)
+        names = set()
+        for line in (ps_out or "").splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            name = parts[-1]
+            if name in pkg_set or name.split(":", 1)[0] in pkg_set:
+                names.add(name)
+        # 3) 连 ps 都不行时，至少把包名给出去
+        return True, (sorted(names) if names else packages)
 
     def get_traffic_collect_method(self) -> str:
         """返回当前设备可用的流量采集方式（含文件存在性探测，通用兼容）"""

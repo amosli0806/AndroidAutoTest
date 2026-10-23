@@ -207,6 +207,11 @@ class PerfView(QWidget):
             idx = self.app_combo.findText(current)
             if idx >= 0:
                 self.app_combo.setCurrentIndex(idx)
+            elif current and not current.startswith("未检测到应用"):
+                # 列表现在按「正在运行的进程」给：上次选的应用这一刻没在跑，
+                # 自然不在列表里。保留用户的选择（组合框可编辑），
+                # 不要静默重置成列表第一项
+                self.app_combo.setEditText(current)
         self.app_combo.blockSignals(False)
         self._check_state()
 
@@ -228,7 +233,10 @@ class PerfView(QWidget):
         ts = sample.timestamp
         # 只对本次会话勾选的指标追加数据
         if 'cpu' in self._active_metrics and 'cpu' in self._cards:
-            self._cards['cpu'].append_data(ts, {'value': sample.cpu_percent})
+            # 本轮 CPU 没拿到有效值（首采 / 进程集合变化 / 采集失败）时不画点：
+            # 否则曲线上会多出一个假的 0，看起来像"应用不占 CPU"
+            if not any(e.startswith('cpu:') for e in getattr(sample, 'errors', ())):
+                self._cards['cpu'].append_data(ts, {'value': sample.cpu_percent})
         if 'mem' in self._active_metrics and 'mem' in self._cards:
             # 多线：Java / Native / Graphics / Stack / Code / Others（Android Studio 风格）+ Total 总线
             mem_vals = {}

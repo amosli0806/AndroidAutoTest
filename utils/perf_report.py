@@ -229,7 +229,12 @@ class PerfReportGenerator:
             for s in samples:
                 t = s.timestamp
                 timestamps.append(f"{t - t0:.1f}")
-                cpu_series.append(f"{s.cpu_percent:.2f}")
+                # 没采到有效值的样本用 null 占位：Chart.js 会画成断点，
+                # 而不是把"没测到"画成 0
+                if any(e.startswith('cpu:') for e in getattr(s, 'errors', ())):
+                    cpu_series.append("null")
+                else:
+                    cpu_series.append(f"{s.cpu_percent:.2f}")
                 mem_series.append(f"{s.mem_pss_mb:.2f}")
                 for cat, _l, _c in MEM_CATEGORIES:
                     mem_cat_series[cat].append(

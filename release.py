@@ -31,18 +31,26 @@ VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 # git push 偶发的网络类错误特征（GitHub 443 端口会 Connection reset）。
 # 命中这些才重试；非网络错误（如 push 被拒）重试无意义，直接报错。
+#
+# 注意 git/curl 的实际措辞有两套，必须都收进来 —— 之前只写了 "connection reset"，
+# 而实际输出是 "Recv failure: Connection was reset"（多了个 was），
+# 导致网络抖动时一次都不重试、直接退出（2026-10-19 / 2026-10-20 各踩一次）。
 _NETWORK_HINTS = (
     "connection reset",
+    "connection was reset",
+    "recv failure",
     "could not read from remote",
+    "couldn't connect to server",
     "connection timed out",
     "failed to connect",
+    "could not resolve host",
     "early eof",
     "remote end hung up",
     "network is unreachable",
     "connection refused",
 )
 PUSH_RETRIES = 3
-PUSH_RETRY_DELAY = 3  # 秒
+PUSH_RETRY_DELAY = 5  # 秒
 
 
 def run(cmd, check=True):

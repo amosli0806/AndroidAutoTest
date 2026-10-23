@@ -36,7 +36,11 @@ class PerfService:
         self._last_tx = 0
         # CPU 差分计算用
         self._last_cpu_ticks = None
+        self._last_cpu_pids = None      # 上次采样的 PID 集合（变了就得重建基准）
         self._last_cpu_time = 0.0
+        # /proc/<pid>/stat 的 utime/stime 单位是 USER_HZ，ARM/x86 恒为 100，
+        # 与内核 CONFIG_HZ（这台车机是 250）无关 —— 2026-10-22 实测：
+        # 按 100 算得 31.37%，与 top 的 32.6% 吻合；按 250 会算成 12.55%
         self._cpu_ticks_per_sec = 100
         self._cpu_core_count = None  # 首次采集时探测
 
@@ -105,7 +109,12 @@ class PerfService:
 
         if 'cpu' in metrics:
             try:
-                sample.cpu_percent = self._collect_cpu(package)
+                cpu = self._collect_cpu(package)
+                if cpu is None:
+                    # 首采 / 进程集合变化：本轮只重建基准，不产出数据点
+                    sample.errors.append("cpu:本轮无有效值（首采或进程集合变化）")
+                else:
+                    sample.cpu_percent = cpu
             except Exception as e:
                 sample.errors.append(f"cpu:{e}")
 
@@ -144,44 +153,100 @@ class PerfService:
     # ============================================================
     # CPU
     # ============================================================
-    def _collect_cpu(self, package: str) -> float:
-        """
-        通过 /proc/<pid>/stat 差分计算进程 CPU 占用率（Linux 通用，不依赖 dumpsys）。
-        首采样返回 0（无基准）；后续按 (Δutime+Δstime)/Δt 计算。
+    def _find_app_pids(self, package: str) -> list:
+        """列出该应用**所有**进程的 PID（主进程 + `包名:xxx` 子进程）。
 
-        拿不到数据一律抛 PerfShellError（**不再静默返回 0**）—— 见 _sh 的说明。
+        为什么不能用 `pidof <包名>`：pidof 匹配的是进程名（comm），而 Android 的
+        私有进程叫 `com.foo:remote`，`pidof com.foo` 匹配不到，CPU 会被系统性漏算。
+        2026-10-22 实测 `com.alibaba.ailabs.autobot`：主进程 3.43% + `:channel`
+        1.66%，只算主进程会漏掉 **32.6%**。
+
+        `ps -A` 的列是 USER PID PPID VSZ RSS WCHAN ADDR S NAME，
+        所以 PID 取第 2 列、进程名取最后一列。
+        """
+        pids = []
+        try:
+            out = self._sh("ps -A", what="ps -A")
+        except PerfShellError:
+            out = ""
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) < 3 or not parts[1].isdigit():
+                continue
+            name = parts[-1]
+            if name == package or name.startswith(package + ":"):
+                pids.append(parts[1])
+
+        if not pids:
+            # 老设备/精简 ROM 的 ps 不认 -A：退回 pidof（只能拿到主进程，
+            # 至少不比改之前差），保证功能可用而不是直接报错
+            pid_out = self._sh(f"pidof {package}", require_output=False).strip()
+            pids = pid_out.split() if pid_out else []
+        return pids
+
+    def _sum_proc_ticks(self, pids: list):
+        """一次 adb 往返读出多个进程的 (utime+stime) 累计值之和。
+
+        返回 None 表示"读到的 stat 行数与 PID 数对不上"（有进程刚好起停），
+        调用方应重建基准，而不是拿一个残缺的和对差值。
+        """
+        paths = " ".join(f"/proc/{p}/stat" for p in pids)
+        # 2>/dev/null + true：进程恰好退出时不要让 cat 的退出码把整轮判成失败
+        out = self._sh(f"cat {paths} 2>/dev/null; true", what="多个 /proc/<pid>/stat")
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        if len(lines) != len(pids):
+            return None
+
+        total = 0
+        for line in lines:
+            # 第 14/15 项是 utime/stime，需从最后一个 ")" 之后切
+            # （comm 里可能有空格/括号）
+            rp = line.rfind(")")
+            if rp < 0:
+                return None
+            fields = line[rp + 2:].split()
+            if len(fields) < 13:
+                return None
+            total += int(fields[11]) + int(fields[12])
+        return total
+
+    def _collect_cpu(self, package: str):
+        """按 /proc/<pid>/stat 差分计算**应用全部进程**的 CPU 占用率。
+
+        返回 None 表示"本轮没有有效值"：首采、进程集合变化、或时钟/PID 异常，
+        此时只重建基准，**不产出数据点**（否则曲线会出现假的 0 或假尖峰）。
+
+        拿不到进程一律抛 PerfShellError（不再静默返回 0）—— 见 _sh 的说明。
+        数值口径是**多核累计**（6 核设备最高 600%），与界面上的「多核累计」一致。
         """
         import time as _time
-        # pidof：命令执行失败抛异常（通道问题）；命令成功但没输出 = 应用确实没在跑
-        pid_out = self._sh(f"pidof {package}", require_output=False).strip()
-        if not pid_out:
-            raise PerfShellError(f"应用未在运行（pidof 无输出）：{package}")
-        pid = pid_out.split()[0]
 
-        stat = self._sh(f"cat /proc/{pid}/stat", what=f"/proc/{pid}/stat")
+        pids = self._find_app_pids(package)
+        if not pids:
+            raise PerfShellError(f"应用未在运行（找不到进程）：{package}")
 
-        # 第 14/15 项是 utime/stime，需从最后一个 ")" 之后切（comm 里可能有空格/括号）
-        rp = stat.rfind(")")
-        if rp < 0:
-            raise PerfShellError(f"/proc/{pid}/stat 格式异常")
-        fields = stat[rp + 2:].split()
-        if len(fields) < 13:
-            raise PerfShellError(f"/proc/{pid}/stat 字段不足（{len(fields)} 项）")
-        total_ticks = int(fields[11]) + int(fields[12])
-        now = _time.time()
+        total_ticks = self._sum_proc_ticks(pids)
+        key = tuple(sorted(pids))
+        # 单调时钟：车机启动/联网时会校时，用 time.time() 会让差值忽大忽小
+        now = _time.monotonic()
 
-        if self._last_cpu_ticks is None:
+        # 首次采样，或进程集合变了（子进程起/停）：累计值没有可比性，重建基准
+        if total_ticks is None or self._last_cpu_pids != key or self._last_cpu_ticks is None:
+            self._last_cpu_pids = key
             self._last_cpu_ticks = total_ticks
             self._last_cpu_time = now
-            return 0.0
+            return None
 
         delta_ticks = total_ticks - self._last_cpu_ticks
         delta_sec = now - self._last_cpu_time
+        self._last_cpu_pids = key
         self._last_cpu_ticks = total_ticks
         self._last_cpu_time = now
 
         if delta_sec <= 0 or delta_ticks < 0:
-            return 0.0
+            # 时钟异常 / PID 被复用导致累计值回退：本轮作废，下一轮从新基准算
+            return None
+
         cpu_sec = delta_ticks / self._cpu_ticks_per_sec
         percent = cpu_sec / delta_sec * 100.0
 

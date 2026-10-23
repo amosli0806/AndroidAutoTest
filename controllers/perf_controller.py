@@ -373,7 +373,7 @@ class PerfController(QObject):
             return
         try:
             compat = AndroidCompat(self.device_service.device)
-            ok, packages = compat.list_all_packages_checked()
+            ok, packages = compat.list_app_processes_checked()
             self.view.update_app_list(packages, load_failed=not ok)
             if ok and packages:
                 self._apps_retry_left = 0      # 拿到了，别再重试
@@ -920,18 +920,30 @@ class PerfController(QObject):
 
         def worker():
             creationflags = subprocess.CREATE_NO_WINDOW if _sys.platform == 'win32' else 0
-            try:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                local_path = os.path.join(
-                    screenshot_dir, f"screenshot_{timestamp}.png")
+
+            def grab(path):
                 # exec-out screencap -p：PNG 字节流直写本地文件，
-                # 不经过设备端临时文件（对比堆转储少一步 pull/rm）
-                with open(local_path, 'wb') as f:
+                # 不经过设备端临时文件（对比堆转储少一步 pull/rm）。
+                # 'wb' 会截断上一次重试留下的半截数据
+                with open(path, 'wb') as f:
                     subprocess.run(
                         [get_adb_path(), "-s", serial, "exec-out", "screencap", "-p"],
                         stdout=f, check=True, timeout=20,
                         creationflags=creationflags,
                     )
+
+            try:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                local_path = os.path.join(
+                    screenshot_dir, f"screenshot_{timestamp}.png")
+                # 车机忙时（例如同时在 pull 大日志）首次可能超时：隔 0.5s
+                # 重试一次，仍失败才报错。**只对超时重试** —— adb 不存在、
+                # 退出码非 0 这类错误重试也没用。
+                try:
+                    grab(local_path)
+                except subprocess.TimeoutExpired:
+                    time.sleep(0.5)
+                    grab(local_path)
                 if os.path.getsize(local_path) == 0:
                     os.remove(local_path)
                     raise RuntimeError("截图数据为空")
@@ -947,11 +959,17 @@ class PerfController(QObject):
         """截图结果回投到主线程：状态文字常驻卡片，失败另弹 toast。
 
         循环截图间隔可能很短，成功时不弹 toast，避免打扰。
+
+        失败时**不把原始异常塞进面板**：`subprocess.TimeoutExpired` 的 str()
+        带着完整的 adb 命令行，既看不懂又会把整行撑爆、挤乱布局。
+        面板只留一句短状态，完整原因写进「虫师日志」。
         """
         if status == "success":
             self.view.set_screenshot_status(f"最近：{os.path.basename(message)}")
         else:
-            self.view.set_screenshot_status(f"❌ {message}", error=True)
+            self.view.set_screenshot_status("最近：截图失败")
+            if self.logs_view:
+                self.logs_view.add_log(f"[性能] 截图失败：{message}", "error")
             show_toast(self.view, "截图失败", duration=4000)
 
     def _on_packet_toggle(self, capturing: bool):
@@ -1148,8 +1166,12 @@ class PerfController(QObject):
                 ])
                 for s in session.samples:
                     bd = getattr(s, 'mem_breakdown', {}) or {}
+                    # 没采到 CPU 的样本写空单元格，不写 0 —— 0 会被读成"真的不占 CPU"
+                    cpu_txt = ("" if any(e.startswith('cpu:')
+                                         for e in getattr(s, 'errors', ()))
+                               else f"{s.cpu_percent:.2f}")
                     writer.writerow([
-                        f"{s.timestamp:.3f}", f"{s.cpu_percent:.2f}",
+                        f"{s.timestamp:.3f}", cpu_txt,
                         f"{s.mem_pss_mb:.2f}",
                         f"{bd.get('Java', 0.0):.2f}",
                         f"{bd.get('Native', 0.0):.2f}",
