@@ -1335,10 +1335,8 @@ def _warn_already_running():
         import ctypes
         ctypes.windll.user32.MessageBoxW(
             None,
-            "虫师已经在运行了。\n\n"
-            "如果看不到它的窗口，多半是最小化在系统托盘里了："
-            "右键任务栏右下角的虫师图标，选「退出虫师」，然后再启动。\n\n"
-            "（两个实例同时开着会让自动更新失败，所以这里只允许开一个。）",
+            "虫师已在运行。\n\n"
+            "请从系统托盘打开，或退出后再启动。",
             "虫师", 0x40)          # MB_ICONINFORMATION
     except Exception:
         pass
