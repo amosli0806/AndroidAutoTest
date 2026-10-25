@@ -102,17 +102,23 @@ class PerfProbe:
         while not self._stop_evt.is_set():
             try:
                 data = self.sample_once()
-                with self._lock:
-                    self._latest = data
-                    self._samples.append(data)
+                if data is not None:      # None = 本轮无有效值（如差分探针首轮）
+                    with self._lock:
+                        self._latest = data
+                        self._samples.append(data)
             except Exception as e:      # 单次失败不退出，界面能看到原因
                 with self._lock:
                     self._latest = {**self._latest, "error": str(e), "ts": time.time()}
             self._stop_evt.wait(self._interval)
 
     # ---------- 子类实现 ----------
-    def sample_once(self) -> dict:
-        """采一次，返回结构化结果（必须带 ts）。失败请抛 ProbeError。"""
+    def sample_once(self):
+        """采一次，返回结构化结果（必须带 ts）。
+
+        返回 **None** 表示"这次没有可用的数据点"（典型：需要两个样本才能算差分的
+        探针，首轮只能建基准）——调用方不会把它记进序列，界面保持"等待采样"。
+        真失败请抛 ProbeError（会显示成 ⚠ 采集失败）。
+        """
         raise NotImplementedError
 
     # ---------- 结果读取（线程安全快照） ----------

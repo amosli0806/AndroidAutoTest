@@ -548,6 +548,41 @@ class PerfReportGenerator:
         <p style="font-size:12px;color:#888;">共 {len(_sc)} 个采样点</p>
         """
 
+        # 网卡流量（探针）：整机口径，按主网卡统计，多网卡不做求和
+        netdev_html = ""
+        _nd = [x for x in (getattr(session, "netdev_samples", None) or [])
+               if "rx_kbps" in x]
+        if _nd:
+            rx_v = [float(x.get("rx_kbps") or 0) for x in _nd]
+            tx_v = [float(x.get("tx_kbps") or 0) for x in _nd]
+            primary = _nd[-1].get("primary", "")
+            last_ifaces = _nd[-1].get("ifaces") or []
+            iface_rows = "".join(
+                f"<tr><td>{i.get('name', '')}</td><td>{float(i.get('rx_mb') or 0):.0f}</td>"
+                f"<td>{float(i.get('tx_mb') or 0):.0f}</td></tr>"
+                for i in last_ifaces)
+            netdev_html = f"""
+        <h2>📶 网卡流量（整机）</h2>
+        <p style="font-size:12px;color:#888;">※ 本项为<b>整机口径</b>（设备上所有应用合计），
+           按主网卡 <code>{primary}</code> 统计；车上同时存在多张网卡时它们是同一通道的不同层，
+           相加会重复计数，故提供各网卡明细而不给「合计」。与上方「流量速率」卡（所选应用）口径不同。</p>
+        <table class="compare compare4">
+            <thead><tr><th>项目</th><th>均值</th><th>峰值</th><th>最低</th></tr></thead>
+            <tbody>
+                <tr><td>下行 (KB/s)</td><td>{_avg(rx_v):.1f}</td>
+                    <td>{max(rx_v):.1f}</td><td>{min(rx_v):.1f}</td></tr>
+                <tr><td>上行 (KB/s)</td><td>{_avg(tx_v):.1f}</td>
+                    <td>{max(tx_v):.1f}</td><td>{min(tx_v):.1f}</td></tr>
+            </tbody>
+        </table>
+        <p style="font-size:12px;color:#888;">各网卡累计（截止最后一次采样）：</p>
+        <table class="compare">
+            <thead><tr><th>网卡</th><th>累计下行 (MB)</th><th>累计上行 (MB)</th></tr></thead>
+            <tbody>{iface_rows}</tbody>
+        </table>
+        <p style="font-size:12px;color:#888;">共 {len(_nd)} 个采样点</p>
+        """
+
         # 曲线区域与图表脚本：只渲染本次勾选采集的指标
         charts_section = ""
         chart_scripts = []
@@ -598,6 +633,8 @@ class PerfReportGenerator:
             _scope_parts.append(f"系统内存 = {SCOPE_LABELS.get(SCOPE_SYSTEM, '整机')}")
         if getattr(session, "sys_cpu_samples", None):
             _scope_parts.append(f"整机 CPU = {SCOPE_LABELS.get(SCOPE_SYSTEM, '整机')}")
+        if getattr(session, "netdev_samples", None):
+            _scope_parts.append(f"网卡流量 = {SCOPE_LABELS.get(SCOPE_SYSTEM, '整机')}")
         scope_text = "、".join(_scope_parts) or "未记录"
         if getattr(session, "scopes_inferred", False):
             scope_text += "（旧会话，按当前默认推断）"
@@ -814,6 +851,8 @@ class PerfReportGenerator:
         {sys_mem_html}
 
         {sys_cpu_html}
+
+        {netdev_html}
 
         {baseline_html}
 
