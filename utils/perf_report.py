@@ -491,6 +491,11 @@ class PerfReportGenerator:
             chart_scripts.append(CHART_JS_FPS)
         if has_traffic:
             charts_section += _wrap('trafficChart')
+            # 流量只能按 UID 统计（系统只有这个口径），不说清楚会被当成"该进程的流量"
+            charts_section += (
+                '<p style="font-size:12px;color:#888;margin:2px 0 10px;">'
+                '※ 网络流量按应用 UID 统计，包含该应用的全部进程，不区分主 / 子进程。</p>'
+            )
             chart_scripts.append(CHART_JS_TRAFFIC)
         if charts_section:
             charts_section = '<h2>📈 实时曲线</h2>' + charts_section

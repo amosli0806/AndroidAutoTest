@@ -304,11 +304,14 @@ class PerfView(QWidget):
             rx_mb = s['rx_mb']
             tx_mb = s['tx_mb']
             total_mb = rx_mb + tx_mb
+            # 流量的系统口径是「按应用 UID」：选了子进程，数字仍是整个应用的，
+            # 不标注会被误读成该子进程的流量（2026-10-25）
+            scope = "整应用统计" if ":" in self.app_combo.currentText() else ""
             self._cards['traffic'].set_stats(
                 current_text=f"接收 {rx_mb:.2f}MB",
                 peak_text=f"发送 {tx_mb:.2f}MB",
                 avg_text=f"总共 {total_mb:.2f}MB",
-                extra_text="",
+                extra_text=scope,
             )
 
 
