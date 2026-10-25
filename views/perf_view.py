@@ -705,7 +705,8 @@ class PerfView(QWidget):
         self.smaps_visible_check = BorderedCheckBox("内存明细")
         self.smaps_visible_check.setToolTip(
             "显示「内存明细（smaps）」卡片：把所选进程的 /proc/<pid>/smaps 完整抓回本地，"
-            "可用来看分段内存映射（比 PSS 总量精细得多）")
+            "可用来看分段内存映射（比 PSS 总量精细得多）\n"
+            "⚠ 读取其他应用的 smaps 需要设备 root，或应用是 debug（可调试）包")
         self.smaps_visible_check.toggled.connect(self._on_card_visibility_changed)
         metric_widgets.append(self.smaps_visible_check)
 
@@ -964,6 +965,9 @@ class PerfView(QWidget):
         # ---- 内存明细（smaps）卡片 ----
         (self._smaps_card, smaps_row,
          self._smaps_dot, self._smaps_title) = _card("#16a085", "内存明细")
+        self._smaps_card.setToolTip(
+            "抓取所选进程的 /proc/<pid>/smaps 到本地\n"
+            "⚠ 需要设备 root，或应用是 debug（可调试）包")
         self.smaps_enable_check = BorderedCheckBox("自动循环")
         self.smaps_enable_check.setToolTip(
             "开启后，点击「开始监控」即按右侧间隔自动抓取所选进程的 smaps\n"

@@ -1053,9 +1053,44 @@ class PerfController(QObject):
         adb = get_adb_path()
         out_dir = self._smaps_out_dir()
         path = os.path.join(out_dir, time.strftime("smaps_%Y%m%d_%H%M%S.txt"))
+        creationflags = subprocess.CREATE_NO_WINDOW if _sys.platform == 'win32' else 0
+
+        def _read_once(cmd):
+            """执行一条读 smaps 的命令：成功返回 (True, 字节数)，失败返回 (False, 原因)"""
+            with open(path, "wb") as f:
+                proc = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE,
+                                      timeout=180, creationflags=creationflags)
+            size = os.path.getsize(path) if os.path.exists(path) else 0
+            if proc.returncode == 0 and size > 1024:
+                return True, size
+            # 失败原因：先看 stderr；adb exec-out 有时把远端 stderr 并进 stdout（文件里），
+            # 所以再读文件头 —— 这就是"输出异常（42 字节）"看不到原因的原因
+            reason = (proc.stderr or b"").decode("utf-8", "replace").strip()
+            if not reason:
+                try:
+                    with open(path, "rb") as fh:
+                        reason = fh.read(300).decode("utf-8", "replace").strip()
+                except OSError:
+                    reason = ""
+            return False, reason
+
+        def _human_reason(reasons) -> str:
+            """把三条路径的原始报错翻译成一句能指导操作的话。
+
+            取"最可行动"的那条：Permission denied 一律归为"需要 root"，
+            不要被后面 run-as 的 "not debuggable" 覆盖掉。
+            """
+            joined = " | ".join(r for r in reasons if r)
+            if "Permission denied" in joined:
+                return ("读取 smaps 需要 root 权限：该设备未 root，"
+                        "应用也不是可调试包（可 adb root，或换 debug 包再试）")
+            if "not debuggable" in joined:
+                return "应用不是可调试包，且设备未 root，无法读取 smaps"
+            if "No such file" in joined:
+                return "进程已退出（smaps 文件不存在）"
+            return reasons[-1] if reasons and reasons[-1] else "未知原因"
 
         def worker():
-            creationflags = subprocess.CREATE_NO_WINDOW if _sys.platform == 'win32' else 0
             try:
                 r = subprocess.run(
                     [adb, "-s", serial, "shell", "pidof", package],
@@ -1066,26 +1101,37 @@ class PerfController(QObject):
                     self.smaps_finished.emit("error", f"应用「{package}」未在运行")
                     return
                 pid = pids[0]
-                with open(path, "wb") as f:
-                    proc = subprocess.run(
-                        [adb, "-s", serial, "exec-out", "cat", f"/proc/{pid}/smaps"],
-                        stdout=f, stderr=subprocess.PIPE, timeout=180,
-                        creationflags=creationflags)
-                size = os.path.getsize(path) if os.path.exists(path) else 0
-                if proc.returncode != 0 or size < 1024:
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
-                    err = (proc.stderr or b"").decode("utf-8", "replace").strip()
-                    self.smaps_finished.emit(
-                        "error", err or f"输出异常（{size} 字节）")
-                    return
-                logger.info("[Perf] smaps 已保存：%s（%.1f MB）", path, size / 1048576.0)
-                self.smaps_finished.emit(
-                    "success", f"{os.path.basename(path)}（{size / 1048576.0:.1f} MB）")
+
+                # 三条路径依次尝试：直读 → root → run-as（可调试包）。
+                # /proc/<pid>/smaps 在 Android 上默认只有 root 能读，shell 读别的应用必被拒。
+                attempts = (
+                    ("直读", [adb, "-s", serial, "exec-out", "cat", f"/proc/{pid}/smaps"]),
+                    ("root", [adb, "-s", serial, "shell", f"su -c 'cat /proc/{pid}/smaps'"]),
+                    ("run-as", [adb, "-s", serial, "shell",
+                                f"run-as {package} cat /proc/{pid}/smaps"]),
+                )
+                reasons = []
+                for label, cmd in attempts:
+                    ok, info = _read_once(cmd)
+                    if ok:
+                        logger.info("[Perf] smaps 已保存（%s）：%s（%.1f MB）",
+                                    label, path, info / 1048576.0)
+                        self.smaps_finished.emit(
+                            "success", f"{os.path.basename(path)}（{info / 1048576.0:.1f} MB）")
+                        return
+                    reasons.append(info)
+                    logger.info("[Perf] smaps %s 失败：%s", label, info)
+                try:
+                    os.remove(path)      # 失败时不要留个只有报错的空文件
+                except OSError:
+                    pass
+                self.smaps_finished.emit("error", _human_reason(reasons))
             except Exception as e:
                 logger.warning("[Perf] smaps 抓取失败：%s", e)
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
                 self.smaps_finished.emit("error", str(e))
             finally:
                 self._smaps_dumping = False
