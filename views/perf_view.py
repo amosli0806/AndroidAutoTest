@@ -1784,6 +1784,7 @@ class PerfView(QWidget):
         # 性能工具卡片（堆转储 / 抓包 / 截图）：与指标卡片保持同一套配色
         for tool_card, title_widget, dot_widget in (
             (self._hprof_card, self._hprof_title, self._hprof_dot),
+            (self._smaps_card, self._smaps_title, self._smaps_dot),
             (self._packet_card, self._packet_title, self._packet_dot),
             (self._screenshot_card, self._screenshot_title, self._screenshot_dot),
         ):
