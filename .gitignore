@@ -55,3 +55,6 @@ desktop.ini
 .DS_Store
 dist_weditor/
 build_weditor/
+
+# ---------- 内部草稿（不随仓库发布） ----------
+docs/性能检测能力并入方案.md
