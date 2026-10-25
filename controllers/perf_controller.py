@@ -1013,6 +1013,7 @@ class PerfController(QObject):
     def _on_hprof_finished(self, status: str, message: str):
         """堆转储结果回投到主线程：只弹 toast 结论，不写日志、不展示异常信息"""
         if status == "success":
+            self._add_event("heap", os.path.basename(message))
             show_toast(self.view, "堆转储完成")
         else:
             show_toast(self.view, "堆转储失败", duration=4000)
@@ -1133,8 +1134,7 @@ class PerfController(QObject):
                     if ok:
                         logger.info("[Perf] smaps 已保存（%s）：%s（%.1f MB）",
                                     label, path, info / 1048576.0)
-                        self.smaps_finished.emit(
-                            "success", f"{info / 1048576.0:.1f} MB")
+                        self.smaps_finished.emit("success", path)
                         return
                     reasons.append(info)
                     logger.info("[Perf] smaps %s 失败：%s", label, info)
@@ -1157,7 +1157,9 @@ class PerfController(QObject):
 
     def _on_smaps_finished(self, status: str, message: str):
         if status == "success":
-            show_toast(self.view, f"内存明细已保存（{message}）", duration=3000)
+            self._add_event("smaps", os.path.basename(message))
+            size = os.path.getsize(message) / 1048576.0 if os.path.exists(message) else 0.0
+            show_toast(self.view, f"内存明细已保存（{size:.1f} MB）", duration=3000)
         else:
             show_toast(self.view, f"内存明细抓取失败：{message}", duration=4000)
 
@@ -1255,7 +1257,7 @@ class PerfController(QObject):
                     self.record_finished.emit("error", _human(err))
                     return
                 logger.info("[Perf] 录屏已保存：%s（%.1f MB）", local, size / 1048576.0)
-                self.record_finished.emit("success", f"{size / 1048576.0:.1f} MB")
+                self.record_finished.emit("success", local)
             except Exception as e:
                 logger.warning("[Perf] 录屏失败：%s", e)
                 try:
@@ -1270,7 +1272,9 @@ class PerfController(QObject):
 
     def _on_record_finished(self, status: str, message: str):
         if status == "success":
-            show_toast(self.view, f"录屏已保存（{message}）", duration=3000)
+            self._add_event("record", os.path.basename(message))
+            size = os.path.getsize(message) / 1048576.0 if os.path.exists(message) else 0.0
+            show_toast(self.view, f"录屏已保存（{size:.1f} MB）", duration=3000)
         else:
             show_toast(self.view, f"录屏失败：{message}", duration=4000)
 
@@ -1372,6 +1376,7 @@ class PerfController(QObject):
         面板只留一句短状态，完整原因写进「虫师日志」。
         """
         if status == "success":
+            self._add_event("screenshot", os.path.basename(message))
             self.view.set_screenshot_status(f"最近：{os.path.basename(message)}")
         else:
             self.view.set_screenshot_status("最近：截图失败")
@@ -1477,6 +1482,7 @@ class PerfController(QObject):
         limit_txt = capture_limit_text(reason)
         note = f'（{limit_txt}，已自动停止）' if limit_txt else ''
         if success:
+            self._add_event("capture", os.path.basename(result))
             self.view.set_packet_capturing(False)
             self.view.set_packet_status(f"完成：{os.path.basename(result)}{note}")
             if self.logs_view:
@@ -1554,6 +1560,20 @@ class PerfController(QObject):
         os.makedirs(path, exist_ok=True)
         return path
 
+    # 诊断事件类型（与报告 EVENT_META 保持一致）
+    EVENT_TYPES = ("heap", "capture", "screenshot", "record", "smaps")
+
+    def _add_event(self, etype: str, file: str, note: str = ""):
+        """给当前会话记一条诊断事件（产物落地了，报告「诊断产物」和曲线竖线要用）。
+
+        脱离监控手动操作时 current_session 为 None，不记（归「手动」目录的产物不属任何会话）。
+        """
+        if self.current_session is None or etype not in self.EVENT_TYPES:
+            return
+        self.current_session.events.append({
+            "ts": time.time(), "type": etype, "file": file, "note": note,
+        })
+
     def _on_export_csv(self):
         if not self.current_session or not self.current_session.samples:
             # 尝试用最后一个会话
@@ -1602,6 +1622,20 @@ class PerfController(QObject):
                         s.fps,
                         s.rx_bytes, s.tx_bytes
                     ])
+            # 诊断产物清单：与主 CSV 并列写一个 <名称>_诊断产物.csv，方便一并归档
+            if getattr(session, 'events', None):
+                manifest = os.path.splitext(path)[0] + "_诊断产物.csv"
+                _labels = {"heap": "堆转储", "capture": "抓包", "screenshot": "截图",
+                           "record": "录屏", "smaps": "内存明细"}
+                t0 = session.samples[0].timestamp if session.samples else 0.0
+                with open(manifest, 'w', newline='', encoding='utf-8-sig') as mf:
+                    w2 = csv.writer(mf)
+                    w2.writerow(['相对秒', '类型', '文件', '备注'])
+                    for e in sorted(session.events, key=lambda x: x.get('ts', 0)):
+                        rel = (e.get('ts', 0) - t0) if t0 else 0.0
+                        w2.writerow([f"{rel:.1f}",
+                                     _labels.get(e.get('type'), e.get('type')),
+                                     e.get('file', ''), e.get('note', '')])
             show_toast(self.view, "导出成功")
         except Exception as e:
             ErrorDialog.show_error(self.view, "导出失败", str(e))

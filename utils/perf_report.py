@@ -623,6 +623,41 @@ class PerfReportGenerator:
         <p style="font-size:12px;color:#888;">共 {len(_io)} 个采样点</p>
         """
 
+        # 诊断事件 → 报告「诊断产物」章节 + 曲线上的事件竖线
+        _EVENT_META = {
+            "heap": ("堆转储", "#e67e22"),
+            "capture": ("抓包", "#9b59b6"),
+            "screenshot": ("截图", "#16a085"),
+            "record": ("录屏", "#e84393"),
+            "smaps": ("内存明细", "#27ae60"),
+        }
+        _events = sorted(getattr(session, "events", None) or [],
+                         key=lambda x: x.get("ts", 0))
+        events_html = ""
+        event_markers_js = "[]"
+        if _events:
+            _rel_secs = [s.timestamp - samples[0].timestamp for s in samples] if samples else []
+            rows, markers = [], []
+            for e in _events:
+                label, color = _EVENT_META.get(e.get("type", ""), (e.get("type", "") or "其他", "#999999"))
+                rel = (e.get("ts", 0) - samples[0].timestamp) if samples else None
+                rel_txt = f"{rel:.1f} 秒" if rel is not None else "—"
+                rows.append(
+                    f"<tr><td>{rel_txt}</td><td>{label}</td>"
+                    f"<td>{e.get('file', '')}</td><td>{e.get('note', '')}</td></tr>")
+                if rel is not None and _rel_secs and 0 <= rel <= _rel_secs[-1]:
+                    idx = min(range(len(_rel_secs)), key=lambda i: abs(_rel_secs[i] - rel))
+                    markers.append(f"{{x:{idx}, color:'{color}', label:'{label}'}}")
+            events_html = f"""
+        <h2>🧾 诊断产物</h2>
+        <p style="font-size:12px;color:#888;">本次会话内产生的堆转储 / 抓包 / 截图 / 录屏 / 内存明细，按发生时刻列出（相对会话开始）：</p>
+        <table class="compare">
+            <thead><tr><th>时刻</th><th>类型</th><th>文件</th><th>备注</th></tr></thead>
+            <tbody>{''.join(rows)}</tbody>
+        </table>
+        """
+            event_markers_js = "[" + ",".join(markers) + "]"
+
         # 曲线区域与图表脚本：只渲染本次勾选采集的指标
         charts_section = ""
         chart_scripts = []
@@ -898,6 +933,8 @@ class PerfReportGenerator:
 
         {iotop_html}
 
+        {events_html}
+
         {baseline_html}
 
         {charts_section}
@@ -924,6 +961,32 @@ class PerfReportGenerator:
         const fpsData = [{','.join(fps_series)}];
         const rxRateData = [{','.join(rx_rate_series)}];
         const txRateData = [{','.join(tx_rate_series)}];
+
+        // 诊断事件竖线：在每条曲线上对应时刻画一条彩色虚线（颜色对应产物类型）
+        const eventMarkers = {event_markers_js};
+        const eventLinePlugin = {{
+            id: 'eventLines',
+            afterDatasetsDraw: function(chart) {{
+                if (!eventMarkers.length) return;
+                var area = chart.chartArea;
+                var xScale = chart.scales.x;
+                eventMarkers.forEach(function(m) {{
+                    var x = xScale.getPixelForValue(m.x);
+                    var ctx = chart.ctx;
+                    ctx.save();
+                    ctx.strokeStyle = m.color;
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([4, 3]);
+                    ctx.globalAlpha = 0.75;
+                    ctx.beginPath();
+                    ctx.moveTo(x, area.top);
+                    ctx.lineTo(x, area.bottom);
+                    ctx.stroke();
+                    ctx.restore();
+                }});
+            }}
+        }};
+        Chart.register(eventLinePlugin);
 
         {charts_js}
 

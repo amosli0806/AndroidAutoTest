@@ -99,6 +99,9 @@ class PerfSession:
     netdev_samples: List[dict] = field(default_factory=list)
     # 磁盘 IO 探针（整机口径，需 root）：[{ts, read_kbps, write_kbps, top:[...]}, ...]
     iotop_samples: List[dict] = field(default_factory=list)
+    # 会话内的诊断事件（堆转储/抓包/截图/录屏/内存明细）：
+    # [{ts, type, file, note}]，ts 为绝对时间戳（time.time()），报告换算成相对秒
+    events: List[dict] = field(default_factory=list)
 
     def to_dict(self):
         return {
@@ -123,6 +126,7 @@ class PerfSession:
             "sys_cpu_samples": self.sys_cpu_samples,
             "netdev_samples": self.netdev_samples,
             "iotop_samples": self.iotop_samples,
+            "events": self.events,
         }
 
     @classmethod
@@ -158,6 +162,7 @@ class PerfSession:
         session.sys_cpu_samples = list(data.get("sys_cpu_samples") or [])
         session.netdev_samples = list(data.get("netdev_samples") or [])
         session.iotop_samples = list(data.get("iotop_samples") or [])
+        session.events = list(data.get("events") or [])
         return session
 
     # ---------- 统计 ----------
