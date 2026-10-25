@@ -251,6 +251,7 @@ class PerfController(QObject):
     # 堆转储结果回投主线程（worker 线程不直接碰 GUI，避免跨线程操作导致界面未响应）
     hprof_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
     smaps_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
+    record_finished = pyqtSignal(str, str)  # (status: 'success'/'error', message)
     # 截图结果回投主线程（状态文字 / 失败 toast）
     screenshot_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
     # 启动测试等结果 -> 底部「虫师日志」（main.py 里连 append_bottom_log）
@@ -280,6 +281,9 @@ class PerfController(QObject):
         # 内存明细（smaps）自动循环 / 抓取状态
         self._smaps_loop_timer = None
         self._smaps_dumping = False
+        # 录屏自动循环 / 录制状态
+        self._record_loop_timer = None
+        self._recording = False
         # 截图自动循环状态
         self._screenshot_loop_timer = None
         self._screenshot_busy = False
@@ -305,6 +309,7 @@ class PerfController(QObject):
         # 堆转储 / 截图结果回主线程处理（toast / 状态文字）
         self.hprof_finished.connect(self._on_hprof_finished)
         self.smaps_finished.connect(self._on_smaps_finished)
+        self.record_finished.connect(self._on_record_finished)
         self.screenshot_finished.connect(self._on_screenshot_finished)
 
         self._connect_signals()
@@ -328,6 +333,10 @@ class PerfController(QObject):
         self.view.hprof_interval_changed.connect(self._on_hprof_interval_changed)
         self.view.smaps_once_requested.connect(self._dump_smaps_now)
         self.view.smaps_interval_changed.connect(self._on_smaps_interval_changed)
+        self.view.record_once_requested.connect(self._record_now)
+        self.view.record_toggle_requested.connect(self._on_record_toggle)
+        self.view.record_interval_changed.connect(self._on_record_cfg_changed)
+        self.view.record_duration_changed.connect(self._on_record_cfg_changed)
         self.view.packet_toggle_requested.connect(self._on_packet_toggle)
         self.view.packet_config_requested.connect(self._on_capture_config)
         self.view.screenshot_toggle_requested.connect(self._on_screenshot_toggle)
@@ -518,6 +527,10 @@ class PerfController(QObject):
         if self.view.screenshot_enable_check.isChecked():
             self._start_screenshot_loop()
 
+        # 录屏自动循环：同截图口径（间隔必须大于单段时长，见 _start_record_loop）
+        if self.view.record_loop_enabled():
+            self._start_record_loop()
+
         # 抓包：勾选了「抓包」卡片就随监控一起开始
         # （停止那半边早就有了，见 _on_stop 里的 _stop_capture；此前只缺这半边，
         #  所以界面看着像"抓包和监控没关系"，2026-10-14 用户反馈）
@@ -596,6 +609,7 @@ class PerfController(QObject):
         self._stop_hprof_loop()
         self._stop_smaps_loop()
         self._stop_screenshot_loop()
+        self._stop_record_loop()
         # 抓包也随监控结束收尾：否则它会一直抓到时长/大小上限，甚至用户以为早就停了
         self._stop_capture()
         # 旁路探针统一收尾（P1 起的 meminfo_sys / top_sys / netdev 等在这里登记）
@@ -1152,6 +1166,121 @@ class PerfController(QObject):
             show_toast(self.view, f"内存明细已保存（{message}）", duration=3000)
         else:
             show_toast(self.view, f"内存明细抓取失败：{message}", duration=4000)
+
+    # ------------------------------------------------------------------
+    # 录屏：screenrecord 定时录一段 → 拉回本地
+    # ------------------------------------------------------------------
+    def _on_record_toggle(self, checked: bool):
+        if not checked:
+            self._stop_record_loop()
+        elif self.perf_worker is not None:
+            # 监控中勾上：立即生效；空闲时勾上则等下次开始监控
+            self._start_record_loop()
+
+    def _on_record_cfg_changed(self):
+        """间隔/时长改了：循环在跑就按新间隔重排"""
+        if self._record_loop_timer is not None and self._record_loop_timer.isActive():
+            self._record_loop_timer.start(int(self.view.get_record_interval() * 1000))
+
+    def _start_record_loop(self):
+        if not self.view.record_config_ok():
+            show_toast(self.view, "间隔需大于单段时长")
+            self.view.record_enable_check.blockSignals(True)
+            self.view.record_enable_check.setChecked(False)
+            self.view.record_enable_check.blockSignals(False)
+            return
+        if self._record_loop_timer is None:
+            self._record_loop_timer = QTimer(self)
+            self._record_loop_timer.timeout.connect(self._record_now)
+        # 不立即录：等一个完整间隔
+        self._record_loop_timer.start(int(self.view.get_record_interval() * 1000))
+
+    def _stop_record_loop(self):
+        if self._record_loop_timer is not None:
+            self._record_loop_timer.stop()
+
+    def _record_now(self):
+        """录一段屏幕视频（后台线程，防重入）。
+
+        screenrecord 是**阻塞**命令（跑满时长才返回），所以整段放在后台线程里，
+        录完再 adb pull 回本地并删掉设备上的临时文件。
+        """
+        if self._recording:
+            return
+        if not self.device_service or not self.device_service.serial:
+            show_toast(self.view, "设备未连接")
+            return
+        self._recording = True
+
+        import subprocess
+        import sys as _sys
+        import threading
+        from utils.adb_path import get_adb_path
+        from utils.settings import Settings as _Settings
+
+        serial = self.device_service.serial
+        adb = get_adb_path()
+        duration = max(5, min(180, int(self.view.get_record_duration())))
+        rec_dir = os.path.join(_Settings.get_output_dir(),
+                               serial.replace(':', '_'), "screencap")
+        os.makedirs(rec_dir, exist_ok=True)
+        name = time.strftime("record_%Y%m%d_%H%M%S.mp4")
+        remote = f"/data/local/tmp/{name}"
+        local = os.path.join(rec_dir, name)
+
+        def _human(err: str) -> str:
+            low = (err or "").lower()
+            if "unable to configure" in low:
+                return "设备不支持录屏（编解码器不可用）"
+            if "inaccessible" in low or "not found" in low:
+                return "设备没有 screenrecord"
+            if "permission denied" in low:
+                return "没有录屏权限"
+            return (err or "").strip()[:60] or "未知原因"
+
+        def worker():
+            creationflags = subprocess.CREATE_NO_WINDOW if _sys.platform == 'win32' else 0
+            try:
+                r = subprocess.run(
+                    [adb, "-s", serial, "shell",
+                     f"screenrecord --time-limit {duration} --bit-rate 8000000 {remote}"],
+                    capture_output=True, text=True, timeout=duration + 40,
+                    creationflags=creationflags, encoding="utf-8", errors="replace")
+                r2 = subprocess.run(
+                    [adb, "-s", serial, "pull", remote, local],
+                    capture_output=True, text=True, timeout=180,
+                    creationflags=creationflags, encoding="utf-8", errors="replace")
+                subprocess.run([adb, "-s", serial, "shell", "rm", "-f", remote],
+                               capture_output=True, timeout=20,
+                               creationflags=creationflags)
+                size = os.path.getsize(local) if os.path.exists(local) else 0
+                if r.returncode != 0 or size < 4096:
+                    try:
+                        os.remove(local)
+                    except OSError:
+                        pass
+                    err = (r.stderr or "") + (r2.stderr or "")
+                    self.record_finished.emit("error", _human(err))
+                    return
+                logger.info("[Perf] 录屏已保存：%s（%.1f MB）", local, size / 1048576.0)
+                self.record_finished.emit("success", f"{size / 1048576.0:.1f} MB")
+            except Exception as e:
+                logger.warning("[Perf] 录屏失败：%s", e)
+                try:
+                    os.remove(local)
+                except OSError:
+                    pass
+                self.record_finished.emit("error", str(e)[:60])
+            finally:
+                self._recording = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_record_finished(self, status: str, message: str):
+        if status == "success":
+            show_toast(self.view, f"录屏已保存（{message}）", duration=3000)
+        else:
+            show_toast(self.view, f"录屏失败：{message}", duration=4000)
 
     def _on_screenshot_toggle(self, checked: bool):
         """截图自动循环勾选状态变化"""

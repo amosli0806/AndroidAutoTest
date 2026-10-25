@@ -118,7 +118,11 @@ class PerfView(QWidget):
     hprof_once_requested = pyqtSignal()
     smaps_once_requested = pyqtSignal()            # 手动触发一次堆转储
     hprof_interval_changed = pyqtSignal()
-    smaps_interval_changed = pyqtSignal()          # 堆转储间隔变更
+    smaps_interval_changed = pyqtSignal()
+    record_once_requested = pyqtSignal()
+    record_toggle_requested = pyqtSignal(bool)
+    record_interval_changed = pyqtSignal()
+    record_duration_changed = pyqtSignal()          # 堆转储间隔变更
     packet_toggle_requested = pyqtSignal(bool)     # 抓包开始/停止
     packet_config_requested = pyqtSignal()         # 打开「抓包参数」对话框
     screenshot_toggle_requested = pyqtSignal(bool)  # 截图自动循环开关（性能工具卡片）
@@ -506,17 +510,52 @@ class PerfView(QWidget):
     PROBE_INTERVALS = [("5 秒", 5), ("10 秒", 10), ("15 秒", 15),
                        ("30 秒", 30), ("1 分钟", 60), ("2 分钟", 120)]
 
+    # ---------- 录屏 ----------
+    @staticmethod
+    def _combo_seconds(text: str, default: int) -> int:
+        """把「10 分钟 / 30 秒」这类文案换成秒（注意分钟要 ×60，不能只取数字）。"""
+        t = (text or "").strip()
+        digits = "".join(ch for ch in t if ch.isdigit())
+        if not digits:
+            return default
+        try:
+            val = int(digits)
+        except ValueError:
+            return default
+        return val * 60 if "分" in t else val
+
+    def get_record_interval(self) -> float:
+        """自动录屏间隔（秒）"""
+        return float(self._combo_seconds(self.record_interval_combo.currentText(), 600))
+
+    def get_record_duration(self) -> int:
+        """单段时长（秒）"""
+        return self._combo_seconds(self.record_duration_combo.currentText(), 30)
+
+    def record_config_ok(self) -> bool:
+        """间隔必须大于单段时长，否则两段会重叠（screenrecord 同时在跑会失败）"""
+        return self.get_record_interval() > self.get_record_duration()
+
+    def _on_record_cfg_changed(self, *_):
+        """间隔/时长变化时给出提示（不阻止，真正启动时会校验）"""
+        if self.record_config_ok():
+            self.record_status_label.setText("")
+        else:
+            self.record_status_label.setText("间隔需大于时长")
+
+    def record_loop_enabled(self) -> bool:
+        return bool(self.record_enable_check.isChecked())
+
+    def _on_record_toggle(self, checked: bool):
+        # 具体启停由控制器处理（需要判断是否在监控中）
+        self.record_toggle_requested.emit(checked)
+
     def smaps_loop_enabled(self) -> bool:
         return bool(self.smaps_enable_check.isChecked())
 
     def get_smaps_interval(self) -> float:
-        """自动抓取间隔（秒）。下拉是分钟文案，这里换算成秒。"""
-        text = self.smaps_interval_combo.currentText()
-        digits = "".join(ch for ch in text if ch.isdigit())
-        try:
-            return float(digits or 5) * 60.0
-        except ValueError:
-            return 300.0
+        """自动抓取间隔（秒）。统一走 _combo_seconds，别再各写一套解析。"""
+        return float(self._combo_seconds(self.smaps_interval_combo.currentText(), 300))
 
     def probe_interval(self, key: str) -> float:
         """取某探针卡片上选中的间隔（秒）；拿不到就返回 0，让控制器用探针默认值。"""
@@ -574,6 +613,10 @@ class PerfView(QWidget):
         self.screenshot_visible_check.setEnabled(idle)
 
         # 堆转储设置：监控中锁定（自动循环勾选与间隔不可改）；空闲时按勾选状态开放间隔
+        self.record_enable_check.setEnabled(idle)
+        self.record_interval_combo.setEnabled(idle and self.record_enable_check.isChecked())
+        self.record_duration_combo.setEnabled(idle and self.record_enable_check.isChecked())
+        self.record_once_btn.setEnabled(True)
         self.smaps_enable_check.setEnabled(idle)
         self.smaps_interval_combo.setEnabled(idle and self.smaps_enable_check.isChecked())
         self.smaps_once_btn.setEnabled(True)     # 随时可以手动抓一次
@@ -733,6 +776,12 @@ class PerfView(QWidget):
             "整机内存（Total / Free / Used / Lost），按设备统计，与上方「内存」卡的所选进程口径不同")
         self.sys_mem_check.toggled.connect(self._on_card_visibility_changed)
         metric_widgets.append(self.sys_mem_check)
+
+        self.record_visible_check = BorderedCheckBox("录屏")
+        self.record_visible_check.setToolTip(
+            "显示「录屏」卡片：按间隔自动录一段屏幕视频（间隔必须大于单段时长，否则会重叠）")
+        self.record_visible_check.toggled.connect(self._on_card_visibility_changed)
+        metric_widgets.append(self.record_visible_check)
 
         self.smaps_visible_check = BorderedCheckBox("内存明细")
         self.smaps_visible_check.setToolTip(
@@ -909,6 +958,7 @@ class PerfView(QWidget):
         self._smaps_card.setVisible(False)
         self._packet_card.setVisible(False)
         self._screenshot_card.setVisible(False)
+        self._record_card.setVisible(False)
 
         # 初始布局
         self._relayout_cards()
@@ -931,10 +981,14 @@ class PerfView(QWidget):
             combo = self._probe_interval_combo(key)
             if combo is not None:
                 combo.currentTextChanged.connect(self._save_perf_config)
+        self.record_enable_check.toggled.connect(self._save_perf_config)
+        self.record_interval_combo.currentTextChanged.connect(self._save_perf_config)
+        self.record_duration_combo.currentTextChanged.connect(self._save_perf_config)
         self.smaps_enable_check.toggled.connect(self._save_perf_config)
         self.smaps_interval_combo.currentTextChanged.connect(self._save_perf_config)
         for chk in (self.sys_cpu_check, self.sys_mem_check, self.netdev_check,
-                    self.iotop_check, self.smaps_visible_check, self.hprof_visible_check,
+                    self.iotop_check, self.record_visible_check,
+                    self.smaps_visible_check, self.hprof_visible_check,
                     self.packet_visible_check, self.screenshot_visible_check):
             chk.toggled.connect(self._save_perf_config)
         self.hprof_enable_check.toggled.connect(self._save_perf_config)
@@ -1092,6 +1146,52 @@ class PerfView(QWidget):
         screenshot_row.addStretch()
         self._screenshot_card.setFixedHeight(44)
 
+        # ---- 录屏卡片 ----
+        (self._record_card, record_row,
+         self._record_dot, self._record_title) = _card("#e84393", "录屏")
+        self.record_enable_check = BorderedCheckBox("自动循环")
+        self.record_enable_check.setToolTip(
+            "开启后，点击「开始监控」即按间隔自动录一段（单段时长见右侧）\n"
+            "间隔必须大于单段时长，否则会重叠")
+        self.record_enable_check.setEnabled(False)
+        self.record_enable_check.toggled.connect(self._on_record_toggle)
+        record_row.addWidget(self.record_enable_check)
+
+        record_row.addWidget(QLabel("间隔:"))
+        self.record_interval_combo = QComboBox()
+        self.record_interval_combo.addItems(
+            ["1 分钟", "2 分钟", "5 分钟", "10 分钟", "30 分钟"])
+        self.record_interval_combo.setCurrentText("10 分钟")
+        self.record_interval_combo.setFixedWidth(90)
+        self.record_interval_combo.setEnabled(False)
+        self.record_interval_combo.currentTextChanged.connect(self._on_record_cfg_changed)
+        self.record_interval_combo.currentTextChanged.connect(
+            lambda _: self.record_interval_changed.emit())
+        record_row.addWidget(self.record_interval_combo)
+
+        record_row.addWidget(QLabel("时长:"))
+        self.record_duration_combo = QComboBox()
+        self.record_duration_combo.addItems(["15 秒", "30 秒", "60 秒", "120 秒"])
+        self.record_duration_combo.setCurrentText("30 秒")
+        self.record_duration_combo.setFixedWidth(84)
+        self.record_duration_combo.setEnabled(False)
+        self.record_duration_combo.currentTextChanged.connect(self._on_record_cfg_changed)
+        self.record_duration_combo.currentTextChanged.connect(
+            lambda _: self.record_duration_changed.emit())
+        record_row.addWidget(self.record_duration_combo)
+
+        self.record_once_btn = QPushButton("立即录一段")
+        self.record_once_btn.setIcon(qta.icon('fa6s.video', color='white'))
+        self.record_once_btn.clicked.connect(self.record_once_requested.emit)
+        record_row.addWidget(self.record_once_btn)
+
+        self.record_status_label = QLabel("")
+        self.record_status_label.setStyleSheet(
+            "font-size: 12px; color: #e67e22; background: transparent;")
+        record_row.addWidget(self.record_status_label)
+        record_row.addStretch()
+        self._record_card.setFixedHeight(44)
+
     def get_hprof_interval(self) -> float:
         """返回堆转储循环间隔（秒）"""
         text = self.hprof_interval_combo.currentText()
@@ -1207,11 +1307,14 @@ class PerfView(QWidget):
         tool_checks = {
             'hprof': self.hprof_visible_check, 'smaps': self.smaps_visible_check,
             'packet': self.packet_visible_check,
-            'screenshot': self.screenshot_visible_check}
+            'screenshot': self.screenshot_visible_check,
+            'record': self.record_visible_check}
         tool_cards = {'hprof': self._hprof_card, 'smaps': self._smaps_card,
                       'packet': self._packet_card,
-                      'screenshot': self._screenshot_card}
-        shown_tools = [tool_cards[k] for k in ('hprof', 'smaps', 'packet', 'screenshot')
+                      'screenshot': self._screenshot_card,
+                      'record': self._record_card}
+        shown_tools = [tool_cards[k]
+                       for k in ('hprof', 'smaps', 'packet', 'screenshot', 'record')
                        if tool_checks[k].isChecked()]
         # 整机探针卡也是 44px 单行，跟在工具卡一组里，视觉整齐（不混进指标网格）
         probe_checks = (
@@ -1402,6 +1505,10 @@ class PerfView(QWidget):
             'sys_cpu_interval': self._probe_interval_text('sys_cpu'),
             'sys_mem_interval': self._probe_interval_text('sys_mem'),
             'show_hprof': self.hprof_visible_check.isChecked(),
+            'show_record': self.record_visible_check.isChecked(),
+            'record_loop': self.record_enable_check.isChecked(),
+            'record_interval': self.record_interval_combo.currentText(),
+            'record_duration': self.record_duration_combo.currentText(),
             'show_smaps': self.smaps_visible_check.isChecked(),
             'smaps_loop': self.smaps_enable_check.isChecked(),
             'smaps_interval': self.smaps_interval_combo.currentText(),
@@ -1475,6 +1582,12 @@ class PerfView(QWidget):
                 combo.setCurrentText(text)
 
         # 卡片显隐
+        if cfg.get('show_record'):
+            self.record_visible_check.setChecked(True)
+        if cfg.get('record_loop'):
+            self.record_enable_check.setChecked(True)
+        _pick(self.record_interval_combo, cfg.get('record_interval'))
+        _pick(self.record_duration_combo, cfg.get('record_duration'))
         if cfg.get('show_smaps'):
             self.smaps_visible_check.setChecked(True)
         if cfg.get('smaps_loop'):
@@ -1832,6 +1945,7 @@ class PerfView(QWidget):
             (self._smaps_card, self._smaps_title, self._smaps_dot),
             (self._packet_card, self._packet_title, self._packet_dot),
             (self._screenshot_card, self._screenshot_title, self._screenshot_dot),
+            (self._record_card, self._record_title, self._record_dot),
         ):
             if tool_card is None:
                 continue
