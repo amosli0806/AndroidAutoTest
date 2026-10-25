@@ -9,7 +9,8 @@ from datetime import datetime
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer, Qt
 
 from models.perf_model import (
-    PerfModel, PerfSession, PerfThreshold, PerfBaseline, compare_stats
+    PerfModel, PerfSession, PerfThreshold, PerfBaseline, compare_stats,
+    DEFAULT_SCOPES, SCOPE_LABELS, scope_conflict_note,
 )
 from services.perf_compat import AndroidCompat
 from services.perf_service import PerfService
@@ -450,6 +451,8 @@ class PerfController(QObject):
             start_time=datetime.now().isoformat(),
             sample_interval=interval,
             metrics=metrics,
+            # 登记本轮的统计口径（选谁算谁 / 流量按整个应用），供报告与基线对比识别
+            scopes=dict(DEFAULT_SCOPES),
         )
         # 设备信息（分辨率 / 屏幕密度 / 安卓版本）一次性采集，用于报告的「基本信息」
         try:
@@ -574,6 +577,8 @@ class PerfController(QObject):
         self._stop_screenshot_loop()
         # 抓包也随监控结束收尾：否则它会一直抓到时长/大小上限，甚至用户以为早就停了
         self._stop_capture()
+        # 旁路探针统一收尾（P1 起的 meminfo_sys / top_sys / netdev 等在这里登记）
+        self._finalize_probes()
 
         # 结束会话
         if self.current_session:
@@ -594,6 +599,29 @@ class PerfController(QObject):
             self.current_session = None
 
         self.view.set_state(self.view.STATE_IDLE)
+
+    def _finalize_probes(self):
+        """统一收尾所有旁路探针（`_probes`，P1 起登记）。
+
+        顺序很关键：**先全部 stop**（发停止信号），**再统一 wait**（等落盘）——
+        逐个 stop+wait 会出现"停 A 时 A 还在写文件，B 已经在抢同一个 adb 通道"。
+        探针机制还没落地时 `_probes` 为空，这个函数是零成本空转。
+        """
+        probes = dict(getattr(self, "_probes", None) or {})
+        if not probes:
+            return
+        for key, probe in probes.items():
+            try:
+                probe.stop()
+            except Exception as e:
+                logger.warning("[Perf] 停止探针 %s 失败: %s", key, e)
+        for key, probe in probes.items():
+            try:
+                probe.wait(timeout=15)
+            except Exception as e:
+                logger.warning("[Perf] 等待探针 %s 落盘失败: %s", key, e)
+        if hasattr(self, "_probes"):
+            self._probes.clear()
 
     def _on_clear_requested(self):
         """清空当前会话已采集的样本（视图已清卡片，控制器负责清数据）"""
@@ -1265,11 +1293,24 @@ class PerfController(QObject):
         if not rows:
             return
 
-        worse = [r for r in rows if r['status'] == 'worse']
-
         def _fmt(r, digits=2):
             return (f"{r['label']}：基线 {r['base']:.{digits}f} → "
                     f"本次 {r['cur']:.{digits}f}（{r['change_pct']:+.1f}%）")
+
+        # 先查口径：口径不同 / 旧基线没记口径时，数值不可直接比，也不判定劣化
+        note = self._scope_conflicts(baseline, session)
+        if note:
+            logger.warning("[Perf] 基线与本次口径不一致：%s", note)
+            WarningDialog.show_warning(
+                self.view,
+                "基线与本次口径不一致",
+                f"对比基线：{baseline.name}\n\n{note}",
+                "完整数据（仅供查看，不判定改善 / 劣化）：\n"
+                + "\n".join(f"• {_fmt(r)}" for r in rows),
+            )
+            return
+
+        worse = [r for r in rows if r['status'] == 'worse']
 
         if worse:
             detail = "\n".join(f"• {_fmt(r)}" for r in worse)
@@ -1284,6 +1325,12 @@ class PerfController(QObject):
                 f"检测到 {len(worse)} 项指标明显劣化：\n\n{detail}",
                 full_detail
             )
+
+    @staticmethod
+    def _scope_conflicts(baseline, session):
+        """对比前查口径（实现见 models.perf_model.scope_conflict_note）。"""
+        return scope_conflict_note(getattr(baseline, "scopes", None),
+                                   getattr(session, "scopes", None))
 
     def _on_save_baseline(self):
         if not self.current_session and not self.model.sessions:
@@ -1312,13 +1359,21 @@ class PerfController(QObject):
             device_serial=session.device_serial,
             metrics=session.get_stats(),
             created_at=datetime.now().isoformat(),
+            scopes=dict(getattr(session, "scopes", {}) or {}),
         )
         self.model.add_baseline(baseline)
         show_toast(self.view, f"基线 '{name}' 已保存")
 
     def _on_threshold_config(self):
         from views.perf_dialogs import PerfThresholdDialog
-        dlg = PerfThresholdDialog(self.model.threshold, self.view)
+        # 带上最近一次会话的统计，对话框里显示「本次会话峰值」作为设定参考
+        ref = {}
+        if self.model.sessions:
+            try:
+                ref = self.model.sessions[-1].get_stats()
+            except Exception:
+                ref = {}
+        dlg = PerfThresholdDialog(self.model.threshold, self.view, reference=ref)
         if dlg.exec() == dlg.DialogCode.Accepted:
             self.model.set_threshold(self.model.threshold)
             show_toast(self.view, "阈值已保存")

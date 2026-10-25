@@ -4,7 +4,8 @@ import os
 import sys
 import base64
 from datetime import datetime
-from models.perf_model import PerfSession, compare_stats, MEM_CATEGORIES
+from models.perf_model import (PerfSession, compare_stats, MEM_CATEGORIES,
+                               SCOPE_LABELS)
 
 
 # 图表库（离线内嵌，见 _chart_js_tags 的说明）
@@ -501,6 +502,16 @@ class PerfReportGenerator:
             charts_section = '<h2>📈 实时曲线</h2>' + charts_section
         charts_js = "\n\n".join(chart_scripts)
 
+        # 统计口径：让读者一眼看清每个数字统计的是"谁"
+        _scopes = getattr(session, "scopes", None) or {}
+        _scope_parts = []
+        for _k in ("cpu", "mem", "fps", "traffic"):
+            if _k in metrics and _scopes.get(_k):
+                _scope_parts.append(f"{_k.upper()} = {SCOPE_LABELS.get(_scopes[_k], _scopes[_k])}")
+        scope_text = "、".join(_scope_parts) or "未记录"
+        if getattr(session, "scopes_inferred", False):
+            scope_text += "（旧会话，按当前默认推断）"
+
         html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -687,6 +698,10 @@ class PerfReportGenerator:
             <tr>
                 <td class="label">监控指标</td>
                 <td>{'、'.join(metrics)}</td>
+            </tr>
+            <tr>
+                <td class="label">统计口径</td>
+                <td>{scope_text}</td>
             </tr>
             {scenario_info}
         </table>

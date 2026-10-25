@@ -12,6 +12,27 @@ from utils.app_paths import data_path
 # Android Studio 风格的内存分类拆解：(分类键, 展示名, 曲线颜色)
 # 由 dumpsys meminfo 的 App Summary 归类而来：
 #   Java / Native / Graphics / Stack / Code / Others
+# ---------- 口径：这个数字统计的是"谁" ----------
+# 进程 = 下拉里选中的那一个进程；应用 = 整个应用（同 UID 的所有进程）；系统 = 整机
+SCOPE_PROCESS, SCOPE_APP, SCOPE_SYSTEM = "process", "app", "system"
+
+SCOPE_LABELS = {
+    SCOPE_PROCESS: "所选进程",
+    SCOPE_APP: "整个应用",
+    SCOPE_SYSTEM: "整机",
+}
+
+# 各指标的默认口径。**新增指标时在这里登记**，否则报告/基线对比不知道该怎么标。
+DEFAULT_SCOPES = {
+    "cpu": SCOPE_PROCESS,
+    "mem": SCOPE_PROCESS,       # v1.5.7 起按进程（之前是整包 TOTAL PSS）
+    "fps": SCOPE_PROCESS,
+    "traffic": SCOPE_APP,       # 系统只按 UID 记账，无法按进程
+    # "sys_mem": SCOPE_SYSTEM,
+    # "sys_cpu": SCOPE_SYSTEM,
+}
+
+
 MEM_CATEGORIES = [
     ("Java", "Java", "#f39c12"),
     ("Native", "Native", "#9b59b6"),
@@ -63,6 +84,10 @@ class PerfSession:
     android_version: str = ""         # 如 13，取自 ro.build.version.release
     # 阈值告警记录：[(timestamp, metric, message), ...]
     alerts: List[tuple] = field(default_factory=list)
+    # 各指标的统计口径，如 {'cpu': 'process', 'traffic': 'app'}
+    scopes: dict = field(default_factory=dict)
+    # 旧会话（v1.5.7 之前）没记录过口径 → 按默认值兜底并置 True，对比时要提示
+    scopes_inferred: bool = False
 
     def to_dict(self):
         return {
@@ -82,6 +107,7 @@ class PerfSession:
             "screen_density": self.screen_density,
             "android_version": self.android_version,
             "alerts": [list(a) for a in self.alerts],
+            "scopes": self.scopes,
         }
 
     @classmethod
@@ -108,6 +134,10 @@ class PerfSession:
             session.samples.append(PerfSample(**{k: v for k, v in s.items()
                                                 if k in _PERF_SAMPLE_FIELDS}))
         session.alerts = [tuple(a) for a in data.get("alerts", [])]
+        # 口径：旧会话没有 scopes → 按当前默认值兜底，并标记为"推断"，对比时提示
+        raw_scopes = data.get("scopes") or {}
+        session.scopes = {**DEFAULT_SCOPES, **raw_scopes}
+        session.scopes_inferred = not bool(raw_scopes)
         return session
 
     # ---------- 统计 ----------
@@ -165,6 +195,30 @@ class PerfSession:
                     "tx_mb": (s1.tx_bytes - s0.tx_bytes) / 1024 / 1024,
                 }
         return result
+
+
+def scope_conflict_note(base_scopes, cur_scopes) -> str:
+    """对比基线前检查口径差异，返回提示文本（空串 = 可以正常对比）。
+
+    三种情况：
+      * 两边都记录了且一致 → 空串
+      * 两边都记录了但不一致 → 指出哪项不同，数值不可比
+      * 基线没记录（v1.5.7 之前建的）→ 提醒旧口径会系统性偏大
+    """
+    base_scopes = base_scopes or {}
+    cur_scopes = cur_scopes or {}
+    if not base_scopes:
+        return ("该基线未记录口径。若它建立于 v1.5.7 之前，内存与 CPU 的数值会"
+                "系统性偏大（当时按整个应用统计，现在按所选进程），不能直接比较。")
+    diff = []
+    for key in sorted(set(base_scopes) | set(cur_scopes)):
+        b, c = base_scopes.get(key), cur_scopes.get(key)
+        if b and c and b != c:
+            diff.append(f"{key.upper()}（基线 {SCOPE_LABELS.get(b, b)} / "
+                        f"本次 {SCOPE_LABELS.get(c, c)}）")
+    if diff:
+        return "口径不一致，数值不可直接比较：" + "、".join(diff)
+    return ""
 
 
 def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.10):
@@ -289,6 +343,7 @@ class PerfBaseline:
     device_serial: str
     metrics: dict = field(default_factory=dict)   # 各指标的统计值
     created_at: str = ""
+    scopes: dict = field(default_factory=dict)    # 建基线时的口径（旧基线为空 → 视为未知）
 
     def to_dict(self):
         return asdict(self)

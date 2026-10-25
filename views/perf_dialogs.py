@@ -20,7 +20,7 @@ from utils.toast import show_toast
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 from utils.dialogs import ConfirmDeleteDialog
-from models.perf_model import MEM_CATEGORIES
+from models.perf_model import MEM_CATEGORIES, scope_conflict_note
 from PyQt6.QtWidgets import QStyleOptionButton, QStyle
 from PyQt6.QtGui import QPainter, QPen, QColor, QBrush
 
@@ -52,13 +52,18 @@ class BorderedCheckBox(QCheckBox):
 class PerfThresholdDialog(QDialog):
     """性能阈值设置对话框"""
 
-    def __init__(self, threshold, parent=None):
+    def __init__(self, threshold, parent=None, reference=None):
+        """
+        reference: 最近一次会话的统计（get_stats() 的返回），用于在对话框里显示
+                   「本次会话峰值」给用户做参照 —— 阈值该设多少，看真实数据最直观。
+        """
         super().__init__(parent)
         self.setObjectName("PerfThresholdDialog")
         self.setWindowTitle("阈值设置")
         self.setModal(True)
-        self.setFixedSize(460, 340)
+        self.setFixedSize(460, 372 if reference else 340)
         self.threshold = threshold
+        self._reference = reference or {}
 
         self.setup_ui()
         self.load_data()
@@ -77,6 +82,21 @@ class PerfThresholdDialog(QDialog):
         subtitle.setStyleSheet("font-size: 12px; color: #999;")
         subtitle.setWordWrap(True)
         root.addWidget(subtitle)
+
+        # 参考值：最近一次会话的峰值，帮用户判断阈值该定多少
+        ref = self._reference or {}
+        ref_bits = []
+        if ref.get('cpu'):
+            ref_bits.append(f"CPU 峰值 {ref['cpu'].get('max', 0):.0f}%")
+        if ref.get('mem'):
+            ref_bits.append(f"内存 峰值 {ref['mem'].get('max', 0):.0f}MB")
+        if ref.get('fps'):
+            ref_bits.append(f"帧率 最低 {ref['fps'].get('min', 0):.0f}")
+        if ref_bits:
+            hint = QLabel("最近一次会话：" + "  ·  ".join(ref_bits) + "（可直接作为上限参考）")
+            hint.setWordWrap(True)
+            hint.setStyleSheet("font-size: 12px; color: #1976d2;")
+            root.addWidget(hint)
 
         # 启用开关
         self.enable_check = BorderedCheckBox("启用阈值告警")
@@ -605,6 +625,7 @@ class PerfBaselineDialog(QDialog):
             device_serial=session.device_serial,
             metrics=session.get_stats(),
             created_at=datetime.now().isoformat(),
+            scopes=dict(getattr(session, "scopes", {}) or {}),
         )
         self.model.add_baseline(baseline)
         self.refresh_list()
@@ -750,6 +771,9 @@ class PerfCompareDialog(QDialog):
         self.baseline = baseline
         self.session = session
         self.current_stats = current_stats
+        # 口径不一致 / 基线没记录口径时，只展示数据、不判改善劣化
+        self._scope_note = scope_conflict_note(getattr(baseline, "scopes", None),
+                                               getattr(session, "scopes", None))
 
         self.setup_ui()
         self.apply_theme()
@@ -769,6 +793,15 @@ class PerfCompareDialog(QDialog):
         )
         sub.setStyleSheet("font-size: 12px; color: #999;")
         root.addWidget(sub)
+
+        if self._scope_note:
+            warn = QLabel("⚠ " + self._scope_note)
+            warn.setWordWrap(True)
+            warn.setStyleSheet(
+                "font-size: 12px; color: #b9770e; background: rgba(230,126,34,0.12);"
+                " border: 1px solid rgba(230,126,34,0.35); border-radius: 4px; padding: 6px 8px;"
+            )
+            root.addWidget(warn)
 
         # 对比表
         self.table = QTableWidget()
@@ -867,10 +900,11 @@ class PerfCompareDialog(QDialog):
             for j in range(4):
                 item = QTableWidgetItem(str(row[j]))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                if j == 3 and row[4]:
-                    item.setForeground(QColor("#e74c3c"))
-                elif j == 3 and not row[4] and row[3] != "—":
-                    item.setForeground(QColor("#27ae60"))
+                if j == 3 and not self._scope_note:      # 口径不一致时不着色
+                    if row[4]:
+                        item.setForeground(QColor("#e74c3c"))
+                    elif row[3] != "—":
+                        item.setForeground(QColor("#27ae60"))
                 self.table.setItem(i, j, item)
 
     def apply_theme(self, theme_mode=None):
