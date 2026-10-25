@@ -49,9 +49,6 @@ class PerfWorker(QThread):
         self._link_down = False
         # 连续多少轮「一项数据都没采到」才判定链路有问题（先容忍偶发抖动）
         self._consecutive_failed = 0
-        # 旁路探针（系统内存 / 后续的整机 CPU、网卡流量）：key -> probe 实例
-        self._probes = {}
-        self._probe_timers = {}
 
     # 连续失败到该次数就动手探活 + 重建连接
     LINK_FAIL_THRESHOLD = 3
@@ -289,6 +286,12 @@ class PerfController(QObject):
         # 部署 tcpdump 期间收到过「停止」：部署线程完成时不要再把抓包拉起来
         # （自动拉起 + 用户秒停 时最容易撞上，否则会出现"监控已停、抓包还在跑"）
         self._capture_stop_requested = False
+
+        # 旁路探针（系统内存 / 后续的整机 CPU、网卡流量）：key -> probe 实例
+        # 注意：必须挂在 Controller 上 —— 2026-10-25 曾误加进 PerfWorker，
+        # 结果开始监控直接报 'PerfController' object has no attribute '_probes'
+        self._probes = {}
+        self._probe_timers = {}
 
         # 采样统计刷新定时器
         self._stats_timer = QTimer(self)
