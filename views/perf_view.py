@@ -455,6 +455,8 @@ class PerfView(QWidget):
             cb.setEnabled(idle and self._metric_available.get(key, True))
 
         # 堆转储/抓包/截图的「卡片显隐」复选框：同口径，非空闲禁用
+        # 系统内存探针只在本轮开始时启动，运行中不允许改（避免半路加/减探针）
+        self.sys_mem_check.setEnabled(idle)
         self.hprof_visible_check.setEnabled(idle)
         self.packet_visible_check.setEnabled(idle)
         self.screenshot_visible_check.setEnabled(idle)
@@ -1000,8 +1002,7 @@ class PerfView(QWidget):
             visible_metrics.append('fps')
         if self.metric_radios['traffic'].isChecked():
             visible_metrics.append('traffic')
-        if getattr(self, 'sys_mem_check', None) is not None and self.sys_mem_check.isChecked():
-            visible_metrics.append('sys_mem')
+
         for key, card in self._cards.items():
             card.setParent(self.cards_container)
             card.setVisible(key in visible_metrics)
@@ -1014,6 +1015,13 @@ class PerfView(QWidget):
                       'screenshot': self._screenshot_card}
         shown_tools = [tool_cards[k] for k in ('hprof', 'packet', 'screenshot')
                        if tool_checks[k].isChecked()]
+        # 系统内存探针卡也是 44px 单行，跟在工具卡一组里，视觉整齐（不混进指标网格）
+        if getattr(self, 'sys_mem_check', None) is not None and self.sys_mem_check.isChecked():
+            if hasattr(self, '_cards') and 'sys_mem' in self._cards:
+                sm = self._cards['sys_mem']
+                sm.setParent(self.cards_container)
+                sm.setVisible(True)     # 上面的指标循环会把它隐藏，这里重新显示
+                shown_tools.insert(0, sm)
         for tc in tool_cards.values():
             tc.setParent(self.cards_container)
             tc.setVisible(tc in shown_tools)

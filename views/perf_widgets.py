@@ -445,47 +445,41 @@ class StatCard(QFrame):
         """)
 
 class ProbeValueCard(QFrame):
-    """数值型探针卡片（系统内存 / 整机 CPU 这类"整机单值"指标）。
+    """数值型探针卡片（**单行紧凑**，与「堆转储 / 抓包」工具卡同高 44px）。
 
-    与 MetricCard 的区别：MetricCard 是「曲线 + 统计栏」，适合跟着主循环走的连续量；
-    整机指标是探针按自己的节奏采的一个快照值，画成曲线意义不大，更适合大字 + 明细。
+    为什么不做成 MetricCard 那种「曲线 + 统计栏」：整机指标是探针按自己节奏采的快照值，
+    画曲线意义不大；单行卡片能和下方工具卡对齐，页面更整齐。
     """
 
-    def __init__(self, title, unit_hint="", accent="#1976d2", parent=None):
+    HEIGHT = 44
+
+    def __init__(self, title, accent="#1976d2", parent=None):
         super().__init__(parent)
         self.setObjectName("ProbeValueCard")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._accent = accent
         self._theme_mode = ThemeMode.LIGHT
+        self.setFixedHeight(self.HEIGHT)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(12, 10, 12, 10)
-        root.setSpacing(6)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(12, 6, 12, 6)
+        row.setSpacing(10)
 
-        head = QHBoxLayout()
-        head.setSpacing(8)
-        # 与其他指标卡片同一款式：圆点 + 标题（颜色跟随卡片主色）
         self.dot = QLabel("●")
-        head.addWidget(self.dot)
+        row.addWidget(self.dot)
         self.title_label = QLabel(title)
-        head.addWidget(self.title_label)
-        head.addStretch()
-        self.scope_badge = QLabel("整机口径")
-        head.addWidget(self.scope_badge)
-        root.addLayout(head)
+        row.addWidget(self.title_label)
 
         self.value_label = QLabel("--")
-        root.addWidget(self.value_label)
-
+        row.addWidget(self.value_label)
         self.detail_label = QLabel("等待采样…")
-        self.detail_label.setWordWrap(True)
-        root.addWidget(self.detail_label)
-
+        row.addWidget(self.detail_label)
         self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
         self.status_label.setVisible(False)
-        root.addWidget(self.status_label)
-        root.addStretch()
+        row.addWidget(self.status_label)
+        row.addStretch()
+        self.scope_badge = QLabel("整机口径")
+        row.addWidget(self.scope_badge)
 
         self._restyle()
 
@@ -494,9 +488,11 @@ class ProbeValueCard(QFrame):
         self.value_label.setText(value_text)
         self.detail_label.setText(detail_text)
         if error:
+            self.detail_label.setVisible(False)
             self.status_label.setText("⚠ " + error)
             self.status_label.setVisible(True)
         else:
+            self.detail_label.setVisible(True)
             self.status_label.setVisible(False)
 
     def clear_data(self):
@@ -505,20 +501,15 @@ class ProbeValueCard(QFrame):
     def set_alert(self, alert):          # 与 MetricCard 的统一接口保持一致（探针不告警）
         pass
 
-    # ---------- 主题 ----------
+    # ---------- 主题（取值与 MetricCard / PerfToolCard 完全一致） ----------
     def _restyle(self, has_wallpaper: bool = False):
-        """配色与 MetricCard 完全对齐（同一张页面上不能有两种卡片底色）。"""
         dark = self._theme_mode == ThemeMode.DARK
         if dark:
             bg = "rgba(35, 36, 39, 0.85)" if has_wallpaper else "#232427"
-            border = "#3a3a3a"
-            title = "#ffffff"
-            detail = "#999999"
+            border, title, detail = "#3a3a3a", "#ffffff", "#999999"
         else:
             bg = "rgba(232, 234, 237, 0.85)" if has_wallpaper else "#e8eaed"
-            border = "#d0d0d0"
-            title = "#333333"
-            detail = "#999999"
+            border, title, detail = "#d0d0d0", "#333333", "#999999"
         badge_bg = "rgba(25,118,210,0.16)" if dark else "#dbe7f5"
         self.setStyleSheet(
             f"QFrame#ProbeValueCard {{ background-color: {bg}; border: 1px solid {border};"
@@ -528,17 +519,16 @@ class ProbeValueCard(QFrame):
             f"color: {self._accent}; font-size: 14px; background: transparent;")
         self.title_label.setStyleSheet(
             f"font-weight: 600; font-size: 13px; color: {title}; background: transparent;")
-        self.scope_badge.setStyleSheet(
-            f"font-size: 11px; color: {self._accent}; background: {badge_bg};"
-            f" border-radius: 3px; padding: 1px 5px;"
-        )
         self.value_label.setStyleSheet(
-            f"font-size: 20px; font-weight: 600; color: {title}; background: transparent;"
-        )
+            f"font-weight: 600; font-size: 13px; color: {title}; background: transparent;")
         self.detail_label.setStyleSheet(
             f"font-size: 12px; color: {detail}; background: transparent;")
         self.status_label.setStyleSheet(
             "font-size: 12px; color: #e74c3c; background: transparent;")
+        self.scope_badge.setStyleSheet(
+            f"font-size: 11px; color: {self._accent}; background: {badge_bg};"
+            f" border-radius: 3px; padding: 1px 5px;"
+        )
 
     def apply_theme(self, theme_mode: ThemeMode, has_wallpaper: bool = False):
         self._theme_mode = theme_mode
