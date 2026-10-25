@@ -31,6 +31,7 @@ DEFAULT_SCOPES = {
     "sys_mem": SCOPE_SYSTEM,    # 探针：整机内存
     "sys_cpu": SCOPE_SYSTEM,    # 探针：整机 CPU
     "netdev": SCOPE_SYSTEM,     # 探针：网卡流量（整机）
+    "iotop": SCOPE_SYSTEM,      # 探针：磁盘 IO（整机，需 root）
 }
 
 
@@ -96,6 +97,8 @@ class PerfSession:
     sys_cpu_samples: List[dict] = field(default_factory=list)
     # 网卡流量探针（整机口径）：[{ts, primary, rx_kbps, tx_kbps, ifaces:[...]}, ...]
     netdev_samples: List[dict] = field(default_factory=list)
+    # 磁盘 IO 探针（整机口径，需 root）：[{ts, read_kbps, write_kbps, top:[...]}, ...]
+    iotop_samples: List[dict] = field(default_factory=list)
 
     def to_dict(self):
         return {
@@ -119,6 +122,7 @@ class PerfSession:
             "sys_mem_samples": self.sys_mem_samples,
             "sys_cpu_samples": self.sys_cpu_samples,
             "netdev_samples": self.netdev_samples,
+            "iotop_samples": self.iotop_samples,
         }
 
     @classmethod
@@ -153,6 +157,7 @@ class PerfSession:
         session.sys_mem_samples = list(data.get("sys_mem_samples") or [])
         session.sys_cpu_samples = list(data.get("sys_cpu_samples") or [])
         session.netdev_samples = list(data.get("netdev_samples") or [])
+        session.iotop_samples = list(data.get("iotop_samples") or [])
         return session
 
     # ---------- 统计 ----------

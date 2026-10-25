@@ -583,6 +583,46 @@ class PerfReportGenerator:
         <p style="font-size:12px;color:#888;">共 {len(_nd)} 个采样点</p>
         """
 
+        # 磁盘 IO（探针，需 root）：没数据就不出这一节
+        iotop_html = ""
+        _io = [x for x in (getattr(session, "iotop_samples", None) or [])
+               if "read_kbps" in x]
+        if _io:
+            rd_v = [float(x.get("read_kbps") or 0) for x in _io]
+            wr_v = [float(x.get("write_kbps") or 0) for x in _io]
+            top_map = {}
+            for item in _io:
+                for t in (item.get("top") or []):
+                    key = t.get("comm", "")
+                    cur = top_map.get(key, [0.0, 0.0])
+                    cur[0] = max(cur[0], float(t.get("read_mb") or 0))
+                    cur[1] = max(cur[1], float(t.get("write_mb") or 0))
+                    top_map[key] = cur
+            top_rows = "".join(
+                f"<tr><td>{k}</td><td>{v[0]:.0f}</td><td>{v[1]:.0f}</td></tr>"
+                for k, v in sorted(top_map.items(),
+                                   key=lambda kv: kv[1][0] + kv[1][1], reverse=True)[:8])
+            iotop_html = f"""
+        <h2>💾 磁盘 IO（整机）</h2>
+        <p style="font-size:12px;color:#888;">※ 本项为<b>整机口径</b>（设备上所有进程的读写合计），
+           需要设备 root 才能采集（系统限制），与「所选进程」口径无关。</p>
+        <table class="compare compare4">
+            <thead><tr><th>项目</th><th>均值</th><th>峰值</th><th>最低</th></tr></thead>
+            <tbody>
+                <tr><td>读 (KB/s)</td><td>{_avg(rd_v):.1f}</td>
+                    <td>{max(rd_v):.1f}</td><td>{min(rd_v):.1f}</td></tr>
+                <tr><td>写 (KB/s)</td><td>{_avg(wr_v):.1f}</td>
+                    <td>{max(wr_v):.1f}</td><td>{min(wr_v):.1f}</td></tr>
+            </tbody>
+        </table>
+        <p style="font-size:12px;color:#888;">累计读写最多的进程（截止最后一次采样）：</p>
+        <table class="compare">
+            <thead><tr><th>进程</th><th>读 (MB)</th><th>写 (MB)</th></tr></thead>
+            <tbody>{top_rows}</tbody>
+        </table>
+        <p style="font-size:12px;color:#888;">共 {len(_io)} 个采样点</p>
+        """
+
         # 曲线区域与图表脚本：只渲染本次勾选采集的指标
         charts_section = ""
         chart_scripts = []
@@ -635,6 +675,8 @@ class PerfReportGenerator:
             _scope_parts.append(f"整机 CPU = {SCOPE_LABELS.get(SCOPE_SYSTEM, '整机')}")
         if getattr(session, "netdev_samples", None):
             _scope_parts.append(f"网卡流量 = {SCOPE_LABELS.get(SCOPE_SYSTEM, '整机')}")
+        if getattr(session, "iotop_samples", None):
+            _scope_parts.append(f"磁盘 IO = {SCOPE_LABELS.get(SCOPE_SYSTEM, '整机')}")
         scope_text = "、".join(_scope_parts) or "未记录"
         if getattr(session, "scopes_inferred", False):
             scope_text += "（旧会话，按当前默认推断）"
@@ -853,6 +895,8 @@ class PerfReportGenerator:
         {sys_cpu_html}
 
         {netdev_html}
+
+        {iotop_html}
 
         {baseline_html}
 

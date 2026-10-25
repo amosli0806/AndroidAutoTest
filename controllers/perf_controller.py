@@ -644,12 +644,20 @@ class PerfController(QObject):
                                and self.view.netdev_check.isChecked())
         except Exception:
             want_netdev = False
+        try:
+            want_iotop = bool(getattr(self.view, "iotop_check", None)
+                              and self.view.iotop_check.isChecked())
+        except Exception:
+            want_iotop = False
         if want_sys_cpu:
             from services.perf_probes import TopSysProbe
             self._start_probe(TopSysProbe(), session)
         if want_netdev:
             from services.perf_probes import NetDevProbe
             self._start_probe(NetDevProbe(), session)
+        if want_iotop:
+            from services.perf_probes import IoTopProbe
+            self._start_probe(IoTopProbe(), session)
 
     def _start_probe(self, probe, session):
         """绑定环境并启动后台采集；界面用 QTimer 读快照，不阻塞 GUI。"""
@@ -713,6 +721,8 @@ class PerfController(QObject):
                     self.current_session.sys_cpu_samples = series
                 elif key == "netdev":
                     self.current_session.netdev_samples = series
+                elif key == "iotop":
+                    self.current_session.iotop_samples = series
         for key, probe in probes.items():
             try:
                 probe.stop()

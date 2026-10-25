@@ -337,8 +337,12 @@ class PerfView(QWidget):
         if key == "netdev":
             self._update_netdev_card(card, data)
             return
+        if key == "iotop":
+            self._update_iotop_card(card, data)
+            return
         if not data or "total_mb" not in data:
-            card.set_values("--", "等待采样…", error=data.get("error", ""))
+            err = data.get("error", "")
+            card.set_values("--", "" if err else "等待采样…", error=err)
             return
         total = data.get("total_mb", 0.0)
         used = data.get("used_mb", 0.0)
@@ -356,7 +360,8 @@ class PerfView(QWidget):
     def _update_sys_cpu_card(card, data: dict):
         """整机 CPU 卡片文案：27% / 8 核累计 219% / 用户 18% · 内核 7% · 空闲 73%"""
         if not data or "cpu_pct" not in data:
-            card.set_values("--", "等待采样…", error=data.get("error", ""))
+            err = data.get("error", "")
+            card.set_values("--", "" if err else "等待采样…", error=err)
             return
         cpu = data.get("cpu_pct", 0.0)
         cores = data.get("cores") or 0
@@ -375,8 +380,9 @@ class PerfView(QWidget):
     def _update_netdev_card(card, data: dict):
         """网卡卡片：主网卡的 ↓/↑ 速率；各网卡明细放 tooltip（不做多网卡求和）"""
         if not data or "rx_kbps" not in data:
-            card.set_values("--", "等待采样…（差分需要两个采样点）",
-                            error=data.get("error", ""))
+            err = data.get("error", "")
+            hint = "" if err else "等待采样…（差分需要两个采样点）"
+            card.set_values("--", hint, error=err)
             return
         name = data.get("primary", "")
         rx = data.get("rx_kbps", 0.0)
@@ -388,6 +394,24 @@ class PerfView(QWidget):
         detail = "\n".join(lines) if lines else "无其他活跃网卡"
         if len(ifaces) > 1:
             detail += "\n（多张网卡可能是同一通道的不同层，故不做求和）"
+        card.set_values(value, detail, error=data.get("error", ""))
+
+    @staticmethod
+    def _update_iotop_card(card, data: dict):
+        """磁盘 IO 卡片：读/写速率；Top 进程放 tooltip（需 root 才有数据）"""
+        if not data or "read_kbps" not in data:
+            err = data.get("error", "")
+            hint = "" if err else "等待采样…（差分需要两个采样点，且需 root）"
+            card.set_values("--", hint, error=err)
+            return
+        value = f"读 {data.get('read_kbps', 0):.1f}  写 {data.get('write_kbps', 0):.1f} KB/s"
+        top = data.get("top") or []
+        if top:
+            lines = [f"{t['comm']}：读 {t['read_mb']:.0f}MB / 写 {t['write_mb']:.0f}MB"
+                     for t in top]
+            detail = "累计 Top 进程：\n" + "\n".join(lines)
+        else:
+            detail = "无进程 IO 明细"
         card.set_values(value, detail, error=data.get("error", ""))
 
     def set_alert(self, metric: str, alert: bool):
@@ -539,7 +563,8 @@ class PerfView(QWidget):
         self.sys_mem_check.setEnabled(idle)
         self.sys_cpu_check.setEnabled(idle)
         self.netdev_check.setEnabled(idle)
-        for key in ('sys_cpu', 'sys_mem', 'netdev'):
+        self.iotop_check.setEnabled(idle)
+        for key in ('sys_cpu', 'sys_mem', 'netdev', 'iotop'):
             combo = self._probe_interval_combo(key)
             if combo is not None:
                 combo.setEnabled(idle)
@@ -688,6 +713,13 @@ class PerfView(QWidget):
             "设备整体 CPU 占用（所有进程合计，归一化到 0~100%），与上方「CPU」卡的所选进程口径不同")
         self.sys_cpu_check.toggled.connect(self._on_card_visibility_changed)
         metric_widgets.append(self.sys_cpu_check)
+
+        self.iotop_check = BorderedCheckBox("磁盘 IO")
+        self.iotop_check.setToolTip(
+            "设备整体磁盘读写速率（整机口径）\n"
+            "⚠ 需要设备 root：读取进程 IO 统计被系统限制，未 root 时该指标不可用")
+        self.iotop_check.toggled.connect(self._on_card_visibility_changed)
+        metric_widgets.append(self.iotop_check)
 
         self.netdev_check = BorderedCheckBox("网卡流量")
         self.netdev_check.setToolTip(
@@ -859,6 +891,8 @@ class PerfView(QWidget):
             '系统内存', accent='#1976d2', intervals=self.PROBE_INTERVALS)
         self._cards['netdev'] = ProbeValueCard(
             '网卡流量', accent='#9b59b6', intervals=self.PROBE_INTERVALS)
+        self._cards['iotop'] = ProbeValueCard(
+            '磁盘 IO', accent='#e67e22', intervals=self.PROBE_INTERVALS)
 
         # 性能工具卡片：堆转储 / 抓包（原来挂在 ADB 工具箱，移到性能检测页）
         self._build_tool_cards()
@@ -870,6 +904,7 @@ class PerfView(QWidget):
         self._cards['sys_mem'].setVisible(False)
         self._cards['sys_cpu'].setVisible(False)
         self._cards['netdev'].setVisible(False)
+        self._cards['iotop'].setVisible(False)
         self._hprof_card.setVisible(False)
         self._smaps_card.setVisible(False)
         self._packet_card.setVisible(False)
@@ -892,14 +927,14 @@ class PerfView(QWidget):
         self.duration_spin.valueChanged.connect(self._save_perf_config)
         for cb in self.metric_radios.values():
             cb.toggled.connect(self._save_perf_config)
-        for key in ('sys_cpu', 'sys_mem', 'netdev'):
+        for key in ('sys_cpu', 'sys_mem', 'netdev', 'iotop'):
             combo = self._probe_interval_combo(key)
             if combo is not None:
                 combo.currentTextChanged.connect(self._save_perf_config)
         self.smaps_enable_check.toggled.connect(self._save_perf_config)
         self.smaps_interval_combo.currentTextChanged.connect(self._save_perf_config)
         for chk in (self.sys_cpu_check, self.sys_mem_check, self.netdev_check,
-                    self.smaps_visible_check, self.hprof_visible_check,
+                    self.iotop_check, self.smaps_visible_check, self.hprof_visible_check,
                     self.packet_visible_check, self.screenshot_visible_check):
             chk.toggled.connect(self._save_perf_config)
         self.hprof_enable_check.toggled.connect(self._save_perf_config)
@@ -1183,6 +1218,7 @@ class PerfView(QWidget):
             ('sys_mem', getattr(self, 'sys_mem_check', None)),
             ('sys_cpu', getattr(self, 'sys_cpu_check', None)),
             ('netdev', getattr(self, 'netdev_check', None)),
+            ('iotop', getattr(self, 'iotop_check', None)),
         )
         probe_cards = []
         for key, chk in probe_checks:
@@ -1360,6 +1396,8 @@ class PerfView(QWidget):
             'sys_mem': self.sys_mem_check.isChecked(),
             'netdev': self.netdev_check.isChecked(),
             'netdev_interval': self._probe_interval_text('netdev'),
+            'iotop': self.iotop_check.isChecked(),
+            'iotop_interval': self._probe_interval_text('iotop'),
             'sys_cpu': self.sys_cpu_check.isChecked(),
             'sys_cpu_interval': self._probe_interval_text('sys_cpu'),
             'sys_mem_interval': self._probe_interval_text('sys_mem'),
@@ -1428,7 +1466,9 @@ class PerfView(QWidget):
             self.sys_cpu_check.setChecked(True)
         if cfg.get('netdev'):
             self.netdev_check.setChecked(True)
-        for key in ('sys_cpu', 'sys_mem', 'netdev'):
+        if cfg.get('iotop'):
+            self.iotop_check.setChecked(True)
+        for key in ('sys_cpu', 'sys_mem', 'netdev', 'iotop'):
             combo = self._probe_interval_combo(key)
             text = cfg.get(f'{key}_interval')
             if combo is not None and text and combo.findText(text) >= 0:
