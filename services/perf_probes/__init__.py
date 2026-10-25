@@ -7,3 +7,4 @@
 """
 from .base import PerfProbe, ProbeError          # noqa: F401
 from .meminfo_sys import MemInfoSysProbe         # noqa: F401
+from .top_sys import TopSysProbe                 # noqa: F401

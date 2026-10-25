@@ -479,6 +479,9 @@ class PerfReportGenerator:
         """
 
         # 系统内存（整机探针）：与「内存」卡口径不同，单独成节并标注清楚
+        def _avg(v):
+            return (sum(v) / len(v)) if v else 0.0
+
         sys_mem_html = ""
         _sm = [x for x in (getattr(session, "sys_mem_samples", None) or [])
                if x.get("total_mb")]
@@ -489,7 +492,6 @@ class PerfReportGenerator:
             used_v, pct_v = _col("used_mb"), _col("used_pct")
             free_v, zram_v = _col("free_mb"), _col("zram_mb")
             total_gb = _sm[-1].get("total_mb", 0) / 1024.0
-            avg = lambda v: sum(v) / len(v)
             sys_mem_html = f"""
         <h2>🖥️ 系统内存（整机）</h2>
         <p style="font-size:12px;color:#888;">※ 本项为<b>整机口径</b>（Total RAM {total_gb:.1f} GB），包含设备上所有进程；
@@ -497,17 +499,52 @@ class PerfReportGenerator:
         <table class="compare">
             <thead><tr><th>项目</th><th>均值</th><th>峰值</th><th>最低</th></tr></thead>
             <tbody>
-                <tr><td>已用 (MB)</td><td>{avg(used_v):.0f}</td>
+                <tr><td>已用 (MB)</td><td>{_avg(used_v):.0f}</td>
                     <td>{max(used_v):.0f}</td><td>{min(used_v):.0f}</td></tr>
-                <tr><td>已用率 (%)</td><td>{avg(pct_v):.1f}</td>
+                <tr><td>已用率 (%)</td><td>{_avg(pct_v):.1f}</td>
                     <td>{max(pct_v):.1f}</td><td>{min(pct_v):.1f}</td></tr>
-                <tr><td>空闲 (MB)</td><td>{avg(free_v):.0f}</td>
+                <tr><td>空闲 (MB)</td><td>{_avg(free_v):.0f}</td>
                     <td>{max(free_v):.0f}</td><td>{min(free_v):.0f}</td></tr>
-                <tr><td>ZRAM 物理占用 (MB)</td><td>{avg(zram_v):.0f}</td>
+                <tr><td>ZRAM 物理占用 (MB)</td><td>{_avg(zram_v):.0f}</td>
                     <td>{max(zram_v):.0f}</td><td>{min(zram_v):.0f}</td></tr>
             </tbody>
         </table>
         <p style="font-size:12px;color:#888;">共 {len(_sm)} 个采样点</p>
+        """
+
+        # 整机 CPU（探针）：与「CPU」卡的所选进程口径不同，单独成节
+        sys_cpu_html = ""
+        _sc = [x for x in (getattr(session, "sys_cpu_samples", None) or [])
+               if "cpu_pct" in x]
+        if _sc:
+            cpu_v = [float(x.get("cpu_pct") or 0) for x in _sc]
+            user_v = [float(x.get("user_pct") or 0) for x in _sc]
+            sys_v = [float(x.get("sys_pct") or 0) for x in _sc]
+            cores = _sc[-1].get("cores") or 0
+            # 峰值多核累计 = 各点「占用率 × 核数」的最大值（total_pct 是容量，不是占用）
+            total_peak = max(
+                (float(x.get("cpu_pct") or 0) * (x.get("cores") or cores or 0) for x in _sc),
+                default=0.0)
+            degraded = any(x.get("degraded") for x in _sc)
+            core_txt = f"{cores} 核" if cores else "核数未知"
+            deg_note = ("<br>※ 该设备的 <code>top</code> 不支持批量模式，已降级为 "
+                        "<code>/proc/stat</code> 差分，因此没有用户 / 内核明细。") if degraded else ""
+            sys_cpu_html = f"""
+        <h2>⚙️ 整机 CPU</h2>
+        <p style="font-size:12px;color:#888;">※ 本项为<b>整机口径</b>（{core_txt}，占用率已归一化到 0~100%，
+           峰值多核累计 {total_peak:.0f}%），包含设备上所有进程，与上方「CPU」卡（所选进程）口径不同。{deg_note}</p>
+        <table class="compare">
+            <thead><tr><th>项目</th><th>均值</th><th>峰值</th><th>最低</th></tr></thead>
+            <tbody>
+                <tr><td>整机占用 (%)</td><td>{_avg(cpu_v):.1f}</td>
+                    <td>{max(cpu_v):.1f}</td><td>{min(cpu_v):.1f}</td></tr>
+                <tr><td>用户态 (%)</td><td>{_avg(user_v):.1f}</td>
+                    <td>{max(user_v):.1f}</td><td>{min(user_v):.1f}</td></tr>
+                <tr><td>内核态 (%)</td><td>{_avg(sys_v):.1f}</td>
+                    <td>{max(sys_v):.1f}</td><td>{min(sys_v):.1f}</td></tr>
+            </tbody>
+        </table>
+        <p style="font-size:12px;color:#888;">共 {len(_sc)} 个采样点</p>
         """
 
         # 曲线区域与图表脚本：只渲染本次勾选采集的指标
@@ -558,6 +595,8 @@ class PerfReportGenerator:
         # 整机探针也标出来（它不在 metrics 里，是按勾选启动的旁路采集）
         if getattr(session, "sys_mem_samples", None):
             _scope_parts.append(f"系统内存 = {SCOPE_LABELS.get(SCOPE_SYSTEM, '整机')}")
+        if getattr(session, "sys_cpu_samples", None):
+            _scope_parts.append(f"整机 CPU = {SCOPE_LABELS.get(SCOPE_SYSTEM, '整机')}")
         scope_text = "、".join(_scope_parts) or "未记录"
         if getattr(session, "scopes_inferred", False):
             scope_text += "（旧会话，按当前默认推断）"
@@ -764,6 +803,8 @@ class PerfReportGenerator:
         {mem_detail_html}
 
         {sys_mem_html}
+
+        {sys_cpu_html}
 
         {baseline_html}
 

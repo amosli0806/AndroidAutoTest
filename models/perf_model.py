@@ -29,7 +29,7 @@ DEFAULT_SCOPES = {
     "fps": SCOPE_PROCESS,
     "traffic": SCOPE_APP,       # 系统只按 UID 记账，无法按进程
     "sys_mem": SCOPE_SYSTEM,    # 探针：整机内存
-    # "sys_cpu": SCOPE_SYSTEM,
+    "sys_cpu": SCOPE_SYSTEM,    # 探针：整机 CPU
 }
 
 
@@ -91,6 +91,8 @@ class PerfSession:
     # 系统内存探针（整机口径）的采样序列：[{ts, total_mb, used_mb, free_mb, lost_mb,
     # zram_mb, used_pct}, ...]。不与 samples 混放——两者频率不同、统计方式也不同
     sys_mem_samples: List[dict] = field(default_factory=list)
+    # 整机 CPU 探针（整机口径）的采样序列：[{ts, cpu_pct, cores, total_pct, ...}, ...]
+    sys_cpu_samples: List[dict] = field(default_factory=list)
 
     def to_dict(self):
         return {
@@ -112,6 +114,7 @@ class PerfSession:
             "alerts": [list(a) for a in self.alerts],
             "scopes": self.scopes,
             "sys_mem_samples": self.sys_mem_samples,
+            "sys_cpu_samples": self.sys_cpu_samples,
         }
 
     @classmethod
@@ -144,6 +147,7 @@ class PerfSession:
         session.scopes_inferred = not bool(raw_scopes)
         # 系统内存探针序列（旧会话没有 = 空列表）
         session.sys_mem_samples = list(data.get("sys_mem_samples") or [])
+        session.sys_cpu_samples = list(data.get("sys_cpu_samples") or [])
         return session
 
     # ---------- 统计 ----------

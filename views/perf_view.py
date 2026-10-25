@@ -321,6 +321,9 @@ class PerfView(QWidget):
         if card is None or not hasattr(card, "set_values"):
             return
         data = data or {}
+        if key == "sys_cpu":
+            self._update_sys_cpu_card(card, data)
+            return
         if not data or "total_mb" not in data:
             card.set_values("--", "等待采样…", error=data.get("error", ""))
             return
@@ -334,6 +337,26 @@ class PerfView(QWidget):
         detail = f"空闲 {free / 1024:.2f} GB · 丢失 {lost:.0f} MB"
         if zram:
             detail += f" · ZRAM {zram:.0f} MB"
+        card.set_values(value, detail, error=data.get("error", ""))
+
+    @staticmethod
+    def _update_sys_cpu_card(card, data: dict):
+        """整机 CPU 卡片文案：27% / 8 核累计 219% / 用户 18% · 内核 7% · 空闲 73%"""
+        if not data or "cpu_pct" not in data:
+            card.set_values("--", "等待采样…", error=data.get("error", ""))
+            return
+        cpu = data.get("cpu_pct", 0.0)
+        cores = data.get("cores") or 0
+        total = data.get("total_pct") or 0.0
+        value = f"{cpu:.0f}%"
+        if cores:
+            # 多核累计占用 = 整机占用率 × 核数（不是 total_pct，那是 8×100 的容量）
+            value += f"（{cores} 核累计 {cpu * cores:.0f}%）"
+        if data.get("degraded"):
+            detail = f"用户 / 内核明细不可用（top 不支持 -b，已降级读 /proc/stat）· 空闲 {data.get('idle_pct', 0):.0f}%"
+        else:
+            detail = (f"用户 {data.get('user_pct', 0):.0f}% · 内核 {data.get('sys_pct', 0):.0f}%"
+                      f" · 空闲 {data.get('idle_pct', 0):.0f}%")
         card.set_values(value, detail, error=data.get("error", ""))
 
     def set_alert(self, metric: str, alert: bool):
@@ -457,6 +480,7 @@ class PerfView(QWidget):
         # 堆转储/抓包/截图的「卡片显隐」复选框：同口径，非空闲禁用
         # 系统内存探针只在本轮开始时启动，运行中不允许改（避免半路加/减探针）
         self.sys_mem_check.setEnabled(idle)
+        self.sys_cpu_check.setEnabled(idle)
         self.hprof_visible_check.setEnabled(idle)
         self.packet_visible_check.setEnabled(idle)
         self.screenshot_visible_check.setEnabled(idle)
@@ -593,6 +617,12 @@ class PerfView(QWidget):
             metric_widgets.append(cb)
 
         # 整机口径的旁路探针（独立于主采样，勾选后随监控启动）
+        self.sys_cpu_check = BorderedCheckBox("整机 CPU")
+        self.sys_cpu_check.setToolTip(
+            "设备整体 CPU 占用（所有进程合计，归一化到 0~100%），与上方「CPU」卡的所选进程口径不同")
+        self.sys_cpu_check.toggled.connect(self._on_card_visibility_changed)
+        metric_widgets.append(self.sys_cpu_check)
+
         self.sys_mem_check = BorderedCheckBox("系统内存")
         self.sys_mem_check.setToolTip(
             "整机内存（Total / Free / Used / Lost），按设备统计，与上方「内存」卡的所选进程口径不同")
@@ -740,7 +770,8 @@ class PerfView(QWidget):
             ]
         )
 
-        # 系统内存（整机）：数值卡，不画曲线
+        # 整机探针：数值卡（单行 44px），不画曲线
+        self._cards['sys_cpu'] = ProbeValueCard('整机 CPU', accent='#3498db')
         self._cards['sys_mem'] = ProbeValueCard('系统内存', accent='#1976d2')
 
         # 性能工具卡片：堆转储 / 抓包（原来挂在 ADB 工具箱，移到性能检测页）
@@ -751,6 +782,7 @@ class PerfView(QWidget):
         self._cards['fps'].setVisible(False)
         self._cards['traffic'].setVisible(False)
         self._cards['sys_mem'].setVisible(False)
+        self._cards['sys_cpu'].setVisible(False)
         self._hprof_card.setVisible(False)
         self._packet_card.setVisible(False)
         self._screenshot_card.setVisible(False)
@@ -772,7 +804,7 @@ class PerfView(QWidget):
         self.duration_spin.valueChanged.connect(self._save_perf_config)
         for cb in self.metric_radios.values():
             cb.toggled.connect(self._save_perf_config)
-        for chk in (self.sys_mem_check, self.hprof_visible_check,
+        for chk in (self.sys_cpu_check, self.sys_mem_check, self.hprof_visible_check,
                     self.packet_visible_check, self.screenshot_visible_check):
             chk.toggled.connect(self._save_perf_config)
         self.hprof_enable_check.toggled.connect(self._save_perf_config)
@@ -1015,13 +1047,22 @@ class PerfView(QWidget):
                       'screenshot': self._screenshot_card}
         shown_tools = [tool_cards[k] for k in ('hprof', 'packet', 'screenshot')
                        if tool_checks[k].isChecked()]
-        # 系统内存探针卡也是 44px 单行，跟在工具卡一组里，视觉整齐（不混进指标网格）
-        if getattr(self, 'sys_mem_check', None) is not None and self.sys_mem_check.isChecked():
-            if hasattr(self, '_cards') and 'sys_mem' in self._cards:
-                sm = self._cards['sys_mem']
-                sm.setParent(self.cards_container)
-                sm.setVisible(True)     # 上面的指标循环会把它隐藏，这里重新显示
-                shown_tools.insert(0, sm)
+        # 整机探针卡也是 44px 单行，跟在工具卡一组里，视觉整齐（不混进指标网格）
+        probe_checks = (
+            ('sys_mem', getattr(self, 'sys_mem_check', None)),
+            ('sys_cpu', getattr(self, 'sys_cpu_check', None)),
+        )
+        probe_cards = []
+        for key, chk in probe_checks:
+            if chk is None or not chk.isChecked():
+                continue
+            if not hasattr(self, '_cards') or key not in self._cards:
+                continue
+            card = self._cards[key]
+            card.setParent(self.cards_container)
+            card.setVisible(True)       # 上面的指标循环会把它隐藏，这里重新显示
+            probe_cards.append(card)
+        shown_tools = probe_cards + shown_tools
         for tc in tool_cards.values():
             tc.setParent(self.cards_container)
             tc.setVisible(tc in shown_tools)
@@ -1185,6 +1226,7 @@ class PerfView(QWidget):
             'fps': self.metric_radios['fps'].isChecked(),
             'traffic': self.metric_radios['traffic'].isChecked(),
             'sys_mem': self.sys_mem_check.isChecked(),
+            'sys_cpu': self.sys_cpu_check.isChecked(),
             'show_hprof': self.hprof_visible_check.isChecked(),
             'show_packet': self.packet_visible_check.isChecked(),
             'show_screenshot': self.screenshot_visible_check.isChecked(),
@@ -1239,6 +1281,8 @@ class PerfView(QWidget):
             self.metric_radios['traffic'].setChecked(True)
         if cfg.get('sys_mem'):
             self.sys_mem_check.setChecked(True)
+        if cfg.get('sys_cpu'):
+            self.sys_cpu_check.setChecked(True)
 
         # 卡片显隐
         if cfg.get('show_hprof'):

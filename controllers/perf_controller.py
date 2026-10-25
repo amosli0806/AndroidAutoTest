@@ -619,9 +619,17 @@ class PerfController(QObject):
                                 and self.view.sys_mem_check.isChecked())
         except Exception:
             want_sys_mem = False
+        try:
+            want_sys_cpu = bool(getattr(self.view, "sys_cpu_check", None)
+                                and self.view.sys_cpu_check.isChecked())
+        except Exception:
+            want_sys_cpu = False
         if want_sys_mem:
             from services.perf_probes import MemInfoSysProbe
             self._start_probe(MemInfoSysProbe(), session)
+        if want_sys_cpu:
+            from services.perf_probes import TopSysProbe
+            self._start_probe(TopSysProbe(), session)
 
     def _start_probe(self, probe, session):
         """绑定环境并启动后台采集；界面用 QTimer 读快照，不阻塞 GUI。"""
@@ -678,6 +686,8 @@ class PerfController(QObject):
                     continue
                 if key == "sys_mem":
                     self.current_session.sys_mem_samples = series
+                elif key == "sys_cpu":
+                    self.current_session.sys_cpu_samples = series
         for key, probe in probes.items():
             try:
                 probe.stop()
