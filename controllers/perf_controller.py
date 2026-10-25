@@ -634,11 +634,8 @@ class PerfController(QObject):
     def _start_probe(self, probe, session):
         """绑定环境并启动后台采集；界面用 QTimer 读快照，不阻塞 GUI。"""
         base = self._device_export_dir()
+        # 目录不预建：探针落盘时才创建（预建会留下空文件夹，用户会以为"没数据"）
         out_dir = os.path.join(base, "perf", getattr(session, "name", "session"), probe.key)
-        try:
-            os.makedirs(out_dir, exist_ok=True)
-        except Exception:
-            out_dir = base
         probe.bind(self.device_service.device, self.device_service.serial, out_dir)
         # 间隔由卡片上的下拉决定（默认 15 秒）；取不到就用探针自带默认
         interval = 0.0
@@ -702,6 +699,8 @@ class PerfController(QObject):
         for key, probe in probes.items():
             try:
                 probe.wait(timeout=15)
+                if getattr(probe, "artifact", ""):
+                    logger.info("[Perf] 探针 %s 产物：%s", key, probe.artifact)
             except Exception as e:
                 logger.warning("[Perf] 等待探针 %s 落盘失败: %s", key, e)
         if hasattr(self, "_probes"):

@@ -9,6 +9,8 @@
 生命周期：bind() → start(interval) → （GUI 定时读 latest()）→ stop() / wait()。
 停止顺序由 PerfController._finalize_probes() 统一保证：先全部 stop，再统一 wait。
 """
+import csv
+import os
 import threading
 import time
 
@@ -34,6 +36,7 @@ class PerfProbe:
         self._latest = {}
         self._samples = []
         self._interval = self.default_interval
+        self.artifact = ""       # 最近一次落盘的产物路径（CSV / 原始 dump 目录）
 
     # ---------- 运行环境 ----------
     def bind(self, device, serial, out_dir, pid_provider=None):
@@ -61,6 +64,39 @@ class PerfProbe:
                 # 线程没退出（命令卡住）：不死等，交给 daemon 属性随进程退出
                 pass
             self._thread = None
+        # 线程结束后落盘：没有产物文件的探针（如整机 CPU）以前在产物目录里只留一个空文件夹
+        self._dump_csv()
+
+    def _dump_csv(self):
+        """把采样序列写一份 CSV（产物目录里要能看见东西，也方便 Excel 复盘）。
+
+        列 = 所有采样点出现过的键的并集（error 除外），第一列固定 ts。
+        失败静默（写不了文件不该影响监控收尾），路径记在 self.artifact 里供日志用。
+        """
+        samples = self.samples()
+        if not samples or not self.out_dir:
+            return ""
+        keys = []
+        for item in samples:
+            for k in item.keys():
+                if k != "error" and k not in keys:
+                    keys.append(k)
+        if "ts" in keys:
+            keys.remove("ts")
+            keys.insert(0, "ts")
+        try:
+            os.makedirs(self.out_dir, exist_ok=True)
+            path = os.path.join(
+                self.out_dir, f"{self.key}_{time.strftime('%Y%m%d_%H%M%S')}.csv")
+            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(keys)
+                for item in samples:
+                    writer.writerow([item.get(k, "") for k in keys])
+            self.artifact = path
+            return path
+        except Exception:
+            return ""
 
     def _run(self):
         while not self._stop_evt.is_set():
