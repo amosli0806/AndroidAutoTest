@@ -8,6 +8,20 @@ from models.perf_model import (PerfSession, compare_stats, MEM_CATEGORIES,
                                SCOPE_LABELS, SCOPE_SYSTEM)
 
 
+# 指标键 -> 报告里显示的中文名（低层键名只在代码里用，报告要给人看）
+METRIC_LABELS = {
+    "cpu": "CPU",
+    "mem": "内存",
+    "fps": "帧率",
+    "traffic": "流量",
+    "sys_mem": "系统内存",
+}
+
+
+def metric_label(key: str) -> str:
+    return METRIC_LABELS.get(key, key)
+
+
 # 图表库（离线内嵌，见 _chart_js_tags 的说明）
 _CHART_JS_FILES = (
     ("chart.umd.min.js",
@@ -112,7 +126,7 @@ CHART_JS_MEM_BREAKDOWN = """new Chart(document.getElementById('memChart'), {
     data: {
         labels: axisLabels,
         datasets: [
-            { label: 'Total', data: memData, borderColor: '#27ae60', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
+            { label: '合计', data: memData, borderColor: '#27ae60', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Java', data: javaData, borderColor: '#f39c12', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Native', data: nativeData, borderColor: '#9b59b6', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Graphics', data: graphicsData, borderColor: '#e74c3c', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
@@ -444,7 +458,7 @@ class PerfReportGenerator:
         mem_stat = stats.get('mem')
         if 'mem' in metrics and mem_stat and not baseline_covers_mem:
             breakdown = stats.get('mem_breakdown') or {}
-            detail_rows = [('Total', mem_stat)]
+            detail_rows = [('合计', mem_stat)]
             detail_rows += [(cat, breakdown[cat]) for cat, _lbl, _color in MEM_CATEGORIES
                             if cat in breakdown]
             detail_tr = ""
@@ -539,7 +553,8 @@ class PerfReportGenerator:
         _scope_parts = []
         for _k in ("cpu", "mem", "fps", "traffic"):
             if _k in metrics and _scopes.get(_k):
-                _scope_parts.append(f"{_k.upper()} = {SCOPE_LABELS.get(_scopes[_k], _scopes[_k])}")
+                _scope_parts.append(
+                    f"{metric_label(_k)} = {SCOPE_LABELS.get(_scopes[_k], _scopes[_k])}")
         # 整机探针也标出来（它不在 metrics 里，是按勾选启动的旁路采集）
         if getattr(session, "sys_mem_samples", None):
             _scope_parts.append(f"系统内存 = {SCOPE_LABELS.get(SCOPE_SYSTEM, '整机')}")
@@ -732,7 +747,7 @@ class PerfReportGenerator:
             </tr>
             <tr>
                 <td class="label">监控指标</td>
-                <td>{'、'.join(metrics)}</td>
+                <td>{'、'.join(metric_label(m) for m in metrics)}</td>
             </tr>
             <tr>
                 <td class="label">统计口径</td>
