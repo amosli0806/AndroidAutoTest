@@ -126,7 +126,7 @@ CHART_JS_MEM_BREAKDOWN = """new Chart(document.getElementById('memChart'), {
     data: {
         labels: axisLabels,
         datasets: [
-            { label: '合计', data: memData, borderColor: '#27ae60', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
+            { label: 'Total', data: memData, borderColor: '#27ae60', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Java', data: javaData, borderColor: '#f39c12', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Native', data: nativeData, borderColor: '#9b59b6', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
             { label: 'Graphics', data: graphicsData, borderColor: '#e74c3c', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
@@ -458,7 +458,7 @@ class PerfReportGenerator:
         mem_stat = stats.get('mem')
         if 'mem' in metrics and mem_stat and not baseline_covers_mem:
             breakdown = stats.get('mem_breakdown') or {}
-            detail_rows = [('合计', mem_stat)]
+            detail_rows = [('Total', mem_stat)]
             detail_rows += [(cat, breakdown[cat]) for cat, _lbl, _color in MEM_CATEGORIES
                             if cat in breakdown]
             detail_tr = ""
