@@ -107,9 +107,17 @@ class PerfService:
         """
         sample = PerfSample(timestamp=time.time())
 
+        # 本轮只需要一次 ps -A：CPU 与内存都按「所选进程」取数（2026-10-25）
+        pids = []
+        if ('cpu' in metrics) or ('mem' in metrics):
+            try:
+                pids = self._find_app_pids(package)
+            except Exception:
+                pids = []
+
         if 'cpu' in metrics:
             try:
-                cpu = self._collect_cpu(package)
+                cpu = self._collect_cpu(package, pids)
                 if cpu is None:
                     # 首采 / 进程集合变化：本轮只重建基准，不产出数据点
                     sample.errors.append("cpu:本轮无有效值（首采或进程集合变化）")
@@ -120,7 +128,7 @@ class PerfService:
 
         if 'mem' in metrics:
             try:
-                pss_mb, breakdown = self._collect_mem(package)
+                pss_mb, breakdown = self._collect_mem(package, pids)
                 sample.mem_pss_mb = pss_mb
                 sample.mem_breakdown = breakdown
             except Exception as e:
@@ -240,7 +248,7 @@ class PerfService:
             total += int(fields[11]) + int(fields[12])
         return total
 
-    def _collect_cpu(self, package: str):
+    def _collect_cpu(self, package: str, pids=None):
         """按 /proc/<pid>/stat 差分计算**所选进程**的 CPU 占用率（不合并同应用其它进程）。
 
         返回 None 表示"本轮没有有效值"：首采、进程集合变化、或时钟/PID 异常，
@@ -251,7 +259,8 @@ class PerfService:
         """
         import time as _time
 
-        pids = self._find_app_pids(package)
+        if pids is None:
+            pids = self._find_app_pids(package)
         if not pids:
             raise PerfShellError(f"应用未在运行（找不到进程）：{package}")
 
@@ -294,14 +303,22 @@ class PerfService:
     # ============================================================
     # 内存
     # ============================================================
-    def _collect_mem(self, package: str) -> tuple:
+    def _collect_mem(self, package: str, pids=None) -> tuple:
         """
-        采集应用内存，返回 (pss_mb, breakdown)：
-          - pss_mb：应用 TOTAL PSS（MB）
-          - breakdown：Android Studio 风格分类拆解 dict，如
+        采集**所选进程**的内存，返回 (pss_mb, breakdown)：
+          - pss_mb：该进程的 TOTAL PSS（MB）
+          - breakdown：分类拆解 dict，如
             {'Java': 61.8, 'Native': 12.3, 'Graphics': 5.0, ...}（单位 MB）
+
+        为什么按 PID 取：`dumpsys meminfo <包名>` 给的是整个应用的 App Summary
+        （含 `包名:*` 子进程）—— 选子进程会显示整包内存，选主进程也混着子进程。
+        改成 `dumpsys meminfo <pid>` 只出这一个进程，和 CPU 口径一致（2026-10-25 用户要求）。
+        拿不到 PID 时退回包名 dump（宁可给整包数，也不让采集直接失败）。
         """
-        out = self._sh(f"dumpsys meminfo {package}", what="dumpsys meminfo")
+        if pids is None:
+            pids = self._find_app_pids(package)
+        target = pids[0] if pids else package
+        out = self._sh(f"dumpsys meminfo {target}", what="dumpsys meminfo")
         # 应用没在跑时 dumpsys 会这么回 —— 给出明确结论，而不是记一个 0 内存
         if "No process found" in out or "Unknown package" in out:
             raise PerfShellError(f"应用未在运行（dumpsys meminfo 无进程）：{package}")
