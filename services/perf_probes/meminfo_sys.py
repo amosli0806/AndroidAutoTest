@@ -81,6 +81,8 @@ class MemInfoSysProbe(PerfProbe):
 
     def _dump_raw(self, out: str, ts: float):
         """原始输出留一份（失败不影响采集）。"""
+        if not self.out_dir:        # 没绑定产物目录（单测/探针试跑）就不要在 CWD 里建目录
+            return
         try:
             d = os.path.join(self.out_dir, "meminfo_sys")
             os.makedirs(d, exist_ok=True)
