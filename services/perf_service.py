@@ -154,12 +154,17 @@ class PerfService:
     # CPU
     # ============================================================
     def _find_app_pids(self, package: str) -> list:
-        """列出该应用**所有**进程的 PID（主进程 + `包名:xxx` 子进程）。
+        """返回**名称与 package 完全一致**的进程 PID（只这一个进程，不做合并）。
 
-        为什么不能用 `pidof <包名>`：pidof 匹配的是进程名（comm），而 Android 的
-        私有进程叫 `com.foo:remote`，`pidof com.foo` 匹配不到，CPU 会被系统性漏算。
-        2026-10-22 实测 `com.alibaba.ailabs.autobot`：主进程 3.43% + `:channel`
-        1.66%，只算主进程会漏掉 **32.6%**。
+        口径：进程下拉里每个进程是一行，**选谁就算谁** —— 与内存、帧率一致。
+        以前这里会把 `包名:*` 的子进程一起算（CPU 合并整个应用），结果选子进程时
+        数值里还混着主进程；需要整包数据时，分别选各进程累加即可（2026-10-23 用户要求）。
+
+        两个匹配陷阱（都会把同应用的其它进程带进来，必须防）：
+          * `ps -A` 的 NAME 列在部分 ROM 上被截断到 15 字符；
+          * `pidof` 是**前缀匹配**，`pidof com.foo:remote` 可能连带 `com.foo`。
+
+        所以 `ps` 走精确匹配；退回 `pidof` 时再用 `/proc/<pid>/cmdline` 复核进程名。
 
         `ps -A` 的列是 USER PID PPID VSZ RSS WCHAN ADDR S NAME，
         所以 PID 取第 2 列、进程名取最后一列。
@@ -173,16 +178,41 @@ class PerfService:
             parts = line.split()
             if len(parts) < 3 or not parts[1].isdigit():
                 continue
-            name = parts[-1]
-            if name == package or name.startswith(package + ":"):
+            if parts[-1] == package:        # 精确匹配，不扩展子进程
                 pids.append(parts[1])
 
         if not pids:
-            # 老设备/精简 ROM 的 ps 不认 -A：退回 pidof（只能拿到主进程，
-            # 至少不比改之前差），保证功能可用而不是直接报错
+            # 老设备/精简 ROM 的 ps 不认 -A：退回 pidof，再按 cmdline 复核
             pid_out = self._sh(f"pidof {package}", require_output=False).strip()
-            pids = pid_out.split() if pid_out else []
+            pids = self._verify_by_cmdline(pid_out.split() if pid_out else [], package)
         return pids
+
+    def _verify_by_cmdline(self, pids, package) -> list:
+        """用 `/proc/<pid>/cmdline` 复核进程名，只留下**完全等于 package** 的 PID。
+
+        必要性：`ps` 的 NAME 可能被截断、`pidof` 是前缀匹配，两者都可能把
+        同应用的其它进程带进来（选中子进程却算出整包的 CPU）。
+        cmdline 读不到（权限/老系统）时原样返回，不让功能退化成采不到。
+        """
+        if not pids:
+            return pids
+        script = " ; ".join(
+            f"echo -n '{pid}|'; tr '\0' ' ' < /proc/{pid}/cmdline 2>/dev/null; echo"
+            for pid in pids
+        )
+        try:
+            out = self._sh(script, require_output=False)
+        except Exception:
+            return pids
+        keep = []
+        for line in out.splitlines():
+            pid, sep, cmd = line.partition("|")
+            if not sep:
+                continue
+            # cmdline 是「进程名 + 参数」，用空格连成一串；第一个 token 才是进程名
+            if cmd.strip().split(" ")[0] == package:
+                keep.append(pid.strip())
+        return keep or pids
 
     def _sum_proc_ticks(self, pids: list):
         """一次 adb 往返读出多个进程的 (utime+stime) 累计值之和。
@@ -211,7 +241,7 @@ class PerfService:
         return total
 
     def _collect_cpu(self, package: str):
-        """按 /proc/<pid>/stat 差分计算**应用全部进程**的 CPU 占用率。
+        """按 /proc/<pid>/stat 差分计算**所选进程**的 CPU 占用率（不合并同应用其它进程）。
 
         返回 None 表示"本轮没有有效值"：首采、进程集合变化、或时钟/PID 异常，
         此时只重建基准，**不产出数据点**（否则曲线会出现假的 0 或假尖峰）。
