@@ -543,6 +543,7 @@ class PerfView(QWidget):
             combo = self._probe_interval_combo(key)
             if combo is not None:
                 combo.setEnabled(idle)
+        self.smaps_visible_check.setEnabled(idle)
         self.hprof_visible_check.setEnabled(idle)
         self.packet_visible_check.setEnabled(idle)
         self.screenshot_visible_check.setEnabled(idle)
