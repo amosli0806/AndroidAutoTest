@@ -1378,6 +1378,10 @@ class PerfView(QWidget):
         """任一相关控件改动即回写配置。恢复期间（_perf_cfg_ready=False）跳过。"""
         if not getattr(self, '_perf_cfg_ready', False):
             return
+        # 无头验证（脚本里构造 PerfView）会把测试值写进用户真实配置，加一道闸：
+        # 设了 CHONGSHI_NO_CONFIG_WRITE 就不写（2026-10-25 踩过：package 被写成 com.demo.app）
+        if os.environ.get("CHONGSHI_NO_CONFIG_WRITE"):
+            return
         try:
             Settings.set_perf_config(self._collect_perf_config())
         except Exception as e:
