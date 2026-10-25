@@ -49,6 +49,9 @@ class PerfWorker(QThread):
         self._link_down = False
         # 连续多少轮「一项数据都没采到」才判定链路有问题（先容忍偶发抖动）
         self._consecutive_failed = 0
+        # 旁路探针（系统内存 / 后续的整机 CPU、网卡流量）：key -> probe 实例
+        self._probes = {}
+        self._probe_timers = {}
 
     # 连续失败到该次数就动手探活 + 重建连接
     LINK_FAIL_THRESHOLD = 3
@@ -506,6 +509,9 @@ class PerfController(QObject):
         #  所以界面看着像"抓包和监控没关系"，2026-10-14 用户反馈）
         self._auto_start_capture_if_enabled()
 
+        # 旁路探针（整机口径）：勾选了就随监控一起启动，各自跑后台线程
+        self._start_probes(session)
+
         # 根据模式更新视图状态
         if mode == 'scenario':
             # 场景化：同时启动用例执行线程
@@ -600,6 +606,46 @@ class PerfController(QObject):
 
         self.view.set_state(self.view.STATE_IDLE)
 
+    # ------------------------------------------------------------------
+    # 旁路探针（系统内存等）
+    # ------------------------------------------------------------------
+    def _start_probes(self, session):
+        """按勾选启动探针。目前只有「系统内存（整机）」。"""
+        try:
+            want_sys_mem = bool(getattr(self.view, "sys_mem_check", None)
+                                and self.view.sys_mem_check.isChecked())
+        except Exception:
+            want_sys_mem = False
+        if want_sys_mem:
+            from services.perf_probes import MemInfoSysProbe
+            self._start_probe(MemInfoSysProbe(), session)
+
+    def _start_probe(self, probe, session):
+        """绑定环境并启动后台采集；界面用 QTimer 读快照，不阻塞 GUI。"""
+        base = self._device_export_dir()
+        out_dir = os.path.join(base, "perf", getattr(session, "name", "session"), probe.key)
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except Exception:
+            out_dir = base
+        probe.bind(self.device_service.device, self.device_service.serial, out_dir)
+        probe.start()
+
+        self._probes[probe.key] = probe
+        timer = QTimer(self)
+        timer.timeout.connect(lambda: self._refresh_probe(probe))
+        timer.start(1000)                    # 1 秒刷一次界面即可，采样节奏由探针自己掌握
+        self._probe_timers[probe.key] = timer
+        logger.info("[Perf] 探针 %s 已启动（间隔 %.1fs，产物 %s）",
+                    probe.key, probe._interval, out_dir)
+
+    def _refresh_probe(self, probe):
+        """把探针最新快照推给界面（失败只记日志，不打扰用户）。"""
+        try:
+            self.view.update_probe(probe.key, probe.latest())
+        except Exception as e:
+            logger.warning("[Perf] 刷新探针 %s 卡片失败: %s", probe.key, e)
+
     def _finalize_probes(self):
         """统一收尾所有旁路探针（`_probes`，P1 起登记）。
 
@@ -607,9 +653,28 @@ class PerfController(QObject):
         逐个 stop+wait 会出现"停 A 时 A 还在写文件，B 已经在抢同一个 adb 通道"。
         探针机制还没落地时 `_probes` 为空，这个函数是零成本空转。
         """
+        for key, timer in dict(getattr(self, "_probe_timers", {}) or {}).items():
+            try:
+                timer.stop()
+            except Exception:
+                pass
+        self._probe_timers = {}
+
         probes = dict(getattr(self, "_probes", None) or {})
         if not probes:
             return
+
+        # 先把采集到的序列挂到会话上（报告要用），再停止
+        if self.current_session is not None:
+            for key, probe in probes.items():
+                try:
+                    series = probe.samples()
+                except Exception:
+                    series = []
+                if not series:
+                    continue
+                if key == "sys_mem":
+                    self.current_session.sys_mem_samples = series
         for key, probe in probes.items():
             try:
                 probe.stop()

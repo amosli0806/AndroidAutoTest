@@ -5,7 +5,7 @@ import sys
 import base64
 from datetime import datetime
 from models.perf_model import (PerfSession, compare_stats, MEM_CATEGORIES,
-                               SCOPE_LABELS)
+                               SCOPE_LABELS, SCOPE_SYSTEM)
 
 
 # 图表库（离线内嵌，见 _chart_js_tags 的说明）
@@ -464,6 +464,38 @@ class PerfReportGenerator:
         </table>
         """
 
+        # 系统内存（整机探针）：与「内存」卡口径不同，单独成节并标注清楚
+        sys_mem_html = ""
+        _sm = [x for x in (getattr(session, "sys_mem_samples", None) or [])
+               if x.get("total_mb")]
+        if _sm:
+            def _col(key):
+                return [float(x.get(key) or 0) for x in _sm]
+
+            used_v, pct_v = _col("used_mb"), _col("used_pct")
+            free_v, zram_v = _col("free_mb"), _col("zram_mb")
+            total_gb = _sm[-1].get("total_mb", 0) / 1024.0
+            avg = lambda v: sum(v) / len(v)
+            sys_mem_html = f"""
+        <h2>🖥️ 系统内存（整机）</h2>
+        <p style="font-size:12px;color:#888;">※ 本项为<b>整机口径</b>（Total RAM {total_gb:.1f} GB），包含设备上所有进程；
+           与上方「内存」卡（所选进程）口径不同，两者不可直接相加或对比。</p>
+        <table class="compare">
+            <thead><tr><th>项目</th><th>均值</th><th>峰值</th><th>最低</th></tr></thead>
+            <tbody>
+                <tr><td>已用 (MB)</td><td>{avg(used_v):.0f}</td>
+                    <td>{max(used_v):.0f}</td><td>{min(used_v):.0f}</td></tr>
+                <tr><td>已用率 (%)</td><td>{avg(pct_v):.1f}</td>
+                    <td>{max(pct_v):.1f}</td><td>{min(pct_v):.1f}</td></tr>
+                <tr><td>空闲 (MB)</td><td>{avg(free_v):.0f}</td>
+                    <td>{max(free_v):.0f}</td><td>{min(free_v):.0f}</td></tr>
+                <tr><td>ZRAM 物理占用 (MB)</td><td>{avg(zram_v):.0f}</td>
+                    <td>{max(zram_v):.0f}</td><td>{min(zram_v):.0f}</td></tr>
+            </tbody>
+        </table>
+        <p style="font-size:12px;color:#888;">共 {len(_sm)} 个采样点</p>
+        """
+
         # 曲线区域与图表脚本：只渲染本次勾选采集的指标
         charts_section = ""
         chart_scripts = []
@@ -508,6 +540,9 @@ class PerfReportGenerator:
         for _k in ("cpu", "mem", "fps", "traffic"):
             if _k in metrics and _scopes.get(_k):
                 _scope_parts.append(f"{_k.upper()} = {SCOPE_LABELS.get(_scopes[_k], _scopes[_k])}")
+        # 整机探针也标出来（它不在 metrics 里，是按勾选启动的旁路采集）
+        if getattr(session, "sys_mem_samples", None):
+            _scope_parts.append(f"系统内存 = {SCOPE_LABELS.get(SCOPE_SYSTEM, '整机')}")
         scope_text = "、".join(_scope_parts) or "未记录"
         if getattr(session, "scopes_inferred", False):
             scope_text += "（旧会话，按当前默认推断）"
@@ -712,6 +747,8 @@ class PerfReportGenerator:
         </div>
 
         {mem_detail_html}
+
+        {sys_mem_html}
 
         {baseline_html}
 

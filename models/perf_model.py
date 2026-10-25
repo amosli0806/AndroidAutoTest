@@ -28,7 +28,7 @@ DEFAULT_SCOPES = {
     "mem": SCOPE_PROCESS,       # v1.5.7 起按进程（之前是整包 TOTAL PSS）
     "fps": SCOPE_PROCESS,
     "traffic": SCOPE_APP,       # 系统只按 UID 记账，无法按进程
-    # "sys_mem": SCOPE_SYSTEM,
+    "sys_mem": SCOPE_SYSTEM,    # 探针：整机内存
     # "sys_cpu": SCOPE_SYSTEM,
 }
 
@@ -88,6 +88,9 @@ class PerfSession:
     scopes: dict = field(default_factory=dict)
     # 旧会话（v1.5.7 之前）没记录过口径 → 按默认值兜底并置 True，对比时要提示
     scopes_inferred: bool = False
+    # 系统内存探针（整机口径）的采样序列：[{ts, total_mb, used_mb, free_mb, lost_mb,
+    # zram_mb, used_pct}, ...]。不与 samples 混放——两者频率不同、统计方式也不同
+    sys_mem_samples: List[dict] = field(default_factory=list)
 
     def to_dict(self):
         return {
@@ -108,6 +111,7 @@ class PerfSession:
             "android_version": self.android_version,
             "alerts": [list(a) for a in self.alerts],
             "scopes": self.scopes,
+            "sys_mem_samples": self.sys_mem_samples,
         }
 
     @classmethod
@@ -138,6 +142,8 @@ class PerfSession:
         raw_scopes = data.get("scopes") or {}
         session.scopes = {**DEFAULT_SCOPES, **raw_scopes}
         session.scopes_inferred = not bool(raw_scopes)
+        # 系统内存探针序列（旧会话没有 = 空列表）
+        session.sys_mem_samples = list(data.get("sys_mem_samples") or [])
         return session
 
     # ---------- 统计 ----------
