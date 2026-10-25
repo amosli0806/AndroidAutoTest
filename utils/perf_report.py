@@ -472,7 +472,7 @@ class PerfReportGenerator:
                     </tr>"""
             mem_detail_html = f"""
         <h2>🧩 内存详情</h2>
-        <table class="compare">
+        <table class="compare compare4">
             <thead><tr><th>分类</th><th>均值 (MB)</th><th>峰值 (MB)</th><th>最低 (MB)</th></tr></thead>
             <tbody>{detail_tr}</tbody>
         </table>
@@ -496,7 +496,7 @@ class PerfReportGenerator:
         <h2>🖥️ 系统内存（整机）</h2>
         <p style="font-size:12px;color:#888;">※ 本项为<b>整机口径</b>（Total RAM {total_gb:.1f} GB），包含设备上所有进程；
            与上方「内存」卡（所选进程）口径不同，两者不可直接相加或对比。</p>
-        <table class="compare">
+        <table class="compare compare4">
             <thead><tr><th>项目</th><th>均值</th><th>峰值</th><th>最低</th></tr></thead>
             <tbody>
                 <tr><td>已用 (MB)</td><td>{_avg(used_v):.0f}</td>
@@ -533,7 +533,7 @@ class PerfReportGenerator:
         <h2>⚙️ 整机 CPU</h2>
         <p style="font-size:12px;color:#888;">※ 本项为<b>整机口径</b>（{core_txt}，占用率已归一化到 0~100%，
            峰值多核累计 {total_peak:.0f}%），包含设备上所有进程，与上方「CPU」卡（所选进程）口径不同。{deg_note}</p>
-        <table class="compare">
+        <table class="compare compare4">
             <thead><tr><th>项目</th><th>均值</th><th>峰值</th><th>最低</th></tr></thead>
             <tbody>
                 <tr><td>整机占用 (%)</td><td>{_avg(cpu_v):.1f}</td>
@@ -735,6 +735,14 @@ class PerfReportGenerator:
             background: #f8f9fa;
             color: #666;
             font-weight: 600;
+        }}
+        /* 4 列表（内存详情 / 系统内存 / 整机 CPU）用固定列宽，三张表的列位置才能对齐；
+           否则「ZRAM 物理占用 (MB)」这类长标签会把第一列撑宽，后三列整体右移 */
+        table.compare4 {{
+            table-layout: fixed;
+        }}
+        table.compare4 th:first-child, table.compare4 td:first-child {{
+            width: 22%;
         }}
         .badge {{
             display: inline-block;
