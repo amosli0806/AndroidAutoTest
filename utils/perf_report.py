@@ -388,11 +388,12 @@ class PerfReportGenerator:
             </div>"""
         if 'fps' in metrics:
             s = stats.get('fps', {})
+            # 与 CPU / 内存卡保持同一排布：主值是峰值，均值 / 最低放小字
             summary_cards_html += f"""
             <div class="card">
-                <div class="value">{s.get('avg', 0):.1f}</div>
-                <div class="label">FPS 均值</div>
-                <div class="sub">最高 {s.get('max', 0):.0f} · 最低 {s.get('min', 0):.0f}</div>
+                <div class="value">{s.get('max', 0):.0f}</div>
+                <div class="label">FPS 峰值</div>
+                <div class="sub">均值 {s.get('avg', 0):.0f} · 最低 {s.get('min', 0):.0f}</div>
             </div>"""
         if has_traffic and 'traffic' in stats:
             t = stats['traffic']
