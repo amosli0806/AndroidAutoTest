@@ -1080,15 +1080,14 @@ class PerfController(QObject):
             取"最可行动"的那条：Permission denied 一律归为"需要 root"，
             不要被后面 run-as 的 "not debuggable" 覆盖掉。
             """
+            # 提示要短：toast 只给结论，原始报错留在虫师日志里（logger.info 已记录）
             joined = " | ".join(r for r in reasons if r)
-            if "Permission denied" in joined:
-                return ("读取 smaps 需要 root 权限：该设备未 root，"
-                        "应用也不是可调试包（可 adb root，或换 debug 包再试）")
-            if "not debuggable" in joined:
-                return "应用不是可调试包，且设备未 root，无法读取 smaps"
+            if "Permission denied" in joined or "not debuggable" in joined:
+                return "需要 root 或 debug 包"
             if "No such file" in joined:
-                return "进程已退出（smaps 文件不存在）"
-            return reasons[-1] if reasons and reasons[-1] else "未知原因"
+                return "进程已退出"
+            tail = reasons[-1] if reasons and reasons[-1] else "未知原因"
+            return tail[:40]
 
         def worker():
             try:
@@ -1117,7 +1116,7 @@ class PerfController(QObject):
                         logger.info("[Perf] smaps 已保存（%s）：%s（%.1f MB）",
                                     label, path, info / 1048576.0)
                         self.smaps_finished.emit(
-                            "success", f"{os.path.basename(path)}（{info / 1048576.0:.1f} MB）")
+                            "success", f"{info / 1048576.0:.1f} MB")
                         return
                     reasons.append(info)
                     logger.info("[Perf] smaps %s 失败：%s", label, info)
@@ -1140,9 +1139,9 @@ class PerfController(QObject):
 
     def _on_smaps_finished(self, status: str, message: str):
         if status == "success":
-            show_toast(self.view, f"内存明细已保存：{message}", duration=3500)
+            show_toast(self.view, f"内存明细已保存（{message}）", duration=3000)
         else:
-            show_toast(self.view, f"内存明细抓取失败：{message}", duration=4500)
+            show_toast(self.view, f"内存明细抓取失败：{message}", duration=4000)
 
     def _on_screenshot_toggle(self, checked: bool):
         """截图自动循环勾选状态变化"""
