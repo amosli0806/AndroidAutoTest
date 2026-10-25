@@ -459,12 +459,15 @@ class ProbeValueCard(QFrame):
         self._theme_mode = ThemeMode.LIGHT
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(14, 10, 14, 10)
-        root.setSpacing(4)
+        root.setContentsMargins(12, 10, 12, 10)
+        root.setSpacing(6)
 
         head = QHBoxLayout()
+        head.setSpacing(8)
+        # 与其他指标卡片同一款式：圆点 + 标题（颜色跟随卡片主色）
+        self.dot = QLabel("●")
+        head.addWidget(self.dot)
         self.title_label = QLabel(title)
-        self.title_label.setStyleSheet("font-size: 13px; font-weight: bold;")
         head.addWidget(self.title_label)
         head.addStretch()
         self.scope_badge = QLabel("整机口径")
@@ -503,29 +506,40 @@ class ProbeValueCard(QFrame):
         pass
 
     # ---------- 主题 ----------
-    def _restyle(self):
+    def _restyle(self, has_wallpaper: bool = False):
+        """配色与 MetricCard 完全对齐（同一张页面上不能有两种卡片底色）。"""
         dark = self._theme_mode == ThemeMode.DARK
-        bg = "#232427" if dark else "#ffffff"
-        border = "#3a3a3a" if dark else "#e0e0e0"
-        title = "#ffffff" if dark else "#333333"
-        detail = "#9aa0a6" if dark else "#888888"
-        badge_bg = "rgba(25,118,210,0.16)" if dark else "#e8f1fb"
+        if dark:
+            bg = "rgba(35, 36, 39, 0.85)" if has_wallpaper else "#232427"
+            border = "#3a3a3a"
+            title = "#ffffff"
+            detail = "#999999"
+        else:
+            bg = "rgba(232, 234, 237, 0.85)" if has_wallpaper else "#e8eaed"
+            border = "#d0d0d0"
+            title = "#333333"
+            detail = "#999999"
+        badge_bg = "rgba(25,118,210,0.16)" if dark else "#dbe7f5"
         self.setStyleSheet(
             f"QFrame#ProbeValueCard {{ background-color: {bg}; border: 1px solid {border};"
             f" border-radius: 8px; }}"
         )
-        self.title_label.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {title};")
+        self.dot.setStyleSheet(
+            f"color: {self._accent}; font-size: 14px; background: transparent;")
+        self.title_label.setStyleSheet(
+            f"font-weight: 600; font-size: 13px; color: {title}; background: transparent;")
         self.scope_badge.setStyleSheet(
             f"font-size: 11px; color: {self._accent}; background: {badge_bg};"
             f" border-radius: 3px; padding: 1px 5px;"
         )
         self.value_label.setStyleSheet(
-            f"font-size: 20px; font-weight: bold; color: {self._accent}; background: transparent;"
+            f"font-size: 20px; font-weight: 600; color: {title}; background: transparent;"
         )
-        self.detail_label.setStyleSheet(f"font-size: 12px; color: {detail}; background: transparent;")
+        self.detail_label.setStyleSheet(
+            f"font-size: 12px; color: {detail}; background: transparent;")
         self.status_label.setStyleSheet(
-            "font-size: 11px; color: #e74c3c; background: transparent;")
+            "font-size: 12px; color: #e74c3c; background: transparent;")
 
     def apply_theme(self, theme_mode: ThemeMode, has_wallpaper: bool = False):
         self._theme_mode = theme_mode
-        self._restyle()
+        self._restyle(has_wallpaper)
