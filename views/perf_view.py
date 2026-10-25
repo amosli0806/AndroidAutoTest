@@ -315,6 +315,14 @@ class PerfView(QWidget):
             )
 
 
+    def _probe_interval_combo(self, key: str):
+        card = self._cards.get(key)
+        return getattr(card, "interval_combo", None) if card is not None else None
+
+    def _probe_interval_text(self, key: str) -> str:
+        combo = self._probe_interval_combo(key)
+        return combo.currentText() if combo is not None else ""
+
     def update_probe(self, key: str, data: dict):
         """旁路探针的最新快照 → 对应数值卡（由 PerfController 每秒推一次）。"""
         card = self._cards.get(key)
@@ -347,7 +355,6 @@ class PerfView(QWidget):
             return
         cpu = data.get("cpu_pct", 0.0)
         cores = data.get("cores") or 0
-        total = data.get("total_pct") or 0.0
         value = f"{cpu:.0f}%"
         if cores:
             # 多核累计占用 = 整机占用率 × 核数（不是 total_pct，那是 8×100 的容量）
@@ -447,6 +454,20 @@ class PerfView(QWidget):
         for btn, name, color in pairs:
             btn.setIcon(self._tinted_icon(name, color, disabled_fg))
 
+    # 探针采样间隔选项：(显示文本, 秒)。整机类指标变化慢，默认 15 秒
+    PROBE_INTERVALS = [("5 秒", 5), ("10 秒", 10), ("15 秒", 15),
+                       ("30 秒", 30), ("1 分钟", 60), ("2 分钟", 120)]
+
+    def probe_interval(self, key: str) -> float:
+        """取某探针卡片上选中的间隔（秒）；拿不到就返回 0，让控制器用探针默认值。"""
+        card = self._cards.get(key)
+        if card is None or not hasattr(card, "interval_seconds"):
+            return 0.0
+        try:
+            return float(card.interval_seconds())
+        except Exception:
+            return 0.0
+
     def _apply_state(self):
         state = self._state
         idle = state == self.STATE_IDLE
@@ -481,6 +502,10 @@ class PerfView(QWidget):
         # 系统内存探针只在本轮开始时启动，运行中不允许改（避免半路加/减探针）
         self.sys_mem_check.setEnabled(idle)
         self.sys_cpu_check.setEnabled(idle)
+        for key in ('sys_cpu', 'sys_mem'):
+            combo = self._probe_interval_combo(key)
+            if combo is not None:
+                combo.setEnabled(idle)
         self.hprof_visible_check.setEnabled(idle)
         self.packet_visible_check.setEnabled(idle)
         self.screenshot_visible_check.setEnabled(idle)
@@ -770,9 +795,12 @@ class PerfView(QWidget):
             ]
         )
 
-        # 整机探针：数值卡（单行 44px），不画曲线
-        self._cards['sys_cpu'] = ProbeValueCard('整机 CPU', accent='#3498db')
-        self._cards['sys_mem'] = ProbeValueCard('系统内存', accent='#1976d2')
+        # 整机探针：数值卡（单行 44px），不画曲线；间隔可调，默认 15 秒
+        # （dumpsys meminfo 一次 3~5 秒，5 秒节奏会把整机 CPU 抬高几个百分点）
+        self._cards['sys_cpu'] = ProbeValueCard(
+            '整机 CPU', accent='#3498db', intervals=self.PROBE_INTERVALS)
+        self._cards['sys_mem'] = ProbeValueCard(
+            '系统内存', accent='#1976d2', intervals=self.PROBE_INTERVALS)
 
         # 性能工具卡片：堆转储 / 抓包（原来挂在 ADB 工具箱，移到性能检测页）
         self._build_tool_cards()
@@ -804,6 +832,10 @@ class PerfView(QWidget):
         self.duration_spin.valueChanged.connect(self._save_perf_config)
         for cb in self.metric_radios.values():
             cb.toggled.connect(self._save_perf_config)
+        for key in ('sys_cpu', 'sys_mem'):
+            combo = self._probe_interval_combo(key)
+            if combo is not None:
+                combo.currentTextChanged.connect(self._save_perf_config)
         for chk in (self.sys_cpu_check, self.sys_mem_check, self.hprof_visible_check,
                     self.packet_visible_check, self.screenshot_visible_check):
             chk.toggled.connect(self._save_perf_config)
@@ -1227,6 +1259,8 @@ class PerfView(QWidget):
             'traffic': self.metric_radios['traffic'].isChecked(),
             'sys_mem': self.sys_mem_check.isChecked(),
             'sys_cpu': self.sys_cpu_check.isChecked(),
+            'sys_cpu_interval': self._probe_interval_text('sys_cpu'),
+            'sys_mem_interval': self._probe_interval_text('sys_mem'),
             'show_hprof': self.hprof_visible_check.isChecked(),
             'show_packet': self.packet_visible_check.isChecked(),
             'show_screenshot': self.screenshot_visible_check.isChecked(),
@@ -1283,6 +1317,11 @@ class PerfView(QWidget):
             self.sys_mem_check.setChecked(True)
         if cfg.get('sys_cpu'):
             self.sys_cpu_check.setChecked(True)
+        for key in ('sys_cpu', 'sys_mem'):
+            combo = self._probe_interval_combo(key)
+            text = cfg.get(f'{key}_interval')
+            if combo is not None and text and combo.findText(text) >= 0:
+                combo.setCurrentText(text)
 
         # 卡片显隐
         if cfg.get('show_hprof'):

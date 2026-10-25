@@ -56,7 +56,7 @@ class TopSysProbe(PerfProbe):
     key = "sys_cpu"
     title = "整机 CPU"
     scope = "system"
-    default_interval = 5.0
+    default_interval = 15.0     # 与系统内存统一：整机类指标变化慢，15 秒足够
 
     def __init__(self):
         super().__init__()

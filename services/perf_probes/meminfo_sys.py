@@ -55,8 +55,10 @@ class MemInfoSysProbe(PerfProbe):
     key = "sys_mem"
     title = "系统内存"
     scope = "system"
-    default_interval = 5.0
-    RAW_EVERY = 12          # 每 12 次（≈1 分钟）落一份原始 dump，供事后比对
+    # 默认 15 秒：dumpsys meminfo 一次要 3~5 秒，5 秒节奏几乎连轴转，
+    # 而且会把「整机 CPU」抬高约 5 个百分点（探针自己的负载也会被统计进去）
+    default_interval = 15.0
+    RAW_EVERY = 4           # 每 4 次（约 1 分钟）落一份原始 dump，供事后比对
 
     def __init__(self):
         super().__init__()

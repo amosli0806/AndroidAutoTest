@@ -2,7 +2,7 @@
 """性能检测的自定义组件"""
 import pyqtgraph as pg
 from PyQt6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel,
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QSizePolicy, QGraphicsDropShadowEffect, QWidget
 )
 from PyQt6.QtCore import Qt
@@ -445,20 +445,28 @@ class StatCard(QFrame):
         """)
 
 class ProbeValueCard(QFrame):
-    """数值型探针卡片（**单行紧凑**，与「堆转储 / 抓包」工具卡同高 44px）。
+    """探针数值卡（**单行紧凑**，与「堆转储」等工具卡同高 44px）。
 
-    为什么不做成 MetricCard 那种「曲线 + 统计栏」：整机指标是探针按自己节奏采的快照值，
-    画曲线意义不大；单行卡片能和下方工具卡对齐，页面更整齐。
+    组成：● 标题 | 主值 | 间隔下拉 | 口径徽标。
+    明细（空闲 / 丢失 / 用户 / 内核…）**不占版面**，放进 tooltip —— 一行里塞太多字会挤，
+    但排查时又需要，hover 就能看到（2026-10-25 用户要求）。
     """
 
     HEIGHT = 44
 
-    def __init__(self, title, accent="#1976d2", parent=None):
+    def __init__(self, title, accent="#1976d2", intervals=None,
+                 default_interval="15 秒", parent=None):
+        """
+        intervals: [(显示文本, 秒), ...]；给了才显示「间隔」下拉（探针可按需调节奏）
+        """
         super().__init__(parent)
         self.setObjectName("ProbeValueCard")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._accent = accent
         self._theme_mode = ThemeMode.LIGHT
+        self._detail = ""
+        self._error = ""
+        self._intervals = dict(intervals or [])
         self.setFixedHeight(self.HEIGHT)
 
         row = QHBoxLayout(self)
@@ -472,12 +480,25 @@ class ProbeValueCard(QFrame):
 
         self.value_label = QLabel("--")
         row.addWidget(self.value_label)
-        self.detail_label = QLabel("等待采样…")
-        row.addWidget(self.detail_label)
+
         self.status_label = QLabel("")
         self.status_label.setVisible(False)
         row.addWidget(self.status_label)
+
         row.addStretch()
+
+        self.interval_label = None
+        self.interval_combo = None
+        if self._intervals:
+            self.interval_label = QLabel("间隔")
+            row.addWidget(self.interval_label)
+            self.interval_combo = QComboBox()
+            self.interval_combo.addItems(list(self._intervals.keys()))
+            if default_interval in self._intervals:
+                self.interval_combo.setCurrentText(default_interval)
+            self.interval_combo.setFixedWidth(88)
+            row.addWidget(self.interval_combo)
+
         self.scope_badge = QLabel("整机口径")
         row.addWidget(self.scope_badge)
 
@@ -485,15 +506,19 @@ class ProbeValueCard(QFrame):
 
     # ---------- 数据 ----------
     def set_values(self, value_text, detail_text, error=""):
+        """detail 不上屏，只放 tooltip；error 显示成短状态并把详情带进 tooltip。"""
+        self._detail = detail_text or ""
+        self._error = error or ""
         self.value_label.setText(value_text)
-        self.detail_label.setText(detail_text)
         if error:
-            self.detail_label.setVisible(False)
-            self.status_label.setText("⚠ " + error)
+            self.status_label.setText("⚠ 采集失败")
             self.status_label.setVisible(True)
         else:
-            self.detail_label.setVisible(True)
             self.status_label.setVisible(False)
+        tip = self._detail
+        if self._error:
+            tip = (tip + "\n" if tip else "") + "⚠ " + self._error
+        self.setToolTip(tip)
 
     def clear_data(self):
         self.set_values("--", "等待采样…")
@@ -501,15 +526,23 @@ class ProbeValueCard(QFrame):
     def set_alert(self, alert):          # 与 MetricCard 的统一接口保持一致（探针不告警）
         pass
 
+    def interval_seconds(self) -> float:
+        """当前选中的间隔（秒）；没下拉时返回 0，由调用方回退到探针默认值。"""
+        if self.interval_combo is None:
+            return 0.0
+        return float(self._intervals.get(self.interval_combo.currentText(), 0))
+
     # ---------- 主题（取值与 MetricCard / PerfToolCard 完全一致） ----------
     def _restyle(self, has_wallpaper: bool = False):
         dark = self._theme_mode == ThemeMode.DARK
         if dark:
             bg = "rgba(35, 36, 39, 0.85)" if has_wallpaper else "#232427"
             border, title, detail = "#3a3a3a", "#ffffff", "#999999"
+            input_bg, input_border = "#2f3033", "#555555"
         else:
             bg = "rgba(232, 234, 237, 0.85)" if has_wallpaper else "#e8eaed"
             border, title, detail = "#d0d0d0", "#333333", "#999999"
+            input_bg, input_border = "#ffffff", "#d0d0d0"
         badge_bg = "rgba(25,118,210,0.16)" if dark else "#dbe7f5"
         self.setStyleSheet(
             f"QFrame#ProbeValueCard {{ background-color: {bg}; border: 1px solid {border};"
@@ -521,14 +554,21 @@ class ProbeValueCard(QFrame):
             f"font-weight: 600; font-size: 13px; color: {title}; background: transparent;")
         self.value_label.setStyleSheet(
             f"font-weight: 600; font-size: 13px; color: {title}; background: transparent;")
-        self.detail_label.setStyleSheet(
-            f"font-size: 12px; color: {detail}; background: transparent;")
         self.status_label.setStyleSheet(
             "font-size: 12px; color: #e74c3c; background: transparent;")
         self.scope_badge.setStyleSheet(
             f"font-size: 11px; color: {self._accent}; background: {badge_bg};"
             f" border-radius: 3px; padding: 1px 5px;"
         )
+        if self.interval_label is not None:
+            self.interval_label.setStyleSheet(
+                f"font-size: 12px; color: {detail}; background: transparent;")
+        if self.interval_combo is not None:
+            self.interval_combo.setStyleSheet(
+                f"QComboBox {{ background-color: {input_bg}; color: {title};"
+                f" border: 1px solid {input_border}; border-radius: 4px;"
+                f" padding: 2px 6px; min-height: 20px; font-size: 12px; }}"
+            )
 
     def apply_theme(self, theme_mode: ThemeMode, has_wallpaper: bool = False):
         self._theme_mode = theme_mode

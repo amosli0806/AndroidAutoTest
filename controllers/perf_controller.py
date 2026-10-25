@@ -640,7 +640,13 @@ class PerfController(QObject):
         except Exception:
             out_dir = base
         probe.bind(self.device_service.device, self.device_service.serial, out_dir)
-        probe.start()
+        # 间隔由卡片上的下拉决定（默认 15 秒）；取不到就用探针自带默认
+        interval = 0.0
+        try:
+            interval = float(self.view.probe_interval(probe.key))
+        except Exception:
+            interval = 0.0
+        probe.start(interval or None)
 
         self._probes[probe.key] = probe
         timer = QTimer(self)
