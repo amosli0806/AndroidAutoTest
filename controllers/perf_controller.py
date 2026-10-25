@@ -250,6 +250,7 @@ class PerfController(QObject):
 
     # 堆转储结果回投主线程（worker 线程不直接碰 GUI，避免跨线程操作导致界面未响应）
     hprof_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
+    smaps_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
     # 截图结果回投主线程（状态文字 / 失败 toast）
     screenshot_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
     # 启动测试等结果 -> 底部「虫师日志」（main.py 里连 append_bottom_log）
@@ -276,6 +277,9 @@ class PerfController(QObject):
         # 堆转储自动循环状态
         self._hprof_loop_timer = None
         self._hprof_dumping = False
+        # 内存明细（smaps）自动循环 / 抓取状态
+        self._smaps_loop_timer = None
+        self._smaps_dumping = False
         # 截图自动循环状态
         self._screenshot_loop_timer = None
         self._screenshot_busy = False
@@ -300,6 +304,7 @@ class PerfController(QObject):
 
         # 堆转储 / 截图结果回主线程处理（toast / 状态文字）
         self.hprof_finished.connect(self._on_hprof_finished)
+        self.smaps_finished.connect(self._on_smaps_finished)
         self.screenshot_finished.connect(self._on_screenshot_finished)
 
         self._connect_signals()
@@ -321,6 +326,8 @@ class PerfController(QObject):
         self.view.hprof_toggle_requested.connect(self._on_hprof_toggle)
         self.view.hprof_once_requested.connect(self._on_hprof_once)
         self.view.hprof_interval_changed.connect(self._on_hprof_interval_changed)
+        self.view.smaps_once_requested.connect(self._dump_smaps_now)
+        self.view.smaps_interval_changed.connect(self._on_smaps_interval_changed)
         self.view.packet_toggle_requested.connect(self._on_packet_toggle)
         self.view.packet_config_requested.connect(self._on_capture_config)
         self.view.screenshot_toggle_requested.connect(self._on_screenshot_toggle)
@@ -503,6 +510,10 @@ class PerfController(QObject):
         if self.view.hprof_enable_check.isChecked():
             self._start_hprof_loop()
 
+        # 内存明细自动循环：同堆转储口径
+        if self.view.smaps_loop_enabled():
+            self._start_smaps_loop()
+
         # 截图自动循环：同堆转储口径
         if self.view.screenshot_enable_check.isChecked():
             self._start_screenshot_loop()
@@ -583,6 +594,7 @@ class PerfController(QObject):
         self._stats_timer.stop()
         # 堆转储/截图自动循环随监控结束而停止（勾选状态保留，作为下次监控的预设）
         self._stop_hprof_loop()
+        self._stop_smaps_loop()
         self._stop_screenshot_loop()
         # 抓包也随监控结束收尾：否则它会一直抓到时长/大小上限，甚至用户以为早就停了
         self._stop_capture()
@@ -986,6 +998,106 @@ class PerfController(QObject):
     # ------------------------------------------------------------------
     # 截图卡片（自动循环 + 立即截图）
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 内存明细（smaps）卡片：抓 /proc/<pid>/smaps 回本地
+    # ------------------------------------------------------------------
+    def _on_smaps_interval_changed(self):
+        """间隔改了：循环在跑就按新间隔重排（不用停机重开）"""
+        if self._smaps_loop_timer is not None and self._smaps_loop_timer.isActive():
+            self._smaps_loop_timer.start(int(self.view.get_smaps_interval() * 1000))
+
+    def _start_smaps_loop(self):
+        package = self.view.get_selected_package()
+        if not package:
+            show_toast(self.view, "请先在左上角选择要监控的应用")
+            self.view.smaps_enable_check.blockSignals(True)
+            self.view.smaps_enable_check.setChecked(False)
+            self.view.smaps_enable_check.blockSignals(False)
+            return
+        if self._smaps_loop_timer is None:
+            self._smaps_loop_timer = QTimer(self)
+            self._smaps_loop_timer.timeout.connect(self._dump_smaps_now)
+        self._smaps_loop_timer.start(int(self.view.get_smaps_interval() * 1000))
+
+    def _stop_smaps_loop(self):
+        if self._smaps_loop_timer is not None:
+            self._smaps_loop_timer.stop()
+
+    def _smaps_out_dir(self) -> str:
+        """smaps 产物目录：<输出目录>/<序列号>/perf/<会话>/smaps（没会话时归到「手动」）"""
+        name = self.current_session.name if self.current_session else "手动"
+        path = os.path.join(self._device_export_dir(), "perf", name, "smaps")
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def _dump_smaps_now(self):
+        """抓一次所选进程的 smaps（后台线程，防重入）。
+
+        用 `adb exec-out cat` 直接把设备文件流到本地，不落设备临时文件——
+        smaps 动辄十几 MB，装卸两次没必要，也避免残留。
+        """
+        if self._smaps_dumping:
+            return
+        package = self.view.get_selected_package()
+        if not package:
+            show_toast(self.view, "请先在左上角选择要监控的应用")
+            return
+        if not self.device_service or not self.device_service.device:
+            show_toast(self.view, "设备未连接")
+            return
+        self._smaps_dumping = True
+
+        import subprocess, sys as _sys, threading
+        from utils.adb_path import get_adb_path
+        serial = self.device_service.serial
+        adb = get_adb_path()
+        out_dir = self._smaps_out_dir()
+        path = os.path.join(out_dir, time.strftime("smaps_%Y%m%d_%H%M%S.txt"))
+
+        def worker():
+            creationflags = subprocess.CREATE_NO_WINDOW if _sys.platform == 'win32' else 0
+            try:
+                r = subprocess.run(
+                    [adb, "-s", serial, "shell", "pidof", package],
+                    capture_output=True, text=True, timeout=6,
+                    creationflags=creationflags, encoding="utf-8", errors="replace")
+                pids = (r.stdout or "").split()
+                if not pids:
+                    self.smaps_finished.emit("error", f"应用「{package}」未在运行")
+                    return
+                pid = pids[0]
+                with open(path, "wb") as f:
+                    proc = subprocess.run(
+                        [adb, "-s", serial, "exec-out", "cat", f"/proc/{pid}/smaps"],
+                        stdout=f, stderr=subprocess.PIPE, timeout=180,
+                        creationflags=creationflags)
+                size = os.path.getsize(path) if os.path.exists(path) else 0
+                if proc.returncode != 0 or size < 1024:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                    err = (proc.stderr or b"").decode("utf-8", "replace").strip()
+                    self.smaps_finished.emit(
+                        "error", err or f"输出异常（{size} 字节）")
+                    return
+                logger.info("[Perf] smaps 已保存：%s（%.1f MB）", path, size / 1048576.0)
+                self.smaps_finished.emit(
+                    "success", f"{os.path.basename(path)}（{size / 1048576.0:.1f} MB）")
+            except Exception as e:
+                logger.warning("[Perf] smaps 抓取失败：%s", e)
+                self.smaps_finished.emit("error", str(e))
+            finally:
+                self._smaps_dumping = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_smaps_finished(self, status: str, message: str):
+        if status == "success":
+            show_toast(self.view, f"内存明细已保存：{message}", duration=3500)
+        else:
+            show_toast(self.view, f"内存明细抓取失败：{message}", duration=4500)
+
     def _on_screenshot_toggle(self, checked: bool):
         """截图自动循环勾选状态变化"""
         if not checked:

@@ -115,8 +115,10 @@ class PerfView(QWidget):
     clear_requested = pyqtSignal()
     threshold_config_requested = pyqtSignal()
     hprof_toggle_requested = pyqtSignal(bool)      # 堆转储自动循环开关（性能工具卡片）
-    hprof_once_requested = pyqtSignal()            # 手动触发一次堆转储
-    hprof_interval_changed = pyqtSignal()          # 堆转储间隔变更
+    hprof_once_requested = pyqtSignal()
+    smaps_once_requested = pyqtSignal()            # 手动触发一次堆转储
+    hprof_interval_changed = pyqtSignal()
+    smaps_interval_changed = pyqtSignal()          # 堆转储间隔变更
     packet_toggle_requested = pyqtSignal(bool)     # 抓包开始/停止
     packet_config_requested = pyqtSignal()         # 打开「抓包参数」对话框
     screenshot_toggle_requested = pyqtSignal(bool)  # 截图自动循环开关（性能工具卡片）
@@ -480,6 +482,18 @@ class PerfView(QWidget):
     PROBE_INTERVALS = [("5 秒", 5), ("10 秒", 10), ("15 秒", 15),
                        ("30 秒", 30), ("1 分钟", 60), ("2 分钟", 120)]
 
+    def smaps_loop_enabled(self) -> bool:
+        return bool(self.smaps_enable_check.isChecked())
+
+    def get_smaps_interval(self) -> float:
+        """自动抓取间隔（秒）。下拉是分钟文案，这里换算成秒。"""
+        text = self.smaps_interval_combo.currentText()
+        digits = "".join(ch for ch in text if ch.isdigit())
+        try:
+            return float(digits or 5) * 60.0
+        except ValueError:
+            return 300.0
+
     def probe_interval(self, key: str) -> float:
         """取某探针卡片上选中的间隔（秒）；拿不到就返回 0，让控制器用探针默认值。"""
         card = self._cards.get(key)
@@ -534,6 +548,9 @@ class PerfView(QWidget):
         self.screenshot_visible_check.setEnabled(idle)
 
         # 堆转储设置：监控中锁定（自动循环勾选与间隔不可改）；空闲时按勾选状态开放间隔
+        self.smaps_enable_check.setEnabled(idle)
+        self.smaps_interval_combo.setEnabled(idle and self.smaps_enable_check.isChecked())
+        self.smaps_once_btn.setEnabled(True)     # 随时可以手动抓一次
         self.hprof_enable_check.setEnabled(idle)
         self.hprof_interval_combo.setEnabled(idle and self.hprof_enable_check.isChecked())
         # 截图设置：同堆转储口径
@@ -683,6 +700,13 @@ class PerfView(QWidget):
             "整机内存（Total / Free / Used / Lost），按设备统计，与上方「内存」卡的所选进程口径不同")
         self.sys_mem_check.toggled.connect(self._on_card_visibility_changed)
         metric_widgets.append(self.sys_mem_check)
+
+        self.smaps_visible_check = BorderedCheckBox("内存明细")
+        self.smaps_visible_check.setToolTip(
+            "显示「内存明细（smaps）」卡片：把所选进程的 /proc/<pid>/smaps 完整抓回本地，"
+            "可用来看分段内存映射（比 PSS 总量精细得多）")
+        self.smaps_visible_check.toggled.connect(self._on_card_visibility_changed)
+        metric_widgets.append(self.smaps_visible_check)
 
         self.hprof_visible_check = BorderedCheckBox("堆转储")
         self.hprof_visible_check.toggled.connect(self._on_card_visibility_changed)
@@ -845,6 +869,7 @@ class PerfView(QWidget):
         self._cards['sys_cpu'].setVisible(False)
         self._cards['netdev'].setVisible(False)
         self._hprof_card.setVisible(False)
+        self._smaps_card.setVisible(False)
         self._packet_card.setVisible(False)
         self._screenshot_card.setVisible(False)
 
@@ -869,8 +894,10 @@ class PerfView(QWidget):
             combo = self._probe_interval_combo(key)
             if combo is not None:
                 combo.currentTextChanged.connect(self._save_perf_config)
+        self.smaps_enable_check.toggled.connect(self._save_perf_config)
+        self.smaps_interval_combo.currentTextChanged.connect(self._save_perf_config)
         for chk in (self.sys_cpu_check, self.sys_mem_check, self.netdev_check,
-                    self.hprof_visible_check,
+                    self.smaps_visible_check, self.hprof_visible_check,
                     self.packet_visible_check, self.screenshot_visible_check):
             chk.toggled.connect(self._save_perf_config)
         self.hprof_enable_check.toggled.connect(self._save_perf_config)
@@ -932,6 +959,37 @@ class PerfView(QWidget):
         hprof_row.addWidget(self.hprof_once_btn)
         hprof_row.addStretch()
         self._hprof_card.setFixedHeight(44)
+
+        # ---- 内存明细（smaps）卡片 ----
+        (self._smaps_card, smaps_row,
+         self._smaps_dot, self._smaps_title) = _card("#16a085", "内存明细")
+        self.smaps_enable_check = BorderedCheckBox("自动循环")
+        self.smaps_enable_check.setToolTip(
+            "开启后，点击「开始监控」即按右侧间隔自动抓取所选进程的 smaps\n"
+            "（第一次抓取在一个完整间隔后执行）")
+        self.smaps_enable_check.setEnabled(False)
+        self.smaps_enable_check.toggled.connect(
+            lambda _: self.smaps_interval_combo.setEnabled(
+                self._state == self.STATE_IDLE and self.smaps_enable_check.isChecked()))
+        smaps_row.addWidget(self.smaps_enable_check)
+
+        smaps_row.addWidget(QLabel("间隔:"))
+        self.smaps_interval_combo = QComboBox()
+        self.smaps_interval_combo.addItems(
+            ["1 分钟", "2 分钟", "5 分钟", "10 分钟", "30 分钟"])
+        self.smaps_interval_combo.setCurrentText("5 分钟")
+        self.smaps_interval_combo.setFixedWidth(100)
+        self.smaps_interval_combo.setEnabled(False)
+        self.smaps_interval_combo.currentTextChanged.connect(
+            lambda _: self.smaps_interval_changed.emit())
+        smaps_row.addWidget(self.smaps_interval_combo)
+
+        self.smaps_once_btn = QPushButton("立即抓取一次")
+        self.smaps_once_btn.setIcon(qta.icon('fa6s.magnifying-glass', color='white'))
+        self.smaps_once_btn.clicked.connect(self.smaps_once_requested.emit)
+        smaps_row.addWidget(self.smaps_once_btn)
+        smaps_row.addStretch()
+        self._smaps_card.setFixedHeight(44)
 
         # ---- 抓包卡片 ----
         (self._packet_card, packet_row,
@@ -1107,11 +1165,13 @@ class PerfView(QWidget):
 
         # 可见工具卡片：按勾选显示
         tool_checks = {
-            'hprof': self.hprof_visible_check, 'packet': self.packet_visible_check,
+            'hprof': self.hprof_visible_check, 'smaps': self.smaps_visible_check,
+            'packet': self.packet_visible_check,
             'screenshot': self.screenshot_visible_check}
-        tool_cards = {'hprof': self._hprof_card, 'packet': self._packet_card,
+        tool_cards = {'hprof': self._hprof_card, 'smaps': self._smaps_card,
+                      'packet': self._packet_card,
                       'screenshot': self._screenshot_card}
-        shown_tools = [tool_cards[k] for k in ('hprof', 'packet', 'screenshot')
+        shown_tools = [tool_cards[k] for k in ('hprof', 'smaps', 'packet', 'screenshot')
                        if tool_checks[k].isChecked()]
         # 整机探针卡也是 44px 单行，跟在工具卡一组里，视觉整齐（不混进指标网格）
         probe_checks = (
@@ -1299,6 +1359,9 @@ class PerfView(QWidget):
             'sys_cpu_interval': self._probe_interval_text('sys_cpu'),
             'sys_mem_interval': self._probe_interval_text('sys_mem'),
             'show_hprof': self.hprof_visible_check.isChecked(),
+            'show_smaps': self.smaps_visible_check.isChecked(),
+            'smaps_loop': self.smaps_enable_check.isChecked(),
+            'smaps_interval': self.smaps_interval_combo.currentText(),
             'show_packet': self.packet_visible_check.isChecked(),
             'show_screenshot': self.screenshot_visible_check.isChecked(),
             'hprof_loop': self.hprof_enable_check.isChecked(),
@@ -1363,6 +1426,11 @@ class PerfView(QWidget):
                 combo.setCurrentText(text)
 
         # 卡片显隐
+        if cfg.get('show_smaps'):
+            self.smaps_visible_check.setChecked(True)
+        if cfg.get('smaps_loop'):
+            self.smaps_enable_check.setChecked(True)
+        _pick(self.smaps_interval_combo, cfg.get('smaps_interval'))
         if cfg.get('show_hprof'):
             self.hprof_visible_check.setChecked(True)
         if cfg.get('show_packet'):
