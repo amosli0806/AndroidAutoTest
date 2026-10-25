@@ -185,10 +185,12 @@ class CaptureWorker(QThread):
     def __init__(self, serial, output_dir, filter_expr="",
                  device_path="/data/local/tmp/tcpdump",
                  interface="any", snaplen=0,
-                 max_seconds=CAPTURE_MAX_SECONDS, max_bytes=CAPTURE_MAX_BYTES):
+                 max_seconds=CAPTURE_MAX_SECONDS, max_bytes=CAPTURE_MAX_BYTES,
+                 subdir=""):
         super().__init__()
         self.serial = serial
         self.output_dir = output_dir
+        self.subdir = subdir or ""
         self.filter_expr = filter_expr
         # 设备侧 tcpdump 路径：可能来自 push，也可能是设备自带的
         # （见 TcpdumpDeployThread.DEVICE_CANDIDATES），不能写死
@@ -212,6 +214,8 @@ class CaptureWorker(QThread):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_serial = self.serial.replace(':', '_')
         device_dir = os.path.join(self.output_dir, safe_serial)
+        if self.subdir:
+            device_dir = os.path.join(device_dir, self.subdir)
         try:
             os.makedirs(device_dir, exist_ok=True)
         except Exception as e:

@@ -920,6 +920,8 @@ class PerfController(QObject):
         from utils.settings import Settings as _Settings
         serial = self.device_service.serial
         adb = get_adb_path()
+        # 目录在起线程前算好：线程里读 current_session 可能已被停止流程清空
+        heap_dir = self._session_artifact_dir("heap")
 
         def worker():
             creationflags = subprocess.CREATE_NO_WINDOW if _sys.platform == 'win32' else 0
@@ -943,13 +945,9 @@ class PerfController(QObject):
                         "error", f"应用「{package}」未在运行")
                     return
 
-                output_dir = _Settings.get_output_dir()
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                safe_serial = serial.replace(':', '_')
-                device_dir = os.path.join(output_dir, safe_serial)
-                os.makedirs(device_dir, exist_ok=True)
                 remote_path = f"/data/local/tmp/heap_{timestamp}.hprof"
-                local_path = os.path.join(device_dir, f"heap_{timestamp}.hprof")
+                local_path = os.path.join(heap_dir, f"heap_{timestamp}.hprof")
 
                 subprocess.run(
                     [adb, "-s", serial, "shell", "am", "dumpheap",
@@ -1048,11 +1046,7 @@ class PerfController(QObject):
             self._smaps_loop_timer.stop()
 
     def _smaps_out_dir(self) -> str:
-        """smaps 产物目录：<输出目录>/<序列号>/perf/<会话>/smaps（没会话时归到「手动」）"""
-        name = self.current_session.name if self.current_session else "手动"
-        path = os.path.join(self._device_export_dir(), "perf", name, "smaps")
-        os.makedirs(path, exist_ok=True)
-        return path
+        return self._session_artifact_dir("smaps")
 
     def _dump_smaps_now(self):
         """抓一次所选进程的 smaps（后台线程，防重入）。
@@ -1221,9 +1215,7 @@ class PerfController(QObject):
         serial = self.device_service.serial
         adb = get_adb_path()
         duration = max(5, min(180, int(self.view.get_record_duration())))
-        rec_dir = os.path.join(_Settings.get_output_dir(),
-                               serial.replace(':', '_'), "screencap")
-        os.makedirs(rec_dir, exist_ok=True)
+        rec_dir = self._session_artifact_dir("screencap")
         name = time.strftime("record_%Y%m%d_%H%M%S.mp4")
         remote = f"/data/local/tmp/{name}"
         local = os.path.join(rec_dir, name)
@@ -1326,9 +1318,7 @@ class PerfController(QObject):
         serial = self.device_service.serial or "device"
         serial_safe = serial.replace(':', '_')
         from utils.settings import Settings as _Settings
-        screenshot_dir = os.path.join(
-            _Settings.get_output_dir(), serial_safe, "screenshots")
-        os.makedirs(screenshot_dir, exist_ok=True)
+        screenshot_dir = self._session_artifact_dir("screenshots")
 
         import subprocess
         import sys as _sys
@@ -1464,11 +1454,13 @@ class PerfController(QObject):
             return
         deploy = getattr(self, '_deploy_thread', None)
         cfg = load_capture_config()
+        cap_name = self.current_session.name if self.current_session else "手动"
         self._capture_worker = CaptureWorker(
             self.device_service.serial, _Settings.get_output_dir(), cfg['filter'],
             device_path=getattr(deploy, 'device_path', "/data/local/tmp/tcpdump"),
             interface=cfg['interface'], snaplen=cfg['snaplen'],
-            max_seconds=cfg['max_seconds'], max_bytes=cfg['max_bytes'])
+            max_seconds=cfg['max_seconds'], max_bytes=cfg['max_bytes'],
+            subdir=os.path.join("perf", cap_name, "capture"))
         self._capture_worker.finished_signal.connect(self._on_capture_finished)
         self._capture_worker.error_signal.connect(
             lambda m: self.view.set_packet_status(f"❌ {m}"))
@@ -1550,6 +1542,17 @@ class PerfController(QObject):
             base = os.path.join(base, serial.replace(':', '_'))
         os.makedirs(base, exist_ok=True)
         return base
+
+    def _session_artifact_dir(self, subdir: str) -> str:
+        """产物归档目录：<输出目录>/<序列号>/perf/<会话>/<subdir>。
+
+        堆转储 / 抓包 / 截图 / 录屏 / smaps 统一落这里，报告与「诊断产物」才能按会话回溯。
+        没有正在进行的会话（脱离监控点「立即 XX」）时归到「手动」目录。
+        """
+        name = self.current_session.name if self.current_session else "手动"
+        path = os.path.join(self._device_export_dir(), "perf", name, subdir)
+        os.makedirs(path, exist_ok=True)
+        return path
 
     def _on_export_csv(self):
         if not self.current_session or not self.current_session.samples:
