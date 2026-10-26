@@ -252,6 +252,7 @@ class PerfController(QObject):
     hprof_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
     smaps_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
     record_finished = pyqtSignal(str, str)  # (status: 'success'/'error', message)
+    capture_ready_checked = pyqtSignal(bool, str)   # 抓包能力前置探测结果 (ok, reason)
     # 截图结果回投主线程（状态文字 / 失败 toast）
     screenshot_finished = pyqtSignal(str, str)   # (status: 'success'/'error', message)
     # 启动测试等结果 -> 底部「虫师日志」（main.py 里连 append_bottom_log）
@@ -284,6 +285,11 @@ class PerfController(QObject):
         # 录屏自动循环 / 录制状态
         self._record_loop_timer = None
         self._recording = False
+        # 抓包能力前置探测（置灰用）：None=未探测，True/False=结论
+        self._capture_ready = None
+        self._capture_ready_reason = ""
+        self._capture_probed_serial = ""
+        self._capture_probing = False
         # 截图自动循环状态
         self._screenshot_loop_timer = None
         self._screenshot_busy = False
@@ -310,6 +316,7 @@ class PerfController(QObject):
         self.hprof_finished.connect(self._on_hprof_finished)
         self.smaps_finished.connect(self._on_smaps_finished)
         self.record_finished.connect(self._on_record_finished)
+        self.capture_ready_checked.connect(self._on_capture_ready_checked)
         self.screenshot_finished.connect(self._on_screenshot_finished)
 
         self._connect_signals()
@@ -378,6 +385,10 @@ class PerfController(QObject):
             self._apps_retry_left = self.APP_LIST_RETRY
             self._on_refresh_apps()
             return
+
+        # 设备就绪后顺手探一次抓包能力（结果用于置灰，每台设备只探一次）
+        if current and getattr(self.view, '_apps_loaded', False):
+            self._probe_capture_capability()
 
         # 同一台设备、但列表还没拿到 → 继续重试（限次）
         if current and not getattr(self.view, '_apps_loaded', False) and self._apps_retry_left > 0:
@@ -758,6 +769,7 @@ class PerfController(QObject):
             self.current_session.samples.clear()
             self.current_session.alerts.clear()
         self._alert_cache = {k: False for k in (self.current_session.metrics if self.current_session else [])}
+        self._alert_hprof_done = False      # 三期：内存超阈值自动转储每会话只做一次
     # ------------------------------------------------------------------
     def _on_sample(self, sample):
         if not self.current_session:
@@ -790,10 +802,26 @@ class PerfController(QObject):
                 self.view.add_alert_log(msg)
                 # 消息中心：阈值异常留痕（_alert_cache 保证同一指标一次会话只报一次）
                 self.perf_alert.emit(msg)
+                # 三期：内存首次越过阈值 → 自动转储一次，抓住「涨上去那一刻」
+                if key == 'mem' and getattr(th, 'auto_hprof_on_alert', False) \
+                        and not getattr(self, '_alert_hprof_done', True):
+                    self._alert_hprof_done = True
+                    self._auto_hprof_on_alert(val, limit)
             elif not triggered and self._alert_cache.get(key, False):
                 # 恢复正常
                 self._alert_cache[key] = False
                 self.view.set_alert(key, False)
+
+    def _auto_hprof_on_alert(self, value: float, limit: float):
+        """内存越过阈值时自动转储一次（每会话一次，见 _alert_hprof_done）。"""
+        logger.info("[Perf] 内存超阈值（%.0f MB > %.0f MB），自动触发堆转储", value, limit)
+        try:
+            self.view.add_alert_log(f"⚙ 内存超阈值（{value:.0f}MB），自动执行堆转储")
+        except Exception:
+            pass
+        if self.logs_view:
+            self.logs_view.add_log("[性能] 内存超阈值，自动堆转储", "info")
+        self._dump_hprof_now()
 
     def _refresh_stats(self, final=False):
         if not self.current_session:
@@ -1397,8 +1425,13 @@ class PerfController(QObject):
         单独成方法：这半边的联动是随监控启动走的，抽出来才好单测
         （见 tools 里的自测思路：不启动完整监控会话也能验证"勾了就抓、没勾就不抓"）。
         """
-        if self.view.packet_visible_check.isChecked():
-            self._start_capture(auto=True)
+        if not self.view.packet_visible_check.isChecked():
+            return
+        if not self.view.packet_available():
+            # 前置探测已判定抓不了（未 root 等）：不打扰，只留一条状态
+            self.view.set_packet_status("未开始：设备不支持抓包")
+            return
+        self._start_capture(auto=True)
 
     def _on_capture_config(self):
         """打开「抓包参数」对话框；确定后落盘并刷新按钮提示"""
@@ -1411,6 +1444,70 @@ class PerfController(QObject):
         self.view.refresh_packet_tooltip()
         show_toast(self.view, "抓包参数已保存")
 
+    # ------------------------------------------------------------------
+    # 抓包防呆：开抓之前先确认「这台设备能不能抓」
+    # ------------------------------------------------------------------
+    def _probe_capture_capability(self):
+        """只读探测抓包能力，结果用来把「开始抓包」按钮置灰（而不是点开才报错）。
+
+        每台设备只探一次（按序列号缓存）；不 push、不部署，纯查询。
+        """
+        if self._capture_probing or self._capture_worker is not None:
+            return
+        if not self.device_service or not self.device_service.serial:
+            self.view.set_packet_available(False, "设备未连接")
+            return
+        serial = self.device_service.serial
+        if serial == self._capture_probed_serial and self._capture_ready is not None:
+            # 已有结论：直接把状态刷回界面（设备重连后按钮可能被重新启用）
+            self.view.set_packet_available(self._capture_ready, self._capture_ready_reason)
+            return
+
+        self._capture_probing = True
+        import threading
+        from utils.adb_path import get_adb_path
+        adb = get_adb_path()
+        local_tcpdump = os.path.join(os.path.dirname(adb), "tcpdump")
+        if not os.path.exists(local_tcpdump):
+            local_tcpdump = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "tcpdump")
+
+        def worker():
+            from services.packet_capture import probe_capture_ready
+            try:
+                ok, reason = probe_capture_ready(serial, local_tcpdump)
+            except Exception as e:
+                ok, reason = False, str(e)
+            self._capture_ready = ok
+            self._capture_ready_reason = reason
+            self._capture_probed_serial = serial
+            self._capture_probing = False
+            # 回主线程改界面
+            self.capture_ready_checked.emit(ok, reason)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_capture_ready_checked(self, ok: bool, reason: str):
+        self.view.set_packet_available(ok, reason)
+
+    # 本机剩余空间低于该值就不开抓包（pcap 写在本机磁盘上，不是设备）
+    CAPTURE_MIN_FREE_BYTES = 500 * 1024 * 1024
+
+    def _check_disk_space_for_capture(self) -> bool:
+        """抓包前检查本机剩余空间，不够就别开（避免写满盘）。"""
+        import shutil
+        from utils.settings import Settings as _Settings
+        try:
+            free = shutil.disk_usage(_Settings.get_output_dir()).free
+        except Exception:
+            return True          # 查不到就不拦，别把正常路径卡死
+        if free < self.CAPTURE_MIN_FREE_BYTES:
+            show_toast(self.view,
+                       f"磁盘剩余 {free / 1048576:.0f} MB，不足 500 MB，已取消抓包",
+                       duration=5000)
+            return False
+        return True
+
     def _start_capture(self, auto: bool = False):
         """auto=True 表示随「开始监控」自动拉起（失败时用轻提示，不弹模态打断采集）"""
         self._capture_auto_started = auto
@@ -1418,6 +1515,10 @@ class PerfController(QObject):
         if not self.device_service or not self.device_service.device:
             show_toast(self.view, "设备未连接")
             self.view.set_packet_capturing(False)
+            return
+        if not self._check_disk_space_for_capture():
+            self.view.set_packet_capturing(False)
+            self.view.set_packet_status("已取消：磁盘空间不足")
             return
         from services.packet_capture import TcpdumpDeployThread
 
@@ -1482,9 +1583,11 @@ class PerfController(QObject):
         limit_txt = capture_limit_text(reason)
         note = f'（{limit_txt}，已自动停止）' if limit_txt else ''
         if success:
-            self._add_event("capture", os.path.basename(result))
+            segs = getattr(worker, "segments", None) or []
+            seg_note = f"，共 {len(segs)} 段" if len(segs) > 1 else ""
+            self._add_event("capture", os.path.basename(result) + seg_note)
             self.view.set_packet_capturing(False)
-            self.view.set_packet_status(f"完成：{os.path.basename(result)}{note}")
+            self.view.set_packet_status(f"完成：{os.path.basename(result)}{seg_note}{note}")
             if self.logs_view:
                 self.logs_view.add_log(f"[抓包] 完成：{result}{note}", "success")
             if limit_txt:

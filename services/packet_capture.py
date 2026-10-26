@@ -23,7 +23,8 @@ from utils.adb_path import get_adb_path
 
 # 抓包保护默认值：单次抓包的时长 / 文件大小上限，到限自动停止并保存已抓内容。
 CAPTURE_MAX_SECONDS = 10 * 60              # 10 分钟
-CAPTURE_MAX_BYTES = 100 * 1024 * 1024      # 100 MB
+CAPTURE_MAX_BYTES = 100 * 1024 * 1024      # 单段上限 100 MB
+CAPTURE_MAX_SEGMENTS = 6                    # 最多 6 段（约 600 MB），再多才真的停
 
 # 抓包参数（界面「参数」对话框可改，存 data/config.json 的 capture_config）。
 # 0 表示「不限」——上限本来是防呆用的，长跑场景需要能放开。
@@ -166,6 +167,44 @@ class TcpdumpDeployThread(QThread):
             self.finished_with.emit(False, f"部署失败: {e}")
 
 
+def probe_capture_ready(serial, local_tcpdump_path):
+    """只读探测「这台设备现在能不能抓包」，返回 (ok, reason)。
+
+    不 push、不部署 —— 只回答「点下开始抓包会不会立刻失败」，用于**前置置灰**：
+      未 root → tcpdump 开不了原始套接字，直接判不可用；
+      设备无 tcpdump 且本地无副本 → 同样不可用；
+      设备已有，或本地有（首次点开始时才 push）→ 可用。
+    """
+    adb = get_adb_path()
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+
+    try:
+        r = subprocess.run(
+            [adb, "-s", serial, "shell", "id"],
+            capture_output=True, text=True, timeout=6,
+            creationflags=creationflags, encoding='utf-8', errors='replace')
+        if "uid=0" not in (r.stdout or ""):
+            return False, "设备未 root"
+    except Exception as e:
+        return False, f"检测 root 失败：{e}"
+
+    probe_cmd = ("for p in " + " ".join(TcpdumpDeployThread.DEVICE_CANDIDATES) + "; do "
+                 'if [ -x "$p" ]; then echo "$p"; break; fi; done')
+    try:
+        r = subprocess.run(
+            [adb, "-s", serial, "shell", probe_cmd],
+            capture_output=True, text=True, timeout=8,
+            creationflags=creationflags, encoding='utf-8', errors='replace')
+        if [ln for ln in (r.stdout or "").splitlines() if ln.strip()]:
+            return True, ""
+    except Exception:
+        pass
+
+    if not os.path.exists(local_tcpdump_path):
+        return False, "设备上没有 tcpdump，本地也没有可推送的副本"
+    return True, ""
+
+
 def _sh_quote(text: str) -> str:
     """给设备 shell 用的单引号转义（BPF 表达式里可能有空格 / 括号 / 重定向符）"""
     return "'" + str(text).replace("'", "'\\''") + "'"
@@ -186,7 +225,7 @@ class CaptureWorker(QThread):
                  device_path="/data/local/tmp/tcpdump",
                  interface="any", snaplen=0,
                  max_seconds=CAPTURE_MAX_SECONDS, max_bytes=CAPTURE_MAX_BYTES,
-                 subdir=""):
+                 subdir="", max_segments=CAPTURE_MAX_SEGMENTS):
         super().__init__()
         self.serial = serial
         self.output_dir = output_dir
@@ -199,18 +238,20 @@ class CaptureWorker(QThread):
         self.snaplen = max(0, int(snaplen or 0))
         self.max_seconds = max_seconds
         self.max_bytes = max_bytes
+        self.max_segments = max_segments
         self._is_running = True
         self.process = None
         self.capture_file = None
         self.file_handle = None
+        self.segments = []          # 分段文件（单段满就换下一段，而不是直接停）
         self.stop_reason = ""
         self._limit_timer = None
+        self._last_mb = 0           # size_updated 节流：每涨 1MB 才发一次
 
     def run(self):
         adb = get_adb_path()
         creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
 
-        # 准备输出文件
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_serial = self.serial.replace(':', '_')
         device_dir = os.path.join(self.output_dir, safe_serial)
@@ -223,13 +264,37 @@ class CaptureWorker(QThread):
             self.finished_signal.emit(False, "创建目录失败")
             return
 
-        self.capture_file = os.path.join(device_dir, f"capture_{timestamp}.pcap")
+        base_path = os.path.join(device_dir, f"capture_{timestamp}")
+        self.segments = []
+
+        # 时长上限用独立计时器触发（跨分段计时）：无流量时 stdout.read 会一直阻塞，
+        # 光靠循环里的时间判断触发不了 —— 这是保护最容易失效的地方。
+        if self.max_seconds and self.max_seconds > 0:
+            self._limit_timer = threading.Timer(self.max_seconds, self._stop_by_time)
+            self._limit_timer.daemon = True
+            self._limit_timer.start()
+
         try:
-            self.file_handle = open(self.capture_file, 'wb')
+            # 单段到上限就换一段接着抓（每段重新起 tcpdump，
+            # 每个文件都有独立 pcap 头，Wireshark 能直接打开）
+            while self._is_running and len(self.segments) < self.max_segments:
+                if not self._run_segment(adb, creationflags, base_path):
+                    break
+        finally:
+            self._cleanup()
+
+    def _run_segment(self, adb, creationflags, base_path) -> bool:
+        """跑一段 tcpdump。返回 True = 本段满、继续下一段；False = 结束。"""
+        idx = len(self.segments) + 1
+        path = base_path + ("" if idx == 1 else f"_p{idx}") + ".pcap"
+        try:
+            self.file_handle = open(path, 'wb')
         except Exception as e:
             self.error_signal.emit(f"无法创建文件: {e}")
             self.finished_signal.emit(False, "创建文件失败")
-            return
+            return False
+        self.segments.append(path)
+        self.capture_file = path
 
         # 为什么必须用 exec-out、而不是 shell（2026-10-14 实测踩出来的）：
         #   * `adb shell` 会把输出里的 0x0A 翻成 0x0D 0x0A（终端换行翻译），
@@ -238,7 +303,6 @@ class CaptureWorker(QThread):
         #   * `adb exec-out` 不做换行翻译，但它把 tcpdump 的 stderr 也并进了 stdout，
         #     "tcpdump: listening on any..." 那段文本会被塞进 24 字节文件头之后。
         # 所以两个都要：exec-out + 把 stderr 重定向到 /dev/null。
-        # 整条命令作为**一个参数**交给设备 shell，BPF 表达式用单引号包住。
         parts = [self.device_path, "-i", _sh_quote(self.interface),
                  "-s", str(self.snaplen), "-w", "-", "-U"]
         if self.filter_expr.strip():
@@ -252,20 +316,13 @@ class CaptureWorker(QThread):
             )
         except Exception as e:
             self.error_signal.emit(f"启动 tcpdump 失败: {e}")
-            if self.file_handle:
-                self.file_handle.close()
-            self.finished_signal.emit(False, "启动失败")
-            return
+            self._close_segment()
+            return False
 
-        self.started_signal.emit(self.capture_file)
+        if idx == 1:
+            self.started_signal.emit(path)
 
-        # 时长上限用独立计时器触发：无流量时 stdout.read 会一直阻塞，
-        # 光靠循环里的时间判断触发不了（这是保护最容易失效的地方）。
-        if self.max_seconds and self.max_seconds > 0:
-            self._limit_timer = threading.Timer(self.max_seconds, self._stop_by_time)
-            self._limit_timer.daemon = True
-            self._limit_timer.start()
-
+        seg_full = False
         try:
             while self._is_running:
                 data = self.process.stdout.read(8192)
@@ -274,16 +331,43 @@ class CaptureWorker(QThread):
                 self.file_handle.write(data)
                 self.file_handle.flush()
                 size = self.file_handle.tell()
-                if size % (1024 * 1024) < 8192:
+                mb = size // (1024 * 1024)
+                if mb != self._last_mb:
+                    self._last_mb = mb
                     self.size_updated.emit(size)
-                # 大小上限：有数据写入时才可能触发（够用，且不引入额外查询）
                 if self.max_bytes and size >= self.max_bytes:
-                    self.stop_reason = "size"
+                    seg_full = True
                     break
         except Exception as e:
             self.error_signal.emit(f"读取数据异常: {e}")
         finally:
-            self._cleanup()
+            self._close_segment()
+
+        if seg_full and self._is_running and len(self.segments) < self.max_segments:
+            self.stop_reason = ""          # 还没停，接着下一段
+            return True
+        if seg_full:
+            self.stop_reason = "size"
+        return False
+
+    def _close_segment(self):
+        """结束当前段的 tcpdump 进程与文件句柄（不 emit finished）。"""
+        if self.process:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=3)
+            except Exception:
+                try:
+                    self.process.kill()
+                except Exception:
+                    pass
+            self.process = None
+        if self.file_handle:
+            try:
+                self.file_handle.close()
+            except Exception:
+                pass
+            self.file_handle = None
 
     def _stop_by_time(self):
         """时长计时器回调：标记原因并终止 tcpdump，让阻塞的 read 返回。"""

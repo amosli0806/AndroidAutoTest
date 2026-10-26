@@ -1088,6 +1088,7 @@ class PerfView(QWidget):
         # ---- 抓包卡片 ----
         (self._packet_card, packet_row,
          self._packet_dot, self._packet_title) = _card("#9b59b6", "网络抓包")
+        self._packet_available = True      # 抓包能力探测结果（未探测时按可用处理）
         self.packet_toggle_btn = QPushButton("开始抓包")
         self.packet_toggle_btn.setIcon(qta.icon('fa6s.network-wired', color='white'))
         self.packet_toggle_btn.setCheckable(True)
@@ -1231,6 +1232,29 @@ class PerfView(QWidget):
         self.screenshot_status_label.setStyleSheet(
             f"font-size: 12px; color: {'#e74c3c' if error else '#999999'}; "
             f"background: transparent;")
+
+    def set_packet_available(self, ok: bool, reason: str = ""):
+        """抓包能力前置探测结果：不能抓就把「开始抓包」置灰，并把原因写在卡片上。
+
+        这样未 root 的设备一进页面就知道抓不了，而不是点下去才弹错误。
+        """
+        self._packet_available = bool(ok)
+        if ok:
+            self.packet_toggle_btn.setEnabled(True)
+            self.packet_toggle_btn.setToolTip("")
+            if not self.packet_toggle_btn.isChecked():
+                self.packet_status_label.setText("未开始")
+                self.packet_status_label.setStyleSheet(
+                    "font-size: 12px; color: #999999; background: transparent;")
+        else:
+            self.packet_toggle_btn.setEnabled(False)
+            self.packet_toggle_btn.setToolTip(f"无法抓包：{reason}")
+            self.packet_status_label.setText(f"不可用：{reason}")
+            self.packet_status_label.setStyleSheet(
+                "font-size: 12px; color: #e67e22; background: transparent;")
+
+    def packet_available(self) -> bool:
+        return bool(getattr(self, "_packet_available", True))
 
     def set_packet_capturing(self, capturing: bool):
         """更新抓包按钮外观与文案（由控制器回写，避免按钮/状态不同步）"""

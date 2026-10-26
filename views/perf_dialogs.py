@@ -61,7 +61,8 @@ class PerfThresholdDialog(QDialog):
         self.setObjectName("PerfThresholdDialog")
         self.setWindowTitle("阈值设置")
         self.setModal(True)
-        self.setFixedSize(460, 372 if reference else 340)
+        # 高度 +34：多了「超阈值自动转储」一行
+        self.setFixedSize(460, 406 if reference else 374)
         self.threshold = threshold
         self._reference = reference or {}
 
@@ -132,6 +133,13 @@ class PerfThresholdDialog(QDialog):
 
         root.addLayout(form)
 
+        # 三期：超阈值自动转储（堆转储要十几秒、几十 MB，默认关）
+        self.auto_hprof_check = QCheckBox("内存超阈值时自动转储堆（每会话一次）")
+        self.auto_hprof_check.setToolTip(
+            "开启后，内存首次越过阈值会立刻执行一次堆转储，抓住「涨上去那一刻」；\n"
+            "堆转储需要 10~30 秒，产物几十 MB")
+        root.addWidget(self.auto_hprof_check)
+
         root.addStretch()
 
         # 按钮
@@ -164,6 +172,7 @@ class PerfThresholdDialog(QDialog):
         self.cpu_spin.setValue(th.cpu_max)
         self.mem_spin.setValue(th.mem_max)
         self.fps_spin.setValue(int(th.fps_min))
+        self.auto_hprof_check.setChecked(bool(getattr(th, 'auto_hprof_on_alert', False)))
 
     def _on_reset(self):
         from models.perf_model import PerfThreshold
@@ -172,6 +181,7 @@ class PerfThresholdDialog(QDialog):
         self.cpu_spin.setValue(default.cpu_max)
         self.mem_spin.setValue(default.mem_max)
         self.fps_spin.setValue(int(default.fps_min))
+        self.auto_hprof_check.setChecked(default.auto_hprof_on_alert)
 
     def _on_ok(self):
         th = self.threshold
@@ -179,6 +189,7 @@ class PerfThresholdDialog(QDialog):
         th.cpu_max = self.cpu_spin.value()
         th.mem_max = self.mem_spin.value()
         th.fps_min = self.fps_spin.value()
+        th.auto_hprof_on_alert = self.auto_hprof_check.isChecked()
         self.accept()
 
     def apply_theme(self, theme_mode=None):

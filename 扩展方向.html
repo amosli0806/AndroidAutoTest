@@ -170,19 +170,14 @@
     <div class="badges">
       <span class="badge">当前版本 v1.5.8</span>
       <span class="badge">8 项扩展方向</span>
-      <span class="badge">性能检测 4 期已完成</span>
+      <span class="badge">4 个开发阶段</span>
     </div>
   </header>
 
   <div class="legend">
     <span class="lbl">状态图例：</span>
-    <span class="chip done">✅ 已完成</span>
     <span class="chip part">🚧 进行中</span>
     <span class="chip plan">📋 规划中</span>
-  </div>
-
-  <div class="tip">
-    📌 <b>2026-10-26 复核</b>：第 8 项「性能检测补全」已主体落地 —— 口径基座（P0）、系统级三件（系统内存 / 整机 CPU / 网卡流量）+ 周期录屏（P1）、smaps 内存明细与磁盘 IO（P2，<b>需要 root 或 debug 包</b>）、第四章的产物按会话归档与事件时间线均已完成。剩下抓包防呆与联动类增强；未发版内容见 <code>CHANGELOG.md</code>。
   </div>
 
   <nav class="toc">
@@ -191,8 +186,7 @@
       <a href="#s1">一、已知缺口</a>
       <a href="#s2">二、扩展方向</a>
       <a href="#s3">三、优先级速查表</a>
-      <a href="#s4">四、堆转储与抓包整合</a>
-      <a href="#s5">五、macOS 移植注意事项</a>
+      <a href="#s4">四、macOS 移植注意事项</a>
     </div>
   </nav>
 
@@ -212,10 +206,7 @@
         <div class="gap-item"><span class="tag plan">📋</span><div><b>套件能力不完整</b> — 无套件级报告、无链式执行（A→B）。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag part">🚧</span><div><b>GPU 采集缺失</b> — 系统内存 / 整机 CPU / 网卡流量 / 磁盘 IO / smaps 已于 2026-10-25 全部补齐（见第二章第 8 项），只剩 GPU 渲染指标没做（原方案的 GPU 仅支持高通 Adreno，且未接编排）。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag part">🚧</span><div><b>抓包防呆偏薄</b> — 未 root 要等点开才发现做不了（缺前置置灰）；设备空间不足不会提前收尾，到限直接停而不是分段存盘。产物归档与事件时间线已落地（详见第四章）。</div></div>
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>GPU 采集缺失</b> — 渲染类指标（帧耗时分布 / GPU 占用）还没有采集手段；原方案的 GPU 仅支持高通 Adreno 且未接编排，属半成品。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报待增强</b> — 唤醒词不能按用例切换；「回执验证」只能确认车机听懂了，还验不了界面真的变了（如地图是否全屏）。</div></div>
@@ -233,7 +224,7 @@
   <section class="chapter" id="s2">
     <h2><span class="num">2</span>扩展方向（按阶段与优先级）</h2>
 
-    <p class="small" style="margin-top:0">8 项规划按 <b>「改动小 → 改动大」</b> 分四阶段：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。<br>当前进度：<b>第 8 项「性能检测补全」已主体完成</b>（2026-10-25），其余 7 项仍为规划中。</p>
+    <p class="small" style="margin-top:0">8 项规划按 <b>「改动小 → 改动大」</b> 分四阶段：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段一 · 改动小、见效快（目标 1 个版本周期，可立即穿插）</h3>
 
@@ -280,7 +271,7 @@
       <div class="example">💡 <b>打个比方：</b>前后置脚本像「做饭前的备菜 + 上桌前的摆盘」——请求前先签名、加密，响应后把数据提炼出来；链路编排像「接力赛」——上一个接口的返回，直接变成下一个接口的入参。</div>
     </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段四 · 改动大 / 影响面广（需专门排期）<span class="tag done" style="margin-left:8px">第 8 项已提前完成</span></h3>
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段四 · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
       <h3>6. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
@@ -297,21 +288,8 @@
     </div>
 
     <div class="card">
-      <h3>8. 性能检测补全 <span class="tag done">✅ 主体完成</span></h3>
-      <p class="small" style="margin-top:0">2026-10-25 一轮做完四期采集能力 + 会话串联，只剩抓包防呆与联动类增强（见第四章）。</p>
-      <ul>
-        <li><b>并入 mapauto-perf-test 的采集能力</b>：只借<b>能力</b>不搬代码（对方是 48 参数的 CLI + 自己一套编排，且「多进程累加」与我们「按所选进程」口径相反）。四期均已落地：
-          <br>① <b>口径基座</b> ✅ 会话与基线记录各指标的「口径」（进程/应用/整机），对比时把口径差异说出来，旧基线不再被误判为劣化；
-          <br>② <b>系统级三件</b> ✅ 系统内存 <code>meminfo_sys</code>、整机 CPU <code>top_sys</code>、网卡流量 <code>netdev</code>——卡片与报告图注统一标「整机」，换进程时数字不变；
-          <br>③ <b>进程级深入</b> ✅ smaps 内存明细、iotop 磁盘 IO（<b>两者都需要设备 root 或 debug 包</b>，未 root 时明确提示、不产出 0）；
-          <br>④ <b>现场留证</b> ✅ 周期录屏（间隔必须大于单段时长，选错时卡片直接提示）。
-          <br><b>不做</b>：simpleperf / heap profile（要 root 或额外二进制，链路长）、GPU（仅高通 Adreno 且未接编排的半成品）、对方的报告与编排层（与我们已有能力重复）。
-          详细步骤与验收见 <code>docs/性能检测能力并入方案.md</code>。</li>
-        <li><b>把堆转储 / 抓包 / 截图 / 录屏 / smaps 接进监控会话</b> ✅ 产物统一归到 <code>perf/&lt;会话&gt;/</code>，报告出「诊断产物」章节，实时曲线按事件时刻画彩色竖线，导出 CSV 附带产物清单（见第四章）。</li>
-        <li><b>待做</b>：抓包防呆（未 root 前置置灰、空间告警、分段存盘）；场景化联动（用例前自动转储 / 用例期间自动抓包）；阈值联动（内存超限自动转储）。</li>
-        <li><b>进程口径（2026-10-25 已统一）</b>：CPU 与内存都只统计下拉里<b>选中的那个进程</b>，不再合并 <code>包名:*</code> 子进程；与旧版本（CPU 合并整包、内存整包 TOTAL PSS）的会话 / 基线对比时，数值会偏小，属口径变化而非劣化 —— 报告「统计口径」一行会主动标出来。</li>
-      </ul>
-      <div class="example">💡 <b>打个比方：</b>体检报告升级完成——原来只查「这个人」（所选进程），现在同时有「整个病房」（整机 CPU / 系统内存 / 网卡 / 磁盘 IO）和「血液明细」（smaps）；CT / 核磁的片子（堆转储、抓包、截图、录屏）也归进了当次体检档案，并在心率曲线上标出「拍的正是这一刻」。</div>
+      <h3>8. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <p>剩余<b>场景化联动</b>：场景化执行时按用例自动转储 / 抓包，每用例一份产物、报告按用例分组。其余采集能力已并入，实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
     </div>
 
     <div class="tip">⚠ <b>注意依赖</b>：变量 / 参数化（含数据驱动）已落地，「关键字驱动 / 变量落地语音 / 接口链路编排」现在可以直接做，不再有前置地基。</div>
@@ -332,7 +310,7 @@
           <tr><td>阶段三</td><td>接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
           <tr><td>阶段四</td><td>变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>变量地基已落地（v1，语音文案已可用 <code>${变量}</code>）；剩下把唤醒词 / 语速等语音参数也做成变量</td></tr>
           <tr><td>阶段四</td><td>关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
-          <tr><td>阶段四</td><td>性能检测补全 <span class="tag done">✅ 主体完成</span></td><td class="stars">—</td><td>四期采集能力（口径基座 / 系统级三件 / 进程级深入 / 周期录屏）与会话串联已完成；剩抓包防呆与联动类增强，见第四章</td></tr>
+          <tr><td>阶段四</td><td>性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
         </tbody>
       </table>
     </div>
@@ -340,32 +318,10 @@
   </section>
 
   <!-- ============ 四、性能检测页：堆转储与抓包整合设计 ============ -->
+  
+
   <section class="chapter" id="s4">
-    <h2><span class="num">4</span>性能检测页 · 堆转储与抓包整合 <span class="tag plan">📋 进行中</span></h2>
-    <div class="card">
-      <h3>已完成（2026-10-25）</h3>
-      <ul>
-        <li class="done-li"><b>产物按会话归档</b> ✅ 堆转储 / 抓包 / 截图 / 录屏 / 内存明细统一归到 <code>输出目录/&lt;序列号&gt;/perf/&lt;会话名&gt;/</code>（脱离监控手动操作时归「手动」目录），与整机探针的 CSV 同一个会话目录。</li>
-        <li class="done-li"><b>事件进会话</b> ✅ <code>PerfSession</code> 加 <code>events</code>（时间戳 / 类型 / 文件 / 备注）；每份产物落盘成功即记一条，旧会话无该字段也能正常加载。</li>
-        <li class="done-li"><b>报告「诊断产物」章节</b> ✅ 按相对会话的秒数列出，一眼看出「第 30 秒抓了个包」。</li>
-        <li class="done-li"><b>曲线事件竖线</b> ✅ 每条实时曲线上按事件时刻画彩色虚线（堆转储橙 / 抓包紫 / 截图青 / 录屏粉 / 内存明细绿）。</li>
-        <li class="done-li"><b>导出附带清单</b> ✅ 导出 CSV 时同目录多生成一份 <code>&lt;名称&gt;_诊断产物.csv</code>。</li>
-      </ul>
-
-      <h3>待解决 / 待做</h3>
-      <ul>
-        <li><b>抓包防呆</b>：未 root 前置置灰并说明；空间不足提前告警；到限改为分段存盘。</li>
-        <li><b>二期</b>：场景化设置支持「用例前自动转储 / 用例期间自动抓包」，每用例一份产物、报告按用例分组。</li>
-        <li><b>三期</b>：内存超阈值自动转储一次，抓住「涨上去那一刻」的堆，比事后手动转储更有诊断价值。</li>
-      </ul>
-      <p class="small">优先级：抓包防呆 → 场景化联动 → 阈值联动。</p>
-
-      <div class="example">💡 <b>打个比方：</b>以前堆转储 / 抓包像「随手拍的片子」，拍完不知道是哪次体检的；现在片子归进了当次体检档案，心率曲线上也标出了「拍的正是这一刻」。剩下的是「拍之前先看看设备行不行」——也就是抓包防呆。</div>
-    </div>
-  </section>
-
-  <section class="chapter" id="s5">
-    <h2><span class="num">5</span>macOS 移植注意事项 <span class="tag plan">📐 2026-10-10 初评 · 2026-10-17 复核 · 未开始</span></h2>
+    <h2><span class="num">4</span>macOS 移植注意事项 <span class="tag plan">📐 2026-10-10 初评 · 2026-10-17 复核 · 未开始</span></h2>
     <p class="small" style="margin-top:0">目标：把虫师跑在 Mac 上，连车机做同样的测试。下面按「不改就跑不起来 / 能跑但行为不对 / 已经写好不用动」三类梳理，每条都标了确切文件；第五节为 2026-10-14 二次核查的新增发现。</p>
 
     <div class="card">
