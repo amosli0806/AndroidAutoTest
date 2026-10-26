@@ -338,9 +338,10 @@ class PerfThreshold:
     mem_max: float = 800.0           # 地图类 PSS 典型 500~800MB
     fps_min: float = 50.0            # 地图渲染低于 50 帧已可感知卡顿
     enabled: bool = True             # 是否启用阈值告警
-    # 内存越过阈值时自动转储一次堆（每会话只触发一次）。默认关：
-    # 堆转储要 10~30 秒、产物几十 MB，得用户自己点头才做
-    auto_hprof_on_alert: bool = False
+    # 内存越过阈值时自动转储一次堆（每会话只触发一次）。默认开：
+    # 「涨上去那一刻」的堆最有诊断价值，事后手动补抓往往已经回落。
+    # 代价是每次会话最多多一份几十 MB 的产物；不想要可在阈值设置里取消勾选
+    auto_hprof_on_alert: bool = True
 
     def to_dict(self):
         return asdict(self)

@@ -136,8 +136,8 @@ class PerfThresholdDialog(QDialog):
         # 三期：超阈值自动转储（堆转储要十几秒、几十 MB，默认关）
         self.auto_hprof_check = QCheckBox("内存超阈值时自动转储堆（每会话一次）")
         self.auto_hprof_check.setToolTip(
-            "开启后，内存首次越过阈值会立刻执行一次堆转储，抓住「涨上去那一刻」；\n"
-            "堆转储需要 10~30 秒，产物几十 MB")
+            "默认开启。内存首次越过阈值会立刻执行一次堆转储，抓住「涨上去那一刻」；\n"
+            "每会话只触发一次，堆转储需 10~30 秒、产物几十 MB，不需要可取消勾选")
         root.addWidget(self.auto_hprof_check)
 
         root.addStretch()
