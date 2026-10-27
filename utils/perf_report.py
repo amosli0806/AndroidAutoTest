@@ -6,6 +6,7 @@ import base64
 from datetime import datetime
 from models.perf_model import (PerfSession, compare_stats, MEM_CATEGORIES,
                                SCOPE_LABELS, SCOPE_SYSTEM)
+from utils.perf_cpu_analysis import analyze_cpu, analyze_threads
 
 
 # 指标键 -> 报告里显示的中文名（低层键名只在代码里用，报告要给人看）
@@ -218,6 +219,149 @@ CHART_JS_TRAFFIC = """new Chart(document.getElementById('trafficChart'), {
         elements: { point: { radius: 0 } }
     }
 });"""
+
+
+def _fmt_pct(value) -> str:
+    return "-" if value is None else f"{value:.1f}%"
+
+
+def _render_cpu_analysis(a: dict) -> str:
+    """CPU 深度分析章节（分位数 / 阈值分档 / 百分位分档 / 连续段 / 峰值点）。"""
+    if not a.get("count"):
+        return ""
+    p = a.get("percentiles") or {}
+    parts = [f"""
+        <h2>🔍 CPU 分析</h2>
+        <p style="font-size:12px;color:#888;">※ 基于 {a['count']} 个有效采样点（间隔 {a['interval']} 秒）；
+           分位数用最近秩法。阈值分档的阈值随本次峰值自适应，适合对比同一场景的不同版本。</p>
+        <p style="font-size:12px;color:#888;">分位数：</p>
+        <table class="compare">
+            <thead><tr><th>P50</th><th>P75</th><th>P90</th><th>P95</th><th>P99</th><th>峰值</th></tr></thead>
+            <tbody><tr>
+                <td>{p.get('p50', 0):.2f}%</td><td>{p.get('p75', 0):.2f}%</td>
+                <td>{p.get('p90', 0):.2f}%</td><td>{p.get('p95', 0):.2f}%</td>
+                <td>{p.get('p99', 0):.2f}%</td><td>{p.get('max', 0):.2f}%</td>
+            </tr></tbody>
+        </table>"""]
+
+    if a.get("thresholds"):
+        rows = "".join(
+            f"<tr><td>{r['threshold']:.2f}</td><td>{r['count']}</td>"
+            f"<td>{r['share']:.1f}%</td><td>{r['avg']:.2f}%</td>"
+            f"<td>{r['max']:.2f}%</td><td>{_fmt_pct(r['top5'])}</td></tr>"
+            for r in a["thresholds"])
+        parts.append(f"""
+        <p style="font-size:12px;color:#888;">阈值分档（采样值 ≥ 阈值）：</p>
+        <table class="compare">
+            <thead><tr><th>阈值 (%)</th><th>采样数</th><th>占比</th>
+                <th>段内均值</th><th>段内最大</th><th>Top5 线程均值</th></tr></thead>
+            <tbody>{rows}</tbody>
+        </table>""")
+
+    if a.get("percentile_buckets"):
+        rows = "".join(
+            f"<tr><td>{r['label']}</td><td>{r['threshold']:.2f}</td>"
+            f"<td>{r['count']}</td><td>{r['share']:.1f}%</td>"
+            f"<td>{r['avg']:.2f}%</td><td>{r['max']:.2f}%</td>"
+            f"<td>{_fmt_pct(r['top5'])}</td></tr>"
+            for r in a["percentile_buckets"])
+        parts.append(f"""
+        <p style="font-size:12px;color:#888;">百分位分档（按采样点数量取最高的 N%）：</p>
+        <table class="compare">
+            <thead><tr><th>分位段</th><th>对应阈值</th><th>采样数</th>
+                <th>实际占比</th><th>段内均值</th><th>段内最大</th><th>Top5 线程均值</th></tr></thead>
+            <tbody>{rows}</tbody>
+        </table>""")
+
+    segs = a.get("segments") or []
+    iso = a.get("isolated_peaks", 0)
+    if segs:
+        rows = "".join(
+            f"<tr><td>#{r['start']} ~ #{r['end']}</td><td>{r['duration']:.1f}s</td>"
+            f"<td>{r['avg']:.2f}%</td><td>{r['max']:.2f}%</td>"
+            f"<td>{r['dominant'] or '-'}</td></tr>"
+            for r in segs)
+        parts.append(f"""
+        <p style="font-size:12px;color:#888;">连续峰值段（连续 ≥2 个采样点均 ≥ P90）：</p>
+        <table class="compare">
+            <thead><tr><th>采样点区间</th><th>持续</th><th>段内均值</th>
+                <th>段内最大</th><th>主导线程</th></tr></thead>
+            <tbody>{rows}</tbody>
+        </table>""")
+        if iso:
+            parts.append(
+                f'<p style="font-size:12px;color:#888;">另有 {iso} 个孤立峰值点'
+                f'（未形成 ≥2 点的连续段），见下方明细。</p>')
+    elif iso:
+        parts.append(
+            f'<p style="font-size:12px;color:#888;">连续峰值段（≥2 个采样点）：'
+            f'本次没有；{iso} 个峰值点均为孤立采样，见下方明细。</p>')
+
+    if a.get("peak_samples"):
+        rows = "".join(
+            f"<tr><td>#{r['index']}</td><td>{r['value']:.2f}%</td>"
+            f"<td>{r['contributors'] or '-'}</td></tr>"
+            for r in a["peak_samples"])
+        parts.append(f"""
+        <p style="font-size:12px;color:#888;">峰值采样点明细（最高的 5 个点；贡献线程按 ≥5% 列出）：</p>
+        <table class="compare">
+            <thead><tr><th>采样点</th><th>CPU (%)</th><th>主要贡献线程</th></tr></thead>
+            <tbody>{rows}</tbody>
+        </table>""")
+
+    c = a.get("concentration") or {}
+    if c:
+        parts.append(f"""
+        <p style="font-size:12px;color:#888;">峰值集中度（{c['samples']} 个峰值点）：
+            Top1 线程均值 <b>{c['top1']:.1f}%</b> · Top5 线程均值 <b>{c['top5']:.1f}%</b>
+            · 判定：<b>{c['mode']}</b></p>""")
+    return "".join(parts)
+
+
+def _render_thread_analysis(thread_samples, cpu_avg: float = 0.0) -> str:
+    """线程分析章节（数量统计 + 最忙线程排行）。"""
+    ta = analyze_threads(thread_samples)
+    if not ta.get("count"):
+        return ""
+    t = ta["totals"]
+    note = ""
+    if cpu_avg > 0 and t["cpu_avg"] > 0:
+        diff = abs(t["cpu_avg"] - cpu_avg) / cpu_avg * 100.0
+        if diff > 20:
+            note = (f"<br>※ 线程合计与进程 CPU 均值相差 {diff:.0f}%，"
+                    f"多为两个探针的采样窗口不同步所致，趋势仍可参考。")
+
+    rows = "".join(
+        f"<tr><td>{r['name']}</td><td>{r['tid']}</td>"
+        f"<td>{r['cpu_avg']:.2f}%</td><td>{r['cpu_max']:.2f}%</td>"
+        f"<td>{r['share']:.1f}%</td></tr>"
+        for r in ta["threads"])
+    return f"""
+        <h2>🧵 线程分析（所选进程）</h2>
+        <p style="font-size:12px;color:#888;">※ 数据源 <code>/proc/&lt;pid&gt;/task/*/stat</code>；
+           线程 CPU 为多核累计，单线程最高 100%。全量线程明细见产物目录的
+           <code>threads_*.csv</code>，这里只列每个采样点最忙的 15 个线程；
+           均值按整个会话平均（某次未进入 Top 15 的线程按 0 计），因此是下限，
+           占比合计可能小于 100%。线程名由内核截断到 15 个字符。{note}</p>
+        <table class="compare compare4">
+            <thead><tr><th>项目</th><th>均值</th><th>峰值</th><th>最低</th></tr></thead>
+            <tbody>
+                <tr><td>线程总数</td><td>{t['total_avg']:.0f}</td>
+                    <td>{t['total_max']}</td><td>{t['total_min']}</td></tr>
+                <tr><td>活跃线程数（≥1%）</td><td>{t['active_avg']:.0f}</td>
+                    <td>{t['active_max']}</td><td>{t['active_min']}</td></tr>
+                <tr><td>线程 CPU 合计 (%)</td><td>{t['cpu_avg']:.2f}</td>
+                    <td>{t['cpu_max']:.2f}</td><td>{t['cpu_min']:.2f}</td></tr>
+            </tbody>
+        </table>
+        <p style="font-size:12px;color:#888;">最忙的线程（按均值排序）：</p>
+        <table class="compare">
+            <thead><tr><th>线程</th><th>TID</th><th>CPU 均值 (%)</th>
+                <th>CPU 峰值 (%)</th><th>占线程合计</th></tr></thead>
+            <tbody>{rows}</tbody>
+        </table>
+        <p style="font-size:12px;color:#888;">共 {ta['count']} 个采样点</p>
+        """
 
 
 class PerfReportGenerator:
@@ -482,6 +626,21 @@ class PerfReportGenerator:
         # 系统内存（整机探针）：与「内存」卡口径不同，单独成节并标注清楚
         def _avg(v):
             return (sum(v) / len(v)) if v else 0.0
+
+        # ---------- CPU 深度分析（P1）+ 线程分析（P2/P3） ----------
+        cpu_analysis_html = ""
+        thread_analysis_html = ""
+        if 'cpu' in metrics and samples:
+            cpu_points = [
+                (s.timestamp, float(s.cpu_percent))
+                for s in samples
+                if not any(str(e).startswith('cpu:') for e in (getattr(s, 'errors', None) or ()))
+            ]
+            thread_samples = list(getattr(session, 'thread_samples', None) or [])
+            analysis = analyze_cpu(cpu_points, session.sample_interval, thread_samples)
+            cpu_analysis_html = _render_cpu_analysis(analysis)
+            thread_analysis_html = _render_thread_analysis(
+                thread_samples, (stats.get('cpu') or {}).get('avg', 0.0))
 
         sys_mem_html = ""
         _sm = [x for x in (getattr(session, "sys_mem_samples", None) or [])
@@ -923,11 +1082,15 @@ class PerfReportGenerator:
             {summary_cards_html}
         </div>
 
+        {cpu_analysis_html}
+
+        {sys_cpu_html}
+
+        {thread_analysis_html}
+
         {mem_detail_html}
 
         {sys_mem_html}
-
-        {sys_cpu_html}
 
         {netdev_html}
 

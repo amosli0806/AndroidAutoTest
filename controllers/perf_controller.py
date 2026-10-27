@@ -650,17 +650,12 @@ class PerfController(QObject):
     # 旁路探针（系统内存等）
     # ------------------------------------------------------------------
     def _start_probes(self, session):
-        """按勾选启动探针。目前只有「系统内存（整机）」。"""
+        """按勾选启动整机探针；整机 CPU / 线程随 CPU 自动启动。"""
         try:
             want_sys_mem = bool(getattr(self.view, "sys_mem_check", None)
                                 and self.view.sys_mem_check.isChecked())
         except Exception:
             want_sys_mem = False
-        try:
-            want_sys_cpu = bool(getattr(self.view, "sys_cpu_check", None)
-                                and self.view.sys_cpu_check.isChecked())
-        except Exception:
-            want_sys_cpu = False
         if want_sys_mem:
             from services.perf_probes import MemInfoSysProbe
             self._start_probe(MemInfoSysProbe(), session)
@@ -674,9 +669,6 @@ class PerfController(QObject):
                               and self.view.iotop_check.isChecked())
         except Exception:
             want_iotop = False
-        if want_sys_cpu:
-            from services.perf_probes import TopSysProbe
-            self._start_probe(TopSysProbe(), session)
         if want_netdev:
             from services.perf_probes import NetDevProbe
             self._start_probe(NetDevProbe(), session)
@@ -684,18 +676,61 @@ class PerfController(QObject):
             from services.perf_probes import IoTopProbe
             self._start_probe(IoTopProbe(), session)
 
-    def _start_probe(self, probe, session):
+        # 整机 CPU / 线程是 CPU 分析的附属数据：只要监控 CPU 就自动带起来，
+        # 不再有独立复选框和卡片（2026-10-27 用户要求，对齐百度项目的 CPU 报告）
+        if 'cpu' in (getattr(session, "metrics", None) or []):
+            from services.perf_probes import ThreadsProbe, TopSysProbe
+            interval = self._cpu_side_interval(session)
+            self._start_probe(TopSysProbe(), session, interval=interval)
+            self._start_probe(ThreadsProbe(), session, interval=interval,
+                              pid_provider=self._make_pid_provider(session))
+
+    @staticmethod
+    def _cpu_side_interval(session) -> float:
+        """整机 CPU / 线程的采样间隔：跟随主采样，但不快于 5 秒。
+
+        线程一次要读 200+ 个 `/proc/<pid>/task/*/stat`，跟 100ms/1s 的主节奏
+        会把 adb 通道抢满；5 秒也是百度那套的默认节奏。
+        """
+        try:
+            base = float(getattr(session, "sample_interval", 5.0) or 5.0)
+        except (TypeError, ValueError):
+            base = 5.0
+        return max(base, 5.0)
+
+    def _make_pid_provider(self, session):
+        """给线程探针提供「所选进程」的 PID（精确匹配，不合并子进程）。
+
+        单独建一个 PerfService 只为复用 _find_app_pids 的精确匹配逻辑：
+        采集线程里的那个实例可能还没创建，而且跑在另一个线程里。
+        """
+        from services.perf_service import PerfService as _PerfService
+        resolver = _PerfService(self.device_service.device, None)
+
+        def _get():
+            if not getattr(self.device_service, "device", None):
+                return ""
+            try:
+                pids = resolver._find_app_pids(session.app_package)
+            except Exception:
+                return ""
+            return pids[0] if pids else ""
+
+        return _get
+
+    def _start_probe(self, probe, session, pid_provider=None, interval=None):
         """绑定环境并启动后台采集；界面用 QTimer 读快照，不阻塞 GUI。"""
         base = self._device_export_dir()
         # 目录不预建：探针落盘时才创建（预建会留下空文件夹，用户会以为"没数据"）
         out_dir = os.path.join(base, "perf", getattr(session, "name", "session"), probe.key)
-        probe.bind(self.device_service.device, self.device_service.serial, out_dir)
-        # 间隔由卡片上的下拉决定（默认 15 秒）；取不到就用探针自带默认
-        interval = 0.0
-        try:
-            interval = float(self.view.probe_interval(probe.key))
-        except Exception:
-            interval = 0.0
+        probe.bind(self.device_service.device, self.device_service.serial, out_dir,
+                   pid_provider=pid_provider)
+        # 间隔优先级：显式传入（CPU 附属采集） > 卡片下拉 > 探针自带默认
+        if interval is None:
+            try:
+                interval = float(self.view.probe_interval(probe.key))
+            except Exception:
+                interval = 0.0
         probe.start(interval or None)
 
         self._probes[probe.key] = probe
@@ -748,6 +783,8 @@ class PerfController(QObject):
                     self.current_session.netdev_samples = series
                 elif key == "iotop":
                     self.current_session.iotop_samples = series
+                elif key == "threads":
+                    self.current_session.thread_samples = series
         for key, probe in probes.items():
             try:
                 probe.stop()

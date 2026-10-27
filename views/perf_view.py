@@ -330,14 +330,15 @@ class PerfView(QWidget):
         return combo.currentText() if combo is not None else ""
 
     def update_probe(self, key: str, data: dict):
-        """旁路探针的最新快照 → 对应数值卡（由 PerfController 每秒推一次）。"""
+        """旁路探针的最新快照（由 PerfController 每秒推一次）。"""
+        # 整机 CPU / 线程已并入 CPU 指标：没有独立卡片，摘要挂到 CPU 卡片的 tooltip
+        if key in ("sys_cpu", "threads"):
+            self._update_cpu_side_summary(key, data)
+            return
         card = self._cards.get(key)
         if card is None or not hasattr(card, "set_values"):
             return
         data = data or {}
-        if key == "sys_cpu":
-            self._update_sys_cpu_card(card, data)
-            return
         if key == "netdev":
             self._update_netdev_card(card, data)
             return
@@ -360,25 +361,38 @@ class PerfView(QWidget):
             detail += f" · ZRAM {zram:.0f} MB"
         card.set_values(value, detail, error=data.get("error", ""))
 
-    @staticmethod
-    def _update_sys_cpu_card(card, data: dict):
-        """整机 CPU 卡片文案：27% / 8 核累计 219% / 用户 18% · 内核 7% · 空闲 73%"""
-        if not data or "cpu_pct" not in data:
-            err = data.get("error", "")
-            card.set_values("--", "" if err else "等待采样…", error=err)
-            return
-        cpu = data.get("cpu_pct", 0.0)
-        cores = data.get("cores") or 0
-        value = f"{cpu:.0f}%"
-        if cores:
-            # 多核累计占用 = 整机占用率 × 核数（不是 total_pct，那是 8×100 的容量）
-            value += f"（{cores} 核累计 {cpu * cores:.0f}%）"
-        if data.get("degraded"):
-            detail = f"用户 / 内核明细不可用（top 不支持 -b，已降级读 /proc/stat）· 空闲 {data.get('idle_pct', 0):.0f}%"
-        else:
-            detail = (f"用户 {data.get('user_pct', 0):.0f}% · 内核 {data.get('sys_pct', 0):.0f}%"
-                      f" · 空闲 {data.get('idle_pct', 0):.0f}%")
-        card.set_values(value, detail, error=data.get("error", ""))
+    def _update_cpu_side_summary(self, key: str, data: dict):
+        """整机 CPU / 线程的实时摘要 → CPU 卡片 tooltip（不额外占版面）。
+
+        这两项是 CPU 分析的附属数据：只看数值时鼠标悬停 CPU 卡就能看到，
+        需要完整数据时看报告里的「CPU 分析 / 整机 CPU / 线程分析」章节。
+        """
+        if not hasattr(self, "_cpu_side"):
+            self._cpu_side = {}
+        self._cpu_side[key] = data or {}
+
+        parts = []
+        sc = self._cpu_side.get("sys_cpu") or {}
+        if "cpu_pct" in sc:
+            cores = sc.get("cores") or 0
+            txt = f"整机 CPU {sc['cpu_pct']:.0f}%"
+            if cores:
+                txt += f"（{cores} 核累计 {sc['cpu_pct'] * cores:.0f}%）"
+            parts.append(txt)
+        th = self._cpu_side.get("threads") or {}
+        if "thread_total" in th:
+            parts.append(f"线程 {th['thread_total']} 个（活跃 {th['thread_active']}）")
+            tops = (th.get("top") or [])[:3]
+            if tops:
+                parts.append("最忙线程：" + "、".join(
+                    f"{t.get('name', '')} {float(t.get('cpu') or 0):.1f}%" for t in tops))
+        errs = [str(d.get("error")) for d in (sc, th) if d.get("error")]
+        if errs:
+            parts.append("⚠ " + "；".join(errs))
+        card = self._cards.get("cpu")
+        if card is not None:
+            card.setToolTip("\n".join(parts))
+
 
     @staticmethod
     def _update_netdev_card(card, data: dict):
@@ -600,10 +614,8 @@ class PerfView(QWidget):
         # 堆转储/抓包/截图的「卡片显隐」复选框：同口径，非空闲禁用
         # 系统内存探针只在本轮开始时启动，运行中不允许改（避免半路加/减探针）
         self.sys_mem_check.setEnabled(idle)
-        self.sys_cpu_check.setEnabled(idle)
-        self.netdev_check.setEnabled(idle)
         self.iotop_check.setEnabled(idle)
-        for key in ('sys_cpu', 'sys_mem', 'netdev', 'iotop'):
+        for key in ('sys_mem', 'netdev', 'iotop'):
             combo = self._probe_interval_combo(key)
             if combo is not None:
                 combo.setEnabled(idle)
@@ -751,12 +763,6 @@ class PerfView(QWidget):
             metric_widgets.append(cb)
 
         # 整机口径的旁路探针（独立于主采样，勾选后随监控启动）
-        self.sys_cpu_check = BorderedCheckBox("整机 CPU")
-        self.sys_cpu_check.setToolTip(
-            "设备整体 CPU 占用（所有进程合计，归一化到 0~100%），与上方「CPU」卡的所选进程口径不同")
-        self.sys_cpu_check.toggled.connect(self._on_card_visibility_changed)
-        metric_widgets.append(self.sys_cpu_check)
-
         self.iotop_check = BorderedCheckBox("磁盘 IO")
         self.iotop_check.setToolTip(
             "设备整体磁盘读写速率（整机口径）\n"
@@ -934,8 +940,7 @@ class PerfView(QWidget):
 
         # 整机探针：数值卡（单行 44px），不画曲线；间隔可调，默认 15 秒
         # （dumpsys meminfo 一次 3~5 秒，5 秒节奏会把整机 CPU 抬高几个百分点）
-        self._cards['sys_cpu'] = ProbeValueCard(
-            '整机 CPU', accent='#3498db', intervals=self.PROBE_INTERVALS)
+        # 注意：整机 CPU 与线程已并入 CPU 指标（随 CPU 自动采集、进报告），不再有卡片
         self._cards['sys_mem'] = ProbeValueCard(
             '系统内存', accent='#1976d2', intervals=self.PROBE_INTERVALS)
         self._cards['netdev'] = ProbeValueCard(
@@ -951,7 +956,6 @@ class PerfView(QWidget):
         self._cards['fps'].setVisible(False)
         self._cards['traffic'].setVisible(False)
         self._cards['sys_mem'].setVisible(False)
-        self._cards['sys_cpu'].setVisible(False)
         self._cards['netdev'].setVisible(False)
         self._cards['iotop'].setVisible(False)
         self._hprof_card.setVisible(False)
@@ -977,7 +981,7 @@ class PerfView(QWidget):
         self.duration_spin.valueChanged.connect(self._save_perf_config)
         for cb in self.metric_radios.values():
             cb.toggled.connect(self._save_perf_config)
-        for key in ('sys_cpu', 'sys_mem', 'netdev', 'iotop'):
+        for key in ('sys_mem', 'netdev', 'iotop'):
             combo = self._probe_interval_combo(key)
             if combo is not None:
                 combo.currentTextChanged.connect(self._save_perf_config)
@@ -986,7 +990,7 @@ class PerfView(QWidget):
         self.record_duration_combo.currentTextChanged.connect(self._save_perf_config)
         self.smaps_enable_check.toggled.connect(self._save_perf_config)
         self.smaps_interval_combo.currentTextChanged.connect(self._save_perf_config)
-        for chk in (self.sys_cpu_check, self.sys_mem_check, self.netdev_check,
+        for chk in (self.sys_mem_check, self.netdev_check,
                     self.iotop_check, self.record_visible_check,
                     self.smaps_visible_check, self.hprof_visible_check,
                     self.packet_visible_check, self.screenshot_visible_check):
@@ -1343,7 +1347,6 @@ class PerfView(QWidget):
         # 整机探针卡也是 44px 单行，跟在工具卡一组里，视觉整齐（不混进指标网格）
         probe_checks = (
             ('sys_mem', getattr(self, 'sys_mem_check', None)),
-            ('sys_cpu', getattr(self, 'sys_cpu_check', None)),
             ('netdev', getattr(self, 'netdev_check', None)),
             ('iotop', getattr(self, 'iotop_check', None)),
         )
@@ -1525,8 +1528,6 @@ class PerfView(QWidget):
             'netdev_interval': self._probe_interval_text('netdev'),
             'iotop': self.iotop_check.isChecked(),
             'iotop_interval': self._probe_interval_text('iotop'),
-            'sys_cpu': self.sys_cpu_check.isChecked(),
-            'sys_cpu_interval': self._probe_interval_text('sys_cpu'),
             'sys_mem_interval': self._probe_interval_text('sys_mem'),
             'show_hprof': self.hprof_visible_check.isChecked(),
             'show_record': self.record_visible_check.isChecked(),
@@ -1593,13 +1594,7 @@ class PerfView(QWidget):
             self.metric_radios['traffic'].setChecked(True)
         if cfg.get('sys_mem'):
             self.sys_mem_check.setChecked(True)
-        if cfg.get('sys_cpu'):
-            self.sys_cpu_check.setChecked(True)
-        if cfg.get('netdev'):
-            self.netdev_check.setChecked(True)
-        if cfg.get('iotop'):
-            self.iotop_check.setChecked(True)
-        for key in ('sys_cpu', 'sys_mem', 'netdev', 'iotop'):
+        for key in ('sys_mem', 'netdev', 'iotop'):
             combo = self._probe_interval_combo(key)
             text = cfg.get(f'{key}_interval')
             if combo is not None and text and combo.findText(text) >= 0:

@@ -10,3 +10,4 @@ from .meminfo_sys import MemInfoSysProbe         # noqa: F401
 from .top_sys import TopSysProbe                 # noqa: F401
 from .netdev import NetDevProbe                  # noqa: F401
 from .iotop import IoTopProbe                    # noqa: F401
+from .threads import ThreadsProbe                # noqa: F401
