@@ -977,12 +977,9 @@ class PerfReportGenerator:
         </table>
         """
 
-        # 内存分类明细不再单列一节，改为并入「测试详情」表（两张表内容重复，
-        # 用户得滚两屏才看完）。有基线且基线带内存数据时不并 —— 明细已经在
-        # 基线对比表里，再列一遍纯属冗余。判据看的是「基线对比表里是否真有
-        # 内存行」，而不是「有没有基线对象」（老基线只有 CPU 数据时仍要并）。
-        baseline_covers_mem = any(
-            str(r.get('key', '')).startswith('mem') for r in baseline_rows)
+        # 内存分类明细不再单列一节，全部并入「测试详情」表。
+        # 配了基线也照样列全：测试详情是「本次结果」，基线对比是「和上次比」，
+        # 两者不能互相替代（2026-10-28 用户反馈：有基线时详情太少了）。
 
         # 系统内存（整机探针）：与「内存」卡口径不同，单独成节并标注清楚
         def _avg(v):
@@ -1409,30 +1406,29 @@ class PerfReportGenerator:
             # res（TOTAL RSS）不再展示：与 total_pss 高度重合，多一行只是噪声
             _mem_split("total_pss (MB)", lambda x, pn: _proc_mem(x, pn, "pss"))
             # 内存分类明细并进这张表（测试详情里没有的项都补上，不再单列一节）
-            if not baseline_covers_mem:
-                _bd = stats.get('mem_breakdown') or {}
-                for _cat, _key in MEM_BREAKDOWN_KEYS.items():
-                    _st = _bd.get(_cat)
-                    if not _st:
-                        continue
-                    _detail_rows.append((
-                        f"{_key} (MB)", f"{_st.get('avg', 0):.1f}",
-                        f"{_st.get('max', 0):.1f}", f"{_st.get('min', 0):.1f}", ""))
-                    _mem_split(f"{_key} (MB)",
-                               lambda x, pn, _c=_cat: _proc_mem(x, pn, "", _c))
-                _ns_vals = [float((x.mem_breakdown or {}).get("Native", 0.0))
-                            + float((x.mem_breakdown or {}).get("System", 0.0))
-                            for x in samples]
-                _ns_vals = [v for v in _ns_vals if v > 0]
-                if _ns_vals:
-                    _detail_rows.append((
-                        "native+system_mem (MB)",
-                        f"{sum(_ns_vals) / len(_ns_vals):.1f}",
-                        f"{max(_ns_vals):.1f}", f"{min(_ns_vals):.1f}", ""))
-                    _mem_split(
-                        "native+system_mem (MB)",
-                        lambda x, pn: (_proc_mem(x, pn, "", "Native")
-                                       + _proc_mem(x, pn, "", "System")))
+            _bd = stats.get('mem_breakdown') or {}
+            for _cat, _key in MEM_BREAKDOWN_KEYS.items():
+                _st = _bd.get(_cat)
+                if not _st:
+                    continue
+                _detail_rows.append((
+                    f"{_key} (MB)", f"{_st.get('avg', 0):.1f}",
+                    f"{_st.get('max', 0):.1f}", f"{_st.get('min', 0):.1f}", ""))
+                _mem_split(f"{_key} (MB)",
+                           lambda x, pn, _c=_cat: _proc_mem(x, pn, "", _c))
+            _ns_vals = [float((x.mem_breakdown or {}).get("Native", 0.0))
+                        + float((x.mem_breakdown or {}).get("System", 0.0))
+                        for x in samples]
+            _ns_vals = [v for v in _ns_vals if v > 0]
+            if _ns_vals:
+                _detail_rows.append((
+                    "native+system_mem (MB)",
+                    f"{sum(_ns_vals) / len(_ns_vals):.1f}",
+                    f"{max(_ns_vals):.1f}", f"{min(_ns_vals):.1f}", ""))
+                _mem_split(
+                    "native+system_mem (MB)",
+                    lambda x, pn: (_proc_mem(x, pn, "", "Native")
+                                   + _proc_mem(x, pn, "", "System")))
 
             # 合计行全部列完后，按进程整块展开（每个进程把自己那套参数连续排完）
             if len(_mem_procs) > 1:
