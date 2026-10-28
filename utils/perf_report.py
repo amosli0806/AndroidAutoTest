@@ -837,9 +837,6 @@ class PerfReportGenerator:
         start = _fmt_time(session.start_time)
         end = _fmt_time(session.end_time)
         metrics = session.metrics
-        # 只采内存的场景：把内存明细直接并进「测试详情」，不再单列「内存详情」章节
-        # （报告里两张表内容几乎重复，用户滚两次才能看完）
-        mem_only = set(metrics) == {'mem'}
         duration = "0 秒"
         if samples:
             _secs = samples[-1].timestamp - samples[0].timestamp
@@ -979,56 +976,12 @@ class PerfReportGenerator:
         </table>
         """
 
-        # 内存详情：**不依赖基线** —— 把 Total + 各分类（Java/Native/Graphics/
-        # Stack/Code/Others）的 均值/峰值/最低 全列出来。以前这些数字只在
-        # 「基线对比」表里出现，没配基线就整段消失，看不到明细。
-        # 有基线且基线带内存数据时不再渲染：明细已经在基线对比表里了，
-        # 再列一遍纯属冗余。判据看的是**基线对比表里是否真有内存行**，
-        # 而不是「有没有基线对象」—— 老基线只有 CPU 数据时，内存明细仍要保留。
-        mem_detail_html = ""
+        # 内存分类明细不再单列一节，改为并入「测试详情」表（两张表内容重复，
+        # 用户得滚两屏才看完）。有基线且基线带内存数据时不并 —— 明细已经在
+        # 基线对比表里，再列一遍纯属冗余。判据看的是「基线对比表里是否真有
+        # 内存行」，而不是「有没有基线对象」（老基线只有 CPU 数据时仍要并）。
         baseline_covers_mem = any(
             str(r.get('key', '')).startswith('mem') for r in baseline_rows)
-        mem_stat = stats.get('mem')
-        if 'mem' in metrics and mem_stat and not baseline_covers_mem and not mem_only:
-            breakdown = stats.get('mem_breakdown') or {}
-            _mem_names = MEM_BREAKDOWN_KEYS
-
-            def _stat(values):
-                vals = [v for v in values if v > 0]
-                if not vals:
-                    return None
-                return {"avg": sum(vals) / len(vals), "max": max(vals), "min": min(vals)}
-
-            detail_rows = [('total_pss', mem_stat)]
-            res_stat = _stat([float(getattr(x, 'mem_res_mb', 0.0) or 0.0)
-                              for x in samples])
-            if res_stat:
-                detail_rows.append(('res', res_stat))
-            detail_rows += [(k, breakdown[cat]) for cat, k in _mem_names.items()
-                            if cat in breakdown]
-            ns_stat = _stat([
-                float(x.mem_breakdown.get("Native", 0.0))
-                + float(x.mem_breakdown.get("System", 0.0)) for x in samples])
-            if ns_stat:
-                detail_rows.append(('native+system_mem', ns_stat))
-            detail_tr = ""
-            for label, st in detail_rows:
-                detail_tr += f"""
-                    <tr>
-                        <td>{label}</td>
-                        <td>{st.get('avg', 0):.2f}</td>
-                        <td>{st.get('max', 0):.2f}</td>
-                        <td>{st.get('min', 0):.2f}</td>
-                    </tr>"""
-            mem_detail_html = f"""
-        <h2>🧩 内存详情</h2>
-        <p style="font-size:12px;color:#888;">※ 参数名与性能报告一致；total_pss 与各分类来自
-           <code>dumpsys meminfo</code>，res 为 TOTAL RSS，单位 MB。</p>
-        <table class="compare compare4">
-            <thead><tr><th>参数</th><th>均值 (MB)</th><th>峰值 (MB)</th><th>最低 (MB)</th></tr></thead>
-            <tbody>{detail_tr}</tbody>
-        </table>
-        """
 
         # 系统内存（整机探针）：与「内存」卡口径不同，单独成节并标注清楚
         def _avg(v):
@@ -1443,8 +1396,8 @@ class PerfReportGenerator:
                 _detail_rows.append((
                     "res (MB)", f"{sum(_res_vals) / len(_res_vals):.1f}",
                     f"{max(_res_vals):.1f}", f"{min(_res_vals):.1f}", "TOTAL RSS"))
-            # 只采内存时，把各分类明细并进这张表（否则要另开一章重复看一遍）
-            if mem_only and not baseline_covers_mem:
+            # 内存分类明细并进这张表（测试详情里没有的项都补上，不再单列一节）
+            if not baseline_covers_mem:
                 _bd = stats.get('mem_breakdown') or {}
                 for _cat, _key in MEM_BREAKDOWN_KEYS.items():
                     _st = _bd.get(_cat)
@@ -1847,8 +1800,6 @@ class PerfReportGenerator:
         </table>
 
         {detail_html}
-
-        {mem_detail_html}
 
         <h2>📊 关键指标</h2>
         <div class="summary">
