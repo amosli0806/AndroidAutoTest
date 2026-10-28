@@ -68,6 +68,10 @@ class PerfSample:
     # 内存 RSS（MB，dumpsys meminfo 的 TOTAL RSS；性能报告里对应 res 参数）
     mem_res_mb: float = 0.0
     mem_breakdown: dict = field(default_factory=dict)  # 分类拆解 {'Java': MB, ...}
+    # 多进程监控时每个进程的内存明细：
+    #   {进程名: {'pss': MB, 'res': MB, 'breakdown': {'Java': MB, ...}}}
+    # 单进程会话为空（合计值已在 mem_pss_mb / mem_breakdown 里）
+    mem_by_process: dict = field(default_factory=dict)
     fps: int = 0                      # 帧率
     rx_bytes: int = 0                 # 接收字节（累计）
     tx_bytes: int = 0                 # 发送字节（累计）

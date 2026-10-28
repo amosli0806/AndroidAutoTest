@@ -142,10 +142,12 @@ class PerfService:
 
         if 'mem' in metrics:
             try:
-                pss_mb, breakdown, res_mb = self._collect_mem(primary, pids)
+                pss_mb, breakdown, res_mb, by_proc = self._collect_mem(primary, pids)
                 sample.mem_pss_mb = pss_mb
                 sample.mem_res_mb = res_mb
                 sample.mem_breakdown = breakdown
+                # 多进程：逐进程明细一起入库（报告据此按进程分行展示）
+                sample.mem_by_process = by_proc
             except Exception as e:
                 sample.errors.append(f"mem:{e}")
 
@@ -367,11 +369,13 @@ class PerfService:
     # ============================================================
     def _collect_mem(self, package: str, pids=None) -> tuple:
         """
-        采集**目标进程**的内存，返回 (pss_mb, breakdown, res_mb)：
+        采集**目标进程**的内存，返回 (pss_mb, breakdown, res_mb, by_process)：
           - pss_mb：这些进程的 TOTAL PSS 之和（MB）
           - breakdown：分类拆解 dict（各进程同名分类相加），如
             {'Java': 61.8, 'Native': 12.3, 'System': 20.0, ...}（单位 MB）
           - res_mb：这些进程的 TOTAL RSS 之和（MB，报告里的 res 参数）
+          - by_process：逐进程明细 {进程名: {'pss','res','breakdown'}}。
+            本来就要逐个 PID dump，明细顺手留下即可（不再只剩一个合计值）。
 
         为什么按 PID 取：`dumpsys meminfo <包名>` 给的是整个应用的 App Summary
         （含 `包名:*` 子进程）—— 选子进程会显示整包内存，选主进程也混着子进程。
@@ -386,6 +390,7 @@ class PerfService:
         total_pss = 0.0
         total_res = 0.0
         merged = {}
+        by_process = {}
         got = 0
         dumped = 0
         for target in targets:
@@ -401,17 +406,25 @@ class PerfService:
             if not m:
                 continue
             got += 1
-            total_pss += int(m.group(1)) / 1024.0      # KB -> MB
+            one_pss = int(m.group(1)) / 1024.0          # KB -> MB
+            one_res = 0.0
             rss = re.search(r"TOTAL RSS:\s*(\d+)", out)
             if rss:
-                total_res += int(rss.group(1)) / 1024.0
-            for key, val in self._parse_mem_breakdown(out).items():
+                one_res = int(rss.group(1)) / 1024.0
+                total_res += one_res
+            one_bd = self._parse_mem_breakdown(out)
+            total_pss += one_pss
+            for key, val in one_bd.items():
                 merged[key] = merged.get(key, 0.0) + val
+            # 进程名：_find_pids 已把 pid -> 名字 存好；拿不到就用 pid 本身
+            name = (getattr(self, "_pid_names", {}) or {}).get(str(target), str(target))
+            by_process[name] = {"pss": one_pss, "res": one_res,
+                                "breakdown": dict(one_bd)}
         if not got:
             if dumped:
                 raise PerfShellError(f"dumpsys meminfo 输出里没有 TOTAL PSS：{package}")
             raise PerfShellError(f"应用未在运行（dumpsys meminfo 无进程）：{package}")
-        return total_pss, merged, total_res
+        return total_pss, merged, total_res, by_process
 
     def _parse_mem_breakdown(self, out: str) -> dict:
         """把 dumpsys meminfo 输出拆成 Android Studio 风格分类（单位 MB）。

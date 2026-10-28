@@ -32,6 +32,19 @@ MEM_BREAKDOWN_KEYS = {
 }
 
 
+def short_proc_name(name: str, base: str) -> str:
+    """进程名短显示：主进程 → 「主进程」，子进程 → 冒号后缀（如「:push」）。
+
+    表格第一列放不下完整包名（com.ss.android.ugc.aweme:push 有 30 字符），
+    短名足以区分同一应用的各目标进程；完整名在「基本信息 → 目标进程」里可查。
+    """
+    if not base or name == base:
+        return "主进程"
+    if name.startswith(base + ":"):
+        return name[len(base):]
+    return name
+
+
 def metric_label(key: str) -> str:
     return METRIC_LABELS.get(key, key)
 
@@ -1386,16 +1399,39 @@ class PerfReportGenerator:
                 f"{_tt['cpu_min']:.1f}", "多核累计"))
         if 'mem' in metrics:
             _s = stats.get('mem') or {}
+            # 多进程：每个参数在合计行后面按进程各列一行（短名区分主进程 / 子进程）
+            _mem_procs = [p for p in (getattr(session, "app_processes", None) or []) if p]
+
+            def _proc_mem(x, pn, field, cat=None):
+                item = (x.mem_by_process or {}).get(pn) or {}
+                if cat is None:
+                    return float(item.get(field, 0.0) or 0.0)
+                return float((item.get("breakdown") or {}).get(cat, 0.0) or 0.0)
+
+            def _mem_split(label, getter):
+                if len(_mem_procs) <= 1:
+                    return
+                for _pn in _mem_procs:
+                    _vals = [v for v in (getter(x, _pn) for x in samples) if v > 0]
+                    if not _vals:
+                        continue
+                    _detail_rows.append((
+                        f"{label} · {short_proc_name(_pn, session.app_package)}",
+                        f"{sum(_vals) / len(_vals):.1f}", f"{max(_vals):.1f}",
+                        f"{min(_vals):.1f}", "单进程"))
+
             _detail_rows.append((
                 "total_pss (MB)", f"{_s.get('avg', 0):.1f}", f"{_s.get('max', 0):.1f}",
                 f"{_s.get('min', 0):.1f}",
                 "多进程合计" if len(_procs) > 1 else "所选进程"))
+            _mem_split("total_pss (MB)", lambda x, pn: _proc_mem(x, pn, "pss"))
             _res_vals = [float(getattr(x, 'mem_res_mb', 0.0) or 0.0) for x in samples]
             _res_vals = [v for v in _res_vals if v > 0]
             if _res_vals:
                 _detail_rows.append((
                     "res (MB)", f"{sum(_res_vals) / len(_res_vals):.1f}",
                     f"{max(_res_vals):.1f}", f"{min(_res_vals):.1f}", "TOTAL RSS"))
+                _mem_split("res (MB)", lambda x, pn: _proc_mem(x, pn, "res"))
             # 内存分类明细并进这张表（测试详情里没有的项都补上，不再单列一节）
             if not baseline_covers_mem:
                 _bd = stats.get('mem_breakdown') or {}
@@ -1406,6 +1442,8 @@ class PerfReportGenerator:
                     _detail_rows.append((
                         f"{_key} (MB)", f"{_st.get('avg', 0):.1f}",
                         f"{_st.get('max', 0):.1f}", f"{_st.get('min', 0):.1f}", ""))
+                    _mem_split(f"{_key} (MB)",
+                               lambda x, pn, _c=_cat: _proc_mem(x, pn, "", _c))
                 _ns_vals = [float((x.mem_breakdown or {}).get("Native", 0.0))
                             + float((x.mem_breakdown or {}).get("System", 0.0))
                             for x in samples]
@@ -1415,6 +1453,10 @@ class PerfReportGenerator:
                         "native+system_mem (MB)",
                         f"{sum(_ns_vals) / len(_ns_vals):.1f}",
                         f"{max(_ns_vals):.1f}", f"{min(_ns_vals):.1f}", ""))
+                    _mem_split(
+                        "native+system_mem (MB)",
+                        lambda x, pn: (_proc_mem(x, pn, "", "Native")
+                                       + _proc_mem(x, pn, "", "System")))
         if 'fps' in metrics:
             _s = stats.get('fps') or {}
             _detail_rows.append((
