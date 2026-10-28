@@ -1819,6 +1819,8 @@ class PerfReportGenerator:
 
         {detail_html}
 
+        {mem_detail_html}
+
         <h2>📊 关键指标</h2>
         <div class="summary">
             {summary_cards_html}
@@ -1827,8 +1829,6 @@ class PerfReportGenerator:
         {charts_section}
 
         {analysis_html}
-
-        {mem_detail_html}
 
         {sys_mem_html}
 
