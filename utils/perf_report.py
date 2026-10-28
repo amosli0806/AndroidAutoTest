@@ -32,18 +32,6 @@ MEM_BREAKDOWN_KEYS = {
 }
 
 
-def short_proc_name(name: str, base: str) -> str:
-    """进程名短显示：主进程 → 「主进程」，子进程 → 冒号后缀（如「:push」）。
-
-    表格第一列放不下完整包名（com.ss.android.ugc.aweme:push 有 30 字符），
-    短名足以区分同一应用的各目标进程；完整名在「基本信息 → 目标进程」里可查。
-    """
-    if not base or name == base:
-        return "主进程"
-    if name.startswith(base + ":"):
-        return name[len(base):]
-    return name
-
 
 def metric_label(key: str) -> str:
     return METRIC_LABELS.get(key, key)
@@ -1449,8 +1437,7 @@ class PerfReportGenerator:
             # 合计行全部列完后，按进程整块展开（每个进程把自己那套参数连续排完）
             if len(_mem_procs) > 1:
                 for _pn in _mem_procs:
-                    _short = short_proc_name(_pn, session.app_package)
-                    _detail_rows.append((f"{_short} · {_pn}",))
+                    _detail_rows.append((_pn,))
                     for _label, _getter in _mem_getters:
                         _vals = [v for v in (_getter(x, _pn) for x in samples) if v > 0]
                         if not _vals:
