@@ -19,6 +19,18 @@ METRIC_LABELS = {
     "sys_mem": "系统内存",
 }
 
+# 内存分类（dumpsys meminfo 段名）→ 报告里的参数名，与性能报告保持一致。
+# 「测试详情」与「内存详情」两处共用，顺序即展示顺序。
+MEM_BREAKDOWN_KEYS = {
+    "Java": "java_heap",
+    "Native": "native_heap",
+    "Graphics": "graphics_mem",
+    "Stack": "stack_mem",
+    "Code": "code_mem",
+    "System": "system_mem",
+    "Others": "other_mem",
+}
+
 
 def metric_label(key: str) -> str:
     return METRIC_LABELS.get(key, key)
@@ -825,6 +837,9 @@ class PerfReportGenerator:
         start = _fmt_time(session.start_time)
         end = _fmt_time(session.end_time)
         metrics = session.metrics
+        # 只采内存的场景：把内存明细直接并进「测试详情」，不再单列「内存详情」章节
+        # （报告里两张表内容几乎重复，用户滚两次才能看完）
+        mem_only = set(metrics) == {'mem'}
         duration = "0 秒"
         if samples:
             _secs = samples[-1].timestamp - samples[0].timestamp
@@ -974,14 +989,9 @@ class PerfReportGenerator:
         baseline_covers_mem = any(
             str(r.get('key', '')).startswith('mem') for r in baseline_rows)
         mem_stat = stats.get('mem')
-        if 'mem' in metrics and mem_stat and not baseline_covers_mem:
+        if 'mem' in metrics and mem_stat and not baseline_covers_mem and not mem_only:
             breakdown = stats.get('mem_breakdown') or {}
-            # 参数名与性能报告对齐：total_pss / res / java_heap / ...
-            _mem_names = {
-                "Java": "java_heap", "Native": "native_heap",
-                "Graphics": "graphics_mem", "Stack": "stack_mem",
-                "Code": "code_mem", "System": "system_mem", "Others": "other_mem",
-            }
+            _mem_names = MEM_BREAKDOWN_KEYS
 
             def _stat(values):
                 vals = [v for v in values if v > 0]
@@ -1433,6 +1443,25 @@ class PerfReportGenerator:
                 _detail_rows.append((
                     "res (MB)", f"{sum(_res_vals) / len(_res_vals):.1f}",
                     f"{max(_res_vals):.1f}", f"{min(_res_vals):.1f}", "TOTAL RSS"))
+            # 只采内存时，把各分类明细并进这张表（否则要另开一章重复看一遍）
+            if mem_only and not baseline_covers_mem:
+                _bd = stats.get('mem_breakdown') or {}
+                for _cat, _key in MEM_BREAKDOWN_KEYS.items():
+                    _st = _bd.get(_cat)
+                    if not _st:
+                        continue
+                    _detail_rows.append((
+                        f"{_key} (MB)", f"{_st.get('avg', 0):.1f}",
+                        f"{_st.get('max', 0):.1f}", f"{_st.get('min', 0):.1f}", ""))
+                _ns_vals = [float((x.mem_breakdown or {}).get("Native", 0.0))
+                            + float((x.mem_breakdown or {}).get("System", 0.0))
+                            for x in samples]
+                _ns_vals = [v for v in _ns_vals if v > 0]
+                if _ns_vals:
+                    _detail_rows.append((
+                        "native+system_mem (MB)",
+                        f"{sum(_ns_vals) / len(_ns_vals):.1f}",
+                        f"{max(_ns_vals):.1f}", f"{min(_ns_vals):.1f}", ""))
         if 'fps' in metrics:
             _s = stats.get('fps') or {}
             _detail_rows.append((
