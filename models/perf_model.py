@@ -240,6 +240,18 @@ class PerfSession:
                     breakdown[cat] = cs
             if breakdown:
                 result['mem_breakdown'] = breakdown
+            # Native + System 合并项（报告里的 native+system_mem）。
+            # 必须在这里单独算：max(N+S) ≠ max(N)+max(S)，不能事后相加。
+            ns_vals = [float(s.mem_breakdown.get("Native", 0.0))
+                       + float(s.mem_breakdown.get("System", 0.0))
+                       for s in self.samples]
+            ns_vals = [v for v in ns_vals if v > 0]
+            if ns_vals:
+                ns = calc(ns_vals)
+                last = self.samples[-1].mem_breakdown or {}
+                ns['current'] = (float(last.get("Native", 0.0))
+                                 + float(last.get("System", 0.0)))
+                result['mem_ns'] = ns
         # FPS
         if 'fps' in self.metrics:
             stat = calc([s.fps for s in self.samples if s.fps > 0])
@@ -351,6 +363,26 @@ def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.
                      bcat.get('max'), ccat.get('max'))
                 _row(f'mem_{cat}_min', f'{name}最低 (MB)',
                      bcat.get('min'), ccat.get('min'))
+    # native+system_mem：新会话/新基线有 mem_ns（均值/峰值/最低都准）；
+    # 旧基线没存这一项，只能拿 Native、System 的均值相加（峰值/最低相加会偏大，
+    # 宁可少给两行也不给错数）
+    bn, cn = base_metrics.get('mem_ns'), cur_stats.get('mem_ns')
+    if _is_stats(bn) and _is_stats(cn):
+        _row('mem_ns_avg', 'native+system_mem均值 (MB)',
+             bn.get('avg'), cn.get('avg'))
+        _row('mem_ns', 'native+system_mem峰值 (MB)',
+             bn.get('max'), cn.get('max'))
+        _row('mem_ns_min', 'native+system_mem最低 (MB)',
+             bn.get('min'), cn.get('min'))
+    elif isinstance(bb, dict) and isinstance(cc, dict):
+        b_nat, b_sys = bb.get('Native'), bb.get('System')
+        c_nat, c_sys = cc.get('Native'), cc.get('System')
+        if _is_stats(b_nat) and _is_stats(c_nat):
+            base_ns = float(b_nat.get('avg') or 0) + float((b_sys or {}).get('avg') or 0)
+            cur_ns = float(c_nat.get('avg') or 0) + float((c_sys or {}).get('avg') or 0)
+            if base_ns > 0 and cur_ns > 0:
+                _row('mem_ns_avg', 'native+system_mem均值 (MB)', base_ns, cur_ns)
+
     b, c = base_metrics.get('fps'), cur_stats.get('fps')
     if _is_stats(b) and _is_stats(c):
         # FPS 越低越差（帧率掉了才是劣化），与 CPU 方向相反
