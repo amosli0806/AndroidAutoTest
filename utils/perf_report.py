@@ -1399,8 +1399,10 @@ class PerfReportGenerator:
                 f"{_tt['cpu_min']:.1f}", "多核累计"))
         if 'mem' in metrics:
             _s = stats.get('mem') or {}
-            # 多进程：每个参数在合计行后面按进程各列一行（短名区分主进程 / 子进程）
+            # 多进程：先把所有参数排成「合计块」，再按进程各排一块
+            # （主进程的全部参数 → 子进程的全部参数），便于整块对比
             _mem_procs = [p for p in (getattr(session, "app_processes", None) or []) if p]
+            _mem_getters = []          # [(参数名, 取某进程该值的函数)]
 
             def _proc_mem(x, pn, field, cat=None):
                 item = (x.mem_by_process or {}).get(pn) or {}
@@ -1409,16 +1411,8 @@ class PerfReportGenerator:
                 return float((item.get("breakdown") or {}).get(cat, 0.0) or 0.0)
 
             def _mem_split(label, getter):
-                if len(_mem_procs) <= 1:
-                    return
-                for _pn in _mem_procs:
-                    _vals = [v for v in (getter(x, _pn) for x in samples) if v > 0]
-                    if not _vals:
-                        continue
-                    _detail_rows.append((
-                        f"{label} · {short_proc_name(_pn, session.app_package)}",
-                        f"{sum(_vals) / len(_vals):.1f}", f"{max(_vals):.1f}",
-                        f"{min(_vals):.1f}", "单进程"))
+                """只登记参数的取数方式；合计行全部排完后统一按进程展开"""
+                _mem_getters.append((label, getter))
 
             _detail_rows.append((
                 "total_pss (MB)", f"{_s.get('avg', 0):.1f}", f"{_s.get('max', 0):.1f}",
@@ -1457,6 +1451,19 @@ class PerfReportGenerator:
                         "native+system_mem (MB)",
                         lambda x, pn: (_proc_mem(x, pn, "", "Native")
                                        + _proc_mem(x, pn, "", "System")))
+
+            # 合计行全部列完后，按进程整块展开（每个进程把自己那套参数连续排完）
+            if len(_mem_procs) > 1:
+                for _pn in _mem_procs:
+                    _short = short_proc_name(_pn, session.app_package)
+                    for _label, _getter in _mem_getters:
+                        _vals = [v for v in (_getter(x, _pn) for x in samples) if v > 0]
+                        if not _vals:
+                            continue
+                        _detail_rows.append((
+                            f"{_label} · {_short}",
+                            f"{sum(_vals) / len(_vals):.1f}", f"{max(_vals):.1f}",
+                            f"{min(_vals):.1f}", "单进程"))
         if 'fps' in metrics:
             _s = stats.get('fps') or {}
             _detail_rows.append((
