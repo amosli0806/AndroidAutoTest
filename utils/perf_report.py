@@ -1418,14 +1418,8 @@ class PerfReportGenerator:
                 "total_pss (MB)", f"{_s.get('avg', 0):.1f}", f"{_s.get('max', 0):.1f}",
                 f"{_s.get('min', 0):.1f}",
                 "多进程合计" if len(_procs) > 1 else "所选进程"))
+            # res（TOTAL RSS）不再展示：与 total_pss 高度重合，多一行只是噪声
             _mem_split("total_pss (MB)", lambda x, pn: _proc_mem(x, pn, "pss"))
-            _res_vals = [float(getattr(x, 'mem_res_mb', 0.0) or 0.0) for x in samples]
-            _res_vals = [v for v in _res_vals if v > 0]
-            if _res_vals:
-                _detail_rows.append((
-                    "res (MB)", f"{sum(_res_vals) / len(_res_vals):.1f}",
-                    f"{max(_res_vals):.1f}", f"{min(_res_vals):.1f}", "TOTAL RSS"))
-                _mem_split("res (MB)", lambda x, pn: _proc_mem(x, pn, "res"))
             # 内存分类明细并进这张表（测试详情里没有的项都补上，不再单列一节）
             if not baseline_covers_mem:
                 _bd = stats.get('mem_breakdown') or {}
@@ -1462,7 +1456,7 @@ class PerfReportGenerator:
                         if not _vals:
                             continue
                         _detail_rows.append((
-                            f"{_label} · {_short}",
+                            _label,
                             f"{sum(_vals) / len(_vals):.1f}", f"{max(_vals):.1f}",
                             f"{min(_vals):.1f}", "单进程"))
         if 'fps' in metrics:
