@@ -22,7 +22,7 @@ import time
 from services.perf_compat import WORKER_TIMEOUT, shell_text_checked
 from .base import PerfProbe, ProbeError
 
-TOP_N = 15          # 报告 / 卡片只留最忙的 N 个线程
+TOP_N = 45          # 每个采样点保留最忙的 N 个（与百度线程报表的 topn=45 对齐）
 ACTIVE_MIN_CPU = 1.0  # 单线程 ≥1% 算"活跃"
 
 
@@ -70,6 +70,44 @@ class ThreadsProbe(PerfProbe):
         self._prev_pid = ""
         self._csv_file = None
         self._csv_writer = None
+        # 全会话累计（按**线程名**聚合，同名多实例合并）：
+        # name -> {tid, tids, cpu_sum, cpu_max, active_idx, present_idx}
+        self._agg = {}
+        self._sample_count = 0
+        self._cpu_total_sum = 0.0
+
+    # ---------- 全会话排行（报告用） ----------
+    def rank(self) -> list:
+        """返回会话中出现过的**全部线程名**的统计，字段对齐百度报告。
+
+        按线程名聚合（同名线程池合并），列含义：
+          cpu_avg   整个会话平均（含 0），= cpu_sum / 采样数
+          cpu_max   单次采样峰值
+          active    活跃采样数（该名字下任一线程 CPU > 0）
+          activity  活跃度 = active / 采样数
+          s_avg     活跃采样上的均值 = cpu_sum / active
+          number    同名线程实例数（不同 TID 个数）
+          share     占全部线程 CPU 之和的比例
+        """
+        n = max(1, self._sample_count)
+        denom = self._cpu_total_sum or 0.0
+        rows = []
+        for name, row in self._agg.items():
+            active = len(row["active_idx"])
+            rows.append({
+                "name": name,
+                "tid": row["tid"],
+                "number": len(row["tids"]),
+                "cpu_avg": round(row["cpu_sum"] / n, 2),
+                "cpu_max": round(row["cpu_max"], 2),
+                "active": active,
+                "activity": round(active / n, 2),
+                "s_avg": round(row["cpu_sum"] / active, 2) if active else 0.0,
+                "share": round(row["cpu_sum"] / denom * 100.0, 1) if denom > 0 else 0.0,
+                "present": len(row["present_idx"]),
+            })
+        rows.sort(key=lambda r: r["cpu_avg"], reverse=True)
+        return rows
 
     # ---------- 采集 ----------
     def sample_once(self):
@@ -105,12 +143,11 @@ class ThreadsProbe(PerfProbe):
         per = []
         for tid, (name, ticks) in stats.items():
             prev = self._prev.get(tid)
-            if prev is None:
-                continue                      # 新线程：本轮没有基准
-            delta = ticks - prev
-            if delta < 0:
-                continue                      # TID 复用：跳过
-            cpu = delta / 100.0 / delta_sec * 100.0
+            if prev is None or ticks < prev:
+                # 新线程 / TID 复用：本轮记 0（计入线程总数，不计入活跃数）
+                per.append((tid, name, 0.0))
+                continue
+            cpu = (ticks - prev) / 100.0 / delta_sec * 100.0
             per.append((tid, name, cpu))
 
         self._prev = {tid: ticks for tid, (_n, ticks) in stats.items()}
@@ -120,6 +157,22 @@ class ThreadsProbe(PerfProbe):
         active = sum(1 for x in per if x[2] >= ACTIVE_MIN_CPU)
         top = sorted(per, key=lambda x: x[2], reverse=True)[:TOP_N]
         ts = time.time()
+
+        # 全会话累计（按线程名聚合，同名多实例合并）——报告要完整排行
+        self._sample_count += 1
+        sample_no = self._sample_count
+        self._cpu_total_sum += total
+        for tid, name, cpu in per:
+            row = self._agg.setdefault(name, {
+                "tid": tid, "tids": set(), "cpu_sum": 0.0, "cpu_max": 0.0,
+                "active_idx": set(), "present_idx": set(),
+            })
+            row["tids"].add(tid)
+            row["present_idx"].add(sample_no)
+            row["cpu_sum"] += cpu
+            row["cpu_max"] = max(row["cpu_max"], cpu)
+            if cpu > 0:
+                row["active_idx"].add(sample_no)
 
         self._write_rows(ts, per)
 

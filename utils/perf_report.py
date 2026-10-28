@@ -3,6 +3,7 @@
 import os
 import sys
 import base64
+import json
 from datetime import datetime
 from models.perf_model import (PerfSession, compare_stats, MEM_CATEGORIES,
                                SCOPE_LABELS, SCOPE_SYSTEM)
@@ -68,15 +69,7 @@ CHART_JS_CPU = """new Chart(document.getElementById('cpuChart'), {
     type: 'line',
     data: {
         labels: axisLabels,
-        datasets: [{
-            label: 'CPU (%)',
-            data: cpuData,
-            borderColor: '#3498db',
-            backgroundColor: 'rgba(52,152,219,0.1)',
-            borderWidth: 2,
-            fill: true,
-            tension: 0.3
-        }]
+        datasets: cpuSeries
     },
     options: {
         responsive: true,
@@ -98,7 +91,7 @@ CHART_JS_MEM = """new Chart(document.getElementById('memChart'), {
     data: {
         labels: axisLabels,
         datasets: [{
-            label: '内存 (MB)',
+            label: 'total_pss',
             data: memData,
             borderColor: '#27ae60',
             backgroundColor: 'rgba(39,174,96,0.1)',
@@ -126,21 +119,13 @@ CHART_JS_MEM_BREAKDOWN = """new Chart(document.getElementById('memChart'), {
     type: 'line',
     data: {
         labels: axisLabels,
-        datasets: [
-            { label: 'Total', data: memData, borderColor: '#27ae60', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
-            { label: 'Java', data: javaData, borderColor: '#f39c12', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
-            { label: 'Native', data: nativeData, borderColor: '#9b59b6', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
-            { label: 'Graphics', data: graphicsData, borderColor: '#e74c3c', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
-            { label: 'Stack', data: stackData, borderColor: '#1abc9c', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
-            { label: 'Code', data: codeData, borderColor: '#3498db', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 },
-            { label: 'Others', data: othersData, borderColor: '#95a5a6', backgroundColor: 'transparent', borderWidth: 2, fill: false, tension: 0.3 }
-        ]
+        datasets: memSeries
     },
     options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-            legend: { display: true, position: 'top' }, title: { display: true, text: '内存占用 (分类拆解, MB)' },
+            legend: { display: false }, title: { display: true, text: '内存占用（MB）' },
             zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
         },
         scales: {
@@ -209,7 +194,7 @@ CHART_JS_TRAFFIC = """new Chart(document.getElementById('trafficChart'), {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-            legend: { display: true }, title: { display: true, text: '流量速率 (KB/s)' },
+            legend: { display: false }, title: { display: true, text: '流量速率 (KB/s)' },
             zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
         },
         scales: {
@@ -221,20 +206,190 @@ CHART_JS_TRAFFIC = """new Chart(document.getElementById('trafficChart'), {
 });"""
 
 
+def _time_axis_labels(timestamps, t0):
+    """相对 t0 的秒数 → (单位, 标签列表)，规则与主曲线一致（时:分 / 分:秒 / 秒）。"""
+    rel = [max(0.0, float(ts or 0) - t0) for ts in timestamps]
+    total = rel[-1] if rel else 0.0
+    if total >= 3600:
+        return "时:分", [f"{int(ts // 3600)}:{int(ts % 3600 // 60):02d}" for ts in rel]
+    if total >= 60:
+        return "分:秒", [f"{int(ts // 60)}:{int(ts % 60):02d}" for ts in rel]
+    return "秒", [f"{ts:.1f}" for ts in rel]
+
+
+def _chart_wrap(canvas_id: str) -> str:
+    """图表容器：画布 + 图例（曲线参数）+ 工具条（全选 / 反选 / 重置缩放）。
+
+    图例不用 Chart.js 内置的（系列多时会盖住曲线），改为画布下方的 HTML 图例：
+    点一项隐藏/显示该曲线，「全选 / 反选」批量操作，「重置缩放」回到全量视图。
+    """
+    return f"""
+        <div class="chart-wrap">
+            <canvas id="{canvas_id}"></canvas>
+        </div>
+        <div class="chart-legend" id="{canvas_id}-legend"></div>
+        <div class="chart-toolbar">
+            <button class="chart-select-all" data-chart="{canvas_id}">全选</button>
+            <button class="chart-invert" data-chart="{canvas_id}">反选</button>
+            <button class="zoom-reset" data-chart="{canvas_id}">↺ 重置缩放</button>
+        </div>"""
+
+
+CHART_JS_CPU_PEAK = """new Chart(document.getElementById('cpuPeakChart'), {
+    type: 'line',
+    data: {
+        labels: axisLabels,
+        datasets: [
+            { label: 'CPU (%)', data: cpuData, borderColor: '#3498db', backgroundColor: 'rgba(52,152,219,0.08)', borderWidth: 2, fill: true, tension: 0.3 },
+            { label: 'P90 阈值', data: cpuThresholdLine, borderColor: '#e74c3c', borderDash: [6, 4], borderWidth: 1.2, pointRadius: 0, fill: false },
+            { label: '峰值点', data: cpuPeakPoints, borderColor: '#e74c3c', backgroundColor: '#e74c3c', showLine: false, pointRadius: 4 }
+        ]
+    },
+    options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false }, title: { display: true, text: 'CPU 峰值分析（≥P90 的点已高亮）' },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
+        },
+        scales: {
+            x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
+            y: { beginAtZero: true, title: { display: true, text: '%' } }
+        },
+        elements: { point: { radius: 0 } }
+    }
+});"""
+
+CHART_JS_SYS_CPU = """new Chart(document.getElementById('sysCpuChart'), {
+    type: 'line',
+    data: {
+        labels: sysCpuLabels,
+        datasets: [
+            { label: 'D_total', data: sysCpuTotal, borderColor: '#95a5a6', backgroundColor: 'transparent', borderWidth: 1.2, borderDash: [6, 4], pointRadius: 0, fill: false },
+            { label: 'D_busy', data: sysCpuData, borderColor: '#e74c3c', backgroundColor: 'rgba(231,76,60,0.06)', borderWidth: 2, fill: true, tension: 0.2 },
+            { label: 'D_user', data: sysCpuUser, borderColor: '#3498db', backgroundColor: 'transparent', borderWidth: 1.4, fill: false, tension: 0.2 },
+            { label: 'D_nice', data: sysCpuNice, borderColor: '#16a085', backgroundColor: 'transparent', borderWidth: 1.2, fill: false, tension: 0.2 },
+            { label: 'D_sys', data: sysCpuSys, borderColor: '#9b59b6', backgroundColor: 'transparent', borderWidth: 1.4, fill: false, tension: 0.2 },
+            { label: 'D_idle', data: sysCpuIdle, borderColor: '#27ae60', backgroundColor: 'transparent', borderWidth: 1.4, fill: false, tension: 0.2 },
+            { label: 'D_iow', data: sysCpuIow, borderColor: '#f39c12', backgroundColor: 'transparent', borderWidth: 1.2, borderDash: [4, 3], fill: false, tension: 0.2 },
+            { label: 'D_irq', data: sysCpuIrq, borderColor: '#8e6e53', backgroundColor: 'transparent', borderWidth: 1, fill: false, tension: 0.2 },
+            { label: 'D_sirq', data: sysCpuSirq, borderColor: '#e84393', backgroundColor: 'transparent', borderWidth: 1, fill: false, tension: 0.2 },
+            { label: 'D_host', data: sysCpuHost, borderColor: '#7f8c8d', backgroundColor: 'transparent', borderWidth: 1, borderDash: [2, 3], fill: false, tension: 0.2 }
+        ]
+    },
+    options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            title: { display: true, text: '系统整体 CPU 趋势（多核累计）' },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
+        },
+        scales: {
+            x: { display: true, title: { display: true, text: sysCpuAxisTitle } },
+            y: { beginAtZero: true, title: { display: true, text: '多核累计 (%)' } }
+        },
+        elements: { point: { radius: 0 } }
+    }
+});"""
+
+CHART_JS_THREAD_COUNT = """new Chart(document.getElementById('threadCountChart'), {
+    type: 'line',
+    data: {
+        labels: threadLabels,
+        datasets: [
+            { label: '线程总数', data: threadTotalData, borderColor: '#2980b9', backgroundColor: 'rgba(41,128,185,0.06)', borderWidth: 2, fill: true, tension: 0.2 },
+            { label: '活跃线程数', data: threadActiveData, borderColor: '#27ae60', backgroundColor: 'transparent', borderWidth: 1.6, fill: false, tension: 0.2 }
+        ]
+    },
+    options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false }, title: { display: true, text: '线程数量趋势' },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
+        },
+        scales: {
+            x: { display: true, title: { display: true, text: threadAxisTitle } },
+            y: { beginAtZero: true, title: { display: true, text: '线程数' } }
+        },
+        elements: { point: { radius: 0 } }
+    }
+});"""
+
+CHART_JS_THREAD_CPU = """new Chart(document.getElementById('threadCpuChart'), {
+    type: 'line',
+    data: {
+        labels: threadLabels,
+        datasets: threadCpuSeries.map(function (s) {
+            return { label: s.label, data: s.data, borderColor: s.color,
+                     backgroundColor: 'transparent', borderWidth: s.width || 1.2,
+                     fill: false, tension: 0.2, spanGaps: false };
+        })
+    },
+    options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false },
+            title: { display: true, text: '线程 CPU 趋势（TOTAL + 最忙的 45 个线程，多核累计 %）' },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
+        },
+        scales: {
+            x: { display: true, title: { display: true, text: threadAxisTitle } },
+            y: { beginAtZero: true, title: { display: true, text: '%' } }
+        },
+        elements: { point: { radius: 0 } }
+    }
+});"""
+
+
 def _fmt_pct(value) -> str:
     return "-" if value is None else f"{value:.1f}%"
 
 
+def _sparkline(total_vals, thread_vals, width: int = 120, height: int = 26) -> str:
+    """线程贡献表里的迷你趋势图：灰线 = TOTAL，蓝线 = 本线程。
+
+    两个系列共用同一纵轴（按 TOTAL 的峰值缩放），所以能一眼看出
+    「这条线程在 TOTAL 抬起来的时候有没有跟着动」。
+    """
+    n = len(total_vals)
+    if n < 2 or len(thread_vals) != n:
+        return ""
+    vmax = max(max(total_vals), max(thread_vals), 0.01)
+
+    def _points(vals):
+        step = width / (n - 1)
+        return " ".join(
+            f"{i * step:.2f},{height - 1 - (v / vmax) * (height - 2):.2f}"
+            for i, v in enumerate(vals))
+
+    return (
+        f'<svg class="spark" viewBox="0 0 {width} {height}" '
+        f'width="{width}" height="{height}" preserveAspectRatio="none">'
+        f'<polyline points="{_points(total_vals)}" fill="none" '
+        f'stroke="#c8c8c8" stroke-width="1"/>'
+        f'<polyline points="{_points(thread_vals)}" fill="none" '
+        f'stroke="#1976d2" stroke-width="1"/></svg>')
+
+
 def _render_cpu_analysis(a: dict) -> str:
-    """CPU 深度分析章节（分位数 / 阈值分档 / 百分位分档 / 连续段 / 峰值点）。"""
+    """CPU 峰值分析章节：分位数 / 多阈值分档 / 百分位分档 / 贡献汇总 / 峰值明细。
+
+    章节顺序与列名沿用「阈值分档 → 百分位分档 → 贡献汇总」的分析逻辑：
+    先看整段负载分布，再看峰值集中在哪几个采样点，最后看峰值被哪些线程推高。
+    """
     if not a.get("count"):
         return ""
     p = a.get("percentiles") or {}
+    n = a["count"]
+    sub = '<h3 style="font-size:14px;margin:20px 0 6px;color:#333;">{}</h3>'
+    note = '<p style="font-size:12px;color:#888;margin:4px 0 8px;">{}</p>'
+
     parts = [f"""
-        <h2>🔍 CPU 分析</h2>
-        <p style="font-size:12px;color:#888;">※ 基于 {a['count']} 个有效采样点（间隔 {a['interval']} 秒）；
-           分位数用最近秩法。阈值分档的阈值随本次峰值自适应，适合对比同一场景的不同版本。</p>
-        <p style="font-size:12px;color:#888;">分位数：</p>
+        <h2>🔍 CPU 峰值分析</h2>
+        <p style="font-size:12px;color:#888;">※ 基于 {n} 个有效采样点（间隔 {a['interval']} 秒），
+           分位数用最近秩法；阈值按本次峰值自适应，适合横向对比同一场景的不同版本。</p>
+        {_chart_wrap('cpuPeakChart')}
+        {sub.format('分位数总览')}
+        {note.format('把采样值从小到大排序后取对应位置的值，P90 即 90% 的采样点不高于它。')}
         <table class="compare">
             <thead><tr><th>P50</th><th>P75</th><th>P90</th><th>P95</th><th>P99</th><th>峰值</th></tr></thead>
             <tbody><tr>
@@ -247,55 +402,167 @@ def _render_cpu_analysis(a: dict) -> str:
     if a.get("thresholds"):
         rows = "".join(
             f"<tr><td>{r['threshold']:.2f}</td><td>{r['count']}</td>"
-            f"<td>{r['share']:.1f}%</td><td>{r['avg']:.2f}%</td>"
-            f"<td>{r['max']:.2f}%</td><td>{_fmt_pct(r['top5'])}</td></tr>"
+            f"<td>{r['share']:.1f}</td><td>{r['avg']:.2f}</td>"
+            f"<td>{r['max']:.2f}</td><td>{_fmt_pct(r['top5'])}</td></tr>"
             for r in a["thresholds"])
         parts.append(f"""
-        <p style="font-size:12px;color:#888;">阈值分档（采样值 ≥ 阈值）：</p>
+        {sub.format(f'多阈值分档（总采样 {n}）')}
+        {note.format('阈值取本次峰值的 25% / 50% / 75% / 90% / 100%，'
+                     '每一档统计「采样值 ≥ 阈值」的采样点。')}
         <table class="compare">
-            <thead><tr><th>阈值 (%)</th><th>采样数</th><th>占比</th>
-                <th>段内均值</th><th>段内最大</th><th>Top5 线程均值</th></tr></thead>
+            <thead><tr><th>阈值（TOTAL ≥）</th><th>采样数</th><th>占比（%）</th>
+                <th>段内均值（%）</th><th>段内最大（%）</th><th>Top5 线程均值</th></tr></thead>
+            <tbody>{rows}</tbody>
+        </table>""")
+
+    if a.get("fixed_thresholds"):
+        rows = "".join(
+            f"<tr><td>{r['threshold']:.0f}</td><td>{r['count']}</td>"
+            f"<td>{r['share']:.1f}</td><td>{r['avg']:.2f}</td>"
+            f"<td>{r['max']:.2f}</td><td>{_fmt_pct(r['top5'])}</td></tr>"
+            for r in a["fixed_thresholds"])
+        parts.append(f"""
+        {sub.format('固定阈值分档（150 / 200 / 300）')}
+        {note.format('固定阈值便于同一应用不同版本的横向对比；本次没达到的档位保留 0 行。')}
+        <table class="compare">
+            <thead><tr><th>阈值（TOTAL ≥）</th><th>采样数</th><th>占比（%）</th>
+                <th>段内均值（%）</th><th>段内最大（%）</th><th>Top5 线程均值</th></tr></thead>
             <tbody>{rows}</tbody>
         </table>""")
 
     if a.get("percentile_buckets"):
         rows = "".join(
             f"<tr><td>{r['label']}</td><td>{r['threshold']:.2f}</td>"
-            f"<td>{r['count']}</td><td>{r['share']:.1f}%</td>"
-            f"<td>{r['avg']:.2f}%</td><td>{r['max']:.2f}%</td>"
+            f"<td>{r['count']}</td><td>{r['share']:.1f}</td>"
+            f"<td>{r['avg']:.2f}</td><td>{r['max']:.2f}</td>"
             f"<td>{_fmt_pct(r['top5'])}</td></tr>"
             for r in a["percentile_buckets"])
         parts.append(f"""
-        <p style="font-size:12px;color:#888;">百分位分档（按采样点数量取最高的 N%）：</p>
+        {sub.format(f'百分位分档（总采样 {n}，阈值自适应）')}
+        {note.format('按采样点数量取最忙的前 2% / 5% / 10% / 25%，'
+                     '「对应阈值」是这一档里最低的那个采样值。')}
         <table class="compare">
-            <thead><tr><th>分位段</th><th>对应阈值</th><th>采样数</th>
-                <th>实际占比</th><th>段内均值</th><th>段内最大</th><th>Top5 线程均值</th></tr></thead>
+            <thead><tr><th>分位段</th><th>对应阈值（TOTAL ≥）</th><th>采样数</th>
+                <th>实际占比（%）</th><th>段内均值（%）</th><th>段内最大（%）</th>
+                <th>Top5 线程均值</th></tr></thead>
             <tbody>{rows}</tbody>
+        </table>""")
+
+    c = a.get("concentration") or {}
+    if c:
+        bucket = next((r for r in a.get("percentile_buckets") or []
+                       if r.get("label") == "前 5%"), None)
+        scope = f"前 5%，TOTAL ≥ {c.get('threshold', bucket['threshold'] if bucket else 0):.1f}"
+        if bucket:
+            scope += (f"，{bucket['count']}/{n} 采样，占 {bucket['share']:.1f}%，"
+                      f"段内均值 {bucket['avg']:.2f}，峰值最大 {bucket['max']:.2f}")
+        parts.append(f"""
+        {sub.format(f'贡献汇总（{scope}）')}
+        <p class="chips">
+            <span class="chip">Top1 均值 <b>{c['top1']:.1f}%</b></span>
+            <span class="chip">Top5 均值 <b>{c['top5']:.1f}%</b></span>
+            <span class="chip">Top1 最大 <b>{c.get('top1_max', 0):.1f}%</b></span>
+            <span class="chip">模式 <b>{c['mode']}</b></span>
+        </p>
+        {note.format('占比都相对「线程 CPU 合计」计算：Top1 是单个最忙线程，'
+                     'Top5 是前 5 个最忙线程之和。')}
+        {sub.format('集中度指标含义')}
+        <table class="compare">
+            <thead><tr><th>指标</th><th>含义</th><th>当前值（%）</th><th>解读</th></tr></thead>
+            <tbody>
+                <tr><td>Top1 均值</td>
+                    <td>平均每个峰值采样点中，最忙线程占线程合计的比例</td>
+                    <td>{c['top1']:.1f}</td><td>值越大 → 峰值越被单个线程主导</td></tr>
+                <tr><td>Top5 均值</td>
+                    <td>平均每个峰值采样点中，前 5 个最忙线程合计占线程合计的比例</td>
+                    <td>{c['top5']:.1f}</td><td>值越大 → 峰值集中在少数几个线程</td></tr>
+                <tr><td>Top1 最大</td>
+                    <td>所有峰值采样点中，单个线程占线程合计的最高比例</td>
+                    <td>{c.get('top1_max', 0):.1f}</td>
+                    <td>{'存在单线程独占的时刻' if c.get('top1_max', 0) >= 50 else '没有单线程独占'}</td></tr>
+                <tr><td>整体判定</td><td>综合上述三项给出的模式</td>
+                    <td>-</td><td>{c['mode']}</td></tr>
+            </tbody>
+        </table>""")
+
+    # ---- 峰值段线程贡献：分类规则 + 逐线程明细（含迷你趋势）----
+    # 只列峰值段均值最高的 15 个（与性能报告的 Top15 一致）；完整排行看「线程 CPU」页
+    all_pt = a.get("peak_threads") or []
+    pt = all_pt[:15]
+    meta = a.get("peak_thread_meta") or {}
+    if pt:
+        type_colors = {
+            "持续型": "#1976d2", "爆发型": "#e74c3c",
+            "常态型": "#34495e", "偶发型": "#888888",
+        }
+        trows = "".join(
+            f"<tr><td>{r['name']}</td>"
+            f"<td>{r['cpu_avg']:.2f}</td><td>{r['peak_avg']:.2f}</td>"
+            f"<td>{r['peak_max']:.1f}</td>"
+            f"<td>{r['activity_all']:.1f}</td><td>{r['activity_peak']:.1f}</td>"
+            f"<td>{r['share']:.1f}</td>"
+            f"<td style=\"color:{type_colors.get(r['type'], '#333')};\">{r['type']}</td>"
+            f"<td class=\"spark-cell\">{_sparkline(r.get('trend_total') or [], r.get('trend') or [])}</td>"
+            f"</tr>"
+            for r in pt)
+        parts.append(f"""
+        {sub.format('贡献类型分类规则')}
+        <details class="rules" open>
+            <summary>贡献类型分类规则（点击展开/收起）</summary>
+            <table class="compare">
+                <thead><tr><th>类型</th><th>判定条件</th><th>含义</th></tr></thead>
+                <tbody>
+                    <tr><td style="color:#1976d2;">持续型</td>
+                        <td>整体活跃率 ≥ 80% 且 峰值段活跃率 ≥ 80%</td>
+                        <td>常驻热线程，全程持续占用 CPU</td></tr>
+                    <tr><td style="color:#e74c3c;">爆发型</td>
+                        <td>峰值段活跃率 ≥ 60% 且（峰值段活跃率 − 整体活跃率）≥ 30</td>
+                        <td>平时较闲，峰值期间被触发，是 CPU 飙升的主要推手</td></tr>
+                    <tr><td style="color:#34495e;">常态型</td>
+                        <td>峰值段活跃率 ≥ 60%，但不满足持续型 / 爆发型</td>
+                        <td>峰值期活跃，整体也有一定负载，属常规工作线程</td></tr>
+                    <tr><td style="color:#888888;">偶发型</td>
+                        <td>峰值段活跃率 &lt; 60%</td>
+                        <td>峰值期间不常出现，对峰值贡献偶发、较弱</td></tr>
+                </tbody>
+            </table>
+        </details>
+        {sub.format(f'峰值段线程贡献（Top 15，共 {len(all_pt)} 个线程，按峰值段均值降序）')}
+        {note.format(f'峰值段 = 进程 CPU 最忙的前 5% 采样点（{meta.get("peak_total", 0)} 个），'
+                     f'其中 {meta.get("matched", 0)} 个能对到线程采样点；'
+                     '线程不在该轮 Top N 里按 0 计，所以「整体均值 / 峰值段均值」都是下限。'
+                     '趋势图灰线为 TOTAL、蓝线为本线程，两条线共用一个纵轴。')}
+        <table class="compare">
+            <thead><tr><th>线程名</th><th>整体均值（%）</th><th>峰值段均值（%）</th>
+                <th>峰值段最大（%）</th><th>整体活跃率（%）</th><th>峰值段活跃率（%）</th>
+                <th>占TOTAL（%）</th><th>贡献类型</th><th>CPU 趋势（灰=TOTAL，蓝=本线程）</th></tr></thead>
+            <tbody>{trows}</tbody>
         </table>""")
 
     segs = a.get("segments") or []
     iso = a.get("isolated_peaks", 0)
     if segs:
         rows = "".join(
-            f"<tr><td>#{r['start']} ~ #{r['end']}</td><td>{r['duration']:.1f}s</td>"
-            f"<td>{r['avg']:.2f}%</td><td>{r['max']:.2f}%</td>"
+            f"<tr><td>#{r['start']}</td><td>#{r['end']}</td>"
+            f"<td>{r.get('points', '-')}（{r['duration']:.1f}s）</td>"
+            f"<td>{r['max']:.2f}%</td><td>{r['avg']:.2f}%</td>"
             f"<td>{r['dominant'] or '-'}</td></tr>"
             for r in segs)
         parts.append(f"""
-        <p style="font-size:12px;color:#888;">连续峰值段（连续 ≥2 个采样点均 ≥ P90）：</p>
+        {sub.format('连续峰值段')}
+        {note.format('连续 ≥2 个采样点都 ≥ P90 才算一段；只有单个点的归到「峰值采样点明细」。')}
         <table class="compare">
-            <thead><tr><th>采样点区间</th><th>持续</th><th>段内均值</th>
-                <th>段内最大</th><th>主导线程</th></tr></thead>
+            <thead><tr><th>起始#</th><th>结束#</th><th>时长（采样）</th>
+                <th>段内最大</th><th>段内均值</th><th>主导线程</th></tr></thead>
             <tbody>{rows}</tbody>
         </table>""")
         if iso:
-            parts.append(
-                f'<p style="font-size:12px;color:#888;">另有 {iso} 个孤立峰值点'
-                f'（未形成 ≥2 点的连续段），见下方明细。</p>')
+            parts.append(note.format(
+                f'另有 {iso} 个孤立峰值点（未形成 ≥2 点的连续段），见下方明细。'))
     elif iso:
-        parts.append(
-            f'<p style="font-size:12px;color:#888;">连续峰值段（≥2 个采样点）：'
-            f'本次没有；{iso} 个峰值点均为孤立采样，见下方明细。</p>')
+        parts.append(f"""
+        {sub.format('连续峰值段')}
+        {note.format(f'本次没有 ≥2 个采样点的连续峰值段；{iso} 个峰值点均为孤立采样，见下方明细。')}""")
 
     if a.get("peak_samples"):
         rows = "".join(
@@ -303,46 +570,55 @@ def _render_cpu_analysis(a: dict) -> str:
             f"<td>{r['contributors'] or '-'}</td></tr>"
             for r in a["peak_samples"])
         parts.append(f"""
-        <p style="font-size:12px;color:#888;">峰值采样点明细（最高的 5 个点；贡献线程按 ≥5% 列出）：</p>
+        {sub.format(f'峰值采样点明细（全部 {len(a["peak_samples"])} 个 ≥ P90 的点）')}
+        {note.format('按 CPU 降序；贡献线程只列占该点线程合计 ≥5% 的线程。')}
         <table class="compare">
-            <thead><tr><th>采样点</th><th>CPU (%)</th><th>主要贡献线程</th></tr></thead>
+            <thead><tr><th>采样点#</th><th>TOTAL（%）</th>
+                <th>主要贡献线程（≥5%）</th></tr></thead>
             <tbody>{rows}</tbody>
         </table>""")
-
-    c = a.get("concentration") or {}
-    if c:
-        parts.append(f"""
-        <p style="font-size:12px;color:#888;">峰值集中度（{c['samples']} 个峰值点）：
-            Top1 线程均值 <b>{c['top1']:.1f}%</b> · Top5 线程均值 <b>{c['top5']:.1f}%</b>
-            · 判定：<b>{c['mode']}</b></p>""")
     return "".join(parts)
 
 
-def _render_thread_analysis(thread_samples, cpu_avg: float = 0.0) -> str:
-    """线程分析章节（数量统计 + 最忙线程排行）。"""
+def _render_thread_analysis(thread_samples, cpu_avg: float = 0.0, rank=None):
+    """返回 (线程数量 HTML, 线程 CPU HTML)。
+
+    拆成两块是为了放进两个 Tab（对齐百度报告的「线程数量 / 线程cpu」）。
+    rank：线程探针在会话结束时给出的全量排行；旧会话没有时回退到 Top 15 聚合。
+    """
     ta = analyze_threads(thread_samples)
     if not ta.get("count"):
-        return ""
+        return "", ""
     t = ta["totals"]
+    rows_data = rank or ta.get("threads") or []
+    complete = bool(rank)
     note = ""
     if cpu_avg > 0 and t["cpu_avg"] > 0:
         diff = abs(t["cpu_avg"] - cpu_avg) / cpu_avg * 100.0
         if diff > 20:
             note = (f"<br>※ 线程合计与进程 CPU 均值相差 {diff:.0f}%，"
                     f"多为两个探针的采样窗口不同步所致，趋势仍可参考。")
+    coverage = (
+        "列出会话中出现过的全部线程（按均值排序）"
+        if complete else
+        "旧会话没有全量排行，这里从每个采样点的 Top N 中聚合，可能缺少部分线程"
+    )
 
     rows = "".join(
         f"<tr><td>{r['name']}</td><td>{r['tid']}</td>"
         f"<td>{r['cpu_avg']:.2f}%</td><td>{r['cpu_max']:.2f}%</td>"
+        f"<td>{r.get('active', '-')}</td><td>{r.get('activity', 0):.2f}</td>"
+        f"<td>{r.get('s_avg', 0):.2f}%</td><td>{r.get('number', 1)}</td>"
         f"<td>{r['share']:.1f}%</td></tr>"
-        for r in ta["threads"])
-    return f"""
-        <h2>🧵 线程分析（所选进程）</h2>
+        for r in rows_data)
+
+    count_html = f"""
+        <h2>🧵 线程数量</h2>
         <p style="font-size:12px;color:#888;">※ 数据源 <code>/proc/&lt;pid&gt;/task/*/stat</code>；
-           线程 CPU 为多核累计，单线程最高 100%。全量线程明细见产物目录的
-           <code>threads_*.csv</code>，这里只列每个采样点最忙的 15 个线程；
-           均值按整个会话平均（某次未进入 Top 15 的线程按 0 计），因此是下限，
-           占比合计可能小于 100%。线程名由内核截断到 15 个字符。{note}</p>
+           线程 CPU 为多核累计，单线程最高 100%。{coverage}；
+           均值按整个会话平均（某轮不存在的线程按 0 计），因此是下限。
+           线程名由内核截断到 15 个字符。全量线程明细见产物目录的
+           <code>threads_*.csv</code>。{note}</p>
         <table class="compare compare4">
             <thead><tr><th>项目</th><th>均值</th><th>峰值</th><th>最低</th></tr></thead>
             <tbody>
@@ -354,14 +630,25 @@ def _render_thread_analysis(thread_samples, cpu_avg: float = 0.0) -> str:
                     <td>{t['cpu_max']:.2f}</td><td>{t['cpu_min']:.2f}</td></tr>
             </tbody>
         </table>
-        <p style="font-size:12px;color:#888;">最忙的线程（按均值排序）：</p>
-        <table class="compare">
-            <thead><tr><th>线程</th><th>TID</th><th>CPU 均值 (%)</th>
-                <th>CPU 峰值 (%)</th><th>占线程合计</th></tr></thead>
-            <tbody>{rows}</tbody>
-        </table>
+        {_chart_wrap('threadCountChart')}
         <p style="font-size:12px;color:#888;">共 {ta['count']} 个采样点</p>
         """
+
+    cpu_html = f"""
+        <h2>🧵 线程 CPU</h2>
+        <p style="font-size:12px;color:#888;">※ 按线程名聚合（同名线程池合并）；
+           采样数 = 该线程名任一线程 CPU &gt; 0 的采样点个数，活跃度 = 采样数 / 总采样数，
+           活跃均值只在这些采样上平均。共 {len(rows_data)} 个线程名，全部列出、按均值降序。</p>
+        {_chart_wrap('threadCpuChart')}
+        <p style="font-size:12px;color:#888;">线程排行（共 {len(rows_data)} 个线程，按均值排序）：</p>
+        <table class="compare">
+            <thead><tr><th>线程</th><th>TID</th><th>CPU 均值 (%)</th>
+                <th>CPU 峰值 (%)</th><th>采样数</th><th>活跃度</th>
+                <th>活跃均值 (%)</th><th>实例数</th><th>占比</th></tr></thead>
+            <tbody>{rows}</tbody>
+        </table>
+        """
+    return count_html, cpu_html
 
 
 class PerfReportGenerator:
@@ -380,6 +667,7 @@ class PerfReportGenerator:
         fps_series = []
         rx_rate_series = []   # 流量速率（KB/s），按相邻采样差分
         tx_rate_series = []
+        mem_native_system = []  # native+system（MB）
 
         if samples:
             t0 = samples[0].timestamp
@@ -399,6 +687,9 @@ class PerfReportGenerator:
                     mem_cat_series[cat].append(
                         f"{s.mem_breakdown.get(cat, 0.0):.2f}"
                     )
+                mem_native_system.append(round(
+                    float(s.mem_breakdown.get("Native", 0.0))
+                    + float(s.mem_breakdown.get("System", 0.0)), 2))
                 fps_series.append(str(s.fps))
                 # 流量速率：相邻采样点差分换算 KB/s（首次只记基准不画点）
                 if prev_rx is not None and prev_ts is not None and (t - prev_ts) > 0:
@@ -424,12 +715,94 @@ class PerfReportGenerator:
                     f"{int(ts // 60)}:{int(ts % 60):02d}"
                     for ts in (s.timestamp - t0 for s in samples)
                 ]
-            else:
-                axis_unit = "秒"
-                axis_labels = timestamps
         else:
             axis_unit = "秒"
             axis_labels = timestamps
+
+        # 实时曲线的数据集：单进程 → 只有合计一条；多进程 → 合计 + 每个进程一条
+        _cpu_proc_names = []
+        for _n in (getattr(session, "app_processes", None) or []):
+            if _n and _n not in _cpu_proc_names:
+                _cpu_proc_names.append(_n)
+        for _s in samples:
+            for _n in (_s.cpu_by_process or {}):
+                if _n and _n not in _cpu_proc_names:
+                    _cpu_proc_names.append(_n)
+        _cpu_multi = len(_cpu_proc_names) > 1
+        _cpu_palette = ['#e67e22', '#16a085', '#8e44ad', '#c0392b',
+                        '#2c3e50', '#d35400', '#7f8c8d', '#27ae60']
+        cpu_chart_series = [{
+            "label": "CPU 合计" if _cpu_multi else "CPU (%)",
+            "data": [None if v == "null" else float(v) for v in cpu_series],
+            "borderColor": "#3498db",
+            "backgroundColor": "rgba(52,152,219,0.10)",
+            "borderWidth": 2,
+            "fill": True,
+            "tension": 0.3,
+        }]
+        if _cpu_multi:
+            for _i, _name in enumerate(_cpu_proc_names):
+                _vals, _has = [], False
+                for _s in samples:
+                    _v = (_s.cpu_by_process or {}).get(_name)
+                    if _v is None:
+                        _vals.append(None)
+                    else:
+                        _vals.append(round(float(_v), 2))
+                        _has = True
+                if not _has:
+                    continue
+                cpu_chart_series.append({
+                    "label": _name,
+                    "data": _vals,
+                    "borderColor": _cpu_palette[_i % len(_cpu_palette)],
+                    "backgroundColor": "transparent",
+                    "borderWidth": 1.6,
+                    "fill": False,
+                    "tension": 0.3,
+                })
+        cpu_chart_series_js = json.dumps(cpu_chart_series, ensure_ascii=False)
+
+        # 内存曲线：参数名与性能报告一致（total_pss / res / java_heap / native_heap /
+        # code_mem / stack_mem / graphics_mem / other_mem / system_mem / native+system_mem）
+        mem_chart_series = []
+        if samples and ('mem' in session.metrics):
+            def _cat_vals(key):
+                return [round(float(s.mem_breakdown.get(key, 0.0)), 2) for s in samples]
+
+            mem_chart_series.append({
+                "label": "total_pss",
+                "data": [round(float(s.mem_pss_mb), 2) for s in samples],
+                "borderColor": "#2c3e50", "borderWidth": 2.2,
+                "fill": False, "tension": 0.3,
+            })
+            if any(s.mem_breakdown for s in samples):
+                for key, label, color in (
+                    ("Java", "java_heap", "#f39c12"),
+                    ("Native", "native_heap", "#3498db"),
+                    ("Code", "code_mem", "#f1c40f"),
+                    ("Stack", "stack_mem", "#e84393"),
+                    ("Graphics", "graphics_mem", "#9b59b6"),
+                    ("Others", "other_mem", "#27ae60"),
+                ):
+                    mem_chart_series.append({
+                        "label": label, "data": _cat_vals(key),
+                        "borderColor": color, "borderWidth": 1.5,
+                        "fill": False, "tension": 0.3,
+                    })
+                if any("System" in s.mem_breakdown for s in samples):
+                    mem_chart_series.append({
+                        "label": "system_mem", "data": _cat_vals("System"),
+                        "borderColor": "#34495e", "borderWidth": 1.5,
+                        "fill": False, "tension": 0.3,
+                    })
+                    mem_chart_series.append({
+                        "label": "native+system_mem", "data": list(mem_native_system),
+                        "borderColor": "#95a5a6", "borderWidth": 1.5,
+                        "fill": False, "tension": 0.3,
+                    })
+        mem_chart_series_js = json.dumps(mem_chart_series, ensure_ascii=False)
+
 
         # 汇总信息
         app_pkg = session.app_package
@@ -603,9 +976,31 @@ class PerfReportGenerator:
         mem_stat = stats.get('mem')
         if 'mem' in metrics and mem_stat and not baseline_covers_mem:
             breakdown = stats.get('mem_breakdown') or {}
-            detail_rows = [('Total', mem_stat)]
-            detail_rows += [(cat, breakdown[cat]) for cat, _lbl, _color in MEM_CATEGORIES
+            # 参数名与性能报告对齐：total_pss / res / java_heap / ...
+            _mem_names = {
+                "Java": "java_heap", "Native": "native_heap",
+                "Graphics": "graphics_mem", "Stack": "stack_mem",
+                "Code": "code_mem", "System": "system_mem", "Others": "other_mem",
+            }
+
+            def _stat(values):
+                vals = [v for v in values if v > 0]
+                if not vals:
+                    return None
+                return {"avg": sum(vals) / len(vals), "max": max(vals), "min": min(vals)}
+
+            detail_rows = [('total_pss', mem_stat)]
+            res_stat = _stat([float(getattr(x, 'mem_res_mb', 0.0) or 0.0)
+                              for x in samples])
+            if res_stat:
+                detail_rows.append(('res', res_stat))
+            detail_rows += [(k, breakdown[cat]) for cat, k in _mem_names.items()
                             if cat in breakdown]
+            ns_stat = _stat([
+                float(x.mem_breakdown.get("Native", 0.0))
+                + float(x.mem_breakdown.get("System", 0.0)) for x in samples])
+            if ns_stat:
+                detail_rows.append(('native+system_mem', ns_stat))
             detail_tr = ""
             for label, st in detail_rows:
                 detail_tr += f"""
@@ -617,8 +1012,10 @@ class PerfReportGenerator:
                     </tr>"""
             mem_detail_html = f"""
         <h2>🧩 内存详情</h2>
+        <p style="font-size:12px;color:#888;">※ 参数名与性能报告一致；total_pss 与各分类来自
+           <code>dumpsys meminfo</code>，res 为 TOTAL RSS，单位 MB。</p>
         <table class="compare compare4">
-            <thead><tr><th>分类</th><th>均值 (MB)</th><th>峰值 (MB)</th><th>最低 (MB)</th></tr></thead>
+            <thead><tr><th>参数</th><th>均值 (MB)</th><th>峰值 (MB)</th><th>最低 (MB)</th></tr></thead>
             <tbody>{detail_tr}</tbody>
         </table>
         """
@@ -629,18 +1026,28 @@ class PerfReportGenerator:
 
         # ---------- CPU 深度分析（P1）+ 线程分析（P2/P3） ----------
         cpu_analysis_html = ""
-        thread_analysis_html = ""
+        thread_count_html = ""
+        thread_cpu_html = ""
+        cpu_p90 = 0.0
+        thread_samples = list(getattr(session, 'thread_samples', None) or [])
+        thread_rank = list(getattr(session, 'thread_rank', None) or [])
+        # 旧版本会话的 thread_rank 是按 TID 聚合的旧口径（没有 active/activity 字段），
+        # 直接渲染会是一排 "-"；丢掉它，回退到 Top15 聚合。
+        if thread_rank and 'active' not in thread_rank[0]:
+            thread_rank = []
         if 'cpu' in metrics and samples:
             cpu_points = [
                 (s.timestamp, float(s.cpu_percent))
                 for s in samples
                 if not any(str(e).startswith('cpu:') for e in (getattr(s, 'errors', None) or ()))
             ]
-            thread_samples = list(getattr(session, 'thread_samples', None) or [])
             analysis = analyze_cpu(cpu_points, session.sample_interval, thread_samples)
+            cpu_p90 = float((analysis.get('percentiles') or {}).get('p90') or 0.0)
             cpu_analysis_html = _render_cpu_analysis(analysis)
-            thread_analysis_html = _render_thread_analysis(
-                thread_samples, (stats.get('cpu') or {}).get('avg', 0.0))
+            thread_count_html, thread_cpu_html = _render_thread_analysis(
+                thread_samples,
+                (stats.get('cpu') or {}).get('avg', 0.0),
+                thread_rank or None)
 
         sys_mem_html = ""
         _sm = [x for x in (getattr(session, "sys_mem_samples", None) or [])
@@ -674,35 +1081,67 @@ class PerfReportGenerator:
 
         # 整机 CPU（探针）：与「CPU」卡的所选进程口径不同，单独成节
         sys_cpu_html = ""
+        sys_raw_series = {}
         _sc = [x for x in (getattr(session, "sys_cpu_samples", None) or [])
                if "cpu_pct" in x]
         if _sc:
-            cpu_v = [float(x.get("cpu_pct") or 0) for x in _sc]
-            user_v = [float(x.get("user_pct") or 0) for x in _sc]
-            sys_v = [float(x.get("sys_pct") or 0) for x in _sc]
             cores = _sc[-1].get("cores") or 0
-            # 峰值多核累计 = 各点「占用率 × 核数」的最大值（total_pct 是容量，不是占用）
-            total_peak = max(
-                (float(x.get("cpu_pct") or 0) * (x.get("cores") or cores or 0) for x in _sc),
-                default=0.0)
+
+            def _raw_series(raw_key, norm_key):
+                """优先用探针记录的 raw（多核累计）；旧会话用 归一化值 × 核数 还原。"""
+                if any(raw_key in x for x in _sc):
+                    return [float(x.get(raw_key) or 0) for x in _sc]
+                if norm_key:
+                    return [float(x.get(norm_key) or 0) * (x.get("cores") or cores or 0)
+                            for x in _sc]
+                return [0.0] * len(_sc)
+
+            total_v = [float(x.get("total_pct") or (x.get("cores") or cores or 0) * 100)
+                       for x in _sc]
+            _CPU_DESC = {
+                "D_total": "总容量（核数 × 100）",
+                "D_busy": "占用 = 总容量 − 空闲",
+                "D_user": "用户态",
+                "D_nice": "低优先级（nice）",
+                "D_sys": "内核态",
+                "D_idle": "空闲",
+                "D_iow": "IO 等待",
+                "D_irq": "硬中断",
+                "D_sirq": "软中断",
+                "D_host": "虚拟化损失（steal）",
+            }
+            _rows = [
+                ("D_total", total_v),
+                ("D_busy", _raw_series("busy_raw", "cpu_pct")),
+                ("D_user", _raw_series("user_raw", "user_pct")),
+                ("D_nice", _raw_series("nice_raw", None)),
+                ("D_sys", _raw_series("sys_raw", "sys_pct")),
+                ("D_idle", _raw_series("idle_raw", "idle_pct")),
+                ("D_iow", _raw_series("iow_raw", "iow_pct")),
+                ("D_irq", _raw_series("irq_raw", None)),
+                ("D_sirq", _raw_series("sirq_raw", None)),
+                ("D_host", _raw_series("host_raw", None)),
+            ]
+            sys_raw_series = {name: vals for name, vals in _rows}
+            table_rows = "".join(
+                f"<tr><td>{name}</td><td>{_CPU_DESC.get(name, '')}</td>"
+                f"<td>{_avg(vals):.2f}</td>"
+                f"<td>{max(vals):.1f}</td><td>{min(vals):.1f}</td></tr>"
+                for name, vals in _rows)
             degraded = any(x.get("degraded") for x in _sc)
             core_txt = f"{cores} 核" if cores else "核数未知"
             deg_note = ("<br>※ 该设备的 <code>top</code> 不支持批量模式，已降级为 "
-                        "<code>/proc/stat</code> 差分，因此没有用户 / 内核明细。") if degraded else ""
+                        "<code>/proc/stat</code> 差分。") if degraded else ""
             sys_cpu_html = f"""
         <h2>⚙️ 整机 CPU</h2>
-        <p style="font-size:12px;color:#888;">※ 本项为<b>整机口径</b>（{core_txt}，占用率已归一化到 0~100%，
-           峰值多核累计 {total_peak:.0f}%），包含设备上所有进程，与上方「CPU」卡（所选进程）口径不同。{deg_note}</p>
-        <table class="compare compare4">
-            <thead><tr><th>项目</th><th>均值</th><th>峰值</th><th>最低</th></tr></thead>
-            <tbody>
-                <tr><td>整机占用 (%)</td><td>{_avg(cpu_v):.1f}</td>
-                    <td>{max(cpu_v):.1f}</td><td>{min(cpu_v):.1f}</td></tr>
-                <tr><td>用户态 (%)</td><td>{_avg(user_v):.1f}</td>
-                    <td>{max(user_v):.1f}</td><td>{min(user_v):.1f}</td></tr>
-                <tr><td>内核态 (%)</td><td>{_avg(sys_v):.1f}</td>
-                    <td>{max(sys_v):.1f}</td><td>{min(sys_v):.1f}</td></tr>
-            </tbody>
+        <p style="font-size:12px;color:#888;">※ 本项为<b>整机口径</b>（{core_txt}）：各项都是 <b>多核累计值</b>
+           （满负荷上限 {cores * 100 if cores else '核数×100'}%），包含设备上所有进程，不做 0~100% 归一化。
+           D_total 是总容量，D_busy = D_total − D_idle，其余各项分别是 CPU 时间花在了哪里；
+           与上方「CPU」卡（所选进程）口径不同，两者不能互相换算。{deg_note}</p>
+        {_chart_wrap('sysCpuChart')}
+        <table class="compare">
+            <thead><tr><th>指标</th><th>含义</th><th>平均值</th><th>最大值</th><th>最小值</th></tr></thead>
+            <tbody>{table_rows}</tbody>
         </table>
         <p style="font-size:12px;color:#888;">共 {len(_sc)} 个采样点</p>
         """
@@ -823,13 +1262,7 @@ class PerfReportGenerator:
 
         def _wrap(canvas_id):
             """图表容器 + 重置缩放按钮（拖拽平移/滚轮缩放后一键回到全量视图）"""
-            return f"""
-        <div class="chart-wrap">
-            <canvas id="{canvas_id}"></canvas>
-        </div>
-        <div class="chart-toolbar">
-            <button class="zoom-reset" data-chart="{canvas_id}">↺ 重置缩放</button>
-        </div>"""
+            return _chart_wrap(canvas_id)
 
         if 'cpu' in metrics:
             charts_section += _wrap('cpuChart')
@@ -853,15 +1286,207 @@ class PerfReportGenerator:
             chart_scripts.append(CHART_JS_TRAFFIC)
         if charts_section:
             charts_section = '<h2>📈 实时曲线</h2>' + charts_section
+
+        # 分析区的折线图脚本（画布已嵌在对应章节 HTML 里）
+        if cpu_analysis_html:
+            chart_scripts.append(CHART_JS_CPU_PEAK)
+        if sys_cpu_html:
+            chart_scripts.append(CHART_JS_SYS_CPU)
+        if thread_count_html:
+            chart_scripts.append(CHART_JS_THREAD_COUNT)
+            chart_scripts.append(CHART_JS_THREAD_CPU)
         charts_js = "\n\n".join(chart_scripts)
+
+        # ---- 分析区折线图的数据（x 轴相对各自首个采样点，按总时长自动选时分/分秒）----
+        _sys_pts = [x for x in (getattr(session, 'sys_cpu_samples', None) or [])
+                    if 'cpu_pct' in x]
+        # 横轴与主曲线同一套规则：时长 ≥1h 用「时:分」，≥1min 用「分:秒」，否则秒
+        if _sys_pts:
+            _sys_unit, _sys_labels = _time_axis_labels(
+                [x.get('ts') for x in _sys_pts], float(_sys_pts[0].get('ts') or 0))
+        else:
+            _sys_unit, _sys_labels = "秒", []
+        sys_cpu_axis_title = f"时间 ({_sys_unit})"
+        sys_cpu_labels_js = ",".join(f"'{l}'" for l in _sys_labels)
+
+        def _sys_js(key):
+            """D_* 系列转 JS 数组（多核累计，不做归一化）。"""
+            return ",".join(f"{v:.1f}" for v in sys_raw_series.get(key, []))
+
+        sys_cpu_total_js = _sys_js("D_total")
+        sys_cpu_data_js = _sys_js("D_busy")
+        sys_cpu_user_js = _sys_js("D_user")
+        sys_cpu_nice_js = _sys_js("D_nice")
+        sys_cpu_sys_js = _sys_js("D_sys")
+        sys_cpu_idle_js = _sys_js("D_idle")
+        sys_cpu_iow_js = _sys_js("D_iow")
+        sys_cpu_irq_js = _sys_js("D_irq")
+        sys_cpu_sirq_js = _sys_js("D_sirq")
+        sys_cpu_host_js = _sys_js("D_host")
+
+        _th_pts = [x for x in (getattr(session, 'thread_samples', None) or [])
+                   if 'thread_total' in x]
+        if _th_pts:
+            _th_unit, _th_labels = _time_axis_labels(
+                [x.get('ts') for x in _th_pts], float(_th_pts[0].get('ts') or 0))
+        else:
+            _th_unit, _th_labels = "秒", []
+        thread_axis_title = f"时间 ({_th_unit})"
+        thread_labels_js = ",".join(f"'{l}'" for l in _th_labels)
+        thread_total_js = ",".join(str(int(x.get('thread_total') or 0)) for x in _th_pts)
+        thread_active_js = ",".join(str(int(x.get('thread_active') or 0)) for x in _th_pts)
+
+        # 线程 CPU 多线图：TOTAL + 均值最高的 45 个线程名（与百度 topn=45 对齐）
+        # 按线程名聚合（同名线程池求和）；某采样点没进 Top 45 → null（断点，不臆造 0）
+        _rank = list(thread_rank)
+        if not _rank and _th_pts:
+            _rank = analyze_threads(_th_pts).get('threads') or []
+
+        def _hsl(i, n):
+            """等间隔色相，series 再多也能区分开。"""
+            hue = int(360.0 * (i % max(n, 1)) / max(n, 1))
+            return f"hsl({hue},65%,48%)"
+
+        _thread_cpu_series = []
+        if _th_pts:
+            _thread_cpu_series.append({
+                'label': 'TOTAL',
+                'color': '#e74c3c',
+                'width': 2.2,
+                'data': [round(float(s.get('cpu_total') or 0), 2) for s in _th_pts],
+            })
+        _top_names = []
+        _seen_names = set()
+        for _th in _rank:
+            _n = _th.get('name')
+            if not _n or _n in _seen_names:
+                continue                 # 旧会话的 rank 按 TID 存，同名会重复出现
+            _seen_names.add(_n)
+            _top_names.append(_n)
+            if len(_top_names) >= 45:
+                break
+        for _i, _name in enumerate(_top_names):
+            _data = []
+            for _s in _th_pts:
+                _val = None
+                for _t in (_s.get('top') or []):
+                    if _t.get('name') == _name:
+                        _val = (_val or 0.0) + float(_t.get('cpu') or 0)
+                _data.append(round(_val, 2) if _val is not None else None)
+            _thread_cpu_series.append({
+                'label': str(_name),
+                'color': _hsl(_i, len(_top_names)),
+                'data': _data,
+            })
+        thread_cpu_series_js = json.dumps(_thread_cpu_series, ensure_ascii=False)
+
+        # ---- 测试详情汇总表（对齐百度报告的「一、性能测试详情」）----
+        # 目标进程（主进程在第一个）：多进程时详情表按进程逐行给出均值/峰值/最低
+        _procs = list(getattr(session, "app_processes", None) or []) or [session.app_package]
+        _proc_row = ""
+        if len(_procs) > 1:
+            _proc_row = ('<tr><td class="label">目标进程</td><td>'
+                         + "<br>".join(_procs) + "</td></tr>")
+
+        _detail_rows = []
+        if 'cpu' in metrics:
+            _s = stats.get('cpu') or {}
+            _detail_rows.append((
+                "进程 CPU 合计 (%)" if len(_procs) > 1 else "进程 CPU (%)",
+                f"{_s.get('avg', 0):.1f}", f"{_s.get('max', 0):.1f}",
+                f"{_s.get('min', 0):.1f}",
+                f"P90 {cpu_p90:.1f}%"))
+            if len(_procs) > 1:
+                for _name in _procs:
+                    _vals = [float((s.cpu_by_process or {}).get(_name))
+                             for s in samples if _name in (s.cpu_by_process or {})]
+                    if not _vals:
+                        continue
+                    _detail_rows.append((
+                        f"CPU：{_name}", f"{sum(_vals) / len(_vals):.1f}",
+                        f"{max(_vals):.1f}", f"{min(_vals):.1f}", "单进程"))
+        if _sys_pts:
+            # 与「设备 CPU」页同口径：多核累计，不做 0~100% 归一化
+            _v = list(sys_raw_series.get('D_busy') or [])
+            if _v:
+                _detail_rows.append((
+                    "整机 CPU (%)", f"{sum(_v) / len(_v):.1f}", f"{max(_v):.1f}",
+                    f"{min(_v):.1f}", f"整机口径，多核累计（{cores or '?'} 核）"))
+        _ta = analyze_threads(_th_pts) if _th_pts else {}
+        _tt = _ta.get('totals') or {}
+        if _tt:
+            _detail_rows.append((
+                "线程总数", f"{_tt['total_avg']:.0f}", f"{_tt['total_max']}",
+                f"{_tt['total_min']}", f"活跃均值 {_tt['active_avg']:.0f}"))
+            _detail_rows.append((
+                "线程 CPU 合计 (%)", f"{_tt['cpu_avg']:.1f}", f"{_tt['cpu_max']:.1f}",
+                f"{_tt['cpu_min']:.1f}", "多核累计"))
+        if 'mem' in metrics:
+            _s = stats.get('mem') or {}
+            _detail_rows.append((
+                "total_pss (MB)", f"{_s.get('avg', 0):.1f}", f"{_s.get('max', 0):.1f}",
+                f"{_s.get('min', 0):.1f}",
+                "多进程合计" if len(_procs) > 1 else "所选进程"))
+            _res_vals = [float(getattr(x, 'mem_res_mb', 0.0) or 0.0) for x in samples]
+            _res_vals = [v for v in _res_vals if v > 0]
+            if _res_vals:
+                _detail_rows.append((
+                    "res (MB)", f"{sum(_res_vals) / len(_res_vals):.1f}",
+                    f"{max(_res_vals):.1f}", f"{min(_res_vals):.1f}", "TOTAL RSS"))
+        if 'fps' in metrics:
+            _s = stats.get('fps') or {}
+            _detail_rows.append((
+                "FPS", f"{_s.get('avg', 0):.1f}", f"{_s.get('max', 0):.0f}",
+                f"{_s.get('min', 0):.0f}", ""))
+        if 'traffic' in stats:
+            _t = stats['traffic']
+            _detail_rows.append((
+                "流量 (MB)", f"↓{_t['rx_mb']:.1f} / ↑{_t['tx_mb']:.1f}", "-", "-", "按 UID"))
+        detail_html = ""
+        if _detail_rows:
+            _rows = "".join(
+                f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td>"
+                f"<td>{r[3]}</td><td>{r[4]}</td></tr>" for r in _detail_rows)
+            detail_html = f"""
+        <h2>📌 测试详情</h2>
+        <table class="compare">
+            <thead><tr><th>指标</th><th>均值</th><th>峰值</th><th>最低</th><th>备注</th></tr></thead>
+            <tbody>{_rows}</tbody>
+        </table>"""
+
+        # ---- 详细分析改成 Tab（对齐百度报告：设备cpu / 线程数量 / 线程cpu / 峰值分析）----
+        _tabs = []
+        if sys_cpu_html:
+            _tabs.append(("tab-sys", "设备 CPU", sys_cpu_html))
+        if thread_count_html:
+            _tabs.append(("tab-thread-count", "线程数量", thread_count_html))
+        if thread_cpu_html:
+            _tabs.append(("tab-thread-cpu", "线程 CPU", thread_cpu_html))
+        if cpu_analysis_html:
+            _tabs.append(("tab-cpu", "CPU 峰值分析", cpu_analysis_html))
+        analysis_html = ""
+        if _tabs:
+            _btns = "".join(
+                f'<button class="tab-btn{" active" if _i == 0 else ""}" '
+                f'data-tab="{_tid}">{_label}</button>'
+                for _i, (_tid, _label, _h) in enumerate(_tabs))
+            _panels = "".join(
+                f'<div class="tab-panel{" active" if _i == 0 else ""}" id="{_tid}">{_h}</div>'
+                for _i, (_tid, _label, _h) in enumerate(_tabs))
+            analysis_html = (
+                '<h2>🔬 详细分析</h2>'
+                f'<div class="tabs"><div class="tab-bar">{_btns}</div>{_panels}</div>')
 
         # 统计口径：让读者一眼看清每个数字统计的是"谁"
         _scopes = getattr(session, "scopes", None) or {}
         _scope_parts = []
         for _k in ("cpu", "mem", "fps", "traffic"):
             if _k in metrics and _scopes.get(_k):
-                _scope_parts.append(
-                    f"{metric_label(_k)} = {SCOPE_LABELS.get(_scopes[_k], _scopes[_k])}")
+                _label = SCOPE_LABELS.get(_scopes[_k], _scopes[_k])
+                if len(_procs) > 1:
+                    # 多进程目标：CPU / 内存按进程求和，FPS / 流量按主进程
+                    _label += "（多进程合计）" if _k in ("cpu", "mem") else "（主进程）"
+                _scope_parts.append(f"{metric_label(_k)} = {_label}")
         # 整机探针也标出来（它不在 metrics 里，是按勾选启动的旁路采集）
         if getattr(session, "sys_mem_samples", None):
             _scope_parts.append(f"系统内存 = {SCOPE_LABELS.get(SCOPE_SYSTEM, '整机')}")
@@ -966,11 +1591,43 @@ class PerfReportGenerator:
                完全跟着这个容器走（原 280px 时绘图区只剩 ~130px，太扁） */
             height: 400px;
         }}
+        .chart-legend {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px 14px;
+            margin: 8px 2px 6px;
+            font-size: 12px;
+            color: #555;
+        }}
+        .chart-legend .legend-item {{
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            user-select: none;
+            line-height: 18px;
+        }}
+        .chart-legend .legend-item i {{
+            width: 12px;
+            height: 3px;
+            border-radius: 2px;
+            display: inline-block;
+            flex: none;
+        }}
+        .chart-legend .legend-item.off {{
+            opacity: 0.35;
+            text-decoration: line-through;
+        }}
         .chart-toolbar {{
             text-align: right;
             margin: 0 0 12px;
         }}
-        .zoom-reset {{
+        .chart-toolbar button + button {{
+            margin-left: 8px;
+        }}
+        .zoom-reset,
+        .chart-select-all,
+        .chart-invert {{
             padding: 3px 12px;
             font-size: 12px;
             color: #666;
@@ -978,8 +1635,11 @@ class PerfReportGenerator:
             border: 1px solid #d0d0d0;
             border-radius: 6px;
             cursor: pointer;
+            font-family: inherit;
         }}
-        .zoom-reset:hover {{
+        .zoom-reset:hover,
+        .chart-select-all:hover,
+        .chart-invert:hover {{
             color: #1976d2;
             border-color: #1976d2;
         }}
@@ -1028,6 +1688,85 @@ class PerfReportGenerator:
         .badge.worse {{ background: #fdecea; color: #e74c3c; }}
         .badge.better {{ background: #eafaf1; color: #27ae60; }}
         .badge.stable {{ background: #f0f0f0; color: #888; }}
+        /* 贡献汇总：一行指标小标签 */
+        .chips {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 4px 0 8px;
+        }}
+        .chip {{
+            display: inline-block;
+            padding: 3px 12px;
+            font-size: 12px;
+            color: #444;
+            background: #f4f7fb;
+            border: 1px solid #e3ecf7;
+            border-radius: 12px;
+        }}
+        .chip b {{ color: #1976d2; }}
+        /* 贡献类型规则：原生 details 折叠，默认展开 */
+        details.rules {{
+            margin: 6px 0 10px;
+        }}
+        details.rules > summary {{
+            cursor: pointer;
+            font-size: 13px;
+            color: #555;
+            margin-bottom: 6px;
+        }}
+        details.rules > summary:hover {{ color: #1976d2; }}
+        /* 线程贡献表里的迷你趋势图 */
+        td.spark-cell {{ padding: 2px 8px; }}
+        svg.spark {{ display: block; }}
+        /* 表格「复制」按钮：贴在表格右上角上方，不压表头文字 */
+        .table-wrap {{ position: relative; padding-top: 18px; }}
+        .table-wrap > .copy-table {{
+            position: absolute;
+            top: 0;
+            right: 2px;
+            z-index: 2;
+            padding: 1px 9px;
+            font-size: 11px;
+            color: #888;
+            background: #fff;
+            border: 1px solid #dcdcdc;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: inherit;
+        }}
+        .table-wrap > .copy-table:hover {{
+            color: #1976d2;
+            border-color: #1976d2;
+        }}
+        /* 详细分析：Tab 切换（隐藏面板里的图表在切过来时 resize） */
+        .tabs {{ margin: 8px 0 22px 0; }}
+        .tab-bar {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            border-bottom: 2px solid #e8eaed;
+            margin-bottom: 16px;
+        }}
+        .tab-btn {{
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            padding: 8px 16px;
+            font-size: 14px;
+            color: #666;
+            cursor: pointer;
+            font-family: inherit;
+        }}
+        .tab-btn:hover {{ color: #1976d2; }}
+        .tab-btn.active {{
+            color: #1976d2;
+            border-bottom-color: #1976d2;
+            font-weight: 600;
+        }}
+        .tab-panel {{ display: none; }}
+        .tab-panel.active {{ display: block; }}
     </style>
 </head>
 <body>
@@ -1045,6 +1784,7 @@ class PerfReportGenerator:
                 <td class="label">应用包名</td>
                 <td>{app_pkg}</td>
             </tr>
+            {_proc_row}
             <tr>
                 <td class="label">设备</td>
                 <td>{device}</td>
@@ -1077,16 +1817,16 @@ class PerfReportGenerator:
             {scenario_info}
         </table>
 
+        {detail_html}
+
         <h2>📊 关键指标</h2>
         <div class="summary">
             {summary_cards_html}
         </div>
 
-        {cpu_analysis_html}
+        {charts_section}
 
-        {sys_cpu_html}
-
-        {thread_analysis_html}
+        {analysis_html}
 
         {mem_detail_html}
 
@@ -1100,8 +1840,6 @@ class PerfReportGenerator:
 
         {baseline_html}
 
-        {charts_section}
-
         {alerts_html}
 
         <div class="footer">
@@ -1114,7 +1852,9 @@ class PerfReportGenerator:
         const axisLabels = [{','.join(f"'{l}'" for l in axis_labels)}];
         const axisUnit = '{axis_unit}';
         const cpuData = [{','.join(cpu_series)}];
+        const cpuSeries = {cpu_chart_series_js};
         const memData = [{','.join(mem_series)}];
+        const memSeries = {mem_chart_series_js};
         const javaData = [{','.join(mem_cat_series['Java'])}];
         const nativeData = [{','.join(mem_cat_series['Native'])}];
         const graphicsData = [{','.join(mem_cat_series['Graphics'])}];
@@ -1124,6 +1864,28 @@ class PerfReportGenerator:
         const fpsData = [{','.join(fps_series)}];
         const rxRateData = [{','.join(rx_rate_series)}];
         const txRateData = [{','.join(tx_rate_series)}];
+
+        // 分析区折线图（CPU 峰值 / 设备 CPU / 线程数量 / 线程 CPU）
+        const cpuP90 = {cpu_p90};
+        const cpuThresholdLine = cpuData.map(function () {{ return cpuP90; }});
+        const cpuPeakPoints = cpuData.map(function (v) {{ return (v !== null && v >= cpuP90) ? v : null; }});
+        const sysCpuLabels = [{sys_cpu_labels_js}];
+        const sysCpuAxisTitle = '{sys_cpu_axis_title}';
+        const sysCpuTotal = [{sys_cpu_total_js}];
+        const sysCpuData = [{sys_cpu_data_js}];
+        const sysCpuUser = [{sys_cpu_user_js}];
+        const sysCpuNice = [{sys_cpu_nice_js}];
+        const sysCpuSys = [{sys_cpu_sys_js}];
+        const sysCpuIdle = [{sys_cpu_idle_js}];
+        const sysCpuIow = [{sys_cpu_iow_js}];
+        const sysCpuIrq = [{sys_cpu_irq_js}];
+        const sysCpuSirq = [{sys_cpu_sirq_js}];
+        const sysCpuHost = [{sys_cpu_host_js}];
+        const threadLabels = [{thread_labels_js}];
+        const threadAxisTitle = '{thread_axis_title}';
+        const threadTotalData = [{thread_total_js}];
+        const threadActiveData = [{thread_active_js}];
+        const threadCpuSeries = {thread_cpu_series_js};
 
         // 诊断事件竖线：在每条曲线上对应时刻画一条彩色虚线（颜色对应产物类型）
         const eventMarkers = {event_markers_js};
@@ -1150,8 +1912,159 @@ class PerfReportGenerator:
             }}
         }};
         Chart.register(eventLinePlugin);
+        // 图例统一放到画布下方（HTML 图例），内置图例在系列多时会压住曲线
+        Chart.defaults.plugins.legend.display = false;
 
         {charts_js}
+
+        // 画布下方图例：点一项隐藏/显示对应曲线
+        function buildLegend(chart) {{
+            var box = document.getElementById(chart.canvas.id + '-legend');
+            if (!box) return;
+            box.innerHTML = '';
+            if (chart.data.datasets.length <= 1) {{
+                // 单条曲线：不显示图例，也不需要「全选 / 反选」
+                document.querySelectorAll(
+                    '.chart-toolbar button[data-chart="' + chart.canvas.id + '"]'
+                ).forEach(function (b) {{
+                    if (!b.classList.contains('zoom-reset')) b.style.display = 'none';
+                }});
+                return;
+            }}
+            chart.data.datasets.forEach(function (ds, i) {{
+                var item = document.createElement('span');
+                item.className = 'legend-item';
+                var swatch = document.createElement('i');
+                swatch.style.background = ds.borderColor || ds.backgroundColor || '#999';
+                var text = document.createElement('span');
+                text.textContent = ds.label;
+                item.appendChild(swatch);
+                item.appendChild(text);
+                item.addEventListener('click', function () {{
+                    var visible = chart.isDatasetVisible(i);
+                    chart.setDatasetVisibility(i, !visible);
+                    chart.update('none');
+                    item.classList.toggle('off', visible);
+                }});
+                box.appendChild(item);
+            }});
+            syncLegend(chart);
+        }}
+
+        function syncLegend(chart) {{
+            var box = document.getElementById(chart.canvas.id + '-legend');
+            if (!box) return;
+            chart.data.datasets.forEach(function (ds, i) {{
+                var item = box.children[i];
+                if (item) item.classList.toggle('off', !chart.isDatasetVisible(i));
+            }});
+        }}
+
+        function chartOf(btn) {{
+            var canvas = document.getElementById(btn.dataset.chart);
+            return canvas ? Chart.getChart(canvas) : null;
+        }}
+
+        document.querySelectorAll('canvas').forEach(function (c) {{
+            var ch = Chart.getChart(c);
+            if (ch) buildLegend(ch);
+        }});
+
+        // 「全选 / 反选」：批量切换曲线的显示状态
+        document.querySelectorAll('.chart-select-all').forEach(function (btn) {{
+            btn.addEventListener('click', function () {{
+                var chart = chartOf(btn);
+                if (!chart) return;
+                chart.data.datasets.forEach(function (_, i) {{
+                    chart.setDatasetVisibility(i, true);
+                }});
+                chart.update('none');
+                syncLegend(chart);
+            }});
+        }});
+        document.querySelectorAll('.chart-invert').forEach(function (btn) {{
+            btn.addEventListener('click', function () {{
+                var chart = chartOf(btn);
+                if (!chart) return;
+                chart.data.datasets.forEach(function (_, i) {{
+                    chart.setDatasetVisibility(i, !chart.isDatasetVisible(i));
+                }});
+                chart.update('none');
+                syncLegend(chart);
+            }});
+        }});
+
+        // 表格右上角「复制」：整表按 Tab 分隔复制，可直接粘到 Excel
+        function copyTable(table, btn) {{
+            var lines = [];
+            table.querySelectorAll('tr').forEach(function (tr) {{
+                var cells = [];
+                tr.querySelectorAll('th,td').forEach(function (c) {{
+                    cells.push(c.innerText.replace(/\\s+/g, ' ').trim());
+                }});
+                if (cells.length) lines.push(cells.join('\\t'));
+            }});
+            var text = lines.join('\\n');
+
+            function done() {{
+                var old = btn.textContent;
+                btn.textContent = '已复制';
+                setTimeout(function () {{ btn.textContent = old; }}, 1200);
+            }}
+
+            function fallback() {{
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                try {{ document.execCommand('copy'); done(); }}
+                catch (e) {{ btn.textContent = '复制失败'; }}
+                document.body.removeChild(ta);
+            }}
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(text).then(done, fallback);
+            }} else {{
+                fallback();
+            }}
+        }}
+
+        document.querySelectorAll('table.compare').forEach(function (t) {{
+            var wrap = document.createElement('div');
+            wrap.className = 'table-wrap';
+            t.parentNode.insertBefore(wrap, t);
+            wrap.appendChild(t);
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'copy-table';
+            btn.textContent = '复制';
+            btn.addEventListener('click', function () {{ copyTable(t, btn); }});
+            wrap.appendChild(btn);
+        }});
+
+        // 「详细分析」Tab：切到隐藏面板时，Chart.js 需要重新量一次尺寸（否则是 0）
+        document.querySelectorAll('.tab-btn').forEach(function (btn) {{
+            btn.addEventListener('click', function () {{
+                var root = btn.closest('.tabs');
+                if (!root) return;
+                root.querySelectorAll('.tab-btn').forEach(function (b) {{
+                    b.classList.remove('active');
+                }});
+                root.querySelectorAll('.tab-panel').forEach(function (p) {{
+                    p.classList.remove('active');
+                }});
+                btn.classList.add('active');
+                var panel = root.querySelector('#' + btn.dataset.tab);
+                if (!panel) return;
+                panel.classList.add('active');
+                panel.querySelectorAll('canvas').forEach(function (c) {{
+                    var ch = Chart.getChart(c);
+                    if (ch) ch.resize();
+                }});
+            }});
+        }});
 
         // 「重置缩放」：回到全量视图（拖拽平移/滚轮缩放后用）
         document.querySelectorAll('.zoom-reset').forEach(function (btn) {{

@@ -31,10 +31,12 @@ class PerfWorker(QThread):
     link_restored = pyqtSignal()
 
     def __init__(self, device_service, package, metrics, interval,
-                 duration_minutes=None, parent=None):
+                 duration_minutes=None, parent=None, processes=None):
         super().__init__(parent)
         self.device_service = device_service
         self.package = package
+        # 目标进程列表（主进程在第一个）：CPU / 内存按这些进程求和
+        self.packages = list(processes) if processes else [package]
         self.metrics = metrics
         self.interval = max(0.1, interval)
         # 监控时长上限（分钟）：None = 不限时；到点后线程自然退出并 emit finished_all
@@ -83,7 +85,7 @@ class PerfWorker(QThread):
             self._service = PerfService(current, compat)
             # 首次采样有些指标（FPS）需要预热
             try:
-                self._service.collect_sample(self.package, self.metrics)
+                self._service.collect_sample(self.packages, self.metrics)
             except Exception:
                 pass
         return True
@@ -152,7 +154,7 @@ class PerfWorker(QThread):
 
             sample = None
             try:
-                sample = self._service.collect_sample(self.package, self.metrics)
+                sample = self._service.collect_sample(self.packages, self.metrics)
             except Exception as e:
                 logger.exception("采样失败")
                 self.error_occurred.emit(str(e))
@@ -431,6 +433,15 @@ class PerfController(QObject):
     # ------------------------------------------------------------------
     def _on_start(self, payload: dict):
         package = payload['package']
+        # 目标进程列表（主进程在第一个）：没勾多进程时就是单个进程
+        processes = []
+        for p in (payload.get('processes') or []):
+            if p and p not in processes:
+                processes.append(p)
+        # 主进程必须在第一个：FPS / 流量 / 线程按它采集
+        if package in processes:
+            processes.remove(package)
+        processes.insert(0, package)
         metrics = payload['metrics']
         interval = payload['interval']
         mode = payload['mode']
@@ -481,6 +492,7 @@ class PerfController(QObject):
             name=time.strftime("%Y%m%d_%H%M%S"),
             device_serial=self.device_service.serial or "",
             app_package=package,
+            app_processes=processes,
             start_time=datetime.now().isoformat(),
             sample_interval=interval,
             metrics=metrics,
@@ -512,6 +524,7 @@ class PerfController(QObject):
         self.perf_worker = PerfWorker(
             self.device_service, package, metrics, interval,
             duration_minutes=payload.get('duration_minutes'),
+            processes=processes,
         )
         self.perf_worker.sample_ready.connect(self._on_sample)
         self.perf_worker.error_occurred.connect(self._on_worker_error)
@@ -785,6 +798,11 @@ class PerfController(QObject):
                     self.current_session.iotop_samples = series
                 elif key == "threads":
                     self.current_session.thread_samples = series
+                    try:
+                        # 完整排行（全部线程）单独带出来，报告不再从 Top N 样本里推
+                        self.current_session.thread_rank = probe.rank()
+                    except Exception:
+                        pass
         for key, probe in probes.items():
             try:
                 probe.stop()

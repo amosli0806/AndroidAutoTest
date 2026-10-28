@@ -8,11 +8,15 @@
   * 连续峰值段（≥ P90 的连续采样点）
   * 峰值采样点明细
   * 峰值集中度（Top1 / Top5 线程占比）—— 需要线程探针数据
+  * 峰值段线程贡献（整体/峰值段均值、活跃率、持续/爆发/常态/偶发分类）
 
 为什么单独成文件：这些是纯计算，能直接喂假数据做单测；
 塞进 perf_report.py 会变成"一边拼 HTML 一边算统计"，改一个数都要重跑报告。
 """
 import math
+
+# 固定阈值分档：与性能报告常用的 150 / 200 / 300 对齐，便于横向对比同一应用的不同版本
+FIXED_THRESHOLDS = (150.0, 200.0, 300.0)
 
 
 # ---------------------------------------------------------------- 基础统计
@@ -78,12 +82,39 @@ def _thread_shares(item):
 
 
 # ---------------------------------------------------------------- 主分析
+def _name_cpu_map(item):
+    """一个线程采样点 → {线程名: CPU 合计}（同名线程池在这一轮累加）。"""
+    out = {}
+    for t in (item or {}).get("top") or []:
+        name = t.get("name") or ""
+        out[name] = out.get(name, 0.0) + float(t.get("cpu") or 0)
+    return out
+
+
+def contribute_type(activity_all: float, activity_peak: float) -> str:
+    """按「整体活跃率 / 峰值段活跃率」判定线程的贡献类型。
+
+    持续型：两段都 ≥80%——常驻热线程；
+    爆发型：峰值段 ≥60%，且比整体高出 ≥30 个百分点——平时闲、峰值期被触发；
+    常态型：峰值段 ≥60% 其余情况——峰值期活跃但整体也有负载；
+    偶发型：峰值段 <60%——峰值期不常出现。
+    """
+    if activity_all >= 80 and activity_peak >= 80:
+        return "持续型"
+    if activity_peak >= 60 and (activity_peak - activity_all) >= 30:
+        return "爆发型"
+    if activity_peak >= 60:
+        return "常态型"
+    return "偶发型"
+
+
 def analyze_cpu(cpu_points, interval: float, thread_samples=None) -> dict:
     """cpu_points: [(ts, cpu_pct), ...]（已剔除采集失败的点）。
 
     返回 dict：
       count / interval / percentiles / thresholds / percentile_buckets /
-      segments / peak_samples / concentration / thread_tolerance
+      segments / peak_samples / concentration / peak_threads / peak_thread_meta
+      / thread_tolerance
     """
     thread_samples = thread_samples or []
     tol = _thread_tolerance(thread_samples)
@@ -95,11 +126,14 @@ def analyze_cpu(cpu_points, interval: float, thread_samples=None) -> dict:
         "thread_tolerance": tol,
         "percentiles": {},
         "thresholds": [],
+        "fixed_thresholds": [],
         "percentile_buckets": [],
         "segments": [],
         "isolated_peaks": 0,
         "peak_samples": [],
         "concentration": {},
+        "peak_threads": [],
+        "peak_thread_meta": {},
     }
     if not values:
         return result
@@ -133,6 +167,21 @@ def analyze_cpu(cpu_points, interval: float, thread_samples=None) -> dict:
                 "top5": top5,
             })
 
+    # ---- 固定阈值分档：150 / 200 / 300（没达到也保留一行，值为 0，便于版本间横向对比）----
+    for th in FIXED_THRESHOLDS:
+        hit = [(ts, v) for ts, v in points if v >= th]
+        shares = [_thread_shares(_thread_at(ts, thread_samples, tol))
+                  for ts, _v in hit]
+        shares = [s for s in shares if s]
+        result["fixed_thresholds"].append({
+            "threshold": th,
+            "count": len(hit),
+            "share": round(len(hit) / len(points) * 100.0, 1),
+            "avg": round(_mean(v for _t, v in hit), 2) if hit else 0.0,
+            "max": round(max(v for _t, v in hit), 2) if hit else 0.0,
+            "top5": round(_mean(s[1] for s in shares), 1) if shares else None,
+        })
+
     # ---- 百分位分档：按采样点数量取前 N% ----
     ordered = sorted(points, key=lambda x: x[1], reverse=True)
     for pct in (2, 5, 10, 25):
@@ -150,6 +199,56 @@ def analyze_cpu(cpu_points, interval: float, thread_samples=None) -> dict:
             "max": round(max(v for _t, v in hit), 2),
             "top5": round(_mean(s[1] for s in shares), 1) if shares else None,
         })
+
+    # ---- 峰值段线程贡献：CPU 最忙的前 5% 采样里，各线程的均值 / 活跃率 / 类型 ----
+    # 峰值段按「进程 CPU 最高的前 5% 采样点」定义，再把这些采样点对到最近的线程采样点；
+    # 线程不在某一轮的 Top N 里就按 0 计（和百度报表口径一致）。
+    peak_threads = []
+    n_peak = max(1, int(round(len(ordered) * 5 / 100.0)))
+    peak_hit = ordered[:n_peak]
+    picked, seen = [], set()
+    for ts, _v in peak_hit:
+        item = _thread_at(ts, thread_samples, tol)
+        if not item:
+            continue
+        key = (item.get("ts"), item.get("pid"))
+        if key in seen:
+            continue
+        seen.add(key)
+        picked.append(item)
+    if picked:
+        all_maps = [_name_cpu_map(s) for s in thread_samples]
+        peak_maps = [_name_cpu_map(s) for s in picked]
+        totals = [float(s.get("cpu_total") or 0) for s in thread_samples]
+        denom = sum(totals) or 0.0
+        n_all = len(thread_samples)
+        n_peak_ok = len(peak_maps)
+        for name in {n for m in all_maps for n in m}:
+            all_vals = [m.get(name, 0.0) for m in all_maps]
+            peak_vals = [m.get(name, 0.0) for m in peak_maps]
+            cpu_sum = sum(all_vals)
+            act_all = sum(1 for v in all_vals if v > 0) / n_all * 100.0
+            act_peak = sum(1 for v in peak_vals if v > 0) / n_peak_ok * 100.0
+            peak_threads.append({
+                "name": name,
+                "cpu_avg": round(cpu_sum / n_all, 2),
+                "peak_avg": round(sum(peak_vals) / n_peak_ok, 2),
+                "peak_max": round(max(peak_vals), 2),
+                "activity_all": round(act_all, 1),
+                "activity_peak": round(act_peak, 1),
+                "share": round(cpu_sum / denom * 100.0, 1) if denom > 0 else 0.0,
+                "type": contribute_type(act_all, act_peak),
+                "trend": [round(v, 2) for v in all_vals],
+                "trend_total": [round(v, 2) for v in totals],
+            })
+        peak_threads.sort(key=lambda r: (r["peak_avg"], r["cpu_avg"]), reverse=True)
+    result["peak_threads"] = peak_threads
+    result["peak_thread_meta"] = {
+        "peak_total": n_peak,          # 前 5% 的采样点数
+        "matched": len(picked),        # 能对到线程采样点的个数
+        "thread_samples": len(thread_samples),
+    }
+
 
     # ---- 连续峰值段：值 ≥ P90 且**至少连续 2 个采样点** ----
     # 只有 1 个点的"段"没有分析价值（平坦数据上会冒出一堆 #13~#13），
@@ -186,14 +285,18 @@ def analyze_cpu(cpu_points, interval: float, thread_samples=None) -> dict:
         result["segments"].append({
             "start": run[0] + 1,          # 展示用 1-based
             "end": run[-1] + 1,
+            "points": len(run),
             "duration": round((run[-1] - run[0] + 1) * interval, 1),
             "avg": round(_mean(v for _t, v in seg), 2),
             "max": round(max(v for _t, v in seg), 2),
             "dominant": dominant,
         })
 
-    # ---- 峰值采样点明细（前 5）----
-    for idx, (ts, v) in enumerate(ordered[:5], start=1):
+    # ---- 峰值采样点明细（**全部** ≥P90 的点，不截前 N）----
+    peak_points = [(i + 1, ts, v) for i, (ts, v) in enumerate(points)
+                   if v >= p90 and v > 0]
+    peak_points.sort(key=lambda x: x[2], reverse=True)
+    for pos, ts, v in peak_points:
         item = _thread_at(ts, thread_samples, tol)
         contrib = []
         total = float((item or {}).get("cpu_total") or 0)
@@ -202,9 +305,6 @@ def analyze_cpu(cpu_points, interval: float, thread_samples=None) -> dict:
                 cpu = float(t.get("cpu") or 0)
                 if cpu / total * 100.0 >= 5.0:
                     contrib.append(f"{t.get('name', '')}={cpu:.1f}")
-        # 原始采样序号（1-based），便于对着 CSV 找
-        pos = next((i + 1 for i, (t0, v0) in enumerate(points)
-                    if t0 == ts and v0 == v), 0)
         result["peak_samples"].append({
             "index": pos,
             "value": round(v, 2),
@@ -231,8 +331,8 @@ def analyze_cpu(cpu_points, interval: float, thread_samples=None) -> dict:
         else:
             mode = "分散（多线程协同）"
         result["concentration"] = {
-            "top1": top1, "top5": top5, "mode": mode,
-            "samples": len(top1_list),
+            "top1": top1, "top5": top5, "top1_max": round(max(top1_list), 1),
+            "mode": mode, "samples": len(top1_list),
         }
     return result
 
@@ -265,29 +365,37 @@ def analyze_threads(thread_samples) -> dict:
     }
 
     agg = {}
-    for item in thread_samples:
+    for idx, item in enumerate(thread_samples):
         for t in (item.get("top") or []):
-            key = (t.get("tid"), t.get("name", ""))
-            row = agg.setdefault(key, {"cpu_sum": 0.0, "cpu_max": 0.0, "n": 0})
+            name = t.get("name", "")
+            row = agg.setdefault(name, {
+                "tid": t.get("tid"), "tids": set(), "cpu_sum": 0.0,
+                "cpu_max": 0.0, "active_idx": set(), "present_idx": set(),
+            })
+            row["tids"].add(t.get("tid"))
+            row["present_idx"].add(idx)
             cpu = float(t.get("cpu") or 0)
             row["cpu_sum"] += cpu
             row["cpu_max"] = max(row["cpu_max"], cpu)
-            row["n"] += 1
+            if cpu > 0:
+                row["active_idx"].add(idx)
     denom = sum(cpu_totals) or 0.0
     n_samples = max(1, len(thread_samples))
     rows = []
-    for (tid, name), row in agg.items():
+    for name, row in agg.items():
+        active = len(row["active_idx"])
         rows.append({
-            "tid": tid,
             "name": name,
-            # 分母用**会话采样数**，不是"进入 Top N 的次数"：
-            # 后者会把偶尔冒尖的线程均摊成很高的平均（比如只出现 3 次、
-            # 每次 4.5% 的线程显示 4.5%，比一直占 1.4% 的主线程还高）。
+            "tid": row["tid"],
+            "number": len(row["tids"]),
             "cpu_avg": round(row["cpu_sum"] / n_samples, 2),
             "cpu_max": round(row["cpu_max"], 2),
+            "active": active,
+            "activity": round(active / n_samples, 2),
+            "s_avg": round(row["cpu_sum"] / active, 2) if active else 0.0,
             "share": round(row["cpu_sum"] / denom * 100.0, 1) if denom > 0 else 0.0,
-            "samples": row["n"],
+            "present": len(row["present_idx"]),
         })
     rows.sort(key=lambda r: r["cpu_avg"], reverse=True)
-    result["threads"] = rows[:15]
+    result["threads"] = rows          # 全部线程，不截断
     return result

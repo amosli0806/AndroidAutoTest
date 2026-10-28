@@ -8,7 +8,8 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QComboBox, QPushButton, QCheckBox, QRadioButton, QButtonGroup,
     QSpinBox, QFrame, QScrollArea, QSizePolicy,
-    QFileDialog, QDialog, QStackedWidget
+    QFileDialog, QDialog, QStackedWidget, QListWidget, QListWidgetItem,
+    QDialogButtonBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QSize
 from PyQt6.QtGui import QIcon
@@ -96,6 +97,48 @@ class BorderedRadioButton(QRadioButton):
         except Exception:
             pass
 
+class MultiProcessDialog(QDialog):
+    """选择要一起监控的多个目标进程（主进程 + 子进程）。
+
+    与性能报告「目标进程」的口径一致：CPU / 内存按勾选的进程求和，
+    FPS / 流量 / 线程仍按主进程（列表里第一个勾选的）。
+    """
+
+    def __init__(self, processes, selected=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("选择目标进程")
+        self.setMinimumWidth(460)
+        lay = QVBoxLayout(self)
+        tip = QLabel("勾选要一起监控的进程（CPU / 内存按所选进程求和）。\n"
+                     "第一个勾选的进程作为主进程，FPS / 流量 / 线程仍按它采集。")
+        tip.setWordWrap(True)
+        lay.addWidget(tip)
+
+        self.list = QListWidget()
+        chosen = set(selected or [])
+        for name in processes:
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked if name in chosen else Qt.CheckState.Unchecked)
+            self.list.addItem(item)
+        lay.addWidget(self.list)
+
+        box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        box.accepted.connect(self.accept)
+        box.rejected.connect(self.reject)
+        lay.addWidget(box)
+
+    def selected_processes(self) -> list:
+        out = []
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                out.append(item.text())
+        return out
+
+
 class PerfView(QWidget):
     """性能检测视图"""
 
@@ -164,6 +207,9 @@ class PerfView(QWidget):
         self._pref_package = ""
         # 记忆里的上次套件名：套件列表由 set_suite_model 稍后填充，届时回选
         self._pref_suite = ""
+        # 多进程目标：当前列表里可选的运行中进程，以及已勾选的目标进程（主进程在第一个）
+        self._running_processes = []
+        self._multi_processes = []
 
         self.setup_ui()
         self._restore_perf_config()
@@ -219,7 +265,62 @@ class PerfView(QWidget):
                 # 不要静默重置成列表第一项
                 self.app_combo.setEditText(current)
         self.app_combo.blockSignals(False)
+        self._running_processes = list(packages or [])
         self._check_state()
+
+    # ------------------------------------------------------------------
+    # 多进程目标
+    # ------------------------------------------------------------------
+    def _on_app_text_changed(self, text: str):
+        """主进程变了：之前勾的其它目标进程不再属于同一组，清掉。"""
+        if self._multi_processes and text not in self._multi_processes:
+            self._multi_processes = []
+            self._update_multi_btn()
+        self._check_state()
+
+    def _update_multi_btn(self):
+        n = len(self._multi_processes)
+        self.app_multi_btn.setText(f"多进程（{n}）" if n > 1 else "多进程")
+        if n > 1:
+            self.app_multi_btn.setToolTip("本次目标进程：\n" + "\n".join(self._multi_processes))
+        else:
+            self.app_multi_btn.setToolTip(
+                "选择多个目标进程一起监控（主进程 + 子进程，CPU / 内存求和）")
+
+    def _choose_processes(self):
+        processes = list(self._running_processes)
+        current = self.app_combo.currentText().strip()
+        if current and not current.startswith("未检测到应用") and current not in processes:
+            processes.insert(0, current)      # 允许把手动输入、当前没在跑的进程也纳入
+        if not processes:
+            show_toast(message="请先刷新应用列表", parent=self)
+            return
+        selected = self._multi_processes or ([current] if current else [])
+        dlg = MultiProcessDialog(processes, selected, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        picked = dlg.selected_processes()
+        self._multi_processes = picked
+        if picked:
+            # 第一个勾选的作为主进程：同步到应用下拉框
+            self.app_combo.blockSignals(True)
+            self.app_combo.setEditText(picked[0])
+            self.app_combo.blockSignals(False)
+        self._update_multi_btn()
+        self._check_state()
+        self._save_perf_config()
+
+    def _target_processes(self) -> list:
+        """本次要监控的进程列表（主进程在第一个）。"""
+        package = self.app_combo.currentText().strip()
+        out = []
+        if package and not package.startswith("未检测到应用"):
+            out.append(package)
+        for p in self._multi_processes:
+            if p and p not in out:
+                out.append(p)
+        return out
+
 
     def update_metric_availability(self, available: dict, reasons: dict):
         """
@@ -377,7 +478,9 @@ class PerfView(QWidget):
             cores = sc.get("cores") or 0
             txt = f"整机 CPU {sc['cpu_pct']:.0f}%"
             if cores:
-                txt += f"（{cores} 核累计 {sc['cpu_pct'] * cores:.0f}%）"
+                busy = sc.get("busy_raw")
+                busy = busy if busy is not None else sc['cpu_pct'] * cores
+                txt += f"（{cores} 核累计 {busy:.0f}%）"
             parts.append(txt)
         th = self._cpu_side.get("threads") or {}
         if "thread_total" in th:
@@ -592,6 +695,7 @@ class PerfView(QWidget):
         self._refresh_run_btn()
 
         self.app_combo.setEnabled(idle)
+        self.app_multi_btn.setEnabled(idle)
         self.interval_combo.setEnabled(idle)
         self.mode_combo.setEnabled(idle)
         self.duration_label.setEnabled(idle)
@@ -701,11 +805,17 @@ class PerfView(QWidget):
         self.app_combo.setEditable(True)
         self.app_combo.setMinimumWidth(180)
         self.app_combo.addItem("未检测到应用")
-        self.app_combo.currentTextChanged.connect(lambda _: self._check_state())
+        self.app_combo.currentTextChanged.connect(self._on_app_text_changed)
+        self.app_multi_btn = QPushButton("多进程")
+        self.app_multi_btn.setMinimumWidth(96)      # 容得下「多进程（3）」，数字变两位也不截断
+        self.app_multi_btn.setToolTip(
+            "选择多个目标进程一起监控（主进程 + 子进程，CPU / 内存求和）")
+        self.app_multi_btn.clicked.connect(self._choose_processes)
         self.app_refresh_btn = QPushButton("刷新")
         self.app_refresh_btn.setIcon(qta.icon('fa6s.rotate', color='white'))
         self.app_refresh_btn.clicked.connect(self.app_list_refresh_requested.emit)
-        flow1.addWidget(_make_group(None, [self.app_combo, self.app_refresh_btn]))
+        flow1.addWidget(_make_group(
+            None, [self.app_combo, self.app_multi_btn, self.app_refresh_btn]))
 
         # 采集组
         self.interval_label = QLabel("间隔:")
@@ -1443,6 +1553,8 @@ class PerfView(QWidget):
 
         payload = {
             'package': package,
+            # 目标进程列表：主进程在第一个；只选了一个进程时就是它自己
+            'processes': self._target_processes(),
             'interval': interval,
             'metrics': metrics,
             'mode': 'scenario' if scenario else 'monitor',
@@ -1544,6 +1656,8 @@ class PerfView(QWidget):
             'screenshot_loop': self.screenshot_enable_check.isChecked(),
             'screenshot_interval': self.screenshot_interval_combo.currentText(),
             'package': pkg,
+            # 多进程目标（主进程不含在内，启动时由 package + 这个列表拼成）
+            'processes': [p for p in self._multi_processes if p != pkg],
             'suite': self.suite_combo.currentText(),
             'loop': self.loop_spin.value(),
             'stop_on_fail': self.stop_on_fail_check.isChecked(),
@@ -1645,6 +1759,11 @@ class PerfView(QWidget):
         if pkg:
             self._pref_package = pkg
             self.app_combo.setCurrentText(pkg)
+        # 多进程目标：主进程由上面的 package 决定，这里只恢复附带的子进程
+        extra = [p for p in (cfg.get('processes') or []) if isinstance(p, str) and p]
+        if extra:
+            self._multi_processes = ([pkg] if pkg else []) + extra
+            self._update_multi_btn()
 
     def _update_status_bar(self):
         # 空闲态：状态栏归位。显式写回（而不是直接 return）是为了清掉

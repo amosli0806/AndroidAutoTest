@@ -41,8 +41,20 @@ MEM_CATEGORIES = [
     ("Graphics", "Graphics", "#e74c3c"),
     ("Stack", "Stack", "#1abc9c"),
     ("Code", "Code", "#3498db"),
+    ("System", "System", "#8e44ad"),
     ("Others", "Others", "#95a5a6"),
 ]
+
+# 报告里展示的参数名（与性能报告的折线图参数一致）
+MEM_PARAM_NAMES = {
+    "Java": "java_heap",
+    "Native": "native_heap",
+    "Graphics": "graphics_mem",
+    "Stack": "stack_mem",
+    "Code": "code_mem",
+    "System": "system_mem",
+    "Others": "other_mem",
+}
 
 
 @dataclass
@@ -50,7 +62,11 @@ class PerfSample:
     """单个采样点"""
     timestamp: float = 0.0            # 采集时间（unix 秒）
     cpu_percent: float = 0.0          # CPU 占用率（%）
+    # 多进程监控时每个进程的 CPU（%）：{进程名: 占用率}；单进程会话为空
+    cpu_by_process: dict = field(default_factory=dict)
     mem_pss_mb: float = 0.0           # 内存 PSS 总量（MB）
+    # 内存 RSS（MB，dumpsys meminfo 的 TOTAL RSS；性能报告里对应 res 参数）
+    mem_res_mb: float = 0.0
     mem_breakdown: dict = field(default_factory=dict)  # 分类拆解 {'Java': MB, ...}
     fps: int = 0                      # 帧率
     rx_bytes: int = 0                 # 接收字节（累计）
@@ -71,6 +87,10 @@ class PerfSession:
     name: str
     device_serial: str
     app_package: str
+    # 本次监控的目标进程列表（主进程在第一个）。
+    # 与性能报告的「目标进程」对齐：一个应用的主进程 + 子进程可以一起算，
+    # CPU / 内存按这些进程求和，FPS / 流量 / 线程仍按主进程（流量本身按 UID 覆盖整包）。
+    app_processes: List[str] = field(default_factory=list)
     start_time: str = ""
     end_time: str = ""
     sample_interval: float = 5.0
@@ -101,6 +121,8 @@ class PerfSession:
     iotop_samples: List[dict] = field(default_factory=list)
     # 线程探针（所选进程）：[{ts, pid, thread_total, thread_active, cpu_total, top:[...]}, ...]
     thread_samples: List[dict] = field(default_factory=list)
+    # 线程探针的全会话排行（**全部线程**，不只 Top N）：[{tid, name, cpu_avg, cpu_max, share}]
+    thread_rank: List[dict] = field(default_factory=list)
     # 会话内的诊断事件（堆转储/抓包/截图/录屏/内存明细）：
     # [{ts, type, file, note}]，ts 为绝对时间戳（time.time()），报告换算成相对秒
     events: List[dict] = field(default_factory=list)
@@ -111,6 +133,7 @@ class PerfSession:
             "name": self.name,
             "device_serial": self.device_serial,
             "app_package": self.app_package,
+            "app_processes": self.app_processes,
             "start_time": self.start_time,
             "end_time": self.end_time,
             "sample_interval": self.sample_interval,
@@ -129,6 +152,7 @@ class PerfSession:
             "netdev_samples": self.netdev_samples,
             "iotop_samples": self.iotop_samples,
             "thread_samples": self.thread_samples,
+            "thread_rank": self.thread_rank,
             "events": self.events,
         }
 
@@ -139,6 +163,7 @@ class PerfSession:
             name=data["name"],
             device_serial=data["device_serial"],
             app_package=data["app_package"],
+            app_processes=list(data.get("app_processes") or []),
             start_time=data.get("start_time", ""),
             end_time=data.get("end_time", ""),
             sample_interval=data.get("sample_interval", 5.0),
@@ -166,6 +191,7 @@ class PerfSession:
         session.netdev_samples = list(data.get("netdev_samples") or [])
         session.iotop_samples = list(data.get("iotop_samples") or [])
         session.thread_samples = list(data.get("thread_samples") or [])
+        session.thread_rank = list(data.get("thread_rank") or [])
         session.events = list(data.get("events") or [])
         return session
 
@@ -304,9 +330,9 @@ def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.
         _row('cpu_min', 'CPU 最低 (%)', b.get('min'), c.get('min'))
     b, c = base_metrics.get('mem'), cur_stats.get('mem')
     if _is_stats(b) and _is_stats(c):
-        _row('mem_avg', 'Total均值 (MB)', b.get('avg'), c.get('avg'))
-        _row('mem', 'Total峰值 (MB)', b.get('max'), c.get('max'))
-        _row('mem_min', 'Total最低 (MB)', b.get('min'), c.get('min'))
+        _row('mem_avg', 'total_pss均值 (MB)', b.get('avg'), c.get('avg'))
+        _row('mem', 'total_pss峰值 (MB)', b.get('max'), c.get('max'))
+        _row('mem_min', 'total_pss最低 (MB)', b.get('min'), c.get('min'))
     # 内存分类拆解对比（各分类均值/峰值/最低，旧数据无拆解时自动跳过）
     bb = base_metrics.get('mem_breakdown', {})
     cc = cur_stats.get('mem_breakdown', {})
@@ -314,11 +340,12 @@ def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.
         for cat, lbl, _color in MEM_CATEGORIES:
             bcat, ccat = bb.get(cat), cc.get(cat)
             if _is_stats(bcat) and _is_stats(ccat):
-                _row(f'mem_{cat}_avg', f'{lbl}均值 (MB)',
+                name = MEM_PARAM_NAMES.get(cat, lbl)
+                _row(f'mem_{cat}_avg', f'{name}均值 (MB)',
                      bcat.get('avg'), ccat.get('avg'))
-                _row(f'mem_{cat}', f'{lbl}峰值 (MB)',
+                _row(f'mem_{cat}', f'{name}峰值 (MB)',
                      bcat.get('max'), ccat.get('max'))
-                _row(f'mem_{cat}_min', f'{lbl}最低 (MB)',
+                _row(f'mem_{cat}_min', f'{name}最低 (MB)',
                      bcat.get('min'), ccat.get('min'))
     b, c = base_metrics.get('fps'), cur_stats.get('fps')
     if _is_stats(b) and _is_stats(c):

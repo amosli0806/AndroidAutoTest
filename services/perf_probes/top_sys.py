@@ -29,26 +29,49 @@ from .base import PerfProbe, ProbeError
 _TOP_RE = re.compile(
     r"([0-9.]+)%cpu[ \t]+([0-9.]+)%user[ \t]+([0-9.]+)%nice[ \t]+"
     r"([0-9.]+)%sys[ \t]+([0-9.]+)%idle[ \t]+([0-9.]+)%iow"
+    r"(?:[ \t]+([0-9.]+)%irq[ \t]+([0-9.]+)%sirq[ \t]+([0-9.]+)%host)?"
 )
 
 
 def parse_top_cpu(out: str) -> dict:
-    """解析 top 的 CPU 汇总行。拿不到汇总行抛 ProbeError（交给调用方兜底）。"""
+    """解析 top 的 CPU 汇总行。拿不到汇总行抛 ProbeError（交给调用方兜底）。
+
+    返回两套数值：
+      * `*_raw`：**多核累计**（与 top 原样一致，如 6 核上限 600）——报告用；
+      * `*_pct`：归一化到 0~100——界面卡片用。
+    百度报告的 D_total / D_busy / D_user / D_* 就是多核累计口径。
+    """
     m = _TOP_RE.search(out or "")
     if not m:
         raise ProbeError("top 输出里没有 CPU 汇总行（该设备可能不支持 top -b）")
-    total, user, _nice, sys, idle, iow = (float(x) for x in m.groups())
+    vals = [float(x) if x is not None else 0.0 for x in m.groups()]
+    total, user, nice, sys, idle, iow, irq, sirq, host = vals
     if total <= 0:
         raise ProbeError("top 汇总行的 %cpu 为 0，无法计算占用率")
     busy = max(0.0, total - idle)
+
+    def _norm(v):
+        return round(v / total * 100.0, 1)
+
     return {
-        "total_pct": round(total, 1),                 # 核数 × 100（多核累计）
+        "total_pct": round(total, 1),                 # 核数 × 100（容量）
         "cores": int(round(total / 100.0)),
-        "cpu_pct": round(busy / total * 100.0, 1),    # 整机归一化 0~100
-        "user_pct": round(user / total * 100.0, 1),
-        "sys_pct": round(sys / total * 100.0, 1),
-        "iow_pct": round(iow / total * 100.0, 1),
-        "idle_pct": round(idle / total * 100.0, 1),
+        # 多核累计（百度 D_* 口径）
+        "busy_raw": round(busy, 1),
+        "user_raw": round(user, 1),
+        "nice_raw": round(nice, 1),
+        "sys_raw": round(sys, 1),
+        "idle_raw": round(idle, 1),
+        "iow_raw": round(iow, 1),
+        "irq_raw": round(irq, 1),
+        "sirq_raw": round(sirq, 1),
+        "host_raw": round(host, 1),
+        # 归一化（界面卡片继续用）
+        "cpu_pct": _norm(busy),
+        "user_pct": _norm(user),
+        "sys_pct": _norm(sys),
+        "iow_pct": _norm(iow),
+        "idle_pct": _norm(idle),
     }
 
 
@@ -91,30 +114,45 @@ class TopSysProbe(PerfProbe):
             self._cores = max(0, len(lines) - 1)
         head = lines[0].split()
         vals = [float(x) for x in head[1:9]]
-        if len(vals) < 4:
-            raise ProbeError("/proc/stat 的 cpu 行字段不全")
+        while len(vals) < 8:            # user nice system idle iow irq sirq steal
+            vals.append(0.0)
         total = sum(vals)
-        idle = vals[3] + (vals[4] if len(vals) > 4 else 0.0)
         now = time.monotonic()
         prev = self._last_stat
-        self._last_stat = (total, idle)
+        self._last_stat = (total, vals)
         if prev is None:
             # 首次只能建基准，交给下一次（不产出假的 0）
             raise ProbeError("整机 CPU 首次采样，等待下一次差分")
         d_total = total - prev[0]
-        d_idle = idle - prev[1]
         if d_total <= 0:
             raise ProbeError("两次采样的 jiffies 差为 0，跳过本轮")
-        busy_pct = (d_total - d_idle) / d_total * 100.0
+        prev_vals = prev[1]
+        d = [max(0.0, vals[i] - prev_vals[i]) for i in range(8)]
         self.source = "proc_stat"
         cores = self._cores or 0
+        cap = max(1, cores) * 100.0
+        raw = [x / d_total * cap for x in d]
+        busy_raw = cap - raw[3]           # total - idle（与 top 的 busy 口径一致）
+
+        def _norm(v):
+            return round(v / cap * 100.0, 1) if cap > 0 else 0.0
+
         return {
-            "total_pct": round(cores * 100.0, 1),
+            "total_pct": round(cap, 1),
             "cores": cores,
-            "cpu_pct": round(busy_pct, 1),
-            "user_pct": 0.0,
-            "sys_pct": 0.0,
-            "iow_pct": 0.0,
-            "idle_pct": round(100.0 - busy_pct, 1),
+            "cpu_pct": round(busy_raw / cap * 100.0, 1),
+            "busy_raw": round(busy_raw, 1),
+            "user_raw": round(raw[0], 1),
+            "nice_raw": round(raw[1], 1),
+            "sys_raw": round(raw[2], 1),
+            "idle_raw": round(raw[3], 1),
+            "iow_raw": round(raw[4], 1),
+            "irq_raw": round(raw[5], 1),
+            "sirq_raw": round(raw[6], 1),
+            "host_raw": round(raw[7], 1),   # /proc/stat 的 steal，对应 top 的 %host
+            "user_pct": _norm(raw[0]),
+            "sys_pct": _norm(raw[2]),
+            "iow_pct": _norm(raw[4]),
+            "idle_pct": _norm(raw[3]),
             "degraded": True,           # 走兜底时界面提示「top 不可用，已降级」
         }

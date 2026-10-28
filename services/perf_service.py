@@ -38,6 +38,10 @@ class PerfService:
         self._last_cpu_ticks = None
         self._last_cpu_pids = None      # 上次采样的 PID 集合（变了就得重建基准）
         self._last_cpu_time = 0.0
+        # 多进程：pid → 进程名（_find_pids 解析 ps 时记录，供逐进程 CPU 拆分）
+        self._pid_names = {}
+        self._last_ticks_map = None     # 上一次每个 PID 的累计 jiffies
+        self._last_cpu_by_process = {}  # 上一次拆分出的 {进程名: CPU%}
         # /proc/<pid>/stat 的 utime/stime 单位是 USER_HZ，ARM/x86 恒为 100，
         # 与内核 CONFIG_HZ（这台车机是 250）无关 —— 2026-10-22 实测：
         # 按 100 算得 31.37%，与 top 的 32.6% 吻合；按 250 会算成 12.55%
@@ -99,51 +103,62 @@ class PerfService:
     # ============================================================
     # 对外接口：一次性采集所有启用的指标
     # ============================================================
-    def collect_sample(self, package: str, metrics: list) -> Optional[PerfSample]:
+    def collect_sample(self, package, metrics: list) -> Optional[PerfSample]:
         """执行一次完整的采样。
+
+        `package` 可以是单个进程名（str），也可以是**目标进程列表**（list）：
+        列表时按 Baidu 性能报告的「目标进程」口径，CPU / 内存对这些进程求和，
+        FPS / 流量仍用第一个（主进程）—— 流量本身按 UID 统计，已覆盖整个应用。
 
         返回 None 表示**本轮所有启用指标都失败**（典型：设备通道失效）——
         调用方应跳过入库，不要拿一条全 0 的样本去污染曲线与统计。
         """
+        packages = self._as_package_list(package)
+        if not packages:
+            raise PerfShellError("未指定目标进程")
+        primary = packages[0]
         sample = PerfSample(timestamp=time.time())
 
-        # 本轮只需要一次 ps -A：CPU 与内存都按「所选进程」取数（2026-10-25）
+        # 本轮只需要一次 ps -A：CPU 与内存都按「目标进程集合」取数
         pids = []
         if ('cpu' in metrics) or ('mem' in metrics):
             try:
-                pids = self._find_app_pids(package)
+                pids = self._find_pids(packages)
             except Exception:
                 pids = []
 
         if 'cpu' in metrics:
             try:
-                cpu = self._collect_cpu(package, pids)
+                cpu = self._collect_cpu(primary, pids)
                 if cpu is None:
                     # 首采 / 进程集合变化：本轮只重建基准，不产出数据点
                     sample.errors.append("cpu:本轮无有效值（首采或进程集合变化）")
                 else:
                     sample.cpu_percent = cpu
+                    # 多进程：逐进程 CPU 一起入库，报告据此画分进程曲线/统计
+                    sample.cpu_by_process = dict(self._last_cpu_by_process or {})
             except Exception as e:
                 sample.errors.append(f"cpu:{e}")
 
         if 'mem' in metrics:
             try:
-                pss_mb, breakdown = self._collect_mem(package, pids)
+                pss_mb, breakdown, res_mb = self._collect_mem(primary, pids)
                 sample.mem_pss_mb = pss_mb
+                sample.mem_res_mb = res_mb
                 sample.mem_breakdown = breakdown
             except Exception as e:
                 sample.errors.append(f"mem:{e}")
 
         if 'fps' in metrics:
             try:
-                gfx_out = self._sh(f"dumpsys gfxinfo {package}", what="dumpsys gfxinfo")
+                gfx_out = self._sh(f"dumpsys gfxinfo {primary}", what="dumpsys gfxinfo")
                 sample.fps = self._parse_fps(gfx_out)
             except Exception as e:
                 sample.errors.append(f"fps:{e}")
 
         if 'traffic' in metrics:
             try:
-                rx, tx = self._collect_traffic(package)
+                rx, tx = self._collect_traffic(primary)
                 sample.rx_bytes = rx
                 sample.tx_bytes = tx
             except Exception as e:
@@ -161,6 +176,44 @@ class PerfService:
     # ============================================================
     # CPU
     # ============================================================
+    @staticmethod
+    def _as_package_list(package) -> list:
+        """str / list 统一成进程名列表（去空、保序）。"""
+        if isinstance(package, str):
+            return [package] if package else []
+        return [p for p in (package or []) if p]
+
+    def _find_pids(self, packages) -> list:
+        """一次 `ps -A` 解析**多个目标进程**的 PID（精确匹配，不扩展子进程）。
+
+        多进程监控时只跑一次 adb，避免 N 个进程 N 次往返；
+        一个都没匹配上时才逐个 `pidof` 兜底（老 ROM 的 ps 不认 -A）。
+        """
+        names = set(packages)
+        pids = []
+        self._pid_names = {}               # 每次重解析，避免 PID 复用留下旧名字
+        try:
+            out = self._sh("ps -A", what="ps -A")
+        except PerfShellError:
+            out = ""
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) < 3 or not parts[1].isdigit():
+                continue
+            if parts[-1] in names:          # 精确匹配，不扩展子进程
+                pids.append(parts[1])
+                self._pid_names[parts[1]] = parts[-1]
+
+        if not pids:
+            for pkg in packages:
+                pid_out = self._sh(f"pidof {pkg}", require_output=False).strip()
+                matched = self._verify_by_cmdline(
+                    pid_out.split() if pid_out else [], pkg)
+                for pid in matched:
+                    self._pid_names[pid] = pkg
+                pids.extend(matched)
+        return pids
+
     def _find_app_pids(self, package: str) -> list:
         """返回**名称与 package 完全一致**的进程 PID（只这一个进程，不做合并）。
 
@@ -177,23 +230,7 @@ class PerfService:
         `ps -A` 的列是 USER PID PPID VSZ RSS WCHAN ADDR S NAME，
         所以 PID 取第 2 列、进程名取最后一列。
         """
-        pids = []
-        try:
-            out = self._sh("ps -A", what="ps -A")
-        except PerfShellError:
-            out = ""
-        for line in out.splitlines():
-            parts = line.split()
-            if len(parts) < 3 or not parts[1].isdigit():
-                continue
-            if parts[-1] == package:        # 精确匹配，不扩展子进程
-                pids.append(parts[1])
-
-        if not pids:
-            # 老设备/精简 ROM 的 ps 不认 -A：退回 pidof，再按 cmdline 复核
-            pid_out = self._sh(f"pidof {package}", require_output=False).strip()
-            pids = self._verify_by_cmdline(pid_out.split() if pid_out else [], package)
-        return pids
+        return self._find_pids([package])
 
     def _verify_by_cmdline(self, pids, package) -> list:
         """用 `/proc/<pid>/cmdline` 复核进程名，只留下**完全等于 package** 的 PID。
@@ -222,8 +259,8 @@ class PerfService:
                 keep.append(pid.strip())
         return keep or pids
 
-    def _sum_proc_ticks(self, pids: list):
-        """一次 adb 往返读出多个进程的 (utime+stime) 累计值之和。
+    def _read_proc_ticks(self, pids: list):
+        """一次 adb 往返读出多个进程的累计 jiffies，返回 {pid: utime+stime}。
 
         返回 None 表示"读到的 stat 行数与 PID 数对不上"（有进程刚好起停），
         调用方应重建基准，而不是拿一个残缺的和对差值。
@@ -235,8 +272,8 @@ class PerfService:
         if len(lines) != len(pids):
             return None
 
-        total = 0
-        for line in lines:
+        ticks = {}
+        for pid, line in zip(pids, lines):
             # 第 14/15 项是 utime/stime，需从最后一个 ")" 之后切
             # （comm 里可能有空格/括号）
             rp = line.rfind(")")
@@ -245,8 +282,13 @@ class PerfService:
             fields = line[rp + 2:].split()
             if len(fields) < 13:
                 return None
-            total += int(fields[11]) + int(fields[12])
-        return total
+            ticks[pid] = int(fields[11]) + int(fields[12])
+        return ticks
+
+    def _sum_proc_ticks(self, pids: list):
+        """多个进程的累计 jiffies 之和（None 表示样本不完整）。"""
+        ticks = self._read_proc_ticks(pids)
+        return None if ticks is None else sum(ticks.values())
 
     def _collect_cpu(self, package: str, pids=None):
         """按 /proc/<pid>/stat 差分计算**所选进程**的 CPU 占用率（不合并同应用其它进程）。
@@ -264,7 +306,8 @@ class PerfService:
         if not pids:
             raise PerfShellError(f"应用未在运行（找不到进程）：{package}")
 
-        total_ticks = self._sum_proc_ticks(pids)
+        ticks_map = self._read_proc_ticks(pids)
+        total_ticks = None if ticks_map is None else sum(ticks_map.values())
         key = tuple(sorted(pids))
         # 单调时钟：车机启动/联网时会校时，用 time.time() 会让差值忽大忽小
         now = _time.monotonic()
@@ -273,21 +316,40 @@ class PerfService:
         if total_ticks is None or self._last_cpu_pids != key or self._last_cpu_ticks is None:
             self._last_cpu_pids = key
             self._last_cpu_ticks = total_ticks
+            self._last_ticks_map = ticks_map
             self._last_cpu_time = now
+            self._last_cpu_by_process = {}
             return None
 
         delta_ticks = total_ticks - self._last_cpu_ticks
         delta_sec = now - self._last_cpu_time
+        prev_map = self._last_ticks_map or {}
+        by_process = {}
+        for pid, ticks in (ticks_map or {}).items():
+            prev = prev_map.get(pid)
+            if prev is None or ticks < prev:
+                continue
+            name = self._pid_names.get(pid) or pid
+            by_process[name] = by_process.get(name, 0) + (ticks - prev)
+
         self._last_cpu_pids = key
         self._last_cpu_ticks = total_ticks
+        self._last_ticks_map = ticks_map
         self._last_cpu_time = now
 
         if delta_sec <= 0 or delta_ticks < 0:
             # 时钟异常 / PID 被复用导致累计值回退：本轮作废，下一轮从新基准算
+            self._last_cpu_by_process = {}
             return None
 
         cpu_sec = delta_ticks / self._cpu_ticks_per_sec
         percent = cpu_sec / delta_sec * 100.0
+
+        # 逐进程拆分（同一进程名的多个 PID 合并）：给报告画多进程曲线 / 统计用
+        self._last_cpu_by_process = {
+            name: round(ticks / self._cpu_ticks_per_sec / delta_sec * 100.0, 2)
+            for name, ticks in by_process.items()
+        }
 
         # 首次采集时探测设备核数（决定合理上限：核数 × 100%）
         if self._cpu_core_count is None:
@@ -305,32 +367,51 @@ class PerfService:
     # ============================================================
     def _collect_mem(self, package: str, pids=None) -> tuple:
         """
-        采集**所选进程**的内存，返回 (pss_mb, breakdown)：
-          - pss_mb：该进程的 TOTAL PSS（MB）
-          - breakdown：分类拆解 dict，如
-            {'Java': 61.8, 'Native': 12.3, 'Graphics': 5.0, ...}（单位 MB）
+        采集**目标进程**的内存，返回 (pss_mb, breakdown, res_mb)：
+          - pss_mb：这些进程的 TOTAL PSS 之和（MB）
+          - breakdown：分类拆解 dict（各进程同名分类相加），如
+            {'Java': 61.8, 'Native': 12.3, 'System': 20.0, ...}（单位 MB）
+          - res_mb：这些进程的 TOTAL RSS 之和（MB，报告里的 res 参数）
 
         为什么按 PID 取：`dumpsys meminfo <包名>` 给的是整个应用的 App Summary
         （含 `包名:*` 子进程）—— 选子进程会显示整包内存，选主进程也混着子进程。
         改成 `dumpsys meminfo <pid>` 只出这一个进程，和 CPU 口径一致（2026-10-25 用户要求）。
+        多进程监控时逐个 PID 取回再求和（PSS 按进程分摊，求和即应用总占用）。
+        某个进程刚好退出就跳过它；全部取不到才算失败。
         拿不到 PID 时退回包名 dump（宁可给整包数，也不让采集直接失败）。
         """
         if pids is None:
             pids = self._find_app_pids(package)
-        target = pids[0] if pids else package
-        out = self._sh(f"dumpsys meminfo {target}", what="dumpsys meminfo")
-        # 应用没在跑时 dumpsys 会这么回 —— 给出明确结论，而不是记一个 0 内存
-        if "No process found" in out or "Unknown package" in out:
+        targets = list(pids) or [package]
+        total_pss = 0.0
+        total_res = 0.0
+        merged = {}
+        got = 0
+        dumped = 0
+        for target in targets:
+            out = self._sh(f"dumpsys meminfo {target}", what="dumpsys meminfo")
+            # 应用没在跑时 dumpsys 会这么回 —— 单个进程退出时跳过，不让整轮失败
+            if "No process found" in out or "Unknown package" in out:
+                continue
+            dumped += 1
+            # TOTAL PSS 优先取 App Summary，回退到进程明细表 TOTAL 行
+            m = re.search(r"TOTAL PSS:\s*(\d+)", out)
+            if not m:
+                m = re.search(r"TOTAL\s+(\d+)", out)
+            if not m:
+                continue
+            got += 1
+            total_pss += int(m.group(1)) / 1024.0      # KB -> MB
+            rss = re.search(r"TOTAL RSS:\s*(\d+)", out)
+            if rss:
+                total_res += int(rss.group(1)) / 1024.0
+            for key, val in self._parse_mem_breakdown(out).items():
+                merged[key] = merged.get(key, 0.0) + val
+        if not got:
+            if dumped:
+                raise PerfShellError(f"dumpsys meminfo 输出里没有 TOTAL PSS：{package}")
             raise PerfShellError(f"应用未在运行（dumpsys meminfo 无进程）：{package}")
-        # TOTAL PSS 优先取 App Summary，回退到进程明细表 TOTAL 行
-        m = re.search(r"TOTAL PSS:\s*(\d+)", out)
-        if not m:
-            m = re.search(r"TOTAL\s+(\d+)", out)
-        if not m:
-            raise PerfShellError(f"dumpsys meminfo 输出里没有 TOTAL PSS：{package}")
-        pss_mb = int(m.group(1)) / 1024.0  # KB -> MB
-        breakdown = self._parse_mem_breakdown(out)
-        return pss_mb, breakdown
+        return total_pss, merged, total_res
 
     def _parse_mem_breakdown(self, out: str) -> dict:
         """把 dumpsys meminfo 输出拆成 Android Studio 风格分类（单位 MB）。
@@ -340,7 +421,7 @@ class PerfService:
         无 App Summary 时回退到进程明细表，按行归类。
         """
         cats: dict = {}
-        # Private Other 与 System 都归入 Others，累加合并
+        # Private Other 与 System 分开记：报告要按 Baidu 口径分别展示 other_mem / system_mem
         for label, key in [
             ("Java Heap", "Java"),
             ("Native Heap", "Native"),
@@ -348,7 +429,7 @@ class PerfService:
             ("Stack", "Stack"),
             ("Graphics", "Graphics"),
             ("Private Other", "Others"),
-            ("System", "Others"),
+            ("System", "System"),
         ]:
             m = re.search(rf"{label}:\s*(\d+)", out)
             if m:
