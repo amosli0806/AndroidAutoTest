@@ -684,6 +684,19 @@ class PerfView(QWidget):
         except Exception:
             return 0.0
 
+    # 运行中不允许改动的勾选：卡片显隐 + 整机探针。
+    # **新增勾选时只改这里**，不要在 _apply_state 里逐个手写 ——
+    # 2026-10-26、2026-10-28 两次都是因为漏写某个勾选，导致监控中还能点。
+    _IDLE_ONLY_CHECKS = (
+        'sys_cpu_check', 'sys_mem_check', 'netdev_check', 'iotop_check',
+        'record_visible_check', 'smaps_visible_check',
+        'hprof_visible_check', 'packet_visible_check', 'screenshot_visible_check',
+    )
+
+    def _idle_only_checks(self):
+        return [w for w in (getattr(self, n, None) for n in self._IDLE_ONLY_CHECKS)
+                if w is not None]
+
     def _apply_state(self):
         state = self._state
         idle = state == self.STATE_IDLE
@@ -715,18 +728,14 @@ class PerfView(QWidget):
         for key, cb in self.metric_radios.items():
             cb.setEnabled(idle and self._metric_available.get(key, True))
 
-        # 堆转储/抓包/截图的「卡片显隐」复选框：同口径，非空闲禁用
-        # 系统内存探针只在本轮开始时启动，运行中不允许改（避免半路加/减探针）
-        self.sys_mem_check.setEnabled(idle)
-        self.iotop_check.setEnabled(idle)
-        for key in ('sys_mem', 'netdev', 'iotop'):
+        # 卡片显隐 / 整机探针勾选：非空闲一律禁用（列表统一处理）
+        for chk in self._idle_only_checks():
+            chk.setEnabled(idle)
+        # 整机探针的间隔下拉：探针只在开始时启动，运行中同样锁定
+        for key in ('sys_cpu', 'sys_mem', 'netdev', 'iotop'):
             combo = self._probe_interval_combo(key)
             if combo is not None:
                 combo.setEnabled(idle)
-        self.smaps_visible_check.setEnabled(idle)
-        self.hprof_visible_check.setEnabled(idle)
-        self.packet_visible_check.setEnabled(idle)
-        self.screenshot_visible_check.setEnabled(idle)
 
         # 堆转储设置：监控中锁定（自动循环勾选与间隔不可改）；空闲时按勾选状态开放间隔
         self.record_enable_check.setEnabled(idle)

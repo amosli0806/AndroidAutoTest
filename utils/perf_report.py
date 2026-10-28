@@ -1456,6 +1456,7 @@ class PerfReportGenerator:
             if len(_mem_procs) > 1:
                 for _pn in _mem_procs:
                     _short = short_proc_name(_pn, session.app_package)
+                    _detail_rows.append((f"{_short} · {_pn}",))
                     for _label, _getter in _mem_getters:
                         _vals = [v for v in (_getter(x, _pn) for x in samples) if v > 0]
                         if not _vals:
@@ -1475,9 +1476,14 @@ class PerfReportGenerator:
                 "流量 (MB)", f"↓{_t['rx_mb']:.1f} / ↑{_t['tx_mb']:.1f}", "-", "-", "按 UID"))
         detail_html = ""
         if _detail_rows:
-            _rows = "".join(
-                f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td>"
-                f"<td>{r[3]}</td><td>{r[4]}</td></tr>" for r in _detail_rows)
+            _rows = ""
+            for r in _detail_rows:
+                if len(r) == 1:
+                    # 分组行：只做视觉分隔，不参与数值列
+                    _rows += f'<tr class="mem-group"><td colspan="5">{r[0]}</td></tr>'
+                else:
+                    _rows += (f"<tr><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td>"
+                              f"<td>{r[3]}</td><td>{r[4]}</td></tr>")
             detail_html = f"""
         <h2>📌 测试详情</h2>
         <table class="compare">
@@ -1700,6 +1706,16 @@ class PerfReportGenerator:
             background: #f8f9fa;
             color: #666;
             font-weight: 600;
+        }}
+        /* 测试详情里的分进程分组行：只当分隔条，别抢过数据本身 */
+        table.compare tr.mem-group td {{
+            background: #f7f8fa;
+            color: #8a8f96;
+            font-size: 12px;
+            text-align: left;
+            padding-top: 9px;
+            padding-bottom: 5px;
+            border-top: 1px solid #e8eaee;
         }}
         /* 4 列表（内存详情 / 系统内存 / 整机 CPU）用固定列宽，三张表的列位置才能对齐；
            否则「ZRAM 物理占用 (MB)」这类长标签会把第一列撑宽，后三列整体右移 */
