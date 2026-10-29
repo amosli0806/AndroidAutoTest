@@ -1363,15 +1363,6 @@ class PerfView(QWidget):
         self._screenshot_card.setVisible(False)
         self._record_card.setVisible(False)
 
-        # 卡片分组小标题（「扩展方向」第 9 项）：整机指标 / 现场留证。
-        # 组内没有卡时由 _relayout_cards 连标题一起不排，避免出现空标题
-        self._group_probe = QLabel("整机指标")
-        self._group_tool = QLabel("现场留证")
-        for lbl in (self._group_probe, self._group_tool):
-            lbl.setObjectName("PerfGroupHeader")
-            lbl.setParent(self.cards_container)
-            lbl.setVisible(False)
-
         # 初始布局
         self._relayout_cards()
 
@@ -1432,10 +1423,14 @@ class PerfView(QWidget):
             grid.setContentsMargins(12, 6, 12, 6)
             grid.setHorizontalSpacing(10)
             grid.setVerticalSpacing(0)
+            # 三段宽度：标题 80 固定 ｜ 参数自适应 ｜ 按钮段按内容
+            grid.setColumnMinimumWidth(0, self._CARD_TITLE_W)
+            grid.setColumnStretch(1, 1)
 
-            # ① 标题段：固定宽度
-            head = QWidget()
-            head_row = QHBoxLayout(head)
+            # 三段都用 addLayout 直接放进栅格，**不要**再套一层 QWidget：
+            # 裸 QWidget 会继承 cards_container 的 background-color 并把卡片
+            # 底色盖成页面底色（2026-10-29 实测卡片变成纯黑的元凶）。
+            head_row = QHBoxLayout()
             head_row.setContentsMargins(0, 0, 0, 0)
             head_row.setSpacing(6)
             dot = QLabel("●")
@@ -1449,24 +1444,18 @@ class PerfView(QWidget):
                 "font-weight: 600; font-size: 13px; background: transparent;")
             head_row.addWidget(title_label)
             head_row.addStretch()
-            head.setFixedWidth(self._CARD_TITLE_W)
-            grid.addWidget(head, 0, 0)
+            grid.addLayout(head_row, 0, 0)
 
-            # ② 参数段：吃掉剩余宽度
-            params = QWidget()
-            p_row = QHBoxLayout(params)
+            p_row = QHBoxLayout()
             p_row.setContentsMargins(0, 0, 0, 0)
             p_row.setSpacing(8)
-            grid.addWidget(params, 0, 1)
-            grid.setColumnStretch(1, 1)
+            grid.addLayout(p_row, 0, 1)
 
-            # ③ 按钮段：靠右固定，不参与拉伸
-            actions = QWidget()
-            a_row = QHBoxLayout(actions)
+            a_row = QHBoxLayout()
             a_row.setContentsMargins(0, 0, 0, 0)
             a_row.setSpacing(6)
             a_row.addStretch()
-            grid.addWidget(actions, 0, 2)
+            grid.addLayout(a_row, 0, 2)
 
             card.setFixedHeight(44)
             return card, p_row, a_row, dot, title_label
@@ -1772,15 +1761,6 @@ class PerfView(QWidget):
             if item.widget():
                 item.widget().setParent(None)
 
-        # 组标题被 setParent(None) 后就成了独立窗口，必须挂回容器并先隐藏，
-        # 用到时再显示（否则会飘出两个小标签）
-        for lbl in (getattr(self, '_group_probe', None),
-                    getattr(self, '_group_tool', None)):
-            if lbl is None:          # 构造期构造尚未完成时的 resize 也会走到这里
-                continue
-            lbl.setParent(self.cards_container)
-            lbl.setVisible(False)
-
         width = self.scroll.viewport().width() if self.scroll else 900
         # 页面在堆里隐藏时不跟随主窗口布局，视口宽度还是构建期默认值（不可信）；
         # 叠加视图自身宽度兜底（首次 showEvent 时自身宽度已是真实值）
@@ -1843,14 +1823,11 @@ class PerfView(QWidget):
             self.cards_grid.addWidget(self._cards[key], i // cols, i % cols)
         row = (len(visible_metrics) + cols - 1) // cols
 
-        # 两组卡片各带一行小标题；组内为空时连标题一起不占位
-        for header, cards in ((getattr(self, '_group_probe', None), probe_cards),
-                              (getattr(self, '_group_tool', None), shown_tools)):
-            if not cards or header is None:
+        # 整机探针卡、工具卡依次跟在指标卡片后面（不再插入分组小标题：
+        # 2026-10-29 用户反馈那两行字多余，占高度又割裂视觉）
+        for cards in (probe_cards, shown_tools):
+            if not cards:
                 continue
-            header.setVisible(True)
-            self.cards_grid.addWidget(header, row, 0, 1, cols)
-            row += 1
             for i, card in enumerate(cards):
                 self.cards_grid.addWidget(card, row + i // cols, i % cols)
             row += (len(cards) + cols - 1) // cols
@@ -2483,21 +2460,6 @@ class PerfView(QWidget):
             f" }}"
         )
         self.cards_container.setStyleSheet(f"background-color: {cards_bg};")
-
-        # 分组小标题（整机指标 / 现场留证）：比卡片标题小一号、用次要色，
-        # 只做分隔不做强调，避免和卡片标题抢视线
-        for lbl in (getattr(self, '_group_probe', None),
-                    getattr(self, '_group_tool', None)):
-            if lbl is None:
-                continue
-            lbl.setStyleSheet(
-                f"QLabel#PerfGroupHeader {{"
-                f" color: {'#9aa0a6' if is_dark else '#8a8f98'};"
-                f" font-size: 11px;"
-                f" font-weight: 600;"
-                f" padding: 4px 2px 0px 2px;"
-                f" background: transparent;"
-                f" }}")
 
         for card in self._cards.values():
             if hasattr(card, 'apply_theme'):
