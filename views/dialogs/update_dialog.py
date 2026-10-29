@@ -69,7 +69,14 @@ class UpdateAvailableDialog(QDialog):
         notes = QTextEdit()
         notes.setObjectName("UpdateNotes")
         notes.setReadOnly(True)
-        notes.setPlainText(self.info.notes.strip() or "（该版本没有填写更新说明）")
+        # 发版说明是 Markdown（CI 把 CHANGELOG 该版段落原样塞进 Release 正文）。
+        # 用 setPlainText 会把「###」「-」当普通字符画出来，看着像乱码；
+        # setMarkdown 才能渲染成标题 + 列表（2026-10-29）。
+        raw_notes = self.info.notes.strip()
+        if raw_notes:
+            notes.setMarkdown(raw_notes)
+        else:
+            notes.setPlainText("（该版本没有填写更新说明）")
         notes.setMinimumHeight(160)
         notes.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
         root.addWidget(notes, 1)
