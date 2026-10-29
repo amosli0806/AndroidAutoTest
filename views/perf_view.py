@@ -928,7 +928,15 @@ class PerfView(QWidget):
         return bool(self.record_enable_check.isChecked())
 
     def _on_record_toggle(self, checked: bool):
-        # 具体启停由控制器处理（需要判断是否在监控中）
+        """录制循环勾选变化：放开/锁住间隔与时长下拉，再通知控制器启停。
+
+        之前只发了信号、没刷新下拉的可用性，导致勾上「循环间隔」后点间隔
+        下拉没反应（2026-10-29 反馈）。监控中勾选本身是禁用的，这里再兜一层
+        idle 判断，避免运行中被别处调用时把下拉放开。
+        """
+        idle = self._state == self.STATE_IDLE
+        self.record_interval_combo.setEnabled(idle and checked)
+        self.record_duration_combo.setEnabled(idle and checked)
         self.record_toggle_requested.emit(checked)
 
     def smaps_loop_enabled(self) -> bool:
