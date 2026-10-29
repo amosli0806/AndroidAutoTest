@@ -106,15 +106,26 @@ class MultiProcessDialog(QDialog):
 
     def __init__(self, processes, selected=None, parent=None):
         super().__init__(parent)
+        self.setObjectName("MultiProcessDialog")
         self.setWindowTitle("选择目标进程")
-        self.setMinimumWidth(460)
+        self.setMinimumWidth(480)
+        self.resize(500, 440)
+
         lay = QVBoxLayout(self)
-        tip = QLabel("勾选要一起监控的进程（CPU / 内存按所选进程求和）。\n"
-                     "第一个勾选的进程作为主进程，FPS / 流量 / 线程仍按它采集。")
-        tip.setWordWrap(True)
-        lay.addWidget(tip)
+        lay.setContentsMargins(16, 14, 16, 12)
+        lay.setSpacing(10)
+
+        self.tip = QLabel("勾选要一起监控的进程，CPU / 内存按所选进程求和。\n"
+                          "第一个勾选的作为主进程，FPS / 流量 / 线程仍按它采集。")
+        self.tip.setWordWrap(True)
+        lay.addWidget(self.tip)
 
         self.list = QListWidget()
+        self.list.setObjectName("ProcList")
+        # 只在纵向上滚动：包名本来就短，横向滚动条纯属碍事
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.list.setUniformItemSizes(True)
         chosen = set(selected or [])
         for name in processes:
             item = QListWidgetItem(name)
@@ -122,13 +133,101 @@ class MultiProcessDialog(QDialog):
             item.setCheckState(
                 Qt.CheckState.Checked if name in chosen else Qt.CheckState.Unchecked)
             self.list.addItem(item)
-        lay.addWidget(self.list)
+        lay.addWidget(self.list, 1)
 
         box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        ok_btn = box.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_btn = box.button(QDialogButtonBox.StandardButton.Cancel)
+        ok_btn.setText("确定")
+        cancel_btn.setText("取消")
+        ok_btn.setObjectName("primaryBtn")
+        for btn in (ok_btn, cancel_btn):
+            btn.setMinimumSize(84, 32)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
         box.accepted.connect(self.accept)
         box.rejected.connect(self.reject)
         lay.addWidget(box)
+
+        self._apply_style()
+
+    # ---------- 外观 ----------
+    def _is_dark(self) -> bool:
+        try:
+            from utils.settings import Settings
+            from utils.theme import THEME_MODE_DARK
+            return Settings.get_theme_mode() == THEME_MODE_DARK
+        except Exception:
+            return False
+
+    def _apply_style(self):
+        dark = self._is_dark()
+        if dark:
+            bg, tip_c = "#1e2023", "#a9b0b8"
+            border, list_bg, item_c = "#34373c", "#26282b", "#e5e7ea"
+            hover, sel = "#2c2f33", "#2f4a72"
+            box_bd, bar_c, bar_h = "#5a6068", "#4b5057", "#5f656d"
+            btn_bd, cancel_fg = "#43474d", "#d6d9dd"
+        else:
+            bg, tip_c = "#f6f7f9", "#6b7280"
+            border, list_bg, item_c = "#dfe3e8", "#ffffff", "#2b2f33"
+            hover, sel = "#f0f3f7", "#dbe7f5"
+            box_bd, bar_c, bar_h = "#c3c9d0", "#c9ced6", "#b3b9c2"
+            btn_bd, cancel_fg = "#d5dae0", "#3a3f45"
+
+        self.setStyleSheet(f"""
+            QDialog#MultiProcessDialog {{ background: {bg}; }}
+            QLabel {{ font-size: 13px; color: {tip_c}; background: transparent; }}
+            QPushButton#primaryBtn {{
+                background: #2d6cdf; color: #ffffff; border: none;
+                border-radius: 5px; font-size: 13px; padding: 0 16px;
+            }}
+            QPushButton#primaryBtn:hover {{ background: #3a7aeb; }}
+            QPushButton#primaryBtn:pressed {{ background: #2560c8; }}
+            QPushButton {{
+                background: transparent; color: {cancel_fg};
+                border: 1px solid {btn_bd}; border-radius: 5px;
+                font-size: 13px; padding: 0 16px;
+            }}
+            QPushButton:hover {{ border-color: #2d6cdf; color: #2d6cdf; }}
+        """)
+
+        # 列表 item 与滚动条**分开**设：同一份 QSS 里混着写，部分 Qt 版本会丢滚动条规则
+        self.list.setStyleSheet(f"""
+            QListWidget#ProcList {{
+                background: {list_bg}; border: 1px solid {border};
+                border-radius: 6px; outline: none; padding: 4px;
+                font-size: 13px; color: {item_c};
+            }}
+            QListWidget#ProcList::item {{
+                padding: 3px 6px; border-radius: 4px;
+            }}
+            QListWidget#ProcList::item:hover {{ background: {hover}; }}
+            QListWidget#ProcList::item:selected {{ background: {sel}; color: {item_c}; }}
+            QListWidget#ProcList::indicator {{
+                width: 14px; height: 14px; margin-right: 6px;
+                border: 1px solid {box_bd}; border-radius: 3px;
+                background: transparent;
+            }}
+            QListWidget#ProcList::indicator:checked {{
+                background: #2d6cdf; border-color: #2d6cdf;
+            }}
+        """)
+        self.list.verticalScrollBar().setStyleSheet(f"""
+            QScrollBar:vertical {{
+                background: transparent; width: 8px; margin: 2px 0; border: none;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {bar_c}; min-height: 28px; border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical:hover {{ background: {bar_h}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0; border: none; background: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """)
 
     def selected_processes(self) -> list:
         out = []
