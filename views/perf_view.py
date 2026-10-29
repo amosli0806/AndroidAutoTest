@@ -355,6 +355,15 @@ class PerfView(QWidget):
     STATE_IDLE = 'idle'
     STATE_RUNNING = 'running'
     STATE_SCENARIO = 'scenario'
+    # 停止中：点「停止」到回到「开始」之间的过渡态。
+    # 控制器的停止是同步阻塞的（worker.wait / 探针收尾 / 写文件），直接跳回
+    # 「开始」会让人以为按钮没生效，所以插入这个状态并强制停留一段时间。
+    STATE_STOPPING = 'stopping'
+
+    # 「停止中」最少停留时长（毫秒）：用户要求至少 2 秒
+    _STOPPING_MIN_MS = 2000
+    # 兜底上限：万一控制器异常没把状态切回空闲，也不能永远卡在「停止中」
+    _STOPPING_MAX_MS = 15000
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -362,6 +371,16 @@ class PerfView(QWidget):
         self._theme_mode = ThemeMode.LIGHT
         self._has_wallpaper = False
         self._state = self.STATE_IDLE
+        # 「停止中」计时：deadline 是"最早可以回空闲"的时刻；pending 表示
+        # 控制器那边的收尾工作已经做完了，只等最短停留时间到点
+        self._stop_deadline = 0.0
+        self._stop_pending = False
+        self._stop_timer = QTimer(self)
+        self._stop_timer.setSingleShot(True)
+        self._stop_timer.timeout.connect(self._maybe_leave_stopping)
+        self._stop_guard = QTimer(self)
+        self._stop_guard.setSingleShot(True)
+        self._stop_guard.timeout.connect(self._force_leave_stopping)
         self._suite_model = None
         self._project_model = None
         self._shown_once = False  # 是否已显示过（视口宽度显示前不可信）
@@ -374,9 +393,10 @@ class PerfView(QWidget):
         self._last_traffic_ts = None
         self._last_traffic_rx = 0
         self._last_traffic_tx = 0
-        # 开始/停止二合一按钮的两套外观（在 apply_theme 里按主题生成）
+        # 开始/停止二合一按钮的三套外观（在 apply_theme 里按主题生成）
         self._run_btn_qss_normal = ""
         self._run_btn_qss_danger = ""
+        self._run_btn_qss_stopping = ""
         # 应用列表是否已成功加载（决定「开始」按钮可用性；见 update_app_list）
         self._apps_loaded = False
         # 配置恢复期间的守卫：恢复过程会触发控件的变更信号，此时不回写配置，
@@ -742,8 +762,62 @@ class PerfView(QWidget):
         return self._state
 
     def set_state(self, state):
+        # 「运行 → 空闲」不直接生效：中间插一层「停止中」，至少停 _STOPPING_MIN_MS
+        # 才回到「开始」。两条路径都会走到这里：
+        #   ① 用户点停止：按钮先切成「停止中」（见 _on_run_btn_clicked），
+        #      控制器收尾完再调 set_state(IDLE) → 这里只负责"收尾已完成"的标记；
+        #   ② 自动停止（到时长 / 场景化跑完）：这里补上「停止中」这一跳。
+        if state == self.STATE_IDLE:
+            if self._state in (self.STATE_RUNNING, self.STATE_SCENARIO):
+                self._enter_stopping()
+                self._stop_pending = True
+                self._maybe_leave_stopping()
+                return
+            if self._state == self.STATE_STOPPING:
+                self._stop_pending = True
+                self._maybe_leave_stopping()
+                return
         self._state = state
         self._apply_state()
+
+    def _enter_stopping(self):
+        """切到「停止中」：立刻改按钮观感，并起最短停留 + 兜底两个计时器。"""
+        if self._state == self.STATE_STOPPING:
+            return
+        self._stop_pending = False
+        self._stop_deadline = time.monotonic() + self._STOPPING_MIN_MS / 1000.0
+        self._state = self.STATE_STOPPING
+        self._apply_state()
+        # 必须强制重绘一次：紧接着的停止是同步阻塞的（等 worker、收探针、落盘），
+        # 不在这里刷一下，事件循环被占住的整段时间里按钮还是旧样子 —— 点了像没反应
+        self.start_btn.repaint()
+        self.status_info.repaint()
+        self._stop_timer.start(self._STOPPING_MIN_MS)
+        self._stop_guard.start(self._STOPPING_MAX_MS)
+
+    def _maybe_leave_stopping(self):
+        """收尾已完成且已过最短停留时间 → 真正回到空闲。"""
+        if self._state != self.STATE_STOPPING or not self._stop_pending:
+            return
+        remain = self._stop_deadline - time.monotonic()
+        if remain > 0:
+            # 还没停够最短时长，把剩余时间再排一次
+            self._stop_timer.start(int(remain * 1000) + 20)
+            return
+        self._stop_guard.stop()
+        self._stop_pending = False
+        self._state = self.STATE_IDLE
+        self._apply_state()
+
+    def _force_leave_stopping(self):
+        """兜底：控制器异常没回空闲时也要还原界面，不能永久卡在「停止中」。"""
+        if self._state != self.STATE_STOPPING:
+            return
+        logger.warning("停止中超过 %d ms 仍未收到空闲状态，强制还原界面",
+                       self._STOPPING_MAX_MS)
+        self._stop_pending = True
+        self._stop_deadline = 0.0
+        self._maybe_leave_stopping()
 
     def _check_state(self):
         # 用「应用列表是否真的加载成功」判断，而不是比对占位文案 —— 否则改一句
@@ -757,9 +831,18 @@ class PerfView(QWidget):
         """刷新「开始 / 停止」二合一按钮的外观。
 
         空闲 = 开始（蓝底 play 图标）；采集中 / 场景化执行中 = 停止（红底 stop
-        图标）。两套 QSS 由 apply_theme 按当前主题预算好（见 _run_btn_qss_*），
-        这里只做切换；按钮被置灰（未选应用）时只留文案、去掉图标。
+        图标）；停止中 = 橙色沙漏（表示正在收尾，不接受点击）。几套 QSS 由
+        apply_theme 按当前主题预算好（见 _run_btn_qss_*），这里只做切换；
+        按钮被置灰（未选应用）时只留文案、去掉图标。
         """
+        if self._state == self.STATE_STOPPING:
+            self.start_btn.setText("停止中")
+            self.start_btn.setToolTip("正在停止采集，请稍候…")
+            self.start_btn.setStyleSheet(
+                self._run_btn_qss_stopping or self._run_btn_qss_danger)
+            # 禁用态也保留图标：这里要的是「进行中」的观感，不是「不可用」
+            self.start_btn.setIcon(qta.icon('fa6s.hourglass-half', color='white'))
+            return
         idle = self._state == self.STATE_IDLE
         if self.start_btn.isEnabled():
             self.start_btn.setIcon(
@@ -881,9 +964,12 @@ class PerfView(QWidget):
         idle = state == self.STATE_IDLE
 
         # 开始/停止二合一：空闲时按「应用列表是否加载成功」决定可用性，
-        # 采集中恒可用（点即停止）
+        # 采集中恒可用（点即停止）；停止中一律不可点（收尾还没完，重复点没意义）
         app_ok = bool(getattr(self, '_apps_loaded', False))
-        self.start_btn.setEnabled(app_ok if idle else True)
+        if state == self.STATE_STOPPING:
+            self.start_btn.setEnabled(False)
+        else:
+            self.start_btn.setEnabled(app_ok if idle else True)
         self._refresh_run_btn()
 
         self.app_combo.setEnabled(idle)
@@ -1108,6 +1194,20 @@ class PerfView(QWidget):
         self.screenshot_visible_check = BorderedCheckBox("截图")
         self.screenshot_visible_check.toggled.connect(self._on_card_visibility_changed)
         metric_widgets.append(self.screenshot_visible_check)
+
+        # 展示顺序与创建顺序解耦：创建顺序散在整段初始化里（还被 _apply_state
+        # 等逻辑依赖），调个展示顺序不该牵动它们，所以在这里按文案重排。
+        # 新加的勾选没登记进 _metric_order 时自动排到末尾，不会凭空消失。
+        _metric_order = [
+            'CPU', '内存',
+            '堆转储', '截图', '录屏',
+            'FPS', '应用流量',
+            '网卡流量', '抓包',
+            '系统内存', '内存明细', '磁盘 IO',
+        ]
+        _by_text = {w.text(): w for w in metric_widgets}
+        _ordered = [_by_text.pop(t) for t in _metric_order if t in _by_text]
+        metric_widgets = _ordered + list(_by_text.values())
         flow2.addWidget(_make_group("指标", metric_widgets))
 
         # 场景化参数组：仅「场景化测试」模式下显示（显隐由 _apply_state 控制）
@@ -1766,7 +1866,12 @@ class PerfView(QWidget):
         """开始/停止二合一的派发：空闲时启动采集，采集中时停止。"""
         if self._state == self.STATE_IDLE:
             self._on_start_clicked()
+        elif self._state == self.STATE_STOPPING:
+            return                      # 收尾中，忽略连点
         else:
+            # 先切「停止中」再发信号：控制器是同步收尾的（等 worker、收探针、
+            # 落盘），等它返回再切就等于没切
+            self._enter_stopping()
             self.stop_requested.emit()
 
 
@@ -1975,6 +2080,7 @@ class PerfView(QWidget):
         state_text = {
             self.STATE_RUNNING: "采集中",
             self.STATE_SCENARIO: "场景化执行中",
+            self.STATE_STOPPING: "停止中",
         }.get(self._state, "")
         self.status_info.setText(f"{state_text} · 采样点 {total} · 间隔 {self.interval_combo.currentText()}")
 
@@ -2171,9 +2277,28 @@ class PerfView(QWidget):
                 color: {disabled_fg};
             }}
         """
-        # 记住两套外观，供运行按钮按状态切换
+        # 「停止中」：仍在进行中的状态，用橙色 + 白字表达「还在收尾」；
+        # 按钮此时是禁用的，所以 :disabled 也必须是橙色 —— 否则会被涂成灰色，
+        # 看着像"停好了但点不动"，与「进行中」的语义正好相反。
+        stopping_qss = f"""
+            QPushButton {{
+                background-color: {'#b9770e' if is_dark else '#e08e0b'};
+                color: #ffffff;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 14px;
+                font-weight: 500;
+                min-height: 22px;
+            }}
+            QPushButton:disabled {{
+                background-color: {'#8a5a0a' if is_dark else '#efa33a'};
+                color: #ffffff;
+            }}
+        """
+        # 记住三套外观，供运行按钮按状态切换
         self._run_btn_qss_normal = btn_qss
         self._run_btn_qss_danger = danger_qss
+        self._run_btn_qss_stopping = stopping_qss
 
         # 纯图标按钮（抓包参数等）：自带一套紧凑样式，不吃上面的通用按钮 QSS，
         # 否则 padding/min-height 会把固定尺寸撑大、与同行按钮错位
