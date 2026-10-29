@@ -22,7 +22,8 @@ from utils.settings import Settings, THEME_MODE_DARK
 from utils.flow_layout import FlowLayout
 from views.perf_widgets import MetricCard, ProbeValueCard
 from models.perf_model import MEM_CATEGORIES
-from PyQt6.QtWidgets import QStyleOptionButton, QStyle, QStyledItemDelegate
+from PyQt6.QtWidgets import (QStyleOptionButton, QStyle, QStyledItemDelegate,
+                             QAbstractItemView)
 from PyQt6.QtGui import QPainter, QPen, QColor
 from PyQt6.QtCore import QRect, QEvent, QPointF
 logger = logging.getLogger(__name__)
@@ -132,9 +133,8 @@ class _ProcCheckDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = option.rect
 
-        if option.state & QStyle.StateFlag.State_Selected:
-            painter.fillRect(rect, QColor(self.c["sel"]))
-        elif option.state & QStyle.StateFlag.State_MouseOver:
+        # 不画「选中」底色：这个列表里勾选才是状态，点一下留一整条蓝底反而干扰
+        if option.state & QStyle.StateFlag.State_MouseOver:
             painter.fillRect(rect, QColor(self.c["hover"]))
 
         # index.data(CheckStateRole) 在 PyQt6 返回 int，直接和 Qt.CheckState 枚举比
@@ -204,6 +204,9 @@ class MultiProcessDialog(QDialog):
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.list.setUniformItemSizes(True)
+        # 没有「选中行」这个概念：勾选才是状态，避免点一下留下蓝底 + 焦点框
+        self.list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         chosen = set(selected or [])
         for name in processes:
             item = QListWidgetItem(name)
