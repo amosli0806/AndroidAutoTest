@@ -22,8 +22,9 @@ from utils.settings import Settings, THEME_MODE_DARK
 from utils.flow_layout import FlowLayout
 from views.perf_widgets import MetricCard, ProbeValueCard
 from models.perf_model import MEM_CATEGORIES
-from PyQt6.QtWidgets import QStyleOptionButton, QStyle
+from PyQt6.QtWidgets import QStyleOptionButton, QStyle, QStyledItemDelegate
 from PyQt6.QtGui import QPainter, QPen, QColor
+from PyQt6.QtCore import QRect, QEvent, QPointF
 logger = logging.getLogger(__name__)
 
 
@@ -97,6 +98,83 @@ class BorderedRadioButton(QRadioButton):
         except Exception:
             pass
 
+# CheckStateRole 读出来是 int：0 未选 / 1 半选 / 2 选中
+_CHECKED = int(Qt.CheckState.Checked.value)
+
+
+class _ProcCheckDelegate(QStyledItemDelegate):
+    """列表行自绘：左边方框（选中画蓝勾），右边进程名。
+
+    为什么不用 QSS 的 ::indicator：QSS 选中态只能填一块颜色，要画勾必须引用图片，
+    而图片在 PyInstaller 打包后路径容易失效。这里用 QPainter 直接画，
+    换主题就是换几个颜色值，也没有额外资源文件。
+    """
+
+    BOX = 15
+    ROW_H = 29
+    PAD_L = 10
+
+    def __init__(self, colors, parent=None):
+        super().__init__(parent)
+        self.c = colors
+
+    def _box_rect(self, rect):
+        return QRect(rect.left() + self.PAD_L,
+                     rect.center().y() - self.BOX // 2 + 1,
+                     self.BOX, self.BOX)
+
+    def sizeHint(self, option, index):
+        h = super().sizeHint(option, index).height()
+        return QSize(0, max(self.ROW_H, h))
+
+    def paint(self, painter, option, index):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = option.rect
+
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(rect, QColor(self.c["sel"]))
+        elif option.state & QStyle.StateFlag.State_MouseOver:
+            painter.fillRect(rect, QColor(self.c["hover"]))
+
+        # index.data(CheckStateRole) 在 PyQt6 返回 int，直接和 Qt.CheckState 枚举比
+        # 永远是 False（枚举不是 IntEnum）—— 初始勾选的行会画不出勾。统一按 int 比。
+        checked = int(index.data(Qt.ItemDataRole.CheckStateRole) or 0) == _CHECKED
+        box = self._box_rect(rect)
+        accent = QColor(self.c["accent"])
+        painter.setPen(QPen(accent if checked else QColor(self.c["box_bd"]), 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(box, 3.5, 3.5)
+
+        if checked:
+            pen = QPen(accent, 1.9)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            x, y = box.left(), box.top()
+            # 两段直线画勾（比 QPolygonF 少一层依赖，PyQt6 里它在 QtGui）
+            painter.drawLine(QPointF(x + 3.0, y + 7.7), QPointF(x + 6.2, y + 10.9))
+            painter.drawLine(QPointF(x + 6.2, y + 10.9), QPointF(x + 12.0, y + 4.2))
+
+        painter.setPen(QColor(self.c["text"]))
+        tr = rect.adjusted(box.right() - rect.left() + 10, 0, -8, 0)
+        fm = painter.fontMetrics()
+        text = fm.elidedText(index.data() or "", Qt.TextElideMode.ElideRight, tr.width())
+        painter.drawText(tr, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
+        painter.restore()
+
+    def editorEvent(self, event, model, option, index):
+        # 只有点在方框附近才切换（点行空白处只是高亮，不误改勾选）
+        if (event.type() == QEvent.Type.MouseButtonRelease
+                and event.button() == Qt.MouseButton.LeftButton
+                and self._box_rect(option.rect).adjusted(-5, -7, 5, 7).contains(event.pos())):
+            cur = int(index.data(Qt.ItemDataRole.CheckStateRole) or 0)
+            new = 0 if cur == _CHECKED else _CHECKED
+            model.setData(index, new, Qt.ItemDataRole.CheckStateRole)
+            return True
+        return super().editorEvent(event, model, option, index)
+
+
 class MultiProcessDialog(QDialog):
     """选择要一起监控的多个目标进程（主进程 + 子进程）。
 
@@ -153,9 +231,13 @@ class MultiProcessDialog(QDialog):
 
     # ---------- 外观 ----------
     def _is_dark(self) -> bool:
+        """当前是否深色主题。
+
+        注意 THEME_MODE_DARK 在 utils.settings（不是 utils.theme）——
+        2026-10-29 曾从 utils.theme 导入，ImportError 被 except 吞掉，
+        结果无论什么主题都走浅色。
+        """
         try:
-            from utils.settings import Settings
-            from utils.theme import THEME_MODE_DARK
             return Settings.get_theme_mode() == THEME_MODE_DARK
         except Exception:
             return False
@@ -168,12 +250,14 @@ class MultiProcessDialog(QDialog):
             hover, sel = "#2c2f33", "#2f4a72"
             box_bd, bar_c, bar_h = "#5a6068", "#4b5057", "#5f656d"
             btn_bd, cancel_fg = "#43474d", "#d6d9dd"
+            accent = "#4c8dff"
         else:
             bg, tip_c = "#f6f7f9", "#6b7280"
             border, list_bg, item_c = "#dfe3e8", "#ffffff", "#2b2f33"
             hover, sel = "#f0f3f7", "#dbe7f5"
             box_bd, bar_c, bar_h = "#c3c9d0", "#c9ced6", "#b3b9c2"
             btn_bd, cancel_fg = "#d5dae0", "#3a3f45"
+            accent = "#2d6cdf"
 
         self.setStyleSheet(f"""
             QDialog#MultiProcessDialog {{ background: {bg}; }}
@@ -192,27 +276,20 @@ class MultiProcessDialog(QDialog):
             QPushButton:hover {{ border-color: #2d6cdf; color: #2d6cdf; }}
         """)
 
-        # 列表 item 与滚动条**分开**设：同一份 QSS 里混着写，部分 Qt 版本会丢滚动条规则
+        # 行内容（方框 + 勾 + 文字）由 delegate 自绘，QSS 只管容器外观；
+        # 滚动条也单独设（同一份 QSS 里混写 ::item 与 QScrollBar，
+        # 部分 Qt 版本会丢滚动条规则 —— theme.py 里已有同样注释）
         self.list.setStyleSheet(f"""
             QListWidget#ProcList {{
                 background: {list_bg}; border: 1px solid {border};
                 border-radius: 6px; outline: none; padding: 4px;
                 font-size: 13px; color: {item_c};
             }}
-            QListWidget#ProcList::item {{
-                padding: 3px 6px; border-radius: 4px;
-            }}
-            QListWidget#ProcList::item:hover {{ background: {hover}; }}
-            QListWidget#ProcList::item:selected {{ background: {sel}; color: {item_c}; }}
-            QListWidget#ProcList::indicator {{
-                width: 14px; height: 14px; margin-right: 6px;
-                border: 1px solid {box_bd}; border-radius: 3px;
-                background: transparent;
-            }}
-            QListWidget#ProcList::indicator:checked {{
-                background: #2d6cdf; border-color: #2d6cdf;
-            }}
         """)
+        self.list.setItemDelegate(_ProcCheckDelegate({
+            "text": item_c, "box_bd": box_bd, "accent": accent,
+            "hover": hover, "sel": sel,
+        }, self.list))
         self.list.verticalScrollBar().setStyleSheet(f"""
             QScrollBar:vertical {{
                 background: transparent; width: 8px; margin: 2px 0; border: none;
