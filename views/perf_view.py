@@ -164,10 +164,10 @@ class _ProcCheckDelegate(QStyledItemDelegate):
         painter.restore()
 
     def editorEvent(self, event, model, option, index):
-        # 只有点在方框附近才切换（点行空白处只是高亮，不误改勾选）
+        # 点整行任意位置都能切换（用户要求：不用瞄准方框）
         if (event.type() == QEvent.Type.MouseButtonRelease
                 and event.button() == Qt.MouseButton.LeftButton
-                and self._box_rect(option.rect).adjusted(-5, -7, 5, 7).contains(event.pos())):
+                and option.rect.contains(event.pos())):
             cur = int(index.data(Qt.ItemDataRole.CheckStateRole) or 0)
             new = 0 if cur == _CHECKED else _CHECKED
             model.setData(index, new, Qt.ItemDataRole.CheckStateRole)
