@@ -739,20 +739,11 @@ class PerfReportGenerator:
                     tx_rate_series.append("0")
                 prev_rx, prev_tx, prev_ts = s.rx_bytes, s.tx_bytes, t
 
-            # 根据总时长选横轴单位，长会话（如 12 小时）显示「时:分」而非几万秒
-            total_secs = samples[-1].timestamp - samples[0].timestamp
-            if total_secs >= 3600:
-                axis_unit = "时:分"
-                axis_labels = [
-                    f"{int(ts // 3600)}:{int(ts % 3600 // 60):02d}"
-                    for ts in (s.timestamp - t0 for s in samples)
-                ]
-            elif total_secs >= 60:
-                axis_unit = "分:秒"
-                axis_labels = [
-                    f"{int(ts // 60)}:{int(ts % 60):02d}"
-                    for ts in (s.timestamp - t0 for s in samples)
-                ]
+            # 根据总时长选横轴单位，长会话（如 12 小时）显示「时:分」而非几万秒。
+            # 复用 _time_axis_labels：之前这里手写 if/elif 漏了「不到 60 秒」这一档，
+            # 短会话（采几个点就停）会走到 UnboundLocalError: axis_labels
+            axis_unit, axis_labels = _time_axis_labels(
+                [s.timestamp for s in samples], t0)
         else:
             axis_unit = "秒"
             axis_labels = timestamps
