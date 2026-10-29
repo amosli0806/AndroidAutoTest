@@ -1482,7 +1482,9 @@ class PerfController(QObject):
         """
         if status == "success":
             self._add_event("screenshot", os.path.basename(message))
-            self.view.set_screenshot_status(f"最近：{os.path.basename(message)}")
+            # 成功不往卡片里写字：文件名对用户没意义，还占着卡片右侧一截
+            # （2026-10-29 反馈）。成功的留痕看「事件 / 虫师日志」，失败才在卡片上提示。
+            self.view.set_screenshot_status("")
         else:
             self.view.set_screenshot_status("最近：截图失败")
             if self.logs_view:

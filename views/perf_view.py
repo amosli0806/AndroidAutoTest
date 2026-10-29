@@ -1629,7 +1629,12 @@ class PerfView(QWidget):
         self.screenshot_toggle_requested.emit(checked)
 
     def set_screenshot_status(self, text: str, error: bool = False):
-        """更新截图卡片状态文字（最近截图文件名 / 失败原因）"""
+        """更新截图卡片状态文字（只有失败才写，传空串表示不显示）。
+
+        成功的截图文件名不再写进卡片（2026-10-29 用户要求）：卡片上那串
+        `screenshot_2026...png` 对用户没意义，还白占一截位置。留痕统一看
+        「事件 / 虫师日志」。失败仍在这里提示，同时还有 toast。
+        """
         self.screenshot_status_label.setText(text)
         self.screenshot_status_label.setStyleSheet(
             f"font-size: 12px; color: {'#e74c3c' if error else '#999999'}; "
