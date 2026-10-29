@@ -840,8 +840,8 @@ class PerfView(QWidget):
             self.start_btn.setToolTip("正在停止采集，请稍候…")
             self.start_btn.setStyleSheet(
                 self._run_btn_qss_stopping or self._run_btn_qss_danger)
-            # 禁用态也保留图标：这里要的是「进行中」的观感，不是「不可用」
-            self.start_btn.setIcon(qta.icon('fa6s.hourglass-half', color='white'))
+            # 不带图标：文案本身已经说清是在收尾，多一个沙漏反而显得忙乱
+            self.start_btn.setIcon(QIcon())
             return
         idle = self._state == self.STATE_IDLE
         if self.start_btn.isEnabled():
