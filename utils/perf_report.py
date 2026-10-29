@@ -15,7 +15,7 @@ METRIC_LABELS = {
     "cpu": "CPU",
     "mem": "内存",
     "fps": "帧率",
-    "traffic": "流量",
+    "traffic": "应用流量",
     "sys_mem": "系统内存",
 }
 
@@ -232,7 +232,7 @@ CHART_JS_TRAFFIC = """new Chart(document.getElementById('trafficChart'), {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-            legend: { display: false }, title: { display: true, text: '流量速率 (KB/s)' },
+            legend: { display: false }, title: { display: true, text: '应用流量 (KB/s)' },
             zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
         },
         scales: {
@@ -955,11 +955,11 @@ class PerfReportGenerator:
             summary_cards_html += f"""
             <div class="card">
                 <div class="value">{t['rx_mb']:.2f}MB</div>
-                <div class="label">流量接收</div>
+                <div class="label">应用流量接收</div>
             </div>
             <div class="card">
                 <div class="value">{t['tx_mb']:.2f}MB</div>
-                <div class="label">流量发送</div>
+                <div class="label">应用流量发送</div>
             </div>"""
 
         # 基线对比（自动匹配同应用基线）
@@ -1149,7 +1149,7 @@ class PerfReportGenerator:
         <h2>📶 网卡流量（整机）</h2>
         <p style="font-size:12px;color:#888;">※ 本项为<b>整机口径</b>（设备上所有应用合计），
            按主网卡 <code>{primary}</code> 统计；车上同时存在多张网卡时它们是同一通道的不同层，
-           相加会重复计数，故提供各网卡明细而不给「合计」。与上方「流量速率」卡（所选应用）口径不同。</p>
+           相加会重复计数，故提供各网卡明细而不给「合计」。与上方「应用流量」卡（所选应用）口径不同。</p>
         <table class="compare compare4">
             <thead><tr><th>项目</th><th>均值</th><th>峰值</th><th>最低</th></tr></thead>
             <tbody>
@@ -1637,7 +1637,7 @@ class PerfReportGenerator:
         if 'traffic' in stats:
             _t = stats['traffic']
             _detail_rows.append((
-                "流量 (MB)", f"↓{_t['rx_mb']:.1f} / ↑{_t['tx_mb']:.1f}", "-", "-", "按 UID"))
+                "应用流量 (MB)", f"↓{_t['rx_mb']:.1f} / ↑{_t['tx_mb']:.1f}", "-", "-", "按 UID"))
         detail_html = ""
         if _detail_rows:
             _rows = ""

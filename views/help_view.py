@@ -703,7 +703,7 @@ class HelpView(QFrame):
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     📊 <b>指标说明</b><br>
                     • <b>CPU</b>：多核累计（8 核设备上限 800%）　<b>内存</b>：应用主进程占用<br>
-                    • <b>FPS</b>：每秒渲染帧数　<b>流量</b>：应用网络速率（KB/s）
+                    • <b>FPS</b>：每秒渲染帧数　<b>应用流量</b>：应用网络速率（KB/s）
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">

@@ -597,7 +597,7 @@ class PerfBaselineDialog(QDialog):
             rows.append(('FPS', s['min'], s['max'], s['avg'], s['std']))
         if 'traffic' in metrics:
             s = metrics['traffic']
-            rows.append(('流量 RX/TX (MB)', '-', '-', f"{s['rx_mb']:.2f}/{s['tx_mb']:.2f}", '-'))
+            rows.append(('应用流量 RX/TX (MB)', '-', '-', f"{s['rx_mb']:.2f}/{s['tx_mb']:.2f}", '-'))
 
         self.detail_table.setRowCount(len(rows))
         for i, row in enumerate(rows):

@@ -401,7 +401,7 @@ def compare_stats(base_metrics: dict, cur_stats: dict, threshold_pct: float = 0.
     if _is_stats(b) and _is_stats(c):
         base_total = b.get('rx_mb', 0) + b.get('tx_mb', 0)
         cur_total = c.get('rx_mb', 0) + c.get('tx_mb', 0)
-        _row('traffic', '流量总量 (MB)', base_total, cur_total)
+        _row('traffic', '应用流量总量 (MB)', base_total, cur_total)
 
     return result
 

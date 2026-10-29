@@ -1053,7 +1053,7 @@ class PerfView(QWidget):
             self.metric_radios[key] = rb
             metric_widgets.append(rb)
         self.metric_radios['cpu'].setChecked(True)
-        for key, label in [('fps', 'FPS'), ('traffic', '流量')]:
+        for key, label in [('fps', 'FPS'), ('traffic', '应用流量')]:
             cb = BorderedCheckBox(label)
             self.metric_radios[key] = cb
             # 勾选状态联动下方卡片显隐
@@ -1071,7 +1071,7 @@ class PerfView(QWidget):
         self.netdev_check = BorderedCheckBox("网卡流量")
         self.netdev_check.setToolTip(
             "设备各网卡的收发速率与累计流量（整机口径，所有应用合计），"
-            "与上方「流量速率」卡（所选应用）不同")
+            "与上方「应用流量」卡（所选应用）不同")
         self.netdev_check.toggled.connect(self._on_card_visibility_changed)
         metric_widgets.append(self.netdev_check)
 
@@ -1228,7 +1228,7 @@ class PerfView(QWidget):
             y_min=0, y_max=60
         )
         self._cards['traffic'] = MetricCard(
-            'traffic', '流量速率 (KB/s)', 'KB/s', '#9b59b6',
+            'traffic', '应用流量 (KB/s)', 'KB/s', '#9b59b6',
             y_min=0, y_max=100,
             series=[
                 {'name': '接收', 'color': '#9b59b6'},
