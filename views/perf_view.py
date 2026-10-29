@@ -870,10 +870,7 @@ class PerfView(QWidget):
         """按当前主题重刷本页图标：深色底用更亮的灰、浅色底用更深的灰"""
         flat = '#c8ccd4' if is_dark else '#5a5f66'   # 纯图标按钮的本色
         pairs = [
-            (self.packet_toggle_btn, 'fa6s.network-wired', '#ffffff'),
             (self.packet_config_btn, 'fa6s.sliders', flat),
-            (self.hprof_once_btn, 'fa6s.database', '#ffffff'),
-            (self.screenshot_once_btn, 'fa6s.camera', '#ffffff'),
             (self.app_refresh_btn, 'fa6s.rotate', '#ffffff'),
             (self.threshold_btn, 'fa6s.sliders', '#ffffff'),
             (self.baseline_btn, 'fa6s.bookmark', '#ffffff'),
@@ -920,7 +917,8 @@ class PerfView(QWidget):
         if self.record_config_ok():
             self.record_status_label.setText("")
         else:
-            self.record_status_label.setText("间隔需大于时长")
+            # 文案压缩成「间隔>时长」：44px 单行卡片里塞不下原来那句 7 字提示
+            self.record_status_label.setText("间隔>时长")
 
     def record_loop_enabled(self) -> bool:
         return bool(self.record_enable_check.isChecked())
@@ -1243,6 +1241,9 @@ class PerfView(QWidget):
         self.cards_grid = QGridLayout(self.cards_container)
         self.cards_grid.setContentsMargins(0, 0, 0, 0)
         self.cards_grid.setSpacing(4)
+        # 两列等宽：以前不加 stretch，两列各按内容撑，实测 551 / 507 永远不等宽
+        self.cards_grid.setColumnStretch(0, 1)
+        self.cards_grid.setColumnStretch(1, 1)
 
         self._build_cards()
 
@@ -1362,6 +1363,15 @@ class PerfView(QWidget):
         self._screenshot_card.setVisible(False)
         self._record_card.setVisible(False)
 
+        # 卡片分组小标题（「扩展方向」第 9 项）：整机指标 / 现场留证。
+        # 组内没有卡时由 _relayout_cards 连标题一起不排，避免出现空标题
+        self._group_probe = QLabel("整机指标")
+        self._group_tool = QLabel("现场留证")
+        for lbl in (self._group_probe, self._group_tool):
+            lbl.setObjectName("PerfGroupHeader")
+            lbl.setParent(self.cards_container)
+            lbl.setVisible(False)
+
         # 初始布局
         self._relayout_cards()
 
@@ -1401,65 +1411,111 @@ class PerfView(QWidget):
         self.loop_spin.valueChanged.connect(self._save_perf_config)
         self.stop_on_fail_check.toggled.connect(self._save_perf_config)
 
+    # 卡片三段的尺寸约定（「扩展方向」第 9 项：卡片排版重构）
+    _CARD_TITLE_W = 80          # 标题段固定宽 → 所有卡标题左边缘对齐
+    _CARD_BTN_W = 84            # 动作按钮统一宽（四字文案刚好放得下）
+    _CARD_BTN_H = 26
+
     def _build_tool_cards(self):
-        """构建三个工具卡片：堆转储（可自动循环）、抓包（手动开始/停止）、截图（可自动循环）。
-        统一单行紧凑结构：圆点 + 标题 + 控件一行排开，高度 44 与控制面板分组一致。"""
+        """构建工具卡片：堆转储 / 内存明细 / 网络抓包 / 截图 / 录屏。
+
+        统一三段栅格（2026-10-29 按「扩展方向」第 9 项重排）：
+            标题段 80px ｜ 参数段（自适应）｜ 按钮段（右对齐，84×26）
+        以前是控件一路往左排、末尾 addStretch()，按钮位置随内容长短漂移
+        （实测 x 在 97~889 之间跳），扫一眼找不到该点哪儿。
+        """
 
         def _card(dot_color, title):
             card = QFrame()
             card.setObjectName("PerfToolCard")
-            row = QHBoxLayout(card)
-            row.setContentsMargins(12, 6, 12, 6)
-            row.setSpacing(10)
+            grid = QGridLayout(card)
+            grid.setContentsMargins(12, 6, 12, 6)
+            grid.setHorizontalSpacing(10)
+            grid.setVerticalSpacing(0)
+
+            # ① 标题段：固定宽度
+            head = QWidget()
+            head_row = QHBoxLayout(head)
+            head_row.setContentsMargins(0, 0, 0, 0)
+            head_row.setSpacing(6)
             dot = QLabel("●")
-            # 圆点颜色存进动态属性，apply_theme 刷新时从属性读回，避免 if/else 逐卡硬编码
+            # 圆点颜色存进动态属性，apply_theme 刷新时从属性读回，避免逐卡硬编码
             dot.setProperty("dotColor", dot_color)
             dot.setStyleSheet(
                 f"color: {dot_color}; font-size: 14px; background: transparent;")
-            row.addWidget(dot)
+            head_row.addWidget(dot)
             title_label = QLabel(title)
             title_label.setStyleSheet(
                 "font-weight: 600; font-size: 13px; background: transparent;")
-            row.addWidget(title_label)
-            return card, row, dot, title_label
+            head_row.addWidget(title_label)
+            head_row.addStretch()
+            head.setFixedWidth(self._CARD_TITLE_W)
+            grid.addWidget(head, 0, 0)
 
-        # ---- 堆转储卡片 ----
-        (self._hprof_card, hprof_row,
+            # ② 参数段：吃掉剩余宽度
+            params = QWidget()
+            p_row = QHBoxLayout(params)
+            p_row.setContentsMargins(0, 0, 0, 0)
+            p_row.setSpacing(8)
+            grid.addWidget(params, 0, 1)
+            grid.setColumnStretch(1, 1)
+
+            # ③ 按钮段：靠右固定，不参与拉伸
+            actions = QWidget()
+            a_row = QHBoxLayout(actions)
+            a_row.setContentsMargins(0, 0, 0, 0)
+            a_row.setSpacing(6)
+            a_row.addStretch()
+            grid.addWidget(actions, 0, 2)
+
+            card.setFixedHeight(44)
+            return card, p_row, a_row, dot, title_label
+
+        def _action_btn(text, tooltip=""):
+            """动作按钮：统一 84x26、四字文案、不带图标（带图标就放不下了）"""
+            btn = QPushButton(text)
+            btn.setObjectName("PerfCardAction")
+            btn.setFixedSize(self._CARD_BTN_W, self._CARD_BTN_H)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            if tooltip:
+                btn.setToolTip(tooltip)
+            return btn
+
+        def _interval_combo(items, current, width=88):
+            combo = QComboBox()
+            combo.addItems(items)
+            combo.setCurrentText(current)
+            combo.setFixedWidth(width)
+            combo.setEnabled(False)
+            return combo
+
+        # ---- 堆转储 ----
+        (self._hprof_card, hprof_params, hprof_actions,
          self._hprof_dot, self._hprof_title) = _card("#e67e22", "堆转储")
-        self.hprof_enable_check = BorderedCheckBox("自动循环")
+        self.hprof_enable_check = BorderedCheckBox("循环")
         self.hprof_enable_check.setToolTip(
             "开启后，点击「开始监控」即按右侧间隔自动对所选应用执行堆转储\n"
             "（第一次转储在一个完整间隔后执行）")
         self.hprof_enable_check.toggled.connect(self._on_hprof_toggle)
-        hprof_row.addWidget(self.hprof_enable_check)
-
-        hprof_row.addWidget(QLabel("间隔:"))
-        self.hprof_interval_combo = QComboBox()
-        self.hprof_interval_combo.addItems(
-            ["1 分钟", "5 分钟", "10 分钟", "30 分钟", "60 分钟", "120 分钟"]
-        )
-        self.hprof_interval_combo.setCurrentText("5 分钟")
-        self.hprof_interval_combo.setFixedWidth(100)
-        self.hprof_interval_combo.setEnabled(False)
+        hprof_params.addWidget(self.hprof_enable_check)
+        self.hprof_interval_combo = _interval_combo(
+            ["1 分钟", "5 分钟", "10 分钟", "30 分钟", "60 分钟", "120 分钟"], "5 分钟")
         self.hprof_interval_combo.currentTextChanged.connect(
-            lambda _: self.hprof_interval_changed.emit()
-        )
-        hprof_row.addWidget(self.hprof_interval_combo)
+            lambda _: self.hprof_interval_changed.emit())
+        hprof_params.addWidget(self.hprof_interval_combo)
+        hprof_params.addStretch()
 
-        self.hprof_once_btn = QPushButton("立即转储一次")
-        self.hprof_once_btn.setIcon(qta.icon('fa6s.database', color='white'))
+        self.hprof_once_btn = _action_btn("立即转储")
         self.hprof_once_btn.clicked.connect(self.hprof_once_requested.emit)
-        hprof_row.addWidget(self.hprof_once_btn)
-        hprof_row.addStretch()
-        self._hprof_card.setFixedHeight(44)
+        hprof_actions.addWidget(self.hprof_once_btn)
 
-        # ---- 内存明细（smaps）卡片 ----
-        (self._smaps_card, smaps_row,
+        # ---- 内存明细（smaps）----
+        (self._smaps_card, smaps_params, smaps_actions,
          self._smaps_dot, self._smaps_title) = _card("#16a085", "内存明细")
         self._smaps_card.setToolTip(
             "抓取所选进程的 /proc/<pid>/smaps 到本地\n"
             "⚠ 需要设备 root，或应用是 debug（可调试）包")
-        self.smaps_enable_check = BorderedCheckBox("自动循环")
+        self.smaps_enable_check = BorderedCheckBox("循环")
         self.smaps_enable_check.setToolTip(
             "开启后，点击「开始监控」即按右侧间隔自动抓取所选进程的 smaps\n"
             "（第一次抓取在一个完整间隔后执行）")
@@ -1467,35 +1523,27 @@ class PerfView(QWidget):
         self.smaps_enable_check.toggled.connect(
             lambda _: self.smaps_interval_combo.setEnabled(
                 self._state == self.STATE_IDLE and self.smaps_enable_check.isChecked()))
-        smaps_row.addWidget(self.smaps_enable_check)
-
-        smaps_row.addWidget(QLabel("间隔:"))
-        self.smaps_interval_combo = QComboBox()
-        self.smaps_interval_combo.addItems(
-            ["1 分钟", "2 分钟", "5 分钟", "10 分钟", "30 分钟"])
-        self.smaps_interval_combo.setCurrentText("5 分钟")
-        self.smaps_interval_combo.setFixedWidth(100)
-        self.smaps_interval_combo.setEnabled(False)
+        smaps_params.addWidget(self.smaps_enable_check)
+        self.smaps_interval_combo = _interval_combo(
+            ["1 分钟", "2 分钟", "5 分钟", "10 分钟", "30 分钟"], "5 分钟")
         self.smaps_interval_combo.currentTextChanged.connect(
             lambda _: self.smaps_interval_changed.emit())
-        smaps_row.addWidget(self.smaps_interval_combo)
+        smaps_params.addWidget(self.smaps_interval_combo)
+        smaps_params.addStretch()
 
-        self.smaps_once_btn = QPushButton("立即抓取一次")
-        self.smaps_once_btn.setIcon(qta.icon('fa6s.magnifying-glass', color='white'))
+        self.smaps_once_btn = _action_btn("立即抓取")
         self.smaps_once_btn.clicked.connect(self.smaps_once_requested.emit)
-        smaps_row.addWidget(self.smaps_once_btn)
-        smaps_row.addStretch()
-        self._smaps_card.setFixedHeight(44)
+        smaps_actions.addWidget(self.smaps_once_btn)
 
-        # ---- 抓包卡片 ----
-        (self._packet_card, packet_row,
+        # ---- 网络抓包 ----
+        (self._packet_card, packet_params, packet_actions,
          self._packet_dot, self._packet_title) = _card("#9b59b6", "网络抓包")
         self._packet_available = True      # 抓包能力探测结果（未探测时按可用处理）
-        self.packet_toggle_btn = QPushButton("开始抓包")
-        self.packet_toggle_btn.setIcon(qta.icon('fa6s.network-wired', color='white'))
-        self.packet_toggle_btn.setCheckable(True)
-        self.packet_toggle_btn.toggled.connect(self.packet_toggle_requested.emit)
-        packet_row.addWidget(self.packet_toggle_btn)
+        self.packet_status_label = QLabel("未开始")
+        self.packet_status_label.setStyleSheet(
+            "font-size: 12px; color: #999999; background: transparent;")
+        packet_params.addWidget(self.packet_status_label)
+        packet_params.addStretch()
 
         # 参数入口：过滤表达式 / 网卡 / 单包长度 / 上限（此前这些全是写死的）
         # 纯图标按钮：单列 objectName，避免被「通用按钮 QSS」套上 padding/min-height
@@ -1506,94 +1554,72 @@ class PerfView(QWidget):
         self.packet_config_btn.setToolTip("抓包参数：过滤表达式 / 网卡 / 单包长度 / 上限")
         self.packet_config_btn.setFlat(True)
         self.packet_config_btn.clicked.connect(self.packet_config_requested.emit)
-        packet_row.addWidget(self.packet_config_btn)
+        packet_actions.addWidget(self.packet_config_btn)
 
-        self.packet_status_label = QLabel("未开始")
-        self.packet_status_label.setStyleSheet("font-size: 12px; color: #999999; background: transparent;")
-        packet_row.addWidget(self.packet_status_label)
-        packet_row.addStretch()
-        self._packet_card.setFixedHeight(44)
+        self.packet_toggle_btn = _action_btn("开始抓包")
+        self.packet_toggle_btn.setCheckable(True)
+        self.packet_toggle_btn.toggled.connect(self.packet_toggle_requested.emit)
+        packet_actions.addWidget(self.packet_toggle_btn)
         self.refresh_packet_tooltip()
 
-        # ---- 截图卡片 ----
-        (self._screenshot_card, screenshot_row,
+        # ---- 截图 ----
+        (self._screenshot_card, screenshot_params, screenshot_actions,
          self._screenshot_dot, self._screenshot_title) = _card("#16a085", "截图")
-        self.screenshot_enable_check = BorderedCheckBox("自动循环")
+        self.screenshot_enable_check = BorderedCheckBox("循环")
         self.screenshot_enable_check.setToolTip(
             "开启后，点击「开始监控」即按右侧间隔自动截取设备屏幕\n"
             "（第一次截图在一个完整间隔后执行）")
         self.screenshot_enable_check.toggled.connect(self._on_screenshot_toggle)
-        screenshot_row.addWidget(self.screenshot_enable_check)
-
-        screenshot_row.addWidget(QLabel("间隔:"))
-        self.screenshot_interval_combo = QComboBox()
-        self.screenshot_interval_combo.addItems(
-            ["30 秒", "1 分钟", "5 分钟", "10 分钟", "30 分钟", "60 分钟"]
-        )
-        self.screenshot_interval_combo.setCurrentText("5 分钟")
-        self.screenshot_interval_combo.setFixedWidth(100)
-        self.screenshot_interval_combo.setEnabled(False)
+        screenshot_params.addWidget(self.screenshot_enable_check)
+        self.screenshot_interval_combo = _interval_combo(
+            ["30 秒", "1 分钟", "5 分钟", "10 分钟", "30 分钟", "60 分钟"], "5 分钟")
         self.screenshot_interval_combo.currentTextChanged.connect(
-            lambda _: self.screenshot_interval_changed.emit()
-        )
-        screenshot_row.addWidget(self.screenshot_interval_combo)
-
-        self.screenshot_once_btn = QPushButton("立即截图一次")
-        self.screenshot_once_btn.setIcon(qta.icon('fa6s.camera', color='white'))
-        self.screenshot_once_btn.clicked.connect(self.screenshot_once_requested.emit)
-        screenshot_row.addWidget(self.screenshot_once_btn)
-
+            lambda _: self.screenshot_interval_changed.emit())
+        screenshot_params.addWidget(self.screenshot_interval_combo)
         self.screenshot_status_label = QLabel("")
-        self.screenshot_status_label.setStyleSheet("font-size: 12px; color: #999999; background: transparent;")
-        screenshot_row.addWidget(self.screenshot_status_label)
-        screenshot_row.addStretch()
-        self._screenshot_card.setFixedHeight(44)
+        self.screenshot_status_label.setStyleSheet(
+            "font-size: 12px; color: #999999; background: transparent;")
+        screenshot_params.addWidget(self.screenshot_status_label)
+        screenshot_params.addStretch()
 
-        # ---- 录屏卡片 ----
-        (self._record_card, record_row,
+        self.screenshot_once_btn = _action_btn("立即截图")
+        self.screenshot_once_btn.clicked.connect(self.screenshot_once_requested.emit)
+        screenshot_actions.addWidget(self.screenshot_once_btn)
+
+        # ---- 录屏 ----
+        (self._record_card, record_params, record_actions,
          self._record_dot, self._record_title) = _card("#e84393", "录屏")
-        self.record_enable_check = BorderedCheckBox("自动循环")
+        self.record_enable_check = BorderedCheckBox("循环")
         self.record_enable_check.setToolTip(
             "开启后，点击「开始监控」即按间隔自动录一段（单段时长见右侧）\n"
             "间隔必须大于单段时长，否则会重叠")
         self.record_enable_check.setEnabled(False)
         self.record_enable_check.toggled.connect(self._on_record_toggle)
-        record_row.addWidget(self.record_enable_check)
-
-        record_row.addWidget(QLabel("间隔:"))
-        self.record_interval_combo = QComboBox()
-        self.record_interval_combo.addItems(
-            ["1 分钟", "2 分钟", "5 分钟", "10 分钟", "30 分钟"])
-        self.record_interval_combo.setCurrentText("10 分钟")
-        self.record_interval_combo.setFixedWidth(90)
-        self.record_interval_combo.setEnabled(False)
+        record_params.addWidget(self.record_enable_check)
+        # 录屏这张卡参数最多（循环 + 间隔 + 录 + 时长 + 提示），两个下拉各窄一点
+        self.record_interval_combo = _interval_combo(
+            ["1 分钟", "2 分钟", "5 分钟", "10 分钟", "30 分钟"], "10 分钟", width=84)
         self.record_interval_combo.currentTextChanged.connect(self._on_record_cfg_changed)
         self.record_interval_combo.currentTextChanged.connect(
             lambda _: self.record_interval_changed.emit())
-        record_row.addWidget(self.record_interval_combo)
-
-        record_row.addWidget(QLabel("时长:"))
-        self.record_duration_combo = QComboBox()
-        self.record_duration_combo.addItems(["15 秒", "30 秒", "60 秒", "120 秒"])
-        self.record_duration_combo.setCurrentText("30 秒")
-        self.record_duration_combo.setFixedWidth(84)
-        self.record_duration_combo.setEnabled(False)
+        record_params.addWidget(self.record_interval_combo)
+        # 时长前面加个「录」字：和间隔一眼区分开，又不动下拉里的数据文案
+        record_params.addWidget(QLabel("录"))
+        self.record_duration_combo = _interval_combo(
+            ["15 秒", "30 秒", "60 秒", "120 秒"], "30 秒", width=76)
         self.record_duration_combo.currentTextChanged.connect(self._on_record_cfg_changed)
         self.record_duration_combo.currentTextChanged.connect(
             lambda _: self.record_duration_changed.emit())
-        record_row.addWidget(self.record_duration_combo)
-
-        self.record_once_btn = QPushButton("立即录一段")
-        self.record_once_btn.setIcon(qta.icon('fa6s.video', color='white'))
-        self.record_once_btn.clicked.connect(self.record_once_requested.emit)
-        record_row.addWidget(self.record_once_btn)
-
+        record_params.addWidget(self.record_duration_combo)
         self.record_status_label = QLabel("")
         self.record_status_label.setStyleSheet(
             "font-size: 12px; color: #e67e22; background: transparent;")
-        record_row.addWidget(self.record_status_label)
-        record_row.addStretch()
-        self._record_card.setFixedHeight(44)
+        record_params.addWidget(self.record_status_label)
+        record_params.addStretch()
+
+        self.record_once_btn = _action_btn("立即录制")
+        self.record_once_btn.clicked.connect(self.record_once_requested.emit)
+        record_actions.addWidget(self.record_once_btn)
 
     def get_hprof_interval(self) -> float:
         """返回堆转储循环间隔（秒）"""
@@ -1640,23 +1666,47 @@ class PerfView(QWidget):
             f"font-size: 12px; color: {'#e74c3c' if error else '#999999'}; "
             f"background: transparent;")
 
-    def set_packet_available(self, ok: bool, reason: str = ""):
-        """抓包能力前置探测结果：不能抓就把「开始抓包」置灰，并把原因写在卡片上。
+    @staticmethod
+    def _set_dot_alert(dot, alert: bool):
+        """把卡片圆点临时切成橙色表示「这项当前不可用」，恢复正常时回到原色。
 
+        颜色统一写在动态属性 dotColor 上 —— apply_theme 换肤时读的也是这份属性，
+        所以换主题不会把「不可用」的橙色冲掉。
+        """
+        if dot is None:
+            return
+        if not dot.property("dotBaseColor"):
+            dot.setProperty("dotBaseColor", dot.property("dotColor"))
+        base = dot.property("dotBaseColor") or dot.property("dotColor")
+        color = "#e67e22" if alert else base
+        dot.setProperty("dotColor", color)
+        dot.setStyleSheet(
+            f"color: {color}; font-size: 14px; background: transparent;")
+
+    def set_packet_available(self, ok: bool, reason: str = ""):
+        """抓包能力前置探测结果：不能抓就把「开始抓包」置灰。
+
+        卡片上只留最短的状态（未 root / 不可用），完整原因进 tooltip ——
+        长句直接把 44px 高的单行卡片撑乱（2026-10-29 按「扩展方向」第 9 项收敛）。
         这样未 root 的设备一进页面就知道抓不了，而不是点下去才弹错误。
         """
         self._packet_available = bool(ok)
         if ok:
             self.packet_toggle_btn.setEnabled(True)
             self.packet_toggle_btn.setToolTip("")
+            self._set_dot_alert(self._packet_dot, False)
             if not self.packet_toggle_btn.isChecked():
                 self.packet_status_label.setText("未开始")
+                self.packet_status_label.setToolTip("")
                 self.packet_status_label.setStyleSheet(
                     "font-size: 12px; color: #999999; background: transparent;")
         else:
             self.packet_toggle_btn.setEnabled(False)
             self.packet_toggle_btn.setToolTip(f"无法抓包：{reason}")
-            self.packet_status_label.setText(f"不可用：{reason}")
+            self._set_dot_alert(self._packet_dot, True)
+            short = "未 root" if "root" in (reason or "").lower() else "不可用"
+            self.packet_status_label.setText(short)
+            self.packet_status_label.setToolTip(f"无法抓包：{reason}")
             self.packet_status_label.setStyleSheet(
                 "font-size: 12px; color: #e67e22; background: transparent;")
 
@@ -1709,19 +1759,34 @@ class PerfView(QWidget):
         self._relayout_cards()
 
     def _relayout_cards(self):
-        """根据当前宽度决定是两列还是一列，并按勾选状态决定哪些卡片显示"""
+        """按当前宽度决定两列还是一列，并按勾选状态决定哪些卡片显示。
+
+        2026-10-29 按「扩展方向」第 9 项重排：
+        * 两列等宽（setColumnStretch 1:1）—— 以前两列各自按内容撑，永远不等宽
+        * 分「整机指标 / 现场留证」两组，各带一行小标题，扫一眼知道哪块是什么
+        * 视口 < 1060 降为单列（再窄两列就挤不下 84px 的按钮了）
+        """
         # 清空布局
         while self.cards_grid.count():
             item = self.cards_grid.takeAt(0)
             if item.widget():
                 item.widget().setParent(None)
 
+        # 组标题被 setParent(None) 后就成了独立窗口，必须挂回容器并先隐藏，
+        # 用到时再显示（否则会飘出两个小标签）
+        for lbl in (getattr(self, '_group_probe', None),
+                    getattr(self, '_group_tool', None)):
+            if lbl is None:          # 构造期构造尚未完成时的 resize 也会走到这里
+                continue
+            lbl.setParent(self.cards_container)
+            lbl.setVisible(False)
+
         width = self.scroll.viewport().width() if self.scroll else 900
         # 页面在堆里隐藏时不跟随主窗口布局，视口宽度还是构建期默认值（不可信）；
         # 叠加视图自身宽度兜底（首次 showEvent 时自身宽度已是真实值）
         if not self._shown_once:
             width = max(width, self.width())
-        two_cols = width >= 900
+        two_cols = width >= 1060
 
         # 可见指标卡片：CPU/内存常驻；FPS/流量按勾选显示
         visible_metrics = ['cpu', 'mem']
@@ -1747,7 +1812,8 @@ class PerfView(QWidget):
         shown_tools = [tool_cards[k]
                        for k in ('hprof', 'smaps', 'packet', 'screenshot', 'record')
                        if tool_checks[k].isChecked()]
-        # 整机探针卡也是 44px 单行，跟在工具卡一组里，视觉整齐（不混进指标网格）
+
+        # 整机探针卡（系统内存 / 网卡流量 / 磁盘 IO）自成一「整机指标」组
         probe_checks = (
             ('sys_mem', getattr(self, 'sys_mem_check', None)),
             ('netdev', getattr(self, 'netdev_check', None)),
@@ -1763,40 +1829,41 @@ class PerfView(QWidget):
             card.setParent(self.cards_container)
             card.setVisible(True)       # 上面的指标循环会把它隐藏，这里重新显示
             probe_cards.append(card)
-        shown_tools = probe_cards + shown_tools
         for tc in tool_cards.values():
             tc.setParent(self.cards_container)
             tc.setVisible(tc in shown_tools)
 
-        if two_cols:
-            # 指标卡片 2 列排布
-            for i, key in enumerate(visible_metrics):
-                self.cards_grid.addWidget(self._cards[key], i // 2, i % 2)
-            # 工具卡片紧跟其后，每行最多 2 张
-            next_row = (len(visible_metrics) + 1) // 2
-            row, col = next_row, 0
-            for tc in shown_tools:
-                self.cards_grid.addWidget(tc, row, col)
-                col += 1
-                if col >= 2:
-                    col = 0
-                    row += 1
-            used_rows = row + (1 if col > 0 else 0)
-        else:
-            for i, key in enumerate(visible_metrics):
-                self.cards_grid.addWidget(self._cards[key], i, 0)
-            row = len(visible_metrics)
-            for tc in shown_tools:
-                self.cards_grid.addWidget(tc, row, 0)
-                row += 1
-            used_rows = row
+        cols = 2 if two_cols else 1
+        # 单列时第二列必须归零，否则它仍按 1:1 占掉一半宽度，卡片只铺半屏
+        self.cards_grid.setColumnStretch(0, 1)
+        self.cards_grid.setColumnStretch(1, 1 if two_cols else 0)
+        # 指标卡片（图表）排最前
+        row = 0
+        for i, key in enumerate(visible_metrics):
+            self.cards_grid.addWidget(self._cards[key], i // cols, i % cols)
+        row = (len(visible_metrics) + cols - 1) // cols
+
+        # 两组卡片各带一行小标题；组内为空时连标题一起不占位
+        for header, cards in ((getattr(self, '_group_probe', None), probe_cards),
+                              (getattr(self, '_group_tool', None), shown_tools)):
+            if not cards or header is None:
+                continue
+            header.setVisible(True)
+            self.cards_grid.addWidget(header, row, 0, 1, cols)
+            row += 1
+            for i, card in enumerate(cards):
+                self.cards_grid.addWidget(card, row + i // cols, i % cols)
+            row += (len(cards) + cols - 1) // cols
+
+        used_rows = row
 
         # 让多余空间落到最末行下方，而不是分散到卡片之间
-        for r in range(0, 20):
+        for r in range(0, 30):
             self.cards_grid.setRowStretch(r, 0)
         self.cards_grid.setRowStretch(used_rows, 1)
 
         self.cards_container.updateGeometry()
+
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -2324,10 +2391,36 @@ class PerfView(QWidget):
             }}
         """
 
+        # 卡片动作按钮（立即转储 / 开始抓包…）：固定 84x26，字号小一号、
+        # 左右 padding 收到 6 —— 通用 QSS 的 4px/14px 会把四字文案挤出去
+        card_action_qss = f"""
+            QPushButton#PerfCardAction {{
+                background-color: {primary_bg};
+                color: {primary_fg};
+                border: none;
+                border-radius: 4px;
+                padding: 0px;
+                font-size: 12px;
+                font-weight: 500;
+            }}
+            QPushButton#PerfCardAction:hover {{
+                background-color: {'#1565c0' if not is_dark else '#64b5f6'};
+            }}
+            QPushButton#PerfCardAction:pressed {{
+                background-color: {'#0d47a1' if not is_dark else '#42a5f5'};
+            }}
+            QPushButton#PerfCardAction:disabled {{
+                background-color: {disabled_bg};
+                color: {disabled_fg};
+            }}
+        """
+
         for btn in self.findChildren(QPushButton):
             name = btn.objectName()
             if name == "PerfIconBtn":
                 btn.setStyleSheet(icon_btn_qss)
+            elif name == "PerfCardAction":
+                btn.setStyleSheet(card_action_qss)
             elif name == "dangerBtn":
                 btn.setStyleSheet(danger_qss)
             else:
@@ -2390,6 +2483,21 @@ class PerfView(QWidget):
             f" }}"
         )
         self.cards_container.setStyleSheet(f"background-color: {cards_bg};")
+
+        # 分组小标题（整机指标 / 现场留证）：比卡片标题小一号、用次要色，
+        # 只做分隔不做强调，避免和卡片标题抢视线
+        for lbl in (getattr(self, '_group_probe', None),
+                    getattr(self, '_group_tool', None)):
+            if lbl is None:
+                continue
+            lbl.setStyleSheet(
+                f"QLabel#PerfGroupHeader {{"
+                f" color: {'#9aa0a6' if is_dark else '#8a8f98'};"
+                f" font-size: 11px;"
+                f" font-weight: 600;"
+                f" padding: 4px 2px 0px 2px;"
+                f" background: transparent;"
+                f" }}")
 
         for card in self._cards.values():
             if hasattr(card, 'apply_theme'):
