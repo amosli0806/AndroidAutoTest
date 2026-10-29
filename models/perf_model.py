@@ -127,6 +127,10 @@ class PerfSession:
     thread_samples: List[dict] = field(default_factory=list)
     # 线程探针的全会话排行（**全部线程**，不只 Top N）：[{tid, name, cpu_avg, cpu_max, share}]
     thread_rank: List[dict] = field(default_factory=list)
+    # FPS 探针（按显示屏/图层）：[{ts, layers:[...], controllers:[...], displays:[...]}, ...]
+    fps_display_samples: List[dict] = field(default_factory=list)
+    # FPS 日志事件（逐条 SDK:FPS_C，百度同款口径）：[{ts, id, fps, s_fps, map_type}, ...]
+    fps_events: List[dict] = field(default_factory=list)
     # 会话内的诊断事件（堆转储/抓包/截图/录屏/内存明细）：
     # [{ts, type, file, note}]，ts 为绝对时间戳（time.time()），报告换算成相对秒
     events: List[dict] = field(default_factory=list)
@@ -157,6 +161,8 @@ class PerfSession:
             "iotop_samples": self.iotop_samples,
             "thread_samples": self.thread_samples,
             "thread_rank": self.thread_rank,
+            "fps_display_samples": self.fps_display_samples,
+            "fps_events": self.fps_events,
             "events": self.events,
         }
 
@@ -196,6 +202,8 @@ class PerfSession:
         session.iotop_samples = list(data.get("iotop_samples") or [])
         session.thread_samples = list(data.get("thread_samples") or [])
         session.thread_rank = list(data.get("thread_rank") or [])
+        session.fps_display_samples = list(data.get("fps_display_samples") or [])
+        session.fps_events = list(data.get("fps_events") or [])
         session.events = list(data.get("events") or [])
         return session
 

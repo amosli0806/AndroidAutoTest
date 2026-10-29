@@ -167,12 +167,37 @@ CHART_JS_FPS = """new Chart(document.getElementById('fpsChart'), {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-            legend: { display: false }, title: { display: true, text: 'FPS 帧率' },
+            legend: { display: false }, title: { display: true, text: '应用整体 FPS（gfxinfo）' },
             zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
         },
         scales: {
             x: { display: true, title: { display: true, text: `时间 (${axisUnit})` } },
             y: { beginAtZero: true }
+        },
+        elements: { point: { radius: 0 } }
+    }
+});"""
+
+CHART_JS_FPS_DISPLAY = """new Chart(document.getElementById('fpsDisplayChart'), {
+    type: 'line',
+    data: {
+        labels: fpsDisplayLabels,
+        datasets: fpsDisplaySeries.map(function (s) {
+            return { label: s.label, data: s.data, borderColor: s.color,
+                     backgroundColor: 'transparent', borderWidth: s.width || 1.6,
+                     borderDash: s.dash || [], fill: false, tension: 0.2,
+                     spanGaps: false };
+        })
+    },
+    options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+            legend: { display: false }, title: { display: true, text: 'FPS 帧率趋势' },
+            zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true }, mode: 'x' } }
+        },
+        scales: {
+            x: { display: true, title: { display: true, text: fpsDisplayAxisTitle } },
+            y: { beginAtZero: true, title: { display: true, text: 'FPS' } }
         },
         elements: { point: { radius: 0 } }
     }
@@ -1235,6 +1260,13 @@ class PerfReportGenerator:
                 CHART_JS_MEM_BREAKDOWN if has_mem_breakdown else CHART_JS_MEM
             )
         if 'fps' in metrics:
+            # 副标题放在图上方，和「FPS 帧率」页区分：这里是 gfxinfo 的应用整体帧率
+            charts_section += (
+                '<p style="font-size:12px;color:#888;margin:2px 0 6px;">'
+                '※ 应用整体 FPS：来自 <code>dumpsys gfxinfo</code>，统计整个应用所有窗口的'
+                '渲染帧率合计，每 5 秒采样一次；与「FPS 帧率」页按 ControllerID 逐条日志统计的'
+                '分屏帧率口径不同，两者不能直接对比。</p>'
+            )
             charts_section += _wrap('fpsChart')
             chart_scripts.append(CHART_JS_FPS)
         if has_traffic:
@@ -1340,6 +1372,161 @@ class PerfReportGenerator:
                 'data': _data,
             })
         thread_cpu_series_js = json.dumps(_thread_cpu_series, ensure_ascii=False)
+
+        # ---------- FPS 帧率（SurfaceFlinger 按显示屏/图层 + 应用日志 Controller） ----------
+        fps_display_html = ""
+        fps_display_series_js = "[]"
+        fps_display_labels_js = ""
+        fps_display_axis_title = "时间 (秒)"
+        _fpsd = [x for x in (getattr(session, "fps_display_samples", None) or [])
+                 if x.get("layers") or x.get("controllers")]
+        # 逐条日志事件（新会话）：统计与曲线都按事件，和性能报告口径一致
+        _fps_events = [e for e in (getattr(session, "fps_events", None) or [])
+                       if e.get("id") and e.get("fps") is not None]
+        if _fpsd or _fps_events:
+            if _fpsd:
+                _fps_unit, _fps_labels = _time_axis_labels(
+                    [x.get("ts") for x in _fpsd], float(_fpsd[0].get("ts") or 0))
+                fps_display_axis_title = f"时间 ({_fps_unit})"
+                fps_display_labels_js = ",".join(f"'{l}'" for l in _fps_labels)
+
+            def _fps_stat(vals):
+                return (sum(vals) / len(vals), max(vals), min(vals)) if vals else (0, 0, 0)
+
+            # Controller（应用日志 SDK:FPS_C）：优先用逐条事件，旧会话退回采样点
+            _ctrl = {}
+            if _fps_events:
+                for _e in _fps_events:
+                    _row = _ctrl.setdefault(_e["id"], {
+                        "map_type": _e.get("map_type", ""), "fps": [], "s_fps": []})
+                    _row["fps"].append(float(_e["fps"]))
+                    _row["s_fps"].append(float(_e.get("s_fps") or 0))
+            else:
+                for _s in _fpsd:
+                    for _c in (_s.get("controllers") or []):
+                        _row = _ctrl.setdefault(_c.get("id", "?"), {
+                            "map_type": _c.get("map_type", ""), "fps": [], "s_fps": []})
+                        _row["fps"].append(float(_c.get("fps") or 0))
+                        _row["s_fps"].append(float(_c.get("s_fps") or 0))
+
+            # SurfaceFlinger 图层（含 VirtualDisplay 副屏）
+            _lay = {}
+            for _s in _fpsd:
+                for _l in (_s.get("layers") or []):
+                    if _l.get("fps") is None:
+                        continue
+                    _row = _lay.setdefault(_l.get("name", "?"), {
+                        "display": _l.get("display", ""),
+                        "refresh": _l.get("refresh"), "fps": []})
+                    _row["fps"].append(float(_l["fps"]))
+
+            _ctrl_table = ""
+            if _ctrl:
+                _crows = ""
+                for _cid, _row in sorted(_ctrl.items()):
+                    _a, _mx, _mn = _fps_stat(_row["fps"])
+                    _sa, _smx, _smn = _fps_stat(_row["s_fps"])
+                    _crows += (
+                        f"<tr><td>{_cid}</td><td>{_row['map_type'] or '-'}</td>"
+                        f"<td>{_a:.2f}</td><td>{_mx:.2f}</td><td>{_mn:.2f}</td>"
+                        f"<td>{_sa:.2f}</td><td>{_smx:.2f}</td><td>{_smn:.2f}</td></tr>")
+                _ctrl_table = f"""
+        <p style="font-size:12px;color:#888;">应用日志（<code>SDK:FPS_C</code>）按 ControllerID 统计
+           （逐条日志算一个点，均值 = 全部日志求和 / 条数）：</p>
+        <table class="compare">
+            <thead><tr><th>ControllerID</th><th>MapType</th><th>平均FPS</th><th>最大FPS</th>
+                <th>最小FPS</th><th>平均S_FPS</th><th>最大S_FPS</th><th>最小S_FPS</th></tr></thead>
+            <tbody>{_crows}</tbody>
+        </table>"""
+
+            _lay_table = ""
+            # 有应用日志（SDK:FPS_C）时只用日志口径，不再并列 SurfaceFlinger 图层，
+            # 否则同一块屏会出现多行、与性能报告的 3 个 Controller 对不上
+            if _lay and not _fps_events:
+                _lrows = ""
+                for _name, _row in _lay.items():
+                    _a, _mx, _mn = _fps_stat(_row["fps"])
+                    _lrows += (
+                        f"<tr><td>{_row['display'] or '未识别'}</td>"
+                        f"<td style=\"word-break:break-all;\">{_name}</td>"
+                        f"<td>{_row['refresh'] if _row['refresh'] is not None else '-'}</td>"
+                        f"<td>{_a:.2f}</td><td>{_mx:.2f}</td><td>{_mn:.2f}</td>"
+                        f"<td>{len(_row['fps'])}</td></tr>")
+                _lay_table = f"""
+        <p style="font-size:12px;color:#888;">SurfaceFlinger 图层（显示屏按分辨率匹配，副屏为应用自建的
+           VirtualDisplay；「未识别」表示图层尺寸对不上任何显示屏）：</p>
+        <table class="compare">
+            <thead><tr><th>显示屏</th><th>图层</th><th>刷新率</th><th>平均FPS</th>
+                <th>最大FPS</th><th>最小FPS</th><th>采样数</th></tr></thead>
+            <tbody>{_lrows}</tbody>
+        </table>"""
+
+            # 趋势图：有 Controller 时按 Controller（实际 + 目标），否则按图层（实际 + 刷新率）
+            _palette = ['#3498db', '#e67e22', '#16a085', '#8e44ad',
+                        '#c0392b', '#2c3e50', '#d35400', '#7f8c8d']
+            _series = []
+            if _ctrl and _fps_events:
+                # 事件口径：横轴用序号（与性能报告一致），各 Controller 按自己的日志条数排列
+                _maxlen = max(len(r["fps"]) for r in _ctrl.values())
+                fps_display_axis_title = "采样点（条）"
+                fps_display_labels_js = ",".join(f"'{i}'" for i in range(_maxlen))
+                for _i, (_cid, _row) in enumerate(sorted(_ctrl.items())):
+                    _color = _palette[_i % len(_palette)]
+                    _pad = _maxlen - len(_row["fps"])
+                    _series.append({"label": f"{_cid} 实际FPS",
+                                    "data": list(_row["fps"]) + [None] * _pad,
+                                    "color": _color, "width": 1.8})
+                    _series.append({"label": f"{_cid} 目标FPS",
+                                    "data": list(_row["s_fps"]) + [None] * _pad,
+                                    "color": _color, "width": 1.2, "dash": [5, 3]})
+            elif _ctrl:
+                for _i, (_cid, _row) in enumerate(sorted(_ctrl.items())):
+                    _color = _palette[_i % len(_palette)]
+                    _act, _tgt = [], []
+                    for _s in _fpsd:
+                        _hit = next((c for c in (_s.get("controllers") or [])
+                                     if c.get("id") == _cid), None)
+                        _act.append(round(float(_hit["fps"]), 1) if _hit else None)
+                        _tgt.append(round(float(_hit["s_fps"]), 1) if _hit else None)
+                    _series.append({"label": f"{_cid} 实际FPS", "data": _act,
+                                    "color": _color, "width": 1.8})
+                    _series.append({"label": f"{_cid} 目标FPS", "data": _tgt,
+                                    "color": _color, "width": 1.2, "dash": [5, 3]})
+            elif _lay:
+                for _i, (_name, _row) in enumerate(_lay.items()):
+                    _color = _palette[_i % len(_palette)]
+                    _act = []
+                    for _s in _fpsd:
+                        _hit = next((l for l in (_s.get("layers") or [])
+                                     if l.get("name") == _name), None)
+                        _val = None if not _hit or _hit.get("fps") is None else round(float(_hit["fps"]), 1)
+                        _act.append(_val)
+                    _series.append({"label": _name, "data": _act,
+                                    "color": _color, "width": 1.8})
+                    if _row.get("refresh"):
+                        _series.append({"label": f"{_name} 目标FPS",
+                                        "data": [_row["refresh"]] * len(_fpsd),
+                                        "color": _color, "width": 1.1, "dash": [5, 3]})
+            fps_display_series_js = json.dumps(_series, ensure_ascii=False)
+
+            _fps_count = (f"共 {len(_fps_events)} 条 FPS 日志事件（约 {len(_ctrl)} 个 Controller）"
+                          if _fps_events else f"共 {len(_fpsd)} 个采样点")
+            _fps_note = (
+                "※ 数据源：应用日志 <code>SDK:FPS_C</code>（逐条采集），按 ControllerID 统计"
+                "实际 / 目标帧率，与性能报告口径一致。"
+                if _fps_events else
+                "※ 应用未提供 <code>SDK:FPS_C</code> 日志，改用 SurfaceFlinger 图层帧时间戳采集"
+                "（包含应用自建的 VirtualDisplay 副屏；显示屏按 layerStack 归属）。"
+            )
+            fps_display_html = f"""
+        <h2>🎞️ FPS 帧率</h2>
+        <p style="font-size:12px;color:#888;">{_fps_note}</p>
+        {_ctrl_table}
+        {_lay_table}
+        {_chart_wrap('fpsDisplayChart')}
+        <p style="font-size:12px;color:#888;">{_fps_count}</p>
+        """
+            charts_js = charts_js + "\n\n" + CHART_JS_FPS_DISPLAY
 
         # ---- 测试详情汇总表（对齐百度报告的「一、性能测试详情」）----
         # 目标进程（主进程在第一个）：多进程时详情表按进程逐行给出均值/峰值/最低
@@ -1468,16 +1655,23 @@ class PerfReportGenerator:
             <tbody>{_rows}</tbody>
         </table>"""
 
-        # ---- 详细分析改成 Tab（对齐百度报告：设备cpu / 线程数量 / 线程cpu / 峰值分析）----
+        # ---- 详细分析改成 Tab（对齐百度报告：设备cpu / 线程数量 / 线程cpu / 峰值分析）
+        # 诊断产物 / 基线对比也收进同一个 Tab 栏：有内容才出现，任何指标组合都适用
         _tabs = []
         if sys_cpu_html:
             _tabs.append(("tab-sys", "设备 CPU", sys_cpu_html))
+        if fps_display_html:
+            _tabs.append(("tab-fps", "FPS 帧率", fps_display_html))
         if thread_count_html:
             _tabs.append(("tab-thread-count", "线程数量", thread_count_html))
         if thread_cpu_html:
             _tabs.append(("tab-thread-cpu", "线程 CPU", thread_cpu_html))
         if cpu_analysis_html:
             _tabs.append(("tab-cpu", "CPU 峰值分析", cpu_analysis_html))
+        if events_html:
+            _tabs.append(("tab-events", "诊断产物", events_html))
+        if baseline_html:
+            _tabs.append(("tab-baseline", "基线对比", baseline_html))
         analysis_html = ""
         if _tabs:
             _btns = "".join(
@@ -1858,10 +2052,6 @@ class PerfReportGenerator:
 
         {iotop_html}
 
-        {events_html}
-
-        {baseline_html}
-
         {alerts_html}
 
         <div class="footer">
@@ -1908,6 +2098,11 @@ class PerfReportGenerator:
         const threadTotalData = [{thread_total_js}];
         const threadActiveData = [{thread_active_js}];
         const threadCpuSeries = {thread_cpu_series_js};
+
+        // FPS 帧率（按显示屏/图层 或 ControllerID）
+        const fpsDisplayLabels = [{fps_display_labels_js}];
+        const fpsDisplayAxisTitle = '{fps_display_axis_title}';
+        const fpsDisplaySeries = {fps_display_series_js};
 
         // 诊断事件竖线：在每条曲线上对应时刻画一条彩色虚线（颜色对应产物类型）
         const eventMarkers = {event_markers_js};

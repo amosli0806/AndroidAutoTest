@@ -698,6 +698,15 @@ class PerfController(QObject):
             self._start_probe(ThreadsProbe(), session, interval=interval,
                               pid_provider=self._make_pid_provider(session))
 
+        # FPS 按显示屏/图层采集（含应用自建的仪表副屏），只要监控 FPS 就自动带起来
+        if 'fps' in (getattr(session, "metrics", None) or []):
+            from services.perf_probes import FpsDisplayProbe
+            probe = FpsDisplayProbe()
+            probe.package = session.app_package
+            self._start_probe(probe, session,
+                              interval=self._cpu_side_interval(session),
+                              pid_provider=self._make_pid_provider(session))
+
     @staticmethod
     def _cpu_side_interval(session) -> float:
         """整机 CPU / 线程的采样间隔：跟随主采样，但不快于 5 秒。
@@ -803,6 +812,13 @@ class PerfController(QObject):
                         self.current_session.thread_rank = probe.rank()
                     except Exception:
                         pass
+                elif key == "fps_display":
+                    self.current_session.fps_display_samples = series
+                    try:
+                        # 逐条日志事件（百度同款统计口径）
+                        self.current_session.fps_events = probe.events()
+                    except Exception:
+                        pass
         for key, probe in probes.items():
             try:
                 probe.stop()
@@ -811,6 +827,12 @@ class PerfController(QObject):
         for key, probe in probes.items():
             try:
                 probe.wait(timeout=15)
+                # 停止后再取一次事件：日志流可能还有最后几条没落库
+                if key == "fps_display" and self.current_session is not None:
+                    try:
+                        self.current_session.fps_events = probe.events()
+                    except Exception:
+                        pass
                 if getattr(probe, "artifact", ""):
                     logger.info("[Perf] 探针 %s 产物：%s", key, probe.artifact)
             except Exception as e:
@@ -1897,7 +1919,12 @@ class PerfController(QObject):
         worse = [r for r in rows if r['status'] == 'worse']
 
         if worse:
-            detail = "\n".join(f"• {_fmt(r)}" for r in worse)
+            # 弹窗只放前 5 条，避免几十行把窗口撑爆；完整清单在下方滚动区
+            preview = worse[:5]
+            detail = "\n".join(f"• {_fmt(r)}" for r in preview)
+            more = len(worse) - len(preview)
+            if more > 0:
+                detail += f"\n…其余 {more} 项明显劣化见下方完整对比"
             full_detail = (
                 f"完整对比（共 {len(rows)} 项，其中明显劣化 {len(worse)} 项）：\n"
                 + "\n".join(f"• {_fmt(r)}" for r in rows)
@@ -1906,7 +1933,7 @@ class PerfController(QObject):
                 self.view,
                 "性能劣化告警",
                 f"对比基线：{baseline.name}\n\n"
-                f"检测到 {len(worse)} 项指标明显劣化：\n\n{detail}",
+                f"检测到 {len(worse)} 项指标明显劣化（共对比 {len(rows)} 项）：\n\n{detail}",
                 full_detail
             )
 
