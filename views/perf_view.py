@@ -913,12 +913,16 @@ class PerfView(QWidget):
         return self.get_record_interval() > self.get_record_duration()
 
     def _on_record_cfg_changed(self, *_):
-        """间隔/时长变化时给出提示（不阻止，真正启动时会校验）"""
-        if self.record_config_ok():
-            self.record_status_label.setText("")
-        else:
-            # 文案压缩成「间隔>时长」：44px 单行卡片里塞不下原来那句 7 字提示
-            self.record_status_label.setText("间隔>时长")
+        """间隔/时长变化时给出提示（不阻止，真正启动时会校验）。
+
+        提示放在下拉的 tooltip + 卡片圆点上，不再往卡片里塞一行字 ——
+        「循环间隔 / 录制时长」两个标签把这一行占满了（2026-10-29）。
+        """
+        ok = self.record_config_ok()
+        tip = "" if ok else "间隔必须大于单段时长，否则两段录制会重叠"
+        self.record_interval_combo.setToolTip(tip)
+        self.record_duration_combo.setToolTip(tip)
+        self._set_dot_alert(getattr(self, '_record_dot', None), not ok)
 
     def record_loop_enabled(self) -> bool:
         return bool(self.record_enable_check.isChecked())
@@ -1481,7 +1485,7 @@ class PerfView(QWidget):
         # ---- 堆转储 ----
         (self._hprof_card, hprof_params, hprof_actions,
          self._hprof_dot, self._hprof_title) = _card("#e67e22", "堆转储")
-        self.hprof_enable_check = BorderedCheckBox("循环")
+        self.hprof_enable_check = BorderedCheckBox("循环间隔")
         self.hprof_enable_check.setToolTip(
             "开启后，点击「开始监控」即按右侧间隔自动对所选应用执行堆转储\n"
             "（第一次转储在一个完整间隔后执行）")
@@ -1504,7 +1508,7 @@ class PerfView(QWidget):
         self._smaps_card.setToolTip(
             "抓取所选进程的 /proc/<pid>/smaps 到本地\n"
             "⚠ 需要设备 root，或应用是 debug（可调试）包")
-        self.smaps_enable_check = BorderedCheckBox("循环")
+        self.smaps_enable_check = BorderedCheckBox("循环间隔")
         self.smaps_enable_check.setToolTip(
             "开启后，点击「开始监控」即按右侧间隔自动抓取所选进程的 smaps\n"
             "（第一次抓取在一个完整间隔后执行）")
@@ -1554,7 +1558,7 @@ class PerfView(QWidget):
         # ---- 截图 ----
         (self._screenshot_card, screenshot_params, screenshot_actions,
          self._screenshot_dot, self._screenshot_title) = _card("#16a085", "截图")
-        self.screenshot_enable_check = BorderedCheckBox("循环")
+        self.screenshot_enable_check = BorderedCheckBox("循环间隔")
         self.screenshot_enable_check.setToolTip(
             "开启后，点击「开始监控」即按右侧间隔自动截取设备屏幕\n"
             "（第一次截图在一个完整间隔后执行）")
@@ -1578,7 +1582,7 @@ class PerfView(QWidget):
         # ---- 录屏 ----
         (self._record_card, record_params, record_actions,
          self._record_dot, self._record_title) = _card("#e84393", "录屏")
-        self.record_enable_check = BorderedCheckBox("循环")
+        self.record_enable_check = BorderedCheckBox("循环间隔")
         self.record_enable_check.setToolTip(
             "开启后，点击「开始监控」即按间隔自动录一段（单段时长见右侧）\n"
             "间隔必须大于单段时长，否则会重叠")
@@ -1593,17 +1597,13 @@ class PerfView(QWidget):
             lambda _: self.record_interval_changed.emit())
         record_params.addWidget(self.record_interval_combo)
         # 时长前面加个「录」字：和间隔一眼区分开，又不动下拉里的数据文案
-        record_params.addWidget(QLabel("录"))
+        record_params.addWidget(QLabel("录制时长"))
         self.record_duration_combo = _interval_combo(
             ["15 秒", "30 秒", "60 秒", "120 秒"], "30 秒", width=76)
         self.record_duration_combo.currentTextChanged.connect(self._on_record_cfg_changed)
         self.record_duration_combo.currentTextChanged.connect(
             lambda _: self.record_duration_changed.emit())
         record_params.addWidget(self.record_duration_combo)
-        self.record_status_label = QLabel("")
-        self.record_status_label.setStyleSheet(
-            "font-size: 12px; color: #e67e22; background: transparent;")
-        record_params.addWidget(self.record_status_label)
         record_params.addStretch()
 
         self.record_once_btn = _action_btn("立即录制")

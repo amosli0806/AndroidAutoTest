@@ -476,6 +476,9 @@ class ProbeValueCard(QFrame):
         self.dot = QLabel("●")
         row.addWidget(self.dot)
         self.title_label = QLabel(title)
+        # 标题定宽：三张探针卡的标题宽窄不一（系统内存 / 网卡流量 / 磁盘 IO），
+        # 不定宽的话右侧的数值「--」各站各的位置，扫一眼排不齐（2026-10-29）
+        self.title_label.setFixedWidth(64)
         row.addWidget(self.title_label)
 
         self.value_label = QLabel("--")
