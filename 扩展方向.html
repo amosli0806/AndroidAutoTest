@@ -264,7 +264,7 @@
     </div>
 
     <div class="card">
-      <h3>5. 高 DPI / 分辨率适配 <span class="tag plan">📋 规划中</span></h3>
+      <h3>5. 高 DPI / 分辨率适配 <span class="tag done">✅ 已完成（2026-10-30）</span></h3>
       <p><b>问题</b>：Qt6 已经按系统缩放换算逻辑像素，但界面里写死了不少逻辑像素尺寸，默认按 ≥1280×720 设计——
         性能卡 <code>setMinimumSize(400, 240)</code> + 两列网格，逻辑宽 &lt;850 就会挤压；
         基线管理 / 阈值 / 对比弹窗固定 <code>820×520</code> / <code>640×620</code> / <code>620×560</code>，
@@ -284,14 +284,18 @@
             <p><b>执行方案 v2（2026-10-30 重排 · 全应用范围 · 按「收益÷风险」排序）</b>：
       上一版按 P0/P1/P2 粗分，没排先后理由，也漏了执行页与元素库。这一版改按
       <b>「先量、再兜底、后动结构」</b>排 6 步，每步独立可发版、独立出更新说明。</p>
+      <p style="background:#eafaf1;border-left:4px solid #27ae60;padding:8px 12px;border-radius:4px">
+      ✅ <b>落地结果（2026-10-30）</b>：第 0~5 步已全部完成，体检 <b>0 项不达标</b> ——
+      执行页 <b>1050 → 596</b>、元素库 <b>997 → 687</b>、性能页 <b>980 → 798</b>（可用宽 814）；
+      13 个超屏弹窗全部收进屏幕；7 档分辨率×缩放全部通过。语音页依赖设备服务，体检脚本标「未覆盖」。</p>
 
-      <p><b>第 0 步 · 先造体检仪（0.5 天，必须先做）</b>：新增 <code>tools/dpi_audit.py</code>，
+      <p><b>第 0 步 · 先造体检仪 <span class="tag done">✅ 已完成</span></b>：新增 <code>tools/dpi_audit.py</code>，
       离屏遍历<b>全部 9 个页面 + 全部弹窗</b> × 「1920×1080@100/125/150、2560×1440@150、1366×768@125、2256×1504@150」，
       输出一张表：<code>minW</code> vs 可用宽、弹窗底边 vs 可用高、主按钮 <code>isVisible()</code>。
       先把当前基线数字存下来，后面每步改完重跑对比。<b>没有它，后面每步都只能靠肉眼看。</b>
       它同时是可进 CI 的门禁。</p>
 
-      <p><b>第 1 步 · 全局兜底（1 天，收益最大、风险最低）</b>：
+      <p><b>第 1 步 · 全局兜底 <span class="tag done">✅ 已完成</span></b>：
       ① <code>QApplication</code> 创建前设 <code>HighDpiScaleFactorRoundingPolicy.PassThrough</code>，
       并把缩放比、逻辑分辨率、可用区域写进启动日志；
       ② <code>utils/dpi.py</code> 提供 <code>avail_rect()</code> / <code>fit_to_screen(dlg)</code> /
@@ -301,25 +305,25 @@
       会顶掉 <code>resize()</code>，需单独改成 <code>resize</code> + <code>setMinimumSize</code>。
       这样不用逐个改 13 处，将来新加弹窗也自动受保护。</p>
 
-      <p><b>第 2 步 · 只给"收缩后仍超屏"的加滚动区（0.5 天）</b>：
+      <p><b>第 2 步 · 只给"收缩后仍超屏"的加滚动区 <span class="tag done">✅ 已完成</span></b>：
       跑第 0 步的脚本，找出收缩后 <code>minimumSizeHint</code> 仍大于可用区的弹窗（预期 3~5 个：
       阈值 / 设置 / 元素编辑 / 知识库导入），只给它们把内容区套 <code>QScrollArea</code>、按钮区固定底部。
       <b>按数据挑，不按猜的挑。</b></p>
 
-      <p><b>第 3 步 · 执行页 1050 → 目标 ≤830（工期待定，动结构）</b>：
+      <p><b>第 3 步 · 执行页 1050 → 596 <span class="tag done">✅ 已完成</span></b>：
       <b>实测更正</b>：<code>ExecuteView</code> 自身的 minW 就是 1050，与外层
       <code>top_splitter</code> 无关（原判断有误）。真因是页内那一行工具条 —— 5 个等宽按钮
       （<code>_equalize_tool_btn_widths</code> 按最长文案现算 ≈81px）+ 套件下拉 130 + 重试条件下拉 96
       + 三个定宽 spin（56/54/54）横向排开。要达到 ≤830 必须把低频控件（循环次数 / 重试 / 条件）
       收进「更多」或折行 —— <b>属结构改动，需先出原型确认</b>（2026-10-08 有过 FlowLayout 折行被回滚的教训）。</p>
 
-      <p><b>第 4 步 · 元素库 997 → 目标 ≤830（工期待定，动结构）</b>：
+      <p><b>第 4 步 · 元素库 997 → 687 <span class="tag done">✅ 已完成</span></b>：
       工具栏一行 8 个控件（搜索框 + 应用下拉 155 + 抓取按钮 + 右侧 新增/编辑/删除/导入/导出 5 个
       124px 按钮），中间有 <code>addStretch()</code> 把按钮顶到右边 —— <b>直接换 FlowLayout 会让按钮跑到
       左边</b>（2026-10-08 踩过），必须先保住右对齐再谈折行。可选方案：低频两个（导入/导出）收进
       「更多」菜单，或整行改「左半自适应 + 右半固定」。<b>同样属结构改动，需确认。</b></p>
 
-      <p><b>第 5 步 · 性能页 980 → 目标 ≤830（2 天，风险最高，放最后）</b>：
+      <p><b>第 5 步 · 性能页 980 → 798 <span class="tag done">✅ 已完成</span></b>：
       ① <code>_make_group()</code> 把每组包成不可压缩原子块，FlowLayout 只能整组换行 —— 组内控件改可收缩 + 省略号，
       这是<b>唯一要动页面结构</b>的地方；② <code>MetricCard</code> <code>setMinimumSize(400,240)</code> +
       <code>setFixedHeight(240)</code> → 300×200 + <code>setMinimumHeight</code>；③ 底部栏 6 个 99px 固定宽按钮小屏折成图标。
