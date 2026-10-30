@@ -626,7 +626,16 @@ class TaskEditDialog(QDialog):
         self.task = task
         self.suite_names = suite_names or []
         self.setWindowTitle("编辑定时任务" if task else "新增定时任务")
-        self.setFixedSize(450, 520)
+        # 固定尺寸的窗口吃不掉 utils/dpi 的「自动收屏」（Qt 会把 resize 顶回固定值），
+        # 所以这里自己按可用区收一次：只保证不越界，不按 0.88 比例缩
+        # —— 比例缩会把 520 压到 450，自绘边框里的内容反而裁得更多。
+        from utils.dpi import avail_rect
+        _avail = avail_rect(self)
+        _w, _h = 450, 520
+        if _avail is not None:
+            _w = min(_w, max(360, _avail.width() - 24))
+            _h = min(_h, max(360, _avail.height() - 24))
+        self.setFixedSize(_w, _h)
         self.setModal(True)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)

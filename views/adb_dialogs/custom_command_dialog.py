@@ -3,7 +3,7 @@
 from PyQt6.QtWidgets import (
     QLabel, QDialog, QVBoxLayout, QFormLayout,
     QLineEdit, QTextEdit, QCheckBox, QSpinBox,
-    QPushButton, QHBoxLayout
+    QPushButton, QHBoxLayout, QScrollArea, QFrame, QWidget
 )
 from PyQt6.QtCore import Qt
 
@@ -64,6 +64,18 @@ class CustomCommandDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
+        # 表单内容放进滚动区：这个弹窗的最小高度约 570px，在 1366×768@150%
+        # （逻辑高 512）这类屏幕上会顶出屏幕、底部「确定」点不到。
+        # 按钮区留在滚动区外面，窗口压多矮都能点到。
+        content = QWidget()
+        c_lay = QVBoxLayout(content)
+        c_lay.setContentsMargins(0, 0, 0, 0)
+        c_lay.setSpacing(12)
+        self.content_scroll = QScrollArea()
+        self.content_scroll.setWidgetResizable(True)
+        self.content_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.content_scroll.setWidget(content)
+
         # ---- 注意事项标签 ----
         self.hint_label = QLabel(
             "💡 注意事项：\n"
@@ -72,7 +84,7 @@ class CustomCommandDialog(QDialog):
         )
         self.hint_label.setWordWrap(True)
         self.hint_label.setObjectName("hintLabel")
-        layout.addWidget(self.hint_label)
+        c_lay.addWidget(self.hint_label)
 
         form = QFormLayout()
         form.setSpacing(10)
@@ -139,7 +151,9 @@ class CustomCommandDialog(QDialog):
         self.preset_hint.setVisible(False)
         form.addRow("", self.preset_hint)
 
-        layout.addLayout(form)
+        c_lay.addLayout(form)
+        c_lay.addStretch()
+        layout.addWidget(self.content_scroll, 1)
 
         # ---- 按钮区 ----
         btn_layout = QHBoxLayout()

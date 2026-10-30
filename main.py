@@ -378,6 +378,22 @@ def unused_data_size(project_model, step_model, suite_model):
         return None
 
 
+def _apply_dpi_rounding_policy():
+    """把高 DPI 舍入策略定为 PassThrough（**必须在 QApplication 创建前**调用）。
+
+    Windows 上 125% / 150% 这类非整数缩放，默认会被舍入到相邻档位，
+    导致界面忽大忽小；PassThrough 按系统真实比例换算，与设计稿一致。
+    幂等，重复调用无副作用。
+    """
+    try:
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QGuiApplication
+        QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    except Exception as e:                 # noqa: BLE001 - 设不上也要能启动
+        logger.warning("设置高 DPI 舍入策略失败：%s", e)
+
+
 def main():
     global _APP
     # ---------- 子进程无黑窗补丁（必须在任何 adb 调用之前）----------    # 虫师打包为无控制台 GUI 后，第三方库（adbutils/u2 等）内部 spawn 的控制台
@@ -449,12 +465,21 @@ def main():
     # 否则 QWebEngineView 首次创建时会触发窗口重建（看起来像应用重启）
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
+    # 高 DPI 舍入策略同样必须在 QApplication 之前定：PassThrough 让 125%/150%
+    # 按真实比例换算，不会被舍成 100%/200%（否则界面忽大忽小）
+    _apply_dpi_rounding_policy()
+
     app = _APP or QApplication(sys.argv)
 
     # 下拉框 / 输入框 / 数字框禁用原生右键菜单（撤销、复制、粘贴那一套），
     # 键盘快捷键不受影响；细节见 utils/no_context_menu.py
     from utils.no_context_menu import install as _install_no_ctx_menu
     _install_no_ctx_menu(app)
+
+    # 高 DPI / 小屏兜底：任何弹窗显示时超屏就自动收进屏幕（utils/dpi.py）
+    from utils import dpi as _dpi
+    _dpi.install_auto_fit(app)
+    logger.info("屏幕信息：%s", _dpi.screen_info())
 
     # ---------- 启动封面：必须在做任何耗时的事之前 ----------
     # 自绘封面是启动时用户看到的第一个东西，得在 QApplication 一建好就出现 ——
@@ -1360,6 +1385,7 @@ if __name__ == "__main__":
         from PyQt6.QtCore import Qt as _Qt
         from PyQt6.QtWidgets import QApplication as _QApplication
         _QApplication.setAttribute(_Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+        _apply_dpi_rounding_policy()
         _APP = _QApplication(sys.argv)
         _boot_base = (sys._MEIPASS if getattr(sys, "frozen", False)
                       else os.path.dirname(os.path.abspath(__file__)))
