@@ -981,7 +981,8 @@ def step_perf_shots():
     grab_widget(pv.scroll, "perf_5_view_charts.png")
 
 def step_perf_scenario_on():
-    perf_view.mode_combo.setCurrentIndex(1)
+    # 模式与套件已合并成一个下拉：第 0 项是独立监控，第 1 项起是各套件
+    perf_view.mode_combo.setCurrentIndex(1 if perf_view.mode_combo.count() > 1 else 0)
     process()
     wait(300)
     process()
@@ -991,7 +992,7 @@ def step_perf_scenario_shots():
     crop_shot(pv, "perf_scenario_1_select_app.png",
               targets=[pv.app_combo], pad=44)
     crop_shot(pv, "perf_scenario_2_choose_suite.png",
-              targets=[pv.mode_combo, pv.suite_combo], pad=40)
+              targets=[pv.mode_combo], pad=40)
     crop_shot(pv, "perf_scenario_3_set_loop.png",
               targets=[pv.loop_spin, pv.stop_on_fail_check], pad=40)
     crop_shot(pv, "perf_scenario_4_start.png",

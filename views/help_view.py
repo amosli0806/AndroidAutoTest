@@ -725,7 +725,7 @@ class HelpView(QFrame):
 
                 {self._get_steps_html([
                     {'image': 'perf_scenario_1_select_app.png', 'desc': '选择目标应用并保持在前后台'},
-                    {'image': 'perf_scenario_2_choose_suite.png', 'desc': '模式切换为「场景化测试」，选择套件'},
+                    {'image': 'perf_scenario_2_choose_suite.png', 'desc': '在「模式」下拉里选一个套件（选「独立监控」则只采集不执行）'},
                     {'image': 'perf_scenario_3_set_loop.png', 'desc': '设置循环次数（建议 1~3 次），按需勾选「失败停止」'},
                     {'image': 'perf_scenario_4_start.png', 'desc': '点「开始」，采集与执行同时进行'},
                     {'image': 'perf_scenario_5_view_logs.png', 'desc': '左侧看执行进度，曲线区看性能数据'},

@@ -997,15 +997,14 @@ class PerfView(QWidget):
 
         # 场景化相关控件：只要模式是「场景化测试」就保持显示（运行中仅置灰不隐藏，
         # 隐藏会导致开始监控后参数区突然空一块、结束后又弹回）
-        scenario_on = (self.mode_combo.currentIndex() == 1)
+        # 模式下拉第 0 项是「独立监控」，其余每一项代表一个套件
+        scenario_on = (self.mode_combo.currentIndex() > 0)
         # 单行命令栏：场景化参数不参与排布时直接让位（等价于原来的整组隐藏），
         # 一次性改完再重排，避免逐项设置触发多次
         self.control_bar.set_eligibility({
-            "suite": scenario_on, "loop": scenario_on, "stopfail": scenario_on,
+            "loop": scenario_on, "stopfail": scenario_on,
         })
-        for w in (self.suite_label, self.suite_combo,
-                  self.loop_label, self.loop_spin,
-                  self.stop_on_fail_check):
+        for w in (self.loop_label, self.loop_spin, self.stop_on_fail_check):
             w.setEnabled(scenario_on and idle)
 
         # 指标单选按钮：非空闲一律禁用（暂停也是监控中，指标已在开始时锁定）
@@ -1103,7 +1102,8 @@ class PerfView(QWidget):
         self.app_refresh_btn.clicked.connect(self.app_list_refresh_requested.emit)
         self.control_bar.add_chip("app", self.app_combo, 999)
         self.control_bar.add_chip("multi", self.app_multi_btn, 70)
-        self.control_bar.add_chip("refresh", self.app_refresh_btn, 50)
+        # 刷新排在「时长」之后被收起：814 宽下先收起时长，刷新按钮能留在行内
+        self.control_bar.add_chip("refresh", self.app_refresh_btn, 60)
 
         # ---- 采集参数 ----
         self.interval_label = QLabel("间隔")
@@ -1111,11 +1111,18 @@ class PerfView(QWidget):
         self.interval_combo.addItems(["100 毫秒", "500 毫秒", "1 秒", "2 秒", "5 秒", "10 秒"])
         self.interval_combo.setCurrentText("5 秒")
         self.interval_combo.setFixedWidth(78)
+        # 模式与套件合并成一个下拉（2026-10-30 用户要求）：
+        # 第 0 项固定是「独立监控」，其余每一项是一个套件（选中即 = 场景化测试）。
+        # 一个下拉同时表达「跑不跑套件」和「跑哪个套件」，省掉一个控件和一次选择。
         self.mode_label = QLabel("模式")
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["独立监控", "场景化测试"])
-        self.mode_combo.setFixedWidth(96)
-        self.mode_combo.currentIndexChanged.connect(lambda _: self._apply_state())
+        self.mode_combo.addItem("独立监控")
+        # 套件列表要等主窗口异步塞进来；在那之前先摆一个占位项，
+        # 「有套件」时由 _rebuild_mode_combo 换成真实的套件名
+        self.mode_combo.addItem("（无套件）")
+        self.mode_combo.setFixedWidth(150)
+        self.mode_combo.setToolTip("独立监控：只看当前应用\n选择套件：按套件顺序做场景化测试")
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         # 监控时长：到点自动停止（典型场景：车机跑 12 小时 Monkey 检测内存泄露）
         self.duration_label = QLabel("时长")
         self.duration_spin = QSpinBox()
@@ -1130,24 +1137,24 @@ class PerfView(QWidget):
             "interval", _pair(self.interval_label, self.interval_combo), 90)
         self.control_bar.add_chip(
             "mode", _pair(self.mode_label, self.mode_combo), 80)
+        # 时长排在多进程之前被收起：814 宽（1366×768@150%）时它是第二个被
+        # 搬进「更多」的，这样「多进程（3）」这个状态指示能一直留在行内
         self.control_bar.add_chip(
-            "duration", _pair(self.duration_label, self.duration_spin), 85)
+            "duration", _pair(self.duration_label, self.duration_spin), 55)
 
-        # ---- 场景化参数（仅「场景化测试」模式参与排布）----
-        self.suite_label = QLabel("套件")
+        # ---- 场景化参数（仅「选了套件」时参与排布）----
+        # 套件下拉不再是独立控件：内容被铺进上面的「模式」下拉，这个对象只作为
+        # 「当前套件名」的状态载体（_collect_start_payload / 配置记忆都读它），
+        # 所以不加入单行命令栏，也不显示。
         self.suite_combo = QComboBox()
-        # 先放占位项：_refresh_suite_combo 由主窗口异步填充，构造到填充之间
-        # 下拉是空的（一行里出现一个空框很难看）
         self.suite_combo.addItem("(无套件)")
-        self.suite_combo.setMinimumWidth(112)   # 「(无套件)」+ 下拉箭头需要 110 左右
+        self.suite_combo.setVisible(False)
         self.loop_label = QLabel("循环")
         self.loop_spin = QSpinBox()
         self.loop_spin.setRange(1, 999)
         self.loop_spin.setValue(1)
         self.loop_spin.setFixedWidth(56)
         self.stop_on_fail_check = BorderedCheckBox("失败停止")
-        self.control_bar.add_chip(
-            "suite", _pair(self.suite_label, self.suite_combo), 60, eligible=False)
         self.control_bar.add_chip(
             "loop", _pair(self.loop_label, self.loop_spin), 45, eligible=False)
         self.control_bar.add_chip("stopfail", self.stop_on_fail_check, 40,
@@ -1781,9 +1788,71 @@ class PerfView(QWidget):
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn.setFixedHeight(28)
-        btn.setFixedWidth(84)
+        btn.setFixedWidth(92)
         btn.clicked.connect(self._show_metrics_menu)
         return btn
+
+    def _on_mode_changed(self, index):
+        """统一选择器：第 0 项 = 独立监控，其余 = 场景化 + 对应套件。
+
+        套件名同步进 `suite_combo`（不显示的载体），这样
+        `_collect_start_payload`、配置记忆等既有逻辑都不用改。
+        """
+        if index <= 0:
+            self.suite_combo.setCurrentText("(无套件)")
+        else:
+            name = self.mode_combo.itemText(index).strip()
+            if name and name not in ("（无套件）", "(无套件)"):
+                self.suite_combo.setCurrentText(name)
+            else:
+                self.suite_combo.setCurrentText("(无套件)")
+        self._apply_state()
+
+    def _rebuild_mode_combo(self):
+        """把「独立监控 + 各套件」重新铺进模式下拉。
+
+        每次套件列表变化都会重建；重建期间 blockSignals，否则 clear() 会把
+        选中项清成 -1、连带触发 _on_mode_changed 把套件名抹掉。
+        """
+        current = self.mode_combo.currentText()
+        names = [self.suite_combo.itemText(i)
+                 for i in range(1, self.suite_combo.count())]
+
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.clear()
+        self.mode_combo.addItem("独立监控")
+        if names:
+            self.mode_combo.addItems(names)
+        else:
+            # 一个套件都没有时给个占位，让用户知道"选了套件才能做场景化"
+            self.mode_combo.addItem("（无套件）")
+
+        target = ""
+        pref = self.suite_combo.currentText()
+        pref_ok = bool(pref) and pref != "(无套件)" and \
+            self.mode_combo.findText(pref) >= 0
+        if getattr(self, "_pref_scenario", False):
+            # 上次退出时是场景化：优先回到记住的那个套件，找不到就取第一个
+            target = pref if pref_ok else (names[0] if names else "（无套件）")
+        elif current == "独立监控":
+            target = "独立监控"
+        elif current and current != "（无套件）" and \
+                self.mode_combo.findText(current) >= 0:
+            target = current          # 原来选的套件还在，保持不变
+        elif current == "（无套件）" and pref_ok:
+            # 之前在"无套件"占位上：套件就绪后回到记得的那个
+            target = pref
+        self.mode_combo.setCurrentText(target or "独立监控")
+        self.mode_combo.blockSignals(False)
+        # blockSignals 期间 _on_mode_changed 不会跑，这里补一次套件名同步，
+        # 否则「模式=冒烟套件、suite_combo=(无套件)」会对不上
+        chosen = self.mode_combo.currentText()
+        if chosen and chosen not in ("独立监控", "（无套件）"):
+            self.suite_combo.setCurrentText(chosen)
+        elif self.mode_combo.currentIndex() <= 0:
+            self.suite_combo.setCurrentText("(无套件)")
+        self._pref_scenario = False
+        self._apply_state()
 
     def _show_metrics_menu(self):
         self._metrics_menu.popup(
@@ -1805,7 +1874,7 @@ class PerfView(QWidget):
                     self.smaps_visible_check):
             if chk.isChecked():
                 names.append(chk.text())
-        btn.setText(f"指标 {len(names)}")
+        btn.setText(f"指标（{len(names)}）")
         btn.setToolTip("已选：" + "、".join(names) if names else "选择要采集的指标")
 
     def _relayout_cards(self):
@@ -1942,7 +2011,7 @@ class PerfView(QWidget):
             return
         self._active_metrics = list(metrics)
 
-        scenario = (self.mode_combo.currentIndex() == 1)
+        scenario = (self.mode_combo.currentIndex() > 0)
         if scenario:
             suite_name = self.suite_combo.currentText()
             if not suite_name or suite_name == "(无套件)":
@@ -2020,6 +2089,8 @@ class PerfView(QWidget):
             self.suite_combo.setCurrentText(current)
         else:
             self.suite_combo.setCurrentText("(无套件)")
+        # 套件列表变了，模式下拉的选项跟着重建（第 0 项独立监控 + 各套件）
+        self._rebuild_mode_combo()
 
     # ------------------------------------------------------------------
     # 配置记忆（data/config.json 的 perf_config）
@@ -2033,7 +2104,7 @@ class PerfView(QWidget):
             pkg = ""
         return {
             'interval': self.interval_combo.currentText(),
-            'mode': 'scenario' if self.mode_combo.currentIndex() == 1 else 'monitor',
+            'mode': 'scenario' if self.mode_combo.currentIndex() > 0 else 'monitor',
             'duration_minutes': self.duration_spin.value(),
             'metric': primary,
             'fps': self.metric_radios['fps'].isChecked(),
@@ -2096,7 +2167,10 @@ class PerfView(QWidget):
 
         _pick(self.interval_combo, cfg.get('interval'))
         if cfg.get('mode') == 'scenario':
-            self.mode_combo.setCurrentIndex(1)
+            # 此刻套件列表还没加载，「模式」下拉里只有占位项，不能直接写死
+            # index=1（那会选中「（无套件）」）。先记下意图，等
+            # _refresh_suite_combo 把套件铺进来后再定位到具体套件。
+            self._pref_scenario = True
         duration = cfg.get('duration_minutes')
         if isinstance(duration, int):
             self.duration_spin.setValue(duration)   # setValue 自带范围钳制

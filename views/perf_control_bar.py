@@ -17,6 +17,7 @@
 
 from PyQt6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QMenu, QWidgetAction,
+    QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QSize, QTimer
 
@@ -71,6 +72,11 @@ class ChipBar(QWidget):
         """往行内加一个控件。priority 越小越先被收起。"""
         slot = QWidget(self)
         slot.setStyleSheet("background: transparent;")
+        # 槽必须「宽度=内容宽」：否则行内还有剩余空间时，Qt 会把多余的宽度
+        # 摊到这些槽上（槽内部的弹簧再把内容顶到左边），看起来就是一串 ~30px
+        # 的空隙、整行左对齐不了（2026-10-30 用户反馈"间距有点大"）
+        slot.setSizePolicy(QSizePolicy.Policy.Fixed,
+                           QSizePolicy.Policy.Preferred)
         lay = QHBoxLayout(slot)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
