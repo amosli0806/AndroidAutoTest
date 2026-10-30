@@ -256,10 +256,11 @@ def _time_axis_labels(timestamps, t0):
 
 
 def _chart_wrap(canvas_id: str) -> str:
-    """图表容器：画布 + 图例（曲线参数）+ 工具条（全选 / 反选 / 重置缩放）。
+    """图表容器：画布 + 图例（曲线参数）+ 工具条（显示事件 / 全选 / 反选 / 重置缩放）。
 
     图例不用 Chart.js 内置的（系列多时会盖住曲线），改为画布下方的 HTML 图例：
     点一项隐藏/显示该曲线，「全选 / 反选」批量操作，「重置缩放」回到全量视图。
+    诊断事件竖线默认关闭：长时间测试截图很多时会把曲线糊死，按钮可随时打开。
     """
     return f"""
         <div class="chart-wrap">
@@ -267,6 +268,7 @@ def _chart_wrap(canvas_id: str) -> str:
         </div>
         <div class="chart-legend" id="{canvas_id}-legend"></div>
         <div class="chart-toolbar">
+            <button class="event-toggle" type="button">显示事件</button>
             <button class="chart-select-all" data-chart="{canvas_id}">全选</button>
             <button class="chart-invert" data-chart="{canvas_id}">反选</button>
             <button class="zoom-reset" data-chart="{canvas_id}">↺ 重置缩放</button>
@@ -1208,6 +1210,23 @@ class PerfReportGenerator:
         }
         _events = sorted(getattr(session, "events", None) or [],
                          key=lambda x: x.get("ts", 0))
+
+        def _fmt_rel(rel):
+            """相对会话开始的秒数 → 秒 / 分:秒 / 时:分:秒（和曲线横轴一致）。
+
+            一分钟以内保留 1 位小数；超过一分钟取整到秒，避免「1:29.7」这种
+            带小数的分秒混排看着别扭。
+            """
+            if rel is None:
+                return "—"
+            if rel < 60:
+                return f"{rel:.1f} 秒"
+            total = int(round(rel))
+            if total < 3600:
+                return f"{total // 60}:{total % 60:02d}"
+            return (f"{total // 3600}:{total % 3600 // 60:02d}:"
+                    f"{total % 60:02d}")
+
         events_html = ""
         event_markers_js = "[]"
         if _events:
@@ -1216,7 +1235,7 @@ class PerfReportGenerator:
             for e in _events:
                 label, color = _EVENT_META.get(e.get("type", ""), (e.get("type", "") or "其他", "#999999"))
                 rel = (e.get("ts", 0) - samples[0].timestamp) if samples else None
-                rel_txt = f"{rel:.1f} 秒" if rel is not None else "—"
+                rel_txt = _fmt_rel(rel)
                 rows.append(
                     f"<tr><td>{rel_txt}</td><td>{label}</td>"
                     f"<td>{e.get('file', '')}</td><td>{e.get('note', '')}</td></tr>")
@@ -1793,6 +1812,7 @@ class PerfReportGenerator:
         .chart-legend {{
             display: flex;
             flex-wrap: wrap;
+            justify-content: center;
             gap: 4px 14px;
             margin: 8px 2px 6px;
             font-size: 12px;
@@ -1826,7 +1846,8 @@ class PerfReportGenerator:
         }}
         .zoom-reset,
         .chart-select-all,
-        .chart-invert {{
+        .chart-invert,
+        .event-toggle {{
             padding: 3px 12px;
             font-size: 12px;
             color: #666;
@@ -1838,9 +1859,16 @@ class PerfReportGenerator:
         }}
         .zoom-reset:hover,
         .chart-select-all:hover,
-        .chart-invert:hover {{
+        .chart-invert:hover,
+        .event-toggle:hover {{
             color: #1976d2;
             border-color: #1976d2;
+        }}
+        /* 事件竖线已打开：按钮高亮，一眼看出当前状态 */
+        .event-toggle.on {{
+            color: #1976d2;
+            border-color: #1976d2;
+            background: #eef5fd;
         }}
         .footer {{
             text-align: center;
@@ -2095,12 +2123,14 @@ class PerfReportGenerator:
         const fpsDisplayAxisTitle = '{fps_display_axis_title}';
         const fpsDisplaySeries = {fps_display_series_js};
 
-        // 诊断事件竖线：在每条曲线上对应时刻画一条彩色虚线（颜色对应产物类型）
+        // 诊断事件竖线：默认关闭（长时间会话截图很多时会把曲线糊死），
+        // 点图表工具栏的「显示事件」才画
         const eventMarkers = {event_markers_js};
+        let showEventMarkers = false;
         const eventLinePlugin = {{
             id: 'eventLines',
             afterDatasetsDraw: function(chart) {{
-                if (!eventMarkers.length) return;
+                if (!showEventMarkers || !eventMarkers.length) return;
                 var area = chart.chartArea;
                 var xScale = chart.scales.x;
                 eventMarkers.forEach(function(m) {{
@@ -2120,6 +2150,27 @@ class PerfReportGenerator:
             }}
         }};
         Chart.register(eventLinePlugin);
+
+        // 「显示事件 / 隐藏事件」：所有图表同步切换；没有事件时按钮直接隐藏
+        if (!eventMarkers.length) {{
+            document.querySelectorAll('.event-toggle').forEach(function (b) {{
+                b.style.display = 'none';
+            }});
+        }} else {{
+            document.querySelectorAll('.event-toggle').forEach(function (btn) {{
+                btn.addEventListener('click', function () {{
+                    showEventMarkers = !showEventMarkers;
+                    document.querySelectorAll('.event-toggle').forEach(function (b) {{
+                        b.textContent = showEventMarkers ? '隐藏事件' : '显示事件';
+                        b.classList.toggle('on', showEventMarkers);
+                    }});
+                    document.querySelectorAll('canvas').forEach(function (c) {{
+                        var ch = Chart.getChart(c);
+                        if (ch) ch.draw();
+                    }});
+                }});
+            }});
+        }}
         // 图例统一放到画布下方（HTML 图例），内置图例在系列多时会压住曲线
         Chart.defaults.plugins.legend.display = false;
 
