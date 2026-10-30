@@ -950,8 +950,10 @@ class MainWindow(QMainWindow):
         welcome_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         welcome_layout = QVBoxLayout(welcome_widget)
         welcome_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        welcome_layout.setContentsMargins(60, 60, 60, 60)
-        welcome_layout.setSpacing(12)
+        # 高度预算很紧：1366×768@150%（逻辑 512 高）展开虫师日志后，欢迎页
+        # 只剩 306px 可用。所以上下边距、行距都按「装得下」定，不是随便收的
+        welcome_layout.setContentsMargins(40, 12, 40, 12)
+        welcome_layout.setSpacing(6)
 
         # 主标题
         welcome_title = QLabel("🐞 欢迎使用虫师")
@@ -965,7 +967,7 @@ class MainWindow(QMainWindow):
         welcome_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_layout.addWidget(welcome_subtitle)
 
-        welcome_layout.addSpacing(28)
+        welcome_layout.addSpacing(8)
 
         # 快速开始提示
         welcome_tips_title = QLabel("快速开始")
@@ -973,32 +975,28 @@ class MainWindow(QMainWindow):
         welcome_tips_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_layout.addWidget(welcome_tips_title)
 
-        welcome_layout.addSpacing(10)
+        welcome_layout.addSpacing(4)
 
         # 用固定宽度容器包裹 tips，容器居中、内部内容左对齐
         tips_container = QWidget()
         tips_container.setObjectName("WelcomeTipsContainer")
-        tips_container.setFixedWidth(520)
+        tips_container.setFixedWidth(560)
         tips_layout = QVBoxLayout(tips_container)
-        tips_layout.setContentsMargins(80, 0, 0, 0)
-        tips_layout.setSpacing(5)
+        tips_layout.setContentsMargins(56, 0, 0, 0)
+        tips_layout.setSpacing(2)
 
         self._welcome_tip_rows = []
-        # 按「从零跑通一个用例」的上手顺序排列：
-        # 连接设备 → 建用例 → 录制 → 执行，后面几条点出各专项能力的入口。
-        # 新增模块时记得往这里补一条，否则新功能在欢迎页上完全看不见。
+        # 五条讲清「从零跑通一个用例」，再两条收口全部专项入口。
+        # 原来是 11 条平铺，高度 559px —— 展开虫师日志后小屏（可用 306px）
+        # 必然出现滚动条（2026-10-30）。精简后高度约 285px，各种常见
+        # 分辨率×缩放组合下都不再需要滚动。
+        # 新增模块时并进对应那条的说明里，别再加行，否则高度会重新超预算。
         tips = [
             ("fa6s.mobile-screen", "连接设备", "顶部工具栏 → 选择设备 → 刷新"),
-            ("fa6s.pen-to-square", "创建用例", "「自动化编辑」→ 右键项目树 → 创建用例"),
-            ("fa6s.video", "录制步骤", "选中用例 → 点步骤列表上方 ● 开始录制"),
-            ("fa6s.eye", "应用可视化", "「应用可视化」→ 一键启动，抓界面元素"),
-            ("fa6s.list", "应用元素库", "「应用元素库」→ 抓取界面一键导入 / Excel 互导"),
+            ("fa6s.pen-to-square", "创建用例", "「自动化编辑」→ 右键项目树新建 → ● 录制步骤"),
             ("fa6s.play", "执行测试", "「自动化执行」→ 勾选用例 → 执行"),
-            ("fa6s.screwdriver-wrench", "ADB 调试", "「ADB 工具箱」→ 指令 / 弱网 / Monkey"),
-            ("fa6s.gauge-high", "性能检测", "「性能检测」→ 选应用 → 开始监控"),
-            ("fa6s.microphone", "语音播报", "「语音播报」→ 勾选语音用例 → 执行选中"),
-            ("fa6s.plug", "接口自动化", "「接口自动化」→ 新建接口 → 发送 / 执行选中"),
-            ("fa6s.book", "个人知识库", "「个人知识库」→ 按项目记录差异点与踩过的坑"),
+            ("fa6s.screwdriver-wrench", "专项工具", "应用可视化 / 元素库 / ADB 工具箱 / 性能检测"),
+            ("fa6s.book", "特色能力", "语音播报 / 接口自动化 / 个人知识库"),
         ]
         for icon_name, label_text, desc_text in tips:
             row = QHBoxLayout()
@@ -1014,7 +1012,7 @@ class MainWindow(QMainWindow):
 
             label = QLabel(label_text)
             label.setObjectName("WelcomeTipLabel")
-            label.setFixedWidth(110)
+            label.setFixedWidth(96)
             label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             row.addWidget(label)
 
@@ -1031,7 +1029,7 @@ class MainWindow(QMainWindow):
 
         welcome_layout.addWidget(tips_container, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        welcome_layout.addSpacing(16)
+        welcome_layout.addSpacing(6)
 
         # 底部一句指路：帮助中心有全套图文说明，但欢迎页此前完全没提这个入口，
         # 新用户容易不知道它存在。快捷键从设置读，用户改过键位这里也跟着变。
