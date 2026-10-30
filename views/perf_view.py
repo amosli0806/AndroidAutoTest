@@ -1071,7 +1071,8 @@ class PerfView(QWidget):
         def _pair(label, widget):
             """「标签 + 控件」成对，收起时整体搬走，不会把标签单独留下。"""
             box = QWidget()
-            box.setStyleSheet("background: transparent;")
+            # 不设透明背景：不带选择器的规则会连带把 QToolTip 也变透明
+            # （亮色主题下提示气泡变黑、看不见正文，2026-10-30 实测）
             lay = QHBoxLayout(box)
             lay.setContentsMargins(0, 0, 0, 0)
             lay.setSpacing(4)

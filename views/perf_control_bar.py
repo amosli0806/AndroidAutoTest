@@ -30,8 +30,11 @@ class ChipBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("PerfChipBar")
-        # 透明底：底色由外层 #PerfControlPanel 负责，这里再铺一层会盖住圆角
-        self.setStyleSheet("background: transparent;")
+        # ⚠ 这里不能写 setStyleSheet("background: transparent;")：
+        # 不带选择器的规则会作用到这个控件本身，并**连带影响它的 QToolTip**——
+        # Qt 会把控件（及其祖先）样式表里的背景套到提示气泡上，transparent
+        # 就是「气泡背景透明 → 合成成纯黑」，亮色主题下提示直接看不见
+        # （2026-10-30 实测复现）。普通 QWidget 本来就不画背景，不需要这句。
 
         self._items = []          # [{key, chip, slot, lay, prio, eligible}]
         self._parked = set()      # 当前被收进弹层的 key
@@ -71,7 +74,7 @@ class ChipBar(QWidget):
     def add_chip(self, key, chip, priority, eligible=True):
         """往行内加一个控件。priority 越小越先被收起。"""
         slot = QWidget(self)
-        slot.setStyleSheet("background: transparent;")
+        # 同上：不要在这里铺透明背景（会连带把提示气泡变透明/变黑）
         # 槽必须「宽度=内容宽」：否则行内还有剩余空间时，Qt 会把多余的宽度
         # 摊到这些槽上（槽内部的弹簧再把内容顶到左边），看起来就是一串 ~30px
         # 的空隙、整行左对齐不了（2026-10-30 用户反馈"间距有点大"）
