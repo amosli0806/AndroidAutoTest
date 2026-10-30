@@ -166,10 +166,10 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-26（v1.5.9）</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-30（v1.5.11）</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.5.9</span>
-      <span class="badge">9 项扩展方向</span>
+      <span class="badge">当前版本 v1.5.11</span>
+      <span class="badge">10 项扩展方向</span>
       <span class="badge">4 个开发阶段</span>
     </div>
   </header>
@@ -217,6 +217,9 @@
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>数据与参考图按绝对路径绑定</b> — 数据驱动绑定的 CSV / Excel、图像定位的参考图存的都是绝对路径，换机器或挪动工程目录后要重新绑定。</div></div>
       </div>
+      <div class="card">
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>界面未适配不同分辨率 / 缩放</b> — 性能页卡片与多个弹窗写死逻辑像素尺寸，1366×768@150%（逻辑 911×512）等环境会挤压或超出屏幕，确定按钮可能点不到。</div></div>
+      </div>
     </div>
   </section>
 
@@ -224,7 +227,7 @@
   <section class="chapter" id="s2">
     <h2><span class="num">2</span>扩展方向（按阶段与优先级）</h2>
 
-    <p class="small" style="margin-top:0">9 项规划按 <b>「改动小 → 改动大」</b> 分四阶段：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
+    <p class="small" style="margin-top:0">10 项规划按 <b>「改动小 → 改动大」</b> 分四阶段：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段一 · 改动小、见效快（目标 1 个版本周期，可立即穿插）</h3>
 
@@ -259,6 +262,28 @@
       <p>把项目数据、步骤、元素库等接入 Git，支持版本回滚、差异对比、分支管理。</p>
       <div class="example">💡 <b>打个比方：</b>像文档的「修订记录 / 历史版本」——用例改乱了，一键回到昨天的版本，还能看看到底改了哪几行。</div>
     </div>
+
+    <div class="card">
+      <h3>10. 高 DPI / 分辨率适配 <span class="tag plan">📋 规划中</span></h3>
+      <p><b>问题</b>：Qt6 已经按系统缩放换算逻辑像素，但界面里写死了不少逻辑像素尺寸，默认按 ≥1280×720 设计——
+        性能卡 <code>setMinimumSize(400, 240)</code> + 两列网格，逻辑宽 &lt;850 就会挤压；
+        基线管理 / 阈值 / 对比弹窗固定 <code>820×520</code> / <code>640×620</code> / <code>620×560</code>，
+        在 1366×768@150%（逻辑 911×512）下会超出屏幕；顶部工具条的固定宽度控件叠加后只能换行或挤压。</p>
+      <ul>
+        <li><b>P0 · 尺寸钳制（低风险，先做）</b>：启动时显式设置 <code>HighDpiScaleFactorRoundingPolicy.PassThrough</code>；
+          新增 <code>utils/dpi.py::fit_to_screen()</code>，弹窗尺寸取「设计值 vs 可用区域×0.92/0.88」的较小值，
+          内容区套 <code>QScrollArea</code>，保证确定按钮永远在屏幕内</li>
+        <li><b>P1 · 响应式布局</b>：卡片最小尺寸 400×240 → 300×200、固定高改为最小高；
+          卡片网格按可用宽度自动切 1 / 2 列；工具条固定宽改 <code>setMinimumWidth + Expanding</code>；
+          主内容左右分栏改 <code>QSplitter</code> 并记住比例</li>
+        <li><b>P2 · 应用内界面缩放（可选）</b>：设置里提供 90% / 100% / 110% / 125%，走全局字号 + QSS 变量；
+          不要用 <code>QT_AUTO_SCREEN_SCALE_FACTOR</code>，否则会和系统缩放叠加导致过大</li>
+      </ul>
+      <p><b>验收矩阵</b>：1920×1080@100/125/150、2560×1440@150、1366×768@125、2256×1504@150——
+        逐项检查主窗口、性能页 1/2 列切换、基线管理 / 阈值 / 对比 / 告警四个弹窗的按钮可见性。</p>
+      <div class="example">💡 <b>打个比方：</b>像给同一套家具换不同的房间——墙小的时候要能把柜子收窄、桌子叠起来，而不是硬塞进去；柜门（确定按钮）永远得露在外面。</div>
+    </div>
+
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段三 · 改动较大，需先设计（目标 2~3 个版本周期）</h3>
 
@@ -316,6 +341,7 @@
           <tr><td>阶段一</td><td>步骤模板</td><td class="stars">⭐⭐⭐</td><td>「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
           <tr><td>阶段二</td><td>语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
           <tr><td>阶段二</td><td>版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
+          <tr><td>阶段二</td><td>高 DPI / 分辨率适配</td><td class="stars">⭐⭐⭐</td><td>纯视图层：弹窗尺寸钳制 + 卡片最小宽调整 + 内容滚动；改动可控，但需要多分辨率回归</td></tr>
           <tr><td>阶段三</td><td>接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
           <tr><td>阶段四</td><td>变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>变量地基已落地（v1，语音文案已可用 <code>${变量}</code>）；剩下把唤醒词 / 语速等语音参数也做成变量</td></tr>
           <tr><td>阶段四</td><td>关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
@@ -410,7 +436,7 @@
     <div class="example">💡 <b>打个比方：</b>这就像把一间按自家户型装修好的房子搬到另一栋楼 —— 家具（Qt 界面、adb / uiautomator2 那套逻辑）都能直接用，但门框尺寸（打包成 <code>.app</code>）、水电接口（路径规范）、门锁（签名 / 公证）都不一样；至于「自动更新」，它更像埋在墙里的暗线，到新楼只能整条重走。</div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-10-25 · v1.5.8</footer>
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-10-30 · v1.5.11</footer>
 </div>
 </body>
 </html>
