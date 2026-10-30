@@ -328,6 +328,10 @@ class _WrappingGroup(QFrame):
     SPACING = 8
     H_MARGIN = 10
     V_MARGIN = 6
+    # 单行统一高度：组内最高的控件是数字框（34px）+ 上下留白 12px = 46。
+    # 不统一的话各组高度跟着自己最高控件走（下拉 30→42、勾选 24→36、数字框 34→46），
+    # 同一行并排时底边参差，就是"看着乱"的另一半原因。
+    ROW_H = 46
 
     def __init__(self, title, widgets, parent=None):
         super().__init__(parent)
@@ -346,29 +350,39 @@ class _WrappingGroup(QFrame):
             self._flow.addWidget(w)
 
     def _flat_width(self):
-        """全部控件平铺所需宽度（宽屏时按这个值一行排开）。"""
+        """全部控件平铺所需宽度（宽屏时按这个值一行排开）。
+
+        ⚠ 必须取 `item.sizeHint()`，不能取 `widget.sizeHint()`：
+        前者会把控件的 minimumWidth 算进去（QWidgetItem 会取两者较大值），
+        而裸 widget.sizeHint() 不会 —— 应用下拉设了 minimumWidth(180)、
+        sizeHint 只有约 100，两者差 77px。按 widget.sizeHint 算就会把组宽
+        低估 77px，于是组件在组内被迫折行：「刷新」掉到第二行、「失败停止」
+        掉到第二行，于是同一行的组高 80 / 46 / 36 / 78 各不相同，看着很乱
+        （2026-10-30 用户反馈"显示的这么乱"就是这个）。
+        """
         total = 0
         for i in range(self._flow.count()):
             it = self._flow.itemAt(i)
             wdg = it.widget() if it is not None else None
             if wdg is not None and not wdg.isHidden():
-                total += wdg.sizeHint().width() + self.SPACING
+                total += it.sizeHint().width() + self.SPACING
         # +4 是防止差 1px 就折行：内层 FlowLayout 用 rect.right() 判边界，
         # 刚好等于累加宽时会判成"放不下"，宽屏下就莫名折成两行
         return max(0, total - self.SPACING) + 2 * self.H_MARGIN + 4
 
     def sizeHint(self):
-        return QSize(self._flat_width(), 44)
+        return QSize(self._flat_width(), self.ROW_H)
 
     def minimumSizeHint(self):
         inner = self._flow.minimumSize()
-        return QSize(inner.width() + 2 * self.H_MARGIN, 44)
+        return QSize(inner.width() + 2 * self.H_MARGIN, self.ROW_H)
 
     def hasHeightForWidth(self):
         return True
 
     def heightForWidth(self, width):
-        return self._flow.heightForWidth(max(1, width - 2 * self.H_MARGIN)) + 2 * self.V_MARGIN
+        h = self._flow.heightForWidth(max(1, width - 2 * self.H_MARGIN))
+        return max(self.ROW_H, h + 2 * self.V_MARGIN)
 
 
 class PerfView(QWidget):

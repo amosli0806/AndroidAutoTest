@@ -588,7 +588,8 @@ class ExecuteView(QWidget):
         toolbar.addWidget(self.save_suite_btn)
         toolbar.addWidget(self.del_suite_btn)
         toolbar.addWidget(self.report_btn)
-        toolbar.addSpacing(6)
+        # 不再额外 addSpacing：「更多」和前面几个按钮同属工具栏，
+        # 再叠一层 6px 会让间距变成 12px（布局本身已有 spacing=6），看着像断开
         toolbar.addWidget(self._build_more_menu())
         toolbar.addStretch()
 
