@@ -226,6 +226,12 @@ class ElementManagerView(QWidget):
         # 弹层出现前同步可用性（导出要有选中行才亮）
         self._more_menu.aboutToShow.connect(self._sync_more_actions)
 
+        # 工具栏按钮统一高度：带图标的「新增」比不带图标的「编辑/删除/更多」
+        # 天然高 1px（图标把 sizeHint 撑高），并排看着不齐（2026-10-30 反馈）
+        for _btn in (self.scrape_btn, self.add_btn, self.edit_btn,
+                     self.delete_btn, self.more_btn):
+            _btn.setFixedHeight(28)
+
         toolbar_layout.addStretch()
         toolbar_layout.addWidget(self.add_btn)
         toolbar_layout.addWidget(self.edit_btn)

@@ -385,6 +385,10 @@ class ExecuteView(QWidget):
         """
         btns = (self.toggle_select_btn, self.execute_btn,
                 self.save_suite_btn, self.del_suite_btn, self.report_btn)
+        # 「更多」也一起等宽（用户要求与「测试报告」一致）；它建成较晚，容错一下
+        more_btn = getattr(self, "more_btn", None)
+        if more_btn is not None:
+            btns = btns + (more_btn,)
         fm = self.save_suite_btn.fontMetrics()
         longest = max(fm.horizontalAdvance(t) for t in
                       ("取消全选", "保存套件", "删除套件", "报告", "执行", "停止"))

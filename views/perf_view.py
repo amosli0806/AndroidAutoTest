@@ -1121,6 +1121,23 @@ class PerfView(QWidget):
             """
             return _WrappingGroup(title, widgets)
 
+        def _pair(label, widget):
+            """把「标签 + 控件」绑成一个不可拆的小块。
+
+            组内改成可折行后，标签和控件是两个独立项，折行时会出现
+            「时长:」落在上一行末尾、下拉跑到下一行（2026-10-30 实测）。
+            成对之后最小宽度 = 标签+控件，折行也拆不散。
+            显式给透明背景：裸 QWidget 会继承祖先的背景色规则，把组框底色盖掉。
+            """
+            box = QWidget()
+            box.setStyleSheet("background: transparent;")
+            lay = QHBoxLayout(box)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(6)
+            lay.addWidget(label)
+            lay.addWidget(widget)
+            return box
+
         # ---------- 行 1：应用 + 采集参数（流式） | 执行按钮（吸右）----------
         row1 = QHBoxLayout()
         row1.setSpacing(8)
@@ -1167,9 +1184,9 @@ class PerfView(QWidget):
             "达到设定时长后自动停止采集并收尾（保存会话、基线对比等）。\n"
             "典型用法：默认 720 分钟 = 12 小时，配合车机长时间 Monkey 检测内存泄露。")
         flow1.addWidget(_make_group(
-            "采集", [self.interval_label, self.interval_combo,
-                     self.mode_label, self.mode_combo,
-                     self.duration_label, self.duration_spin]))
+            "采集", [_pair(self.interval_label, self.interval_combo),
+                     _pair(self.mode_label, self.mode_combo),
+                     _pair(self.duration_label, self.duration_spin)]))
         row1.addWidget(flow_host, 1)
 
         # 行 1 只承载「应用 + 采集参数」（流式换行）；
