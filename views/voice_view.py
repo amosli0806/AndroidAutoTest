@@ -8,7 +8,7 @@
 三栏结构（观感与「自动化编辑」「自动化执行」两页一致）：
     左  语音管理  —— 独立的「语音用例」列表，可新建/删除/导入/导出
     中  播报文案  —— 选中用例的文案列表（增删改 + 单条播报）
-    右  执行      —— 勾选要播的语音用例、全选/取消全选、语速、循环、执行选中、停止
+    右  执行      —— 勾选要播的语音用例、全选、语速、循环、执行选中（播报中变「停止」）
 
 重要：**语音用例与「自动化编辑」里的用例是两套独立的东西**。
 那边是 App 操作序列（点击/输入/断言…），这里是纯播报脚本，互不影响。
@@ -711,7 +711,7 @@ class VoiceView(QWidget):
         title_row.addWidget(self.case_label)
         title_row.addStretch()
         # 唤醒词：一键把配置好的唤醒词追加成一条文案。
-        # 和「+ 添加步骤」一样，没选用例时置灰（启用态才是实心蓝）
+        # 和「添加步骤」一样，没选用例时置灰（启用态才是实心蓝）
         self.wake_btn = QPushButton("唤醒词")
         self.wake_btn.setObjectName("VoiceWakeBtn")
         self.wake_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -719,15 +719,15 @@ class VoiceView(QWidget):
         self.wake_btn.setToolTip("在当前用例末尾追加一条唤醒词文案（文案在「设置 → 语音播报」里改）")
         self.wake_btn.clicked.connect(self._on_add_wake_word)
         title_row.addWidget(self.wake_btn)
-        self.add_btn = QPushButton("+ 添加步骤")
+        self.add_btn = QPushButton("添加步骤")
         self.add_btn.setObjectName("VoiceAddBtn")
         self.add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.add_btn.clicked.connect(self._on_add_phrase)
         title_row.addWidget(self.add_btn)
-        # + 添加检测：往用例末尾追加一条「预期结果」步骤（回执验证关键词），
+        # 添加检测：往用例末尾追加一条「预期结果」步骤（回执验证关键词），
         # 它会作为独立的一行出现在步骤列表里，可复制/删除
-        self.add_verify_btn = QPushButton("+ 添加检测")
+        self.add_verify_btn = QPushButton("添加检测")
         self.add_verify_btn.setObjectName("VoiceAddBtn")
         self.add_verify_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_verify_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -736,7 +736,7 @@ class VoiceView(QWidget):
         # 批量重算：把**全部用例**的「播后等待」按文案+语速重算一遍
         # （表格导入后一次性补齐用；实现上必须全部算完只落盘一次，见 _on_recalc_delays）
         self.recalc_btn = QPushButton("批量重算")
-        self.recalc_btn.setObjectName("VoiceAddBtn")   # 复用「+ 添加步骤」的样式
+        self.recalc_btn.setObjectName("VoiceAddBtn")   # 复用「添加步骤」的样式
         self.recalc_btn.setToolTip("按语速重算全部用例的「播后等待」")
         self.recalc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.recalc_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -814,35 +814,29 @@ class VoiceView(QWidget):
         title_row.addWidget(self.loop_spin)
 
         title_row.addSpacing(8)
-        self.play_all_btn = QPushButton("执行选中")
-        self.play_all_btn.setObjectName("VoicePlayAllBtn")
-        self.play_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.play_all_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.play_all_btn.setFixedHeight(26)
-        self.play_all_btn.clicked.connect(self._on_play_all)
-        title_row.addWidget(self.play_all_btn)
-
-        self.stop_btn = QPushButton("停止")
-        self.stop_btn.setObjectName("VoiceStopBtn")
-        self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.stop_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.stop_btn.setFixedHeight(26)
-        self.stop_btn.clicked.connect(self._on_stop)
-        title_row.addWidget(self.stop_btn)
+        # 「执行选中 / 停止」二合一：同一个按钮两种状态（蓝「执行选中」/ 红「停止」）。
+        # 原来的两个按钮并排，空闲时「停止」恒灰，白占一格还让这一行显得挤
+        # （2026-10-30 用户要求合并）。状态由 _set_play_stop_state 切换。
+        self.play_stop_btn = QPushButton("执行选中")
+        self.play_stop_btn.setObjectName("VoicePlayAllBtn")
+        self.play_stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.play_stop_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.play_stop_btn.setFixedHeight(26)
+        self.play_stop_btn.setToolTip("播报所有勾选的语音用例")
+        self.play_stop_btn.clicked.connect(self._on_play_stop_clicked)
+        title_row.addWidget(self.play_stop_btn)
 
         title_row.addStretch()
 
-        self.all_btn = QPushButton("全选")
-        self.none_btn = QPushButton("取消全选")
-        for btn in (self.all_btn, self.none_btn):
-            btn.setObjectName("VoiceToolBtn")
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            btn.setFixedHeight(26)
-        self.all_btn.clicked.connect(lambda: self._set_all_checked(True))
-        self.none_btn.clicked.connect(lambda: self._set_all_checked(False))
-        title_row.addWidget(self.all_btn)
-        title_row.addWidget(self.none_btn)
+        # 「全选 / 取消全选」二合一：文案跟着树里实际勾选情况走，
+        # 全勾着时显示「取消全选」，其余情况（含部分勾选）显示「全选」
+        self.select_all_btn = QPushButton("全选")
+        self.select_all_btn.setObjectName("VoiceToolBtn")
+        self.select_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.select_all_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.select_all_btn.setFixedHeight(26)
+        self.select_all_btn.clicked.connect(self._on_select_all_clicked)
+        title_row.addWidget(self.select_all_btn)
 
         v.addLayout(title_row)
 
@@ -1176,7 +1170,7 @@ class VoiceView(QWidget):
             self._add_empty_hint(hint)
         elif not steps:
             self._add_empty_hint(
-                "这个用例还没有步骤，点右上角「+ 添加步骤」「+ 添加检测」")
+                "这个用例还没有步骤，点右上角「添加步骤」「添加检测」")
         else:
             for i, step in enumerate(steps):
                 if step.kind == KIND_VERIFY:
@@ -1771,20 +1765,41 @@ class VoiceView(QWidget):
         return items
 
     def _sync_action_button_widths(self):
-        """把两排动作按钮各自对齐到组内最宽的宽度。
+        """统一本页几组动作按钮的宽度。
 
-        「唤醒词 / + 添加步骤」和「执行选中 / 停止 / 全选 / 取消全选」的文案长短不一
-        （2 字 ~ 4 字），不定宽时一排里宽窄参差，看着散。按组取 sizeHint 的最大值，
-        不写死像素 —— 字号或系统字体变了也不会把文案截掉。
+        两条规则：
+        1. 会切文案的按钮（「执行选中 ↔ 停止」「全选 ↔ 取消全选」）按**较长的那个
+           状态**定最小宽 —— 只用 sizeHint 会在切换瞬间变窄，整行跟着抖一下。
+        2. 「唤醒词 / 添加步骤 / 添加检测 / 批量重算」全部收敛到「执行选中」那一档。
+           原来是按组内最宽值定宽（「+ 添加步骤」带加号最宽），四个按钮被撑得
+           比右边的执行按钮宽一截；去掉加号后文字都是 4 字，与执行选中同宽最齐
+           （2026-10-30 用户要求）。
         必须在 QSS 下发之后调用，sizeHint 才是按按钮那套 12px 字号算出来的。
         """
-        for buttons in (
-            (self.wake_btn, self.add_btn, self.recalc_btn, self.add_verify_btn),
-            (self.play_all_btn, self.stop_btn, self.all_btn, self.none_btn),
-        ):
-            width = max(b.sizeHint().width() for b in buttons)
-            for btn in buttons:
-                btn.setFixedWidth(width)
+        play = getattr(self, "play_stop_btn", None)
+        if play is None:
+            return
+
+        def _widest(btn, texts):
+            """临时换文案量 sizeHint，取最大值（不改按钮最终文案）。"""
+            current = btn.text()
+            widths = []
+            for text in texts:
+                btn.setText(text)
+                widths.append(btn.sizeHint().width())
+            btn.setText(current)
+            return max(widths)
+
+        play_w = _widest(play, ("执行选中", "停止"))
+        play.setMinimumWidth(play_w)
+
+        sel = getattr(self, "select_all_btn", None)
+        if sel is not None:
+            sel.setMinimumWidth(_widest(sel, ("全选", "取消全选")))
+
+        for btn in (self.wake_btn, self.add_btn, self.add_verify_btn,
+                    self.recalc_btn):
+            btn.setFixedWidth(play_w)
 
     def _sync_play_buttons(self, running=None):
         # running 不传时自动探测：勾选树执行中保持可用，其勾选变化回调
@@ -1793,16 +1808,21 @@ class VoiceView(QWidget):
             running = self._playback_running()
         available = self.service.is_available()
         has_checked = bool(self._collect_checked_case_ids())
-        # 一条都没勾选时直接禁用，比点了再弹提示更直观
-        self.play_all_btn.setEnabled(available and not running and has_checked)
-        self.stop_btn.setEnabled(running)
+        # 「执行选中 / 停止」二合一：先按运行态换外观，再定可用性。
+        # 运行时它是「停止」，恒可点（那是唯一的打断入口）；空闲时按
+        # 「语音引擎可用 + 至少勾了一条」放开，一条都没勾就直接禁用，
+        # 比点了再弹提示更直观。
+        self._set_play_stop_state(running)
+        self.play_stop_btn.setEnabled(
+            True if running else (available and has_checked))
         self.add_btn.setEnabled(not running and self._current_case() is not None)
         # 批量重算是全量操作，不依赖当前选中哪个用例，只要有用例就能点
         self.recalc_btn.setEnabled(not running and bool(self.model.cases))
         self.add_verify_btn.setEnabled(not running and self._current_case() is not None)
         self.wake_btn.setEnabled(not running and self._current_case() is not None)
-        self.all_btn.setEnabled(not running)
-        self.none_btn.setEnabled(not running)
+        # 「全选 / 取消全选」二合一：文案跟着树里实际勾选情况走
+        self._sync_select_all_btn()
+        self.select_all_btn.setEnabled(not running)
         self.loop_spin.setEnabled(not running)
         self.rate_spin.setEnabled(available and not running)
         # 左右两棵树执行中不再 setEnabled(False)：禁用会把整个树的图标
@@ -1819,6 +1839,69 @@ class VoiceView(QWidget):
 
     def _playback_running(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
+
+    def _set_play_stop_state(self, running: bool):
+        """「执行选中 / 停止」二合一按钮换状态。
+
+        两种状态靠 objectName 区分配色（蓝底 VoicePlayAllBtn / 红底 VoiceStopBtn），
+        **改完 objectName 必须 unpolish + polish** —— QSS 选择器是按写入时的
+        objectName 匹配的，不重绘的话按钮会保持上一套配色（实测不变色）。
+        文案与可用性不在这里管（可用性由 _sync_play_buttons 决定）。
+        """
+        btn = getattr(self, "play_stop_btn", None)
+        if btn is None:
+            return
+        name = "VoiceStopBtn" if running else "VoicePlayAllBtn"
+        text = "停止" if running else "执行选中"
+        tip = "停止正在进行的播报" if running else "播报所有勾选的语音用例"
+        if btn.objectName() == name:
+            if btn.text() != text:
+                btn.setText(text)
+            btn.setToolTip(tip)
+            return
+        btn.setObjectName(name)
+        btn.setText(text)
+        btn.setToolTip(tip)
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
+        btn.update()
+
+    def _check_counts(self):
+        """勾选树里 (用例总数, 已勾选数)。"""
+        total = checked = 0
+        for i in range(self.check_tree.topLevelItemCount()):
+            group_item = self.check_tree.topLevelItem(i)
+            for j in range(group_item.childCount()):
+                total += 1
+                if group_item.child(j).checkState(0) == Qt.CheckState.Checked:
+                    checked += 1
+        return total, checked
+
+    def _sync_select_all_btn(self):
+        """「全选 / 取消全选」二合一的文案：全部勾满时显示「取消全选」。
+
+        部分勾选也算「还没全选」，显示「全选」—— 再点一下把剩下的补齐，
+        比显示「取消全选」把已有的清空更符合直觉。
+        """
+        btn = getattr(self, "select_all_btn", None)
+        if btn is None:
+            return
+        total, checked = self._check_counts()
+        text = "取消全选" if total and checked == total else "全选"
+        if btn.text() != text:
+            btn.setText(text)
+
+    def _on_play_stop_clicked(self):
+        """二合一按钮的派发：播报中 = 停止，空闲时 = 执行选中。"""
+        if self._playback_running():
+            self._on_stop()
+        else:
+            self._on_play_all()
+
+    def _on_select_all_clicked(self):
+        """二合一全选：当前已全勾就取消全选，否则全部勾上。"""
+        total, checked = self._check_counts()
+        self._set_all_checked(not (total and checked == total))
 
     def _build_feedback(self):
         """按当前配置与设备状态构建回执抓取服务；不满足条件返回 None。
@@ -2210,7 +2293,7 @@ class VoiceView(QWidget):
             #VoiceView QLabel#VoiceEmpty {{ color: {muted}; padding: 16px 0; }}
             /* 本页所有按钮统一为「刷新」按钮样式：
                蓝底白字、圆角 4px、浅色/深色两套主题下观感一致。
-               "唤醒词"、"+ 添加步骤"、"全选"、"取消全选"、"执行选中"
+               "唤醒词"、"添加步骤"、"全选"、"执行选中"
                以及行内的"播报 / 删除"按钮都走这条通用规则。 */
             #VoiceView QPushButton {{
                 background: rgba(25, 118, 210, 0.9);
@@ -2235,8 +2318,9 @@ class VoiceView(QWidget):
                 color: rgba(255, 255, 255, 0.65);
                 border-color: rgba(25, 118, 210, 0.2);
             }}
-            /* "停止"单独走红色：它是打断动作，而且只在播报中可用，
-               红底能让它在蓝按钮里一眼被找到（下面四条按上面的结构等比换色） */
+            /* "停止"单独走红色：它是打断动作，且只在播报中可用。
+               「执行选中 / 停止」是同一个按钮的两种状态，运行时把 objectName
+               换成 VoiceStopBtn 即套上这套红色（下面四条按上面的结构等比换色） */
             #VoiceView QPushButton#VoiceStopBtn {{
                 background: rgba(231, 76, 60, 0.9);
                 border-color: rgba(231, 76, 60, 0.9);

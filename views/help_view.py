@@ -759,7 +759,7 @@ class HelpView(QFrame):
                     <b>两类步骤</b><br>
                     • <b>播报步骤</b>：要念的文案；「播后等待」是这句播完后再等的秒数，给车机反应时间，
                     可按文案长度一键估算，也可点「批量重算」补齐全部用例<br>
-                    • <b>检测步骤</b>：点「+ 添加检测」添加，填期望出现在车机回话里的关键词，
+                    • <b>检测步骤</b>：点「添加检测」添加，填期望出现在车机回话里的关键词，
                     用来判断这句话有没有被正确识别；没配检测的播报不做验证
                 </div>
 
@@ -801,13 +801,13 @@ class HelpView(QFrame):
                 "执行与设置": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">▶️ 执行与设置</h2>
                 <p style="font-size: 15px;">
-                    右栏勾选要播的用例，点 <b>「执行选中」</b> 依次播报；播报中点 <b>「停止」</b> 立即打断。
+                    右栏勾选要播的用例，点 <b>「执行选中」</b> 依次播报；播报中这个按钮会变成<b>「停止」</b>，点它立即打断。
                 </p>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     <b>勾选方式</b><br>
                     • 点行内任意位置即可勾选 / 取消；勾选分组会带全组内用例<br>
-                    • <b>全选 / 取消全选</b> 一次处理整棵树；<b>循环</b>设几次就整轮播几遍
+                    • <b>全选</b>一次处理整棵树，全勾满后按钮变成<b>「取消全选」</b>；<b>循环</b>设几次就整轮播几遍
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
