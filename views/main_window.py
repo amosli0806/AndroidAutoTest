@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QStatusBar, QSizePolicy, QMessageBox, QFileDialog,
     QDialog, QTextEdit, QApplication, QLineEdit,
     QStackedWidget, QWidgetAction, QGraphicsOpacityEffect, QFrame, QToolTip,
+    QScrollArea,
     QDockWidget
 )
 from PyQt6.QtGui import (
@@ -1040,7 +1041,24 @@ class MainWindow(QMainWindow):
         welcome_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         welcome_layout.addWidget(welcome_hint)
 
-        wrapper_layout.addWidget(welcome_widget)
+        # 欢迎页内容（标题 + 11 条上手提示）天然有 550px 上下高度，
+        # 直接放进去会把**整个主窗口的最小高度**顶到 629 —— 1366×768@150%
+        # 只有 512 逻辑高、1920×1080@150% 也只有 680，窗口都比屏幕高，
+        # 底部状态栏和日志面板会跑到屏幕外（2026-10-30 排查）。
+        # 套一层滚动区后可以任意压矮，装不下时自己出滚动条。
+        welcome_scroll = QScrollArea()
+        welcome_scroll.setObjectName("WelcomeScroll")
+        welcome_scroll.setWidgetResizable(True)
+        welcome_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        welcome_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        welcome_scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # 只写带选择器的规则：不带选择器的 background 会连带把 QToolTip 弄成透明
+        welcome_scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }")
+        welcome_scroll.viewport().setAutoFillBackground(False)
+        welcome_scroll.setWidget(welcome_widget)
+        wrapper_layout.addWidget(welcome_scroll)
         self.stacked_widget.insertWidget(6, welcome_wrapper)
 
         self.main_splitter.addWidget(self.stacked_widget)
