@@ -418,7 +418,7 @@ class ExecuteView(QWidget):
         这些又是低频设置（每次执行前基本不改），收进弹层不影响日常操作；
         控件对象本身不销毁，所有读取它们的逻辑（执行参数、配置记忆）无需改动。
         """
-        from PyQt6.QtWidgets import QMenu, QToolButton, QWidgetAction, QGridLayout, QWidget
+        from PyQt6.QtWidgets import QWidgetAction, QGridLayout, QWidget
 
         panel = QWidget()
         panel.setObjectName("ExecMorePanel")
@@ -443,15 +443,17 @@ class ExecuteView(QWidget):
 
         action = QWidgetAction(panel)
         action.setDefaultWidget(panel)
-        menu = QMenu(self)
-        menu.addAction(action)
 
-        self.more_btn = QToolButton()
-        self.more_btn.setText("更多")
-        self.more_btn.setToolTip("循环次数 / 失败停止 / 失败重试")
+        # 统一用 utils.more_button 的「更多 ▾」：QToolButton + setMenu 的默认
+        # ::menu-indicator 会被画到按钮右下角，和文字挤在一起（2026-10-30 反馈）
+        from utils.more_button import make_more_button
+        self.more_btn, menu = make_more_button(
+            self, "循环次数 / 失败停止 / 失败重试")
+        # 和其它工具栏按钮同一套样式（apply_theme 按 objectName 分发 QSS），
+        # 否则会落到通用按钮样式上、颜色与旁边不一致
+        self.more_btn.setObjectName("ToolTextBtn")
         self.more_btn.setFixedHeight(28)
-        self.more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.more_btn.setMenu(menu)
+        menu.addAction(action)
         self._style_more_panel(getattr(self, "_theme_mode", ThemeMode.LIGHT) == ThemeMode.DARK)
         return self.more_btn
 

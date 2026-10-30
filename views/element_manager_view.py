@@ -147,12 +147,10 @@ class ElementManagerView(QWidget):
         self.table.horizontalHeader().setStyleSheet(header_style)
         self.table.verticalHeader().setStyleSheet(header_style)
 
-    def _show_more_menu(self):
-        """弹出「更多」菜单；每次弹出前同步可用性（导出要有选中行才亮）。"""
+    def _sync_more_actions(self):
+        """弹出前同步可用性：导出要有选中行才亮。"""
         self.import_action.setEnabled(self.import_btn.isEnabled())
         self.export_action.setEnabled(self.export_btn.isEnabled())
-        self._more_menu.popup(
-            self.more_btn.mapToGlobal(self.more_btn.rect().bottomLeft()))
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -217,15 +215,16 @@ class ElementManagerView(QWidget):
         self.import_btn.setVisible(False)
         self.export_btn.setVisible(False)
 
-        self.more_btn = QPushButton("更多")
-        self.more_btn.setIcon(qta.icon('fa6s.ellipsis', color='white'))
-        self.more_btn.setToolTip("导入元素 / 导出元素")
-        self._more_menu = QMenu(self)
+        # 与自动化执行页同一个 helper：文案带「▾」，点开在按钮下方弹出
+        from utils.more_button import make_more_button
+        self.more_btn, self._more_menu = make_more_button(
+            self, "导入元素 / 导出元素")
         self.import_action = self._more_menu.addAction("导入元素…")
         self.import_action.triggered.connect(self._on_import)
         self.export_action = self._more_menu.addAction("导出元素…")
         self.export_action.triggered.connect(self._on_export)
-        self.more_btn.clicked.connect(self._show_more_menu)
+        # 弹层出现前同步可用性（导出要有选中行才亮）
+        self._more_menu.aboutToShow.connect(self._sync_more_actions)
 
         toolbar_layout.addStretch()
         toolbar_layout.addWidget(self.add_btn)
