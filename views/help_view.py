@@ -692,8 +692,8 @@ class HelpView(QFrame):
                 </p>
 
                 {self._get_steps_html([
-                    {'image': 'perf_1_select_app.png', 'desc': '顶部选择目标应用，点「刷新应用」可重新获取列表'},
-                    {'image': 'perf_2_choose_metrics.png', 'desc': '勾选要监控的指标（设备不支持的会置灰）'},
+                    {'image': 'perf_1_select_app.png', 'desc': '顶部选择目标应用，点右侧环形箭头可重新获取列表'},
+                    {'image': 'perf_2_choose_metrics.png', 'desc': '点「指标」勾选要监控的项（设备不支持的会置灰）'},
                     {'image': 'perf_3_set_interval.png', 'desc': '设置采样间隔：单项 1 秒即可，多项建议 5 秒以上'},
                     {'image': 'perf_4_start_monitor.png', 'desc': '点「开始」，曲线与统计实时刷新'},
                     {'image': 'perf_5_view_charts.png', 'desc': '实时查看各项指标曲线'},
