@@ -281,40 +281,55 @@
       </ul>
       <p><b>验收矩阵</b>：1920×1080@100/125/150、2560×1440@150、1366×768@125、2256×1504@150——
         逐项检查主窗口、性能页 1/2 列切换、基线管理 / 阈值 / 对比 / 告警四个弹窗的按钮可见性。</p>
-            <p><b>执行方案（2026-10-30 实测定稿 · <span style="color:#c0392b">全应用范围</span>）</b>：
-      原先只按性能页 + 4 个弹窗估算，<b>范围不够</b>。在 1366×768@150%（逻辑 911×512）下逐页离屏实测
-      <code>minimumSizeHint</code>：<b>执行页 1050</b>、<b>元素库 997</b>、<b>性能页 980</b> 三页超宽
-      （接口 601 / 知识库 422 / 用例 245 / 帮助 / 项目树 均正常）；主窗口左右各有 40px 固定工具栏，
-      页面真实可用宽只有约 <b>830</b>，缺口比单页测量更大。弹窗层面全库扫出 <b>13 个</b>固定尺寸超过 512 高：
-      阈值 <code>640×620</code>、设置 <code>820×560</code>、基线管理 <code>820×520</code>、对比 <code>620×560</code>、
-      元素编辑 <code>760×560</code>、套件 <code>620×560</code>、知识库导入 <code>720×540</code>、
-      进程选择 <code>520×560</code>、动作卡 / 命令选择 <code>440×560</code>、
-      任务 <code>450×520</code>、录屏 <code>720×520</code>、自定义命令 <code>530×520</code>。
-      据此把范围从「性能页 + 4 个弹窗」扩到全应用，仍分三步、每步可独立发版：</p>
-      <p><b>P0 · 兜底不越界（1 个版本，低风险，<span style="color:#c0392b">覆盖全部 13 个弹窗</span>）</b>：
-      ① 在 <code>QApplication</code> 创建前设 <code>HighDpiScaleFactorRoundingPolicy.PassThrough</code>
-      （现在只设了 <code>AA_ShareOpenGLContexts</code>），并把系统缩放、逻辑分辨率、可用区域写进启动日志；
-      ② 新增 <code>utils/dpi.py</code>：<code>avail_rect()</code> + <code>fit_to_screen(widget, w, h)</code>
-      （取设计值与可用区域 0.92/0.88 的较小值并居中），复用已有
-      <code>utils/dialogs.py::_body_max_height()</code>、<code>main_window._fit_visualize_dock_to_screen()</code> 的思路；
-      ③ 上述 13 个弹窗全部改走 <code>fit_to_screen()</code>，内容区套 <code>QScrollArea</code>，按钮区固定在底部不滚动。
-      验收：911×512 下 13 个弹窗底边 ≤ 可用高、主按钮可点。</p>
-      <p><b>P1 · 让它装得下（1~2 个版本，<span style="color:#c0392b">覆盖 3 个超宽页面</span>）</b>：
-      ① <b>执行页（1050）</b>：<code>main_window.py:3151</code> 的 <code>top_splitter</code>（执行区:定时计划 = 2:1）
-      + <code>:3162</code> 的 <code>page_splitter</code>（上:日志 = 3:1），两处都 <code>setChildrenCollapsible(False)</code>，
-      栏不可收缩、各自最小宽直接相加 → 改 <code>True</code> + 给子面板 <code>setMinimumWidth(0)</code>，比例持久化；
-      ② <b>元素库（997）</b>：工具栏一行摆了 7 个 124px 按钮 + 1 个 155px 下拉，合计 997 →
-      常用项常显、其余收进「更多」，或直接换 <code>FlowLayout</code> 折行；
-      ③ <b>性能页（980）</b>：<code>_make_group()</code> 把每组控件包成不可压缩原子块，
-      FlowLayout 只能整组换行 —— 组内控件改可收缩（<code>setMinimumWidth(0)</code> + 省略号）或拆开参与流式排布，目标 &lt; 830；
-      ④ <code>MetricCard</code> <code>setMinimumSize(400,240)</code> + <code>setFixedHeight(240)</code> → 300×200 + <code>setMinimumHeight</code>；
-      ⑤ 性能页底部栏 6 个 99px 固定宽按钮小屏折成图标。验收：911×512 下三页均无横向溢出、关键按钮可见。</p>
-      <p><b>P2 · 应用内缩放（可选，2 天）</b>：设置里给 90% / 100% / 110% / 125%，走全局字号 + QSS 变量；
+            <p><b>执行方案 v2（2026-10-30 重排 · 全应用范围 · 按「收益÷风险」排序）</b>：
+      上一版按 P0/P1/P2 粗分，没排先后理由，也漏了执行页与元素库。这一版改按
+      <b>「先量、再兜底、后动结构」</b>排 6 步，每步独立可发版、独立出更新说明。</p>
+
+      <p><b>第 0 步 · 先造体检仪（0.5 天，必须先做）</b>：新增 <code>tools/dpi_audit.py</code>，
+      离屏遍历<b>全部 9 个页面 + 全部弹窗</b> × 「1920×1080@100/125/150、2560×1440@150、1366×768@125、2256×1504@150」，
+      输出一张表：<code>minW</code> vs 可用宽、弹窗底边 vs 可用高、主按钮 <code>isVisible()</code>。
+      先把当前基线数字存下来，后面每步改完重跑对比。<b>没有它，后面每步都只能靠肉眼看。</b>
+      它同时是可进 CI 的门禁。</p>
+
+      <p><b>第 1 步 · 全局兜底（1 天，收益最大、风险最低）</b>：
+      ① <code>QApplication</code> 创建前设 <code>HighDpiScaleFactorRoundingPolicy.PassThrough</code>，
+      并把缩放比、逻辑分辨率、可用区域写进启动日志；
+      ② <code>utils/dpi.py</code> 提供 <code>avail_rect()</code> / <code>fit_to_screen(dlg)</code> /
+      <code>install_auto_fit(app)</code>（应用级事件过滤器，QDialog 显示时超屏就收缩到可用区 92%/88% 并居中）。
+      <b>已实测可行性</b>：13 个超屏弹窗里 <b>12 个是 <code>resize()</code> 型</b>，过滤器能自动把它们收进屏幕
+      （820×520 → 820×450）；<b>只有 1 个例外</b> —— <code>task_view.py:629</code> 的 <code>setFixedSize(450,520)</code>
+      会顶掉 <code>resize()</code>，需单独改成 <code>resize</code> + <code>setMinimumSize</code>。
+      这样不用逐个改 13 处，将来新加弹窗也自动受保护。</p>
+
+      <p><b>第 2 步 · 只给"收缩后仍超屏"的加滚动区（0.5 天）</b>：
+      跑第 0 步的脚本，找出收缩后 <code>minimumSizeHint</code> 仍大于可用区的弹窗（预期 3~5 个：
+      阈值 / 设置 / 元素编辑 / 知识库导入），只给它们把内容区套 <code>QScrollArea</code>、按钮区固定底部。
+      <b>按数据挑，不按猜的挑。</b></p>
+
+      <p><b>第 3 步 · 执行页 1050 → 目标 ≤830（0.5 天）</b>：<code>main_window.py:3151 top_splitter</code>（2:1）与
+      <code>:3162 page_splitter</code>（3:1）两处 <code>setChildrenCollapsible(False)</code> 让栏不可折叠、
+      最小宽直接相加 —— 改 <code>True</code> + 子面板 <code>setMinimumWidth(0)</code>，用
+      <code>QSplitter.saveState()</code> 记住用户拖过的比例。<b>只放开约束、不动布局结构，风险低收益最大。</b></p>
+
+      <p><b>第 4 步 · 元素库 997 → 目标 ≤830（0.5 天）</b>：工具栏一行 7 个 124px 按钮 + 1 个 155px 下拉 = 997。
+      常用 3 个常显、其余收进「更多」菜单；或直接换项目已有的 <code>FlowLayout</code> 折行。
+      独立模块，不牵连其它页面。</p>
+
+      <p><b>第 5 步 · 性能页 980 → 目标 ≤830（2 天，风险最高，放最后）</b>：
+      ① <code>_make_group()</code> 把每组包成不可压缩原子块，FlowLayout 只能整组换行 —— 组内控件改可收缩 + 省略号，
+      这是<b>唯一要动页面结构</b>的地方；② <code>MetricCard</code> <code>setMinimumSize(400,240)</code> +
+      <code>setFixedHeight(240)</code> → 300×200 + <code>setMinimumHeight</code>；③ 底部栏 6 个 99px 固定宽按钮小屏折成图标。
+      <b>按 2026-10-08 的教训：先出一版只改 ① 的方案 + 截图，确认后再连同 ②③ 一起推。</b></p>
+
+      <p><b>第 6 步 · 应用内缩放（可选，1.5 天）</b>：设置里 90% / 100% / 110% / 125%，走全局字号 + QSS 变量；
       不要用 <code>QT_AUTO_SCREEN_SCALE_FACTOR</code>（会和系统缩放叠加导致过大）。</p>
-      <div class="tip">🧪 <b>回归方式</b>：加一个离屏脚本遍历<b>全部页面</b>（用例 / 执行 / 接口 / 元素库 / 性能 / 语音 / 知识库 / 帮助 / 项目树）
-      与<b>全部弹窗</b>，按「1920×1080@100、1920×1080@125、1920×1080@150、2560×1440@150、1366×768@125、2256×1504@150」
-      逐项断言 <code>minimumSizeHint().width() ≤ 可用宽</code>、弹窗底边 ≤ 可用高、关键按钮 <code>isVisible()</code> ——
-      比人工换分辨率点一遍可靠，可进 CI。</div>
+
+      <div class="tip">🚫 <b>本次不做</b>（控制范围，避免又变成全面重构）：不逐个改全库 82 处按钮固定尺寸；
+      不重写主题 / QSS；不动采集与执行链路；不做"全响应式"改造 —— 只解决「装不下 / 点不到」这一个问题。</div>
+
+      <div class="tip">🧪 <b>每步验收口径</b>（全部由第 0 步脚本判定）：911×512 下
+      ① 页面 <code>minimumSizeHint().width() ≤ 830</code>；② 弹窗底边 ≤ 可用高；③ 主按钮 <code>isVisible()</code>；
+      ④ 6 组分辨率×缩放全部通过；⑤ 深浅两主题各跑一遍（避免只修深色）。</div>
             <div class="example">💡 <b>打个比方：</b>像给同一套家具换不同的房间——墙小的时候要能把柜子收窄、桌子叠起来，而不是硬塞进去；柜门（确定按钮）永远得露在外面。</div>
     </div>
 
