@@ -1068,6 +1068,8 @@ def main():
     )
     perf_view.set_suite_model(suite_model)
     perf_view.set_project_model(project_model)
+    # 性能检测：退出时中断在录的录屏、停止抓包与旁路探针，避免 adb 子进程滞留
+    app.aboutToQuit.connect(perf_controller.shutdown)
     # 自动化执行页增删套件后，即时同步到性能检测页的「场景化测试」套件下拉。
     # 两个页面共用一个 suite_model，但下拉框不会自动重读 —— 不接这条线就得重启虫师
     # 才能看到新套件（2026-10-10 用户反馈）。

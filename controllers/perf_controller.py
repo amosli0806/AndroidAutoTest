@@ -9,8 +9,8 @@ from datetime import datetime
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, QTimer, Qt
 
 from models.perf_model import (
-    PerfModel, PerfSession, PerfThreshold, PerfBaseline, compare_stats,
-    DEFAULT_SCOPES, SCOPE_LABELS, scope_conflict_note,
+    PerfModel, PerfSession, PerfThreshold, PerfBaseline,
+    DEFAULT_SCOPES, SCOPE_LABELS,
 )
 from services.perf_compat import AndroidCompat
 from services.perf_service import PerfService
@@ -281,12 +281,20 @@ class PerfController(QObject):
         # 堆转储自动循环状态
         self._hprof_loop_timer = None
         self._hprof_dumping = False
+        self._hprof_proc = None       # 在途 dumpheap 的本地 adb 进程
+        self._hprof_remote = ""       # 设备端临时 hprof（退出/取消时清理）
+        self._hprof_cancel = False
         # 内存明细（smaps）自动循环 / 抓取状态
         self._smaps_loop_timer = None
         self._smaps_dumping = False
+        self._smaps_proc = None       # 在途 cat smaps 的本地 adb 进程
+        self._smaps_cancel = False
         # 录屏自动循环 / 录制状态
         self._record_loop_timer = None
         self._recording = False
+        self._record_proc = None       # 当前录屏的本地 adb 进程（停止时 terminate）
+        self._record_remote = ""       # 当前录屏的设备端临时文件（清理/精确 pkill 用）
+        self._record_cancel = False    # 停止/退出时置位：本段丢弃，不 pull
         # 抓包能力前置探测（置灰用）：None=未探测，True/False=结论
         self._capture_ready = None
         self._capture_ready_reason = ""
@@ -295,6 +303,8 @@ class PerfController(QObject):
         # 截图自动循环状态
         self._screenshot_loop_timer = None
         self._screenshot_busy = False
+        self._screenshot_proc = None  # 在途 screencap 的本地 adb 进程
+        self._screenshot_cancel = False
         # 抓包状态
         self._capture_worker = None
         # 本次抓包是不是「随监控自动拉起」的（决定失败时弹模态还是轻提示）
@@ -653,11 +663,48 @@ class PerfController(QObject):
                 )
                 # 消息中心：采集完成留痕（纯新增信号）
                 self.perf_finished.emit(len(self.current_session.samples))
-                # 基线自动回归对比：跑完自动比对同应用基线、判定劣化
-                self._auto_compare_baseline(self.current_session)
+                # 不再自动弹「性能劣化告警」：基线多起来后对比容易误报，
+                # 劣化情况统一看报告里的「基线对比」页（2026-10-30 用户要求）
             self.current_session = None
 
         self.view.set_state(self.view.STATE_IDLE)
+
+    def shutdown(self):
+        """应用退出前收尾：中断在途的录屏 / 堆转储 / 内存明细 / 截图，停止抓包与探针。
+
+        不走 `_on_stop()`：退出时不需要再弹基线对比/保存对话框；这里只保证
+        没有 adb 子进程（screenrecord / dumpheap / cat smaps / screencap / tcpdump）
+        滞留，设备端临时文件（hprof）也会清掉。在途产物一律丢弃。
+        """
+        for _stop in (self._stop_record_loop, self._stop_hprof_loop,
+                      self._stop_smaps_loop, self._stop_screenshot_loop):
+            try:
+                _stop()
+            except Exception:
+                pass
+        try:
+            self._stop_capture()
+            worker = getattr(self, "_capture_worker", None)
+            if worker is not None:
+                # 等抓包线程收尾，避免退出瞬间 QThread 还在跑
+                worker.wait(2000)
+        except Exception:
+            pass
+        try:
+            if self.perf_worker is not None:
+                self.perf_worker.stop()
+                self.perf_worker.wait(1500)
+                self.perf_worker = None
+        except Exception:
+            pass
+        try:
+            self._stats_timer.stop()
+        except Exception:
+            pass
+        try:
+            self._finalize_probes()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # 旁路探针（系统内存等）
@@ -1004,8 +1051,18 @@ class PerfController(QObject):
             int(self.view.get_hprof_interval() * 1000))
 
     def _stop_hprof_loop(self):
+        """停自动转储；在途的 dumpheap 也一并中断（退出时不留设备端 hprof）。"""
         if self._hprof_loop_timer is not None:
             self._hprof_loop_timer.stop()
+        if not self._hprof_dumping:
+            return
+        self._hprof_cancel = True
+        proc = self._hprof_proc
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
 
     def _dump_hprof_now(self):
         """对当前所选应用执行一次堆转储（后台线程，防重入）"""
@@ -1019,6 +1076,7 @@ class PerfController(QObject):
             show_toast(self.view, "设备未连接")
             return
         self._hprof_dumping = True
+        self._hprof_cancel = False
 
         import subprocess, sys as _sys
         from utils.adb_path import get_adb_path
@@ -1030,6 +1088,7 @@ class PerfController(QObject):
 
         def worker():
             creationflags = subprocess.CREATE_NO_WINDOW if _sys.platform == 'win32' else 0
+            remote_path = ""
             try:
                 # 由包名直接定位进程 PID（不再弹进程选择框）
                 pid = None
@@ -1053,50 +1112,62 @@ class PerfController(QObject):
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 remote_path = f"/data/local/tmp/heap_{timestamp}.hprof"
                 local_path = os.path.join(heap_dir, f"heap_{timestamp}.hprof")
+                self._hprof_remote = remote_path
 
-                subprocess.run(
+                proc = subprocess.Popen(
                     [adb, "-s", serial, "shell", "am", "dumpheap",
                      str(pid), remote_path],
-                    check=True, timeout=60, creationflags=creationflags,
-                    capture_output=True, text=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    creationflags=creationflags,
                     encoding='utf-8', errors='replace',
                 )
+                self._hprof_proc = proc
+                try:
+                    out, err = proc.communicate(timeout=60)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    out, err = proc.communicate()
+                    err = (err or "") + "堆转储超时"
+                if self._hprof_cancel:
+                    return              # 停止/退出：不 pull、不提示
+                if proc.returncode != 0:
+                    raise subprocess.CalledProcessError(
+                        proc.returncode, "am dumpheap", output=out, stderr=err)
+
                 subprocess.run(
                     [adb, "-s", serial, "pull", remote_path, local_path],
                     check=True, timeout=120, creationflags=creationflags,
                     capture_output=True, text=True,
                     encoding='utf-8', errors='replace',
                 )
-                subprocess.run(
-                    [adb, "-s", serial, "shell", "rm", remote_path],
-                    timeout=5, creationflags=creationflags,
-                    capture_output=True, text=True,
-                    encoding='utf-8', errors='replace',
-                )
+                if self._hprof_cancel:
+                    try:
+                        os.remove(local_path)
+                    except OSError:
+                        pass
+                    return
                 self.hprof_finished.emit("success", local_path)
             except subprocess.CalledProcessError as e:
-                # dumpheap/pull 失败：清掉设备侧可能残留的 0 字节空文件，避免堆积垃圾
-                try:
-                    subprocess.run(
-                        [adb, "-s", serial, "shell", "rm", remote_path],
-                        timeout=5, creationflags=creationflags,
-                    )
-                except Exception:
-                    pass
-                self.hprof_finished.emit(
-                    "error", self._hprof_fail_reason(e))
+                if not self._hprof_cancel:
+                    self.hprof_finished.emit("error", self._hprof_fail_reason(e))
             except Exception as e:
-                try:
-                    subprocess.run(
-                        [adb, "-s", serial, "shell", "rm", remote_path],
-                        timeout=5, creationflags=creationflags,
-                    )
-                except Exception:
-                    pass
-                self.hprof_finished.emit("error", str(e))
+                if not self._hprof_cancel:
+                    self.hprof_finished.emit("error", str(e))
             finally:
+                # 无论成功/失败/超时/取消，设备端临时 hprof 一律清掉
+                if remote_path:
+                    try:
+                        subprocess.run(
+                            [adb, "-s", serial, "shell", "rm", "-f", remote_path],
+                            timeout=5, creationflags=creationflags,
+                            capture_output=True, text=True,
+                            encoding='utf-8', errors='replace',
+                        )
+                    except Exception:
+                        pass
+                self._hprof_proc = None
+                self._hprof_remote = ""
                 self._hprof_dumping = False
-
         import threading
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1148,8 +1219,18 @@ class PerfController(QObject):
         self._smaps_loop_timer.start(int(self.view.get_smaps_interval() * 1000))
 
     def _stop_smaps_loop(self):
+        """停自动抓取；在途的 cat smaps 也中断（最多 3 条路径，不中断会拖很久）。"""
         if self._smaps_loop_timer is not None:
             self._smaps_loop_timer.stop()
+        if not self._smaps_dumping:
+            return
+        self._smaps_cancel = True
+        proc = self._smaps_proc
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
 
     def _smaps_out_dir(self) -> str:
         return self._session_artifact_dir("smaps")
@@ -1170,6 +1251,7 @@ class PerfController(QObject):
             show_toast(self.view, "设备未连接")
             return
         self._smaps_dumping = True
+        self._smaps_cancel = False
 
         import subprocess, sys as _sys, threading
         from utils.adb_path import get_adb_path
@@ -1182,14 +1264,23 @@ class PerfController(QObject):
         def _read_once(cmd):
             """执行一条读 smaps 的命令：成功返回 (True, 字节数)，失败返回 (False, 原因)"""
             with open(path, "wb") as f:
-                proc = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE,
-                                      timeout=180, creationflags=creationflags)
+                proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.PIPE,
+                                        creationflags=creationflags)
+                self._smaps_proc = proc
+                try:
+                    _out, err = proc.communicate(timeout=180)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    _out, err = proc.communicate()
+                    err = (err or b"") + b" timeout"
             size = os.path.getsize(path) if os.path.exists(path) else 0
+            if self._smaps_cancel:
+                return False, "已停止"
             if proc.returncode == 0 and size > 1024:
                 return True, size
             # 失败原因：先看 stderr；adb exec-out 有时把远端 stderr 并进 stdout（文件里），
             # 所以再读文件头 —— 这就是"输出异常（42 字节）"看不到原因的原因
-            reason = (proc.stderr or b"").decode("utf-8", "replace").strip()
+            reason = (err or b"").decode("utf-8", "replace").strip()
             if not reason:
                 try:
                     with open(path, "rb") as fh:
@@ -1235,8 +1326,16 @@ class PerfController(QObject):
                 )
                 reasons = []
                 for label, cmd in attempts:
+                    if self._smaps_cancel:
+                        return              # 停止/退出：不再尝试
                     ok, info = _read_once(cmd)
                     if ok:
+                        if self._smaps_cancel:
+                            try:
+                                os.remove(path)
+                            except OSError:
+                                pass
+                            return
                         logger.info("[Perf] smaps 已保存（%s）：%s（%.1f MB）",
                                     label, path, info / 1048576.0)
                         self.smaps_finished.emit("success", path)
@@ -1247,15 +1346,18 @@ class PerfController(QObject):
                     os.remove(path)      # 失败时不要留个只有报错的空文件
                 except OSError:
                     pass
-                self.smaps_finished.emit("error", _human_reason(reasons))
+                if not self._smaps_cancel:
+                    self.smaps_finished.emit("error", _human_reason(reasons))
             except Exception as e:
                 logger.warning("[Perf] smaps 抓取失败：%s", e)
                 try:
                     os.remove(path)
                 except OSError:
                     pass
-                self.smaps_finished.emit("error", str(e))
+                if not self._smaps_cancel:
+                    self.smaps_finished.emit("error", str(e))
             finally:
+                self._smaps_proc = None
                 self._smaps_dumping = False
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1297,14 +1399,46 @@ class PerfController(QObject):
         self._record_loop_timer.start(int(self.view.get_record_interval() * 1000))
 
     def _stop_record_loop(self):
+        """停掉录屏循环；**正在录的那一段也一并中断**。
+
+        只停 QTimer 的话，一段最长 180 秒的 screenrecord 会继续跑完并 pull 回来，
+        停止监控后还会多出一个文件、占用设备临时空间。这里主动 kill 本地 adb
+        客户端，并在设备侧按文件名精确杀掉对应的 screenrecord（不影响别的录屏）。
+        """
         if self._record_loop_timer is not None:
             self._record_loop_timer.stop()
+        if not self._recording:
+            return
+
+        self._record_cancel = True
+        proc = self._record_proc
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        # adb 客户端断开后，部分 ROM 的设备端 screenrecord 仍会跑到时限；
+        # 用本次的文件名精确 pkill，避免误杀其它录屏
+        remote = self._record_remote
+        if remote:
+            try:
+                import subprocess
+                import sys as _sys
+                from utils.adb_path import get_adb_path
+                flags = subprocess.CREATE_NO_WINDOW if _sys.platform == "win32" else 0
+                subprocess.run(
+                    [get_adb_path(), "-s", self.device_service.serial, "shell",
+                     "pkill", "-f", f"screenrecord.*{os.path.basename(remote)}"],
+                    capture_output=True, timeout=10, creationflags=flags)
+            except Exception:
+                pass
 
     def _record_now(self):
         """录一段屏幕视频（后台线程，防重入）。
 
         screenrecord 是**阻塞**命令（跑满时长才返回），所以整段放在后台线程里，
         录完再 adb pull 回本地并删掉设备上的临时文件。
+        录屏期间保存本地 adb 进程与远端文件名，停止/退出时由 _stop_record_loop 中断。
         """
         if self._recording:
             return
@@ -1312,6 +1446,7 @@ class PerfController(QObject):
             show_toast(self.view, "设备未连接")
             return
         self._recording = True
+        self._record_cancel = False
 
         import subprocess
         import sys as _sys
@@ -1326,6 +1461,7 @@ class PerfController(QObject):
         name = time.strftime("record_%Y%m%d_%H%M%S.mp4")
         remote = f"/data/local/tmp/{name}"
         local = os.path.join(rec_dir, name)
+        self._record_remote = remote
 
         def _human(err: str) -> str:
             low = (err or "").lower()
@@ -1339,26 +1475,47 @@ class PerfController(QObject):
 
         def worker():
             creationflags = subprocess.CREATE_NO_WINDOW if _sys.platform == 'win32' else 0
+            err_text = ""
             try:
-                r = subprocess.run(
+                proc = subprocess.Popen(
                     [adb, "-s", serial, "shell",
                      f"screenrecord --time-limit {duration} --bit-rate 8000000 {remote}"],
-                    capture_output=True, text=True, timeout=duration + 40,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                     creationflags=creationflags, encoding="utf-8", errors="replace")
+                self._record_proc = proc
+                if self._record_cancel:
+                    # 线程刚起来用户就点了停止：直接终止，别白录一段
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+                try:
+                    _out, err_text = proc.communicate(timeout=duration + 40)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    _out, err_text = proc.communicate()
+                    err_text = (err_text or "") + "录屏超时"
+                if self._record_cancel:
+                    # 用户停止 / 程序退出：这一段直接丢弃，不 pull、不通知
+                    return
                 r2 = subprocess.run(
                     [adb, "-s", serial, "pull", remote, local],
                     capture_output=True, text=True, timeout=180,
                     creationflags=creationflags, encoding="utf-8", errors="replace")
-                subprocess.run([adb, "-s", serial, "shell", "rm", "-f", remote],
-                               capture_output=True, timeout=20,
-                               creationflags=creationflags)
-                size = os.path.getsize(local) if os.path.exists(local) else 0
-                if r.returncode != 0 or size < 4096:
+                if self._record_cancel:
+                    # 拉取期间用户点了停止：这一段同样丢弃
                     try:
                         os.remove(local)
                     except OSError:
                         pass
-                    err = (r.stderr or "") + (r2.stderr or "")
+                    return
+                size = os.path.getsize(local) if os.path.exists(local) else 0
+                if proc.returncode != 0 or size < 4096:
+                    try:
+                        os.remove(local)
+                    except OSError:
+                        pass
+                    err = (err_text or "") + (r2.stderr or "")
                     self.record_finished.emit("error", _human(err))
                     return
                 logger.info("[Perf] 录屏已保存：%s（%.1f MB）", local, size / 1048576.0)
@@ -1369,8 +1526,18 @@ class PerfController(QObject):
                     os.remove(local)
                 except OSError:
                     pass
-                self.record_finished.emit("error", str(e)[:60])
+                if not self._record_cancel:
+                    self.record_finished.emit("error", str(e)[:60])
             finally:
+                # 不管成功 / 失败 / 超时 / 被取消，设备上的临时文件都要删干净
+                try:
+                    subprocess.run([adb, "-s", serial, "shell", "rm", "-f", remote],
+                                   capture_output=True, timeout=20,
+                                   creationflags=creationflags)
+                except Exception:
+                    pass
+                self._record_proc = None
+                self._record_remote = ""
                 self._recording = False
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1378,8 +1545,9 @@ class PerfController(QObject):
     def _on_record_finished(self, status: str, message: str):
         if status == "success":
             self._add_event("record", os.path.basename(message))
-            size = os.path.getsize(message) / 1048576.0 if os.path.exists(message) else 0.0
-            show_toast(self.view, f"录屏已保存（{size:.1f} MB）", duration=3000)
+            # 循环录屏每完成一段都弹 toast 太吵（2026-10-30 反馈），成功静默；
+            # 产物在「诊断产物」里能看到，失败才提示
+            logger.info("[Perf] 录屏已保存：%s", message)
         else:
             show_toast(self.view, f"录屏失败：{message}", duration=4000)
 
@@ -1411,8 +1579,18 @@ class PerfController(QObject):
             int(self.view.get_screenshot_interval() * 1000))
 
     def _stop_screenshot_loop(self):
+        """停自动截图；在途的 screencap 也中断，停止后不再多写一张。"""
         if self._screenshot_loop_timer is not None:
             self._screenshot_loop_timer.stop()
+        if not self._screenshot_busy:
+            return
+        self._screenshot_cancel = True
+        proc = self._screenshot_proc
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
 
     def _take_screenshot_now(self):
         """截一次设备屏幕（后台线程，防重入）"""
@@ -1423,6 +1601,7 @@ class PerfController(QObject):
             show_toast(self.view, "设备未连接")
             return
         self._screenshot_busy = True
+        self._screenshot_cancel = False
 
         serial = self.device_service.serial or "device"
         serial_safe = serial.replace(':', '_')
@@ -1442,11 +1621,22 @@ class PerfController(QObject):
                 # 不经过设备端临时文件（对比堆转储少一步 pull/rm）。
                 # 'wb' 会截断上一次重试留下的半截数据
                 with open(path, 'wb') as f:
-                    subprocess.run(
+                    proc = subprocess.Popen(
                         [get_adb_path(), "-s", serial, "exec-out", "screencap", "-p"],
-                        stdout=f, check=True, timeout=20,
+                        stdout=f, stderr=subprocess.PIPE,
                         creationflags=creationflags,
                     )
+                    self._screenshot_proc = proc
+                    try:
+                        _out, err = proc.communicate(timeout=20)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.communicate()
+                        raise
+                    if proc.returncode != 0:
+                        raise subprocess.CalledProcessError(
+                            proc.returncode, "screencap",
+                            stderr=(err or b"").decode("utf-8", "replace"))
 
             try:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1460,13 +1650,21 @@ class PerfController(QObject):
                 except subprocess.TimeoutExpired:
                     time.sleep(0.5)
                     grab(local_path)
+                if self._screenshot_cancel:
+                    try:
+                        os.remove(local_path)
+                    except OSError:
+                        pass
+                    return
                 if os.path.getsize(local_path) == 0:
                     os.remove(local_path)
                     raise RuntimeError("截图数据为空")
                 self.screenshot_finished.emit("success", local_path)
             except Exception as e:
-                self.screenshot_finished.emit("error", str(e))
+                if not self._screenshot_cancel:
+                    self.screenshot_finished.emit("error", str(e))
             finally:
+                self._screenshot_proc = None
                 self._screenshot_busy = False
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1883,67 +2081,6 @@ class PerfController(QObject):
                 subprocess.Popen(["xdg-open", folder])
         except Exception as e:
             ErrorDialog.show_error(self.view, "报告生成失败", str(e))
-
-    def _auto_compare_baseline(self, session):
-        """采集结束自动比对同应用基线，判定性能劣化。
-
-        无基线或无法对比时静默跳过；有劣化时弹窗提示，无劣化不打扰用户。
-        对比结果只走弹窗，不写入自动化执行日志区。
-        """
-        baseline = self.model.find_baseline_for_package(
-            session.app_package, session.metrics)
-        if baseline is None:
-            return
-        stats = session.get_stats()
-        if not stats:
-            return
-        rows = compare_stats(baseline.metrics, stats)
-        if not rows:
-            return
-
-        def _fmt(r, digits=2):
-            return (f"{r['label']}：基线 {r['base']:.{digits}f} → "
-                    f"本次 {r['cur']:.{digits}f}（{r['change_pct']:+.1f}%）")
-
-        # 先查口径：口径不同 / 旧基线没记口径时，数值不可直接比，也不判定劣化
-        note = self._scope_conflicts(baseline, session)
-        if note:
-            logger.warning("[Perf] 基线与本次口径不一致：%s", note)
-            WarningDialog.show_warning(
-                self.view,
-                "基线与本次口径不一致",
-                f"对比基线：{baseline.name}\n\n{note}",
-                "完整数据（仅供查看，不判定改善 / 劣化）：\n"
-                + "\n".join(f"• {_fmt(r)}" for r in rows),
-            )
-            return
-
-        worse = [r for r in rows if r['status'] == 'worse']
-
-        if worse:
-            # 弹窗只放前 5 条，避免几十行把窗口撑爆；完整清单在下方滚动区
-            preview = worse[:5]
-            detail = "\n".join(f"• {_fmt(r)}" for r in preview)
-            more = len(worse) - len(preview)
-            if more > 0:
-                detail += f"\n…其余 {more} 项明显劣化见下方完整对比"
-            full_detail = (
-                f"完整对比（共 {len(rows)} 项，其中明显劣化 {len(worse)} 项）：\n"
-                + "\n".join(f"• {_fmt(r)}" for r in rows)
-            )
-            WarningDialog.show_warning(
-                self.view,
-                "性能劣化告警",
-                f"对比基线：{baseline.name}\n\n"
-                f"检测到 {len(worse)} 项指标明显劣化（共对比 {len(rows)} 项）：\n\n{detail}",
-                full_detail
-            )
-
-    @staticmethod
-    def _scope_conflicts(baseline, session):
-        """对比前查口径（实现见 models.perf_model.scope_conflict_note）。"""
-        return scope_conflict_note(getattr(baseline, "scopes", None),
-                                   getattr(session, "scopes", None))
 
     def _on_save_baseline(self):
         if not self.current_session and not self.model.sessions:
