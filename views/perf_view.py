@@ -318,6 +318,59 @@ class MultiProcessDialog(QDialog):
         return out
 
 
+class _WrappingGroup(QFrame):
+    """能自己折行的分组框（性能页顶部「应用 / 采集 / 指标」等分组）。
+
+    内层是 FlowLayout：宽屏按 sizeHint（全部平铺）给宽度就是一行；
+    容器变窄时按可用宽度重新排，超出就折到第二行，高度随之增加。
+    """
+
+    SPACING = 8
+    H_MARGIN = 10
+    V_MARGIN = 6
+
+    def __init__(self, title, widgets, parent=None):
+        super().__init__(parent)
+        self.setObjectName("PerfGroup")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setContentsMargins(self.H_MARGIN, self.V_MARGIN,
+                                self.H_MARGIN, self.V_MARGIN)
+        self._flow = FlowLayout(self, margin=0, spacing=self.SPACING)
+        self._title = None
+        if title:
+            self._title = QLabel(title)
+            self._title.setObjectName("PerfGroupTitle")
+            self._flow.addWidget(self._title)
+            self._flow.addSpacing(2) if hasattr(self._flow, "addSpacing") else None
+        for w in widgets:
+            self._flow.addWidget(w)
+
+    def _flat_width(self):
+        """全部控件平铺所需宽度（宽屏时按这个值一行排开）。"""
+        total = 0
+        for i in range(self._flow.count()):
+            it = self._flow.itemAt(i)
+            wdg = it.widget() if it is not None else None
+            if wdg is not None and not wdg.isHidden():
+                total += wdg.sizeHint().width() + self.SPACING
+        # +4 是防止差 1px 就折行：内层 FlowLayout 用 rect.right() 判边界，
+        # 刚好等于累加宽时会判成"放不下"，宽屏下就莫名折成两行
+        return max(0, total - self.SPACING) + 2 * self.H_MARGIN + 4
+
+    def sizeHint(self):
+        return QSize(self._flat_width(), 44)
+
+    def minimumSizeHint(self):
+        inner = self._flow.minimumSize()
+        return QSize(inner.width() + 2 * self.H_MARGIN, 44)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._flow.heightForWidth(max(1, width - 2 * self.H_MARGIN)) + 2 * self.V_MARGIN
+
+
 class PerfView(QWidget):
     """性能检测视图"""
 
@@ -1058,24 +1111,15 @@ class PerfView(QWidget):
         c_layout.setSpacing(8)
 
         def _make_group(title, widgets):
-            """语义分组容器：组名 + 控件横排，作为一个整体参与流式换行"""
-            g = QFrame()
-            g.setObjectName("PerfGroup")
-            g.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-            gl = QHBoxLayout(g)
-            gl.setContentsMargins(10, 6, 10, 6)
-            gl.setSpacing(8)
-            if title:
-                t = QLabel(title)
-                t.setObjectName("PerfGroupTitle")
-                gl.addWidget(t)
-                gl.addSpacing(2)
-            for w in widgets:
-                gl.addWidget(w)
-            # 统一组高：组内控件高低不一（复选框 17、下拉框 30），
-            # 固定高度保证同一行（以及两行之间）的组框严格等高，内容垂直居中
-            g.setFixedHeight(44)
-            return g
+            """语义分组容器：组名 + 控件，宽屏一行、窄屏在组内自己折行。
+
+            以前用 QHBoxLayout：组内永不换行，组的"最小宽度"就是所有控件宽度之和
+            —— 「指标」组 12 个勾选约 960px，直接把页面最小宽度顶到 980，
+            1366×768@150%（页面可用宽 814）时横向溢出。
+            现在内层用 FlowLayout：最小宽度 = 最宽的那个控件，窄屏组内折行；
+            宽屏时 sizeHint 仍给平铺宽度，观感与原来一致（同样 44px 高）。
+            """
+            return _WrappingGroup(title, widgets)
 
         # ---------- 行 1：应用 + 采集参数（流式） | 执行按钮（吸右）----------
         row1 = QHBoxLayout()
@@ -1267,8 +1311,10 @@ class PerfView(QWidget):
         bottom.setObjectName("PerfBottomBar")
         bottom.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         b_layout = QHBoxLayout(bottom)
-        b_layout.setContentsMargins(16, 8, 16, 8)
-        b_layout.setSpacing(8)
+        # 边距/间距比原来紧一档：底部栏 6 个按钮 + 状态文字是页面最小宽度的
+        # 最后一道瓶颈（879），1366×768@150% 下页面只有 814 可用
+        b_layout.setContentsMargins(10, 6, 10, 6)
+        b_layout.setSpacing(5)
 
         # 左侧：状态信息（占用剩余空间）
         self.status_info = QLabel("就绪 · 未开始采集")
@@ -1306,7 +1352,7 @@ class PerfView(QWidget):
         self.report_btn.clicked.connect(self.report_requested.emit)
         b_layout.addWidget(self.report_btn)
 
-        self.export_csv_btn = QPushButton("导出 CSV")
+        self.export_csv_btn = QPushButton("导出")
         self.export_csv_btn.setIcon(qta.icon('fa6s.file-csv', color='white'))
         self.export_csv_btn.clicked.connect(self.export_csv_requested.emit)
         b_layout.addWidget(self.export_csv_btn)
@@ -2422,7 +2468,9 @@ class PerfView(QWidget):
         bottom_btns = [self.threshold_btn, self.baseline_btn,
                        self.baseline_mgr_btn, self.report_btn,
                        self.export_csv_btn, self.clear_btn]
-        uniform_w = max(b.sizeHint().width() for b in bottom_btns)
+        # 上限 92：不加限制时「导出 CSV」的自然宽（99）成了整排宽度，
+        # 底部栏最小宽跟着涨到 879；92 下四字按钮仍完整，小屏才放得下
+        uniform_w = min(max(b.sizeHint().width() for b in bottom_btns), 88)
         for b in bottom_btns:
             b.setFixedWidth(uniform_w)
 

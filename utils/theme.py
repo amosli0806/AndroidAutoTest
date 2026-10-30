@@ -881,7 +881,10 @@ class Theme:
             padding: 5px 12px;
             border-radius: 4px;
             font-weight: 500;
-            min-width: 100px;
+            /* 64 而非 100：这一行的 5 个按钮各占 124px 会把页面最小宽度顶到 867，
+               1366×768@150% 时可用宽只有 814。文字短（新增/编辑/删除/更多），
+               64px 够用；「抓取界面」按文字自然撑开，不受影响 */
+            min-width: 64px;
         }
         #ElementManagerView QPushButton:hover {
             background-color: #1565c0;
@@ -1007,7 +1010,10 @@ class Theme:
             padding: 5px 12px;
             border-radius: 4px;
             font-weight: 500;
-            min-width: 100px;
+            /* 64 而非 100：这一行的 5 个按钮各占 124px 会把页面最小宽度顶到 867，
+               1366×768@150% 时可用宽只有 814。文字短（新增/编辑/删除/更多），
+               64px 够用；「抓取界面」按文字自然撑开，不受影响 */
+            min-width: 64px;
         }
         #ElementManagerView QPushButton:hover {
             background-color: #1565c0;

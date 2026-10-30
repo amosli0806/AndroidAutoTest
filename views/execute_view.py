@@ -373,6 +373,7 @@ class ExecuteView(QWidget):
         check_border = "#b8b8b8" if theme_mode == ThemeMode.DARK else "#5a5a5a"
         if getattr(self, "_check_delegate", None) is not None:
             self._check_delegate.set_border_colors(check_border, check_border)
+        self._style_more_panel(theme_mode == ThemeMode.DARK)
         self._rebuild_icons()
         self._update_buttons()
 
@@ -408,6 +409,78 @@ class ExecuteView(QWidget):
         """主题切换后按当前主题色重建工具栏图标（图标-only 按钮的可见性命脉）。"""
         # 全选 / 执行 已改成文字按钮，这里不需要重建图标（配色由 apply_theme 的 QSS 负责）
         # 保存套件 / 删除套件 / 报告 已改成文字按钮，不再重建图标
+
+    def _build_more_menu(self):
+        """把「循环次数 / 失败停止 / 失败重试」收进「更多」菜单。
+
+        为什么收：这一行原本平铺 5 个按钮 + 套件下拉 + 循环 + 重试三项，
+        最小宽度被撑到 1050，1366×768@150%（页面可用宽仅 814）时横向溢出。
+        这些又是低频设置（每次执行前基本不改），收进弹层不影响日常操作；
+        控件对象本身不销毁，所有读取它们的逻辑（执行参数、配置记忆）无需改动。
+        """
+        from PyQt6.QtWidgets import QMenu, QToolButton, QWidgetAction, QGridLayout, QWidget
+
+        panel = QWidget()
+        panel.setObjectName("ExecMorePanel")
+        panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._more_panel = panel
+        grid = QGridLayout(panel)
+        grid.setContentsMargins(12, 10, 12, 10)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+
+        grid.addWidget(self.loop_label, 0, 0)
+        grid.addWidget(self.loop_spin, 0, 1)
+        grid.addWidget(self.stop_on_fail_check, 0, 2, 1, 4)
+
+        grid.addWidget(self.retry_label, 1, 0)
+        grid.addWidget(self.retry_spin, 1, 1)
+        grid.addWidget(self.retry_unit_label, 1, 2)
+        grid.addWidget(self.retry_interval_label, 1, 3)
+        grid.addWidget(self.retry_delay_spin, 1, 4)
+        grid.addWidget(self.retry_delay_unit_label, 1, 5)
+        grid.addWidget(self.retry_cond_combo, 2, 0, 1, 6)
+
+        action = QWidgetAction(panel)
+        action.setDefaultWidget(panel)
+        menu = QMenu(self)
+        menu.addAction(action)
+
+        self.more_btn = QToolButton()
+        self.more_btn.setText("更多")
+        self.more_btn.setToolTip("循环次数 / 失败停止 / 失败重试")
+        self.more_btn.setFixedHeight(28)
+        self.more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.more_btn.setMenu(menu)
+        self._style_more_panel(getattr(self, "_theme_mode", ThemeMode.LIGHT) == ThemeMode.DARK)
+        return self.more_btn
+
+    def _style_more_panel(self, is_dark: bool):
+        """给「更多」弹层单独上色。
+
+        弹层里的 QLabel / QCheckBox 不在页面 QSS 的覆盖范围内（弹出后父级是 QMenu），
+        不单独上色就是"深底黑字"看不见 —— 实测文字栏宽度占了、字却完全看不见。
+        """
+        panel = getattr(self, "_more_panel", None)
+        if panel is None:
+            return
+        text = "#eee" if is_dark else "#333"
+        bg = "#2b2b2b" if is_dark else "#f5f5f5"
+        border = "#4a4a4a" if is_dark else "#d0d0d0"
+        panel.setStyleSheet(f"""
+            QWidget#ExecMorePanel {{
+                background: {bg};
+                border: 1px solid {border};
+            }}
+            QWidget#ExecMorePanel QLabel {{
+                color: {text};
+                background: transparent;
+            }}
+            QWidget#ExecMorePanel QCheckBox {{
+                color: {text};
+                background: transparent;
+            }}
+        """)
 
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -509,19 +582,8 @@ class ExecuteView(QWidget):
         toolbar.addWidget(self.save_suite_btn)
         toolbar.addWidget(self.del_suite_btn)
         toolbar.addWidget(self.report_btn)
-        toolbar.addSpacing(4)
-        toolbar.addWidget(self.loop_label)
-        toolbar.addWidget(self.loop_spin)
-        toolbar.addWidget(self.stop_on_fail_check)
         toolbar.addSpacing(6)
-        toolbar.addWidget(self.retry_label)
-        toolbar.addWidget(self.retry_spin)
-        toolbar.addWidget(self.retry_unit_label)
-        toolbar.addSpacing(4)
-        toolbar.addWidget(self.retry_interval_label)
-        toolbar.addWidget(self.retry_delay_spin)
-        toolbar.addWidget(self.retry_delay_unit_label)
-        toolbar.addWidget(self.retry_cond_combo)
+        toolbar.addWidget(self._build_more_menu())
         toolbar.addStretch()
 
         layout.addLayout(toolbar)

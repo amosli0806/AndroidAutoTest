@@ -68,14 +68,21 @@ class FlowLayout(QLayout):
             if widget and widget.isHidden():
                 continue
             hint = item.sizeHint()
-            if x + hint.width() > rect.right() - self._margin:
+            # 支持能"自己再折行"的子控件（如组内用 FlowLayout 的分组容器）：
+            # 它的高度随可用宽度变化，这里按实际给的宽度问它要高度，
+            # 否则宽屏一行、窄屏折行时会被按单行高度裁掉半截。
+            item_w = min(hint.width(), max(1, rect.width() - 2 * self._margin))
+            item_h = hint.height()
+            if widget is not None and widget.hasHeightForWidth():
+                item_h = widget.heightForWidth(item_w)
+            if x + item_w > rect.right() - self._margin:
                 x = rect.x() + self._margin
                 y += line_height + spacing
                 line_height = 0
             if not test_only:
-                item.setGeometry(QRect(QPoint(x, y), hint))
-            x += hint.width() + spacing
-            line_height = max(line_height, hint.height())
+                item.setGeometry(QRect(QPoint(x, y), QSize(item_w, item_h)))
+            x += item_w + spacing
+            line_height = max(line_height, item_h)
         if test_only:
             return y + line_height + self._margin - rect.y()
         return None

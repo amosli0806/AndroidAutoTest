@@ -147,6 +147,13 @@ class ElementManagerView(QWidget):
         self.table.horizontalHeader().setStyleSheet(header_style)
         self.table.verticalHeader().setStyleSheet(header_style)
 
+    def _show_more_menu(self):
+        """弹出「更多」菜单；每次弹出前同步可用性（导出要有选中行才亮）。"""
+        self.import_action.setEnabled(self.import_btn.isEnabled())
+        self.export_action.setEnabled(self.export_btn.isEnabled())
+        self._more_menu.popup(
+            self.more_btn.mapToGlobal(self.more_btn.rect().bottomLeft()))
+
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
 
@@ -201,12 +208,30 @@ class ElementManagerView(QWidget):
         self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self._on_export)
 
+        # 导入 / 导出属低频操作，收进「更多」菜单。
+        # 原来这一行平铺 8 个控件，最小宽度被顶到 997 —— 1366×768@150% 时
+        # 页面可用宽只有 814，右侧按钮会被挤出屏幕。收进菜单后约 700。
+        # 按钮对象本身保留（可用性由选中状态控制），只是不参与这一行的布局。
+        self.import_btn.setParent(self)
+        self.export_btn.setParent(self)
+        self.import_btn.setVisible(False)
+        self.export_btn.setVisible(False)
+
+        self.more_btn = QPushButton("更多")
+        self.more_btn.setIcon(qta.icon('fa6s.ellipsis', color='white'))
+        self.more_btn.setToolTip("导入元素 / 导出元素")
+        self._more_menu = QMenu(self)
+        self.import_action = self._more_menu.addAction("导入元素…")
+        self.import_action.triggered.connect(self._on_import)
+        self.export_action = self._more_menu.addAction("导出元素…")
+        self.export_action.triggered.connect(self._on_export)
+        self.more_btn.clicked.connect(self._show_more_menu)
+
         toolbar_layout.addStretch()
         toolbar_layout.addWidget(self.add_btn)
         toolbar_layout.addWidget(self.edit_btn)
         toolbar_layout.addWidget(self.delete_btn)
-        toolbar_layout.addWidget(self.import_btn)
-        toolbar_layout.addWidget(self.export_btn)
+        toolbar_layout.addWidget(self.more_btn)
 
         main_layout.addLayout(toolbar_layout)
 
