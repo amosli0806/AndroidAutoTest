@@ -471,19 +471,28 @@ class MonkeyPanel(QWidget):
 
     # ------------------------------------------------------------------
     def _choose_packages(self):
-        """弹出选择对话框，多选应用"""
+        """弹出选择对话框，多选应用。
+
+        列表口径与性能检测「选择目标进程」一致：只列**正在运行**的应用进程
+        （AMS），不再列全部已安装包 —— 以前 `pm list packages -s` 会带出一堆
+        android.* 系统服务，数量比性能检测多几十个，看着对不上（2026-10-31 反馈）。
+        monkey 压测要的是包名，所以确定后把「pkg:子进程」还原成包名并去重。
+        """
         if not self._get_serial():
             # 先单独判设备连接：未接设备给 Toast，别让它落进下面的「无法获取应用列表」对话框
             show_toast(self.window(), "⚠️ 设备未连接，请先连接设备", duration=2000)
             return
-        third = self._run_adb_cmd(["shell", "pm", "list", "packages", "-3"], timeout=10)
-        system = self._run_adb_cmd(["shell", "pm", "list", "packages", "-s"], timeout=10)
+
         apps = []
-        for out in (third, system):
-            for line in out.splitlines():
-                if line.startswith("package:"):
-                    apps.append(line[8:].strip())
-        apps.sort()
+        ds = self.device_service
+        if ds is not None and getattr(ds, "device", None) is not None:
+            try:
+                from services.perf_compat import AndroidCompat
+                _ok, processes = AndroidCompat(ds.device).list_app_processes_checked()
+                apps = [p for p in processes if p]
+            except Exception:
+                apps = []
+        apps = sorted(set(apps))
 
         if not apps:
             WarningDialog.show_warning(self, "提示", "无法获取应用列表，请检查设备连接")
@@ -493,6 +502,11 @@ class MonkeyPanel(QWidget):
         # 自绘勾选框 + 点整行切换 + 细滚动条 + 搜索 + 确定/取消 + 深浅主题
         from views.adb_dialogs.check_list_dialog import CheckListDialog
         current = [p.strip() for p in self.pkg.text().split(',') if p.strip()]
+        # 当前已填、但这一刻没在运行列表里的包名也置顶纳入（对齐性能检测，
+        # 允许保留手动输入的目标），否则上次选的应用这次没在跑会勾不上
+        missing = [c for c in current if c not in apps]
+        if missing:
+            apps = missing + apps
         dlg = CheckListDialog(
             title="选择应用",
             items=apps,
@@ -505,7 +519,13 @@ class MonkeyPanel(QWidget):
             return
         picked = dlg.selected_items()
         if picked:
-            self.pkg.setText(','.join(picked))
+            # monkey 的 -p / 白名单文件都只认包名：把「pkg:子进程」还原成包名并去重
+            pkgs = []
+            for name in picked:
+                base = name.split(":", 1)[0].strip()
+                if base and base not in pkgs:
+                    pkgs.append(base)
+            self.pkg.setText(','.join(pkgs))
 
     # ------------------------------------------------------------------
     def _start_monkey(self):
