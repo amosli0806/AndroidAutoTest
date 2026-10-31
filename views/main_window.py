@@ -2730,6 +2730,13 @@ class MainWindow(QMainWindow):
         """
         if not self._mini_mode:
             return
+        # 迷你窗口必须保持普通状态：Windows 的「从最大化还原」流程偶尔会把
+        # 窗口又切回最大化（此时固定尺寸被忽略，底部状态栏会被任务栏盖住）
+        if self.windowFlags() & Qt.WindowType.WindowMaximizeButtonHint:
+            # 最大化按钮又回来了，说明窗口被系统重建过；先隐藏再改 flag，改完再显示
+            self.hide()
+            self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint, False)
+            self.show()
         if self.isMaximized() or self.isFullScreen():
             self.showNormal()
         from utils.dpi import avail_rect
@@ -2795,17 +2802,20 @@ class MainWindow(QMainWindow):
             # 用 setFixedSize 而非 resize：主窗口最小宽度被内部页面的 minimumSizeHint
             # 顶到 680，resize 会被布局拉回，setFixedSize 能强制锁定迷你尺寸。
             # 尺寸按当前屏幕可用区收一次，避免 1366×768@150% 这类小屏上底边出界。
-            self.showNormal()
+            # 先隐藏再改状态/尺寸，最后 show()：不要依赖 showNormal() 的
+            # 异步还原，它偶尔会在返回后把最大化状态又恢复回来。
+            self.hide()
+            self.setWindowState(self.windowState() & ~(
+                Qt.WindowState.WindowMaximized | Qt.WindowState.WindowFullScreen))
             mini_w, mini_h = self._mini_window_size()
             self.setFixedSize(mini_w, mini_h)
             self._apply_mini_geometry()
-            # showNormal() 返回后窗口管理器可能还会把旧的普通窗口几何恢复回来，
-            # 导致右工具栏 / 底部状态栏跑到屏幕外（偶现）。等事件循环跑完、
-            # 再等 150ms 各校正一次，确保最终落在屏幕可用区内。
-            QTimer.singleShot(0, self._apply_mini_geometry)
-            QTimer.singleShot(150, self._apply_mini_geometry)
-            # 迷你模式下拖到另一块缩放不同的屏幕时，再收一次
+            self.show()
             self._attach_mini_screen_watch()
+            # 进迷你模式后的 1.2 秒内多校正几次：壁纸缩放等同步操作会让
+            # 窗口管理器的还原事件排到后面，只校正 0/150ms 不够。
+            for _delay in (0, 80, 250, 600, 1200):
+                QTimer.singleShot(_delay, self._apply_mini_geometry)
         else:
             self._detach_mini_screen_watch()
             self.mini_mode_action.setIcon(qta.icon('fa6s.compress', color=self._toolbar_icon_color()))
