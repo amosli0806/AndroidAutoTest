@@ -166,11 +166,11 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-30（v1.5.11）</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-31（v1.5.14）</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.5.11</span>
-      <span class="badge">9 项扩展方向</span>
-      <span class="badge">4 个开发阶段</span>
+      <span class="badge">当前版本 v1.5.14</span>
+      <span class="badge">9 项待办</span>
+      <span class="badge">按改动量分 A~D 四档</span>
     </div>
   </header>
 
@@ -183,53 +183,17 @@
   <nav class="toc">
     <h2>目录</h2>
     <div class="links">
-      <a href="#s1">一、已知缺口</a>
-      <a href="#s2">二、扩展方向</a>
-      <a href="#s3">三、优先级速查表</a>
-      <a href="#s4">四、macOS 移植注意事项</a>
+      <a href="#s1">一、待办与扩展方向（按改动量排序）</a>
+      <a href="#s2">二、macOS 移植注意事项</a>
     </div>
   </nav>
 
   <!-- ============ 一、已知缺口 ============ -->
-  <section class="chapter" id="s1">
-    <h2><span class="num">1</span>已知缺口与桩实现</h2>
-    <p class="small" style="margin-top:0">这些是当前尚未补齐、或做了半截的能力，是下一步要优先解决的问题。</p>
+    <section class="chapter" id="s1">
+    <h2><span class="num">1</span>待办与扩展方向（按改动量排序）</h2>
+    <p class="small" style="margin-top:0">从「改动小、见效快」到「改动大、影响面广」依次排列 —— <b>越靠前越建议先动</b>。档位只反映<b>改动量与风险</b>，不代表价值：D 档（如关键字驱动）一旦做出来收益最大，只是要先有变量地基。</p>
 
-    <div class="grid2">
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无分支与步骤级循环</b> — 没有 if/else，也没有「这段步骤重复 N 次」（执行页的「循环次数」只是整轮重复）。失败重试与显式等待已落地。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无关键字复用</b> — 「登录」「搜索」等常用组合无法封装复用。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>套件能力不完整</b> — 无套件级报告、无链式执行（A→B）。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>GPU 采集缺失</b> — 渲染类指标（帧耗时分布 / GPU 占用）还没有采集手段；原方案的 GPU 仅支持高通 Adreno 且未接编排，属半成品。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报待增强</b> — 唤醒词不能按用例切换；「回执验证」只能确认车机听懂了，还验不了界面真的变了（如地图是否全屏）。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无工程化配套</b> — 无 Git 集成（用例数据没有版本管理与回滚）。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>数据与参考图按绝对路径绑定</b> — 数据驱动绑定的 CSV / Excel、图像定位的参考图存的都是绝对路径，换机器或挪动工程目录后要重新绑定。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>界面未适配不同分辨率 / 缩放</b> — 性能页卡片与多个弹窗写死逻辑像素尺寸，1366×768@150%（逻辑 911×512）等环境会挤压或超出屏幕，确定按钮可能点不到。</div></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ 二、扩展方向 ============ -->
-  <section class="chapter" id="s2">
-    <h2><span class="num">2</span>扩展方向（按阶段与优先级）</h2>
-
-    <p class="small" style="margin-top:0">9 项规划按 <b>「改动小 → 改动大」</b> 分四阶段：能小步快跑、影响面可控的先做，要动数据结构或核心执行链路的往后放。每项都配了一个生活化类比帮助理解。</p>
-
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段一 · 改动小、见效快（目标 1 个版本周期，可立即穿插）</h3>
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ A · 改动小、见效快（半天 ~ 1 天，可随时插进版本）</h3>
 
     <div class="card">
       <h3>1. 测试套件增强 <span class="tag plan">📋 规划中</span></h3>
@@ -245,26 +209,8 @@
       <div class="example">💡 <b>打个比方：</b>像 Word / PPT 模板——「启动 → 等待 → 点首页」这套成熟流程存成模板，新用例直接套用，不用每次从零搭。</div>
     </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段二 · 改动适中、模块独立（目标 1~2 个版本周期）</h3>
-
     <div class="card">
-        <h3>3. 语音播报增强 <span class="tag plan">📋 规划中</span></h3>
-      <ul>
-        <li>唤醒词多套管理（按用例切换、多条候选轮播）</li>
-        <li>「真执行了」校验：回执验证已能确认「被正确识别」，但如果界面是否真的变了（如地图是否全屏）还没有手段</li>
-        <li>语音用例 ↔ 自动化用例互转</li>
-      </ul>
-      <div class="example">💡 <b>打个比方：</b>换车已经能整套套用（车型模板）；这一步要再细到「按用例切换唤醒词、多条候选轮播」，并验明正身 —— 确认「地图真的切成全屏了没有」，而不只是「车机听懂了没有」。</div>
-    </div>
-
-    <div class="card">
-      <h3>4. 版本控制集成（Git）<span class="tag plan">📋 规划中</span></h3>
-      <p>把项目数据、步骤、元素库等接入 Git，支持版本回滚、差异对比、分支管理。</p>
-      <div class="example">💡 <b>打个比方：</b>像文档的「修订记录 / 历史版本」——用例改乱了，一键回到昨天的版本，还能看看到底改了哪几行。</div>
-    </div>
-
-    <div class="card">
-      <h3>5. 知识库增强（检索与关联）<span class="tag plan">📋 规划中</span></h3>
+      <h3>3. 知识库增强（检索与关联）<span class="tag plan">📋 规划中</span></h3>
       <p><b>现状</b>：<code>views/knowledge_view.py</code>（1329 行）+ <code>models/knowledge_model.py</code>（747 行）
         已具备「项目 → 分类 → 笔记」树、富文本编辑器（落库转 Markdown）、标签、全文搜索、图片资源、Markdown 导出。
         基础功能够用，但<b>提效交互几乎没有</b>。</p>
@@ -305,9 +251,25 @@
         三个做完「好用感」有明显质变，且都不动数据模型。</p>
     </div>
 
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ B · 改动适中、模块独立（1 ~ 2 天，独立开发不影响别处）</h3>
 
+    <div class="card">
+        <h3>4. 语音播报增强 <span class="tag plan">📋 规划中</span></h3>
+      <ul>
+        <li>唤醒词多套管理（按用例切换、多条候选轮播）</li>
+        <li>「真执行了」校验：回执验证已能确认「被正确识别」，但如果界面是否真的变了（如地图是否全屏）还没有手段</li>
+        <li>语音用例 ↔ 自动化用例互转</li>
+      </ul>
+      <div class="example">💡 <b>打个比方：</b>换车已经能整套套用（车型模板）；这一步要再细到「按用例切换唤醒词、多条候选轮播」，并验明正身 —— 确认「地图真的切成全屏了没有」，而不只是「车机听懂了没有」。</div>
+    </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段三 · 改动较大，需先设计（目标 2~3 个版本周期）</h3>
+    <div class="card">
+      <h3>5. 版本控制集成（Git）<span class="tag plan">📋 规划中</span></h3>
+      <p>把项目数据、步骤、元素库等接入 Git，支持版本回滚、差异对比、分支管理。</p>
+      <div class="example">💡 <b>打个比方：</b>像文档的「修订记录 / 历史版本」——用例改乱了，一键回到昨天的版本，还能看看到底改了哪几行。</div>
+    </div>
+
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ C · 改动较大、需先设计（要先出方案再动手）</h3>
 
     <div class="card">
       <h3>6. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
@@ -318,10 +280,15 @@
       <div class="example">💡 <b>打个比方：</b>前后置脚本像「做饭前的备菜 + 上桌前的摆盘」——请求前先签名、加密，响应后把数据提炼出来；链路编排像「接力赛」——上一个接口的返回，直接变成下一个接口的入参。</div>
     </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ 阶段四 · 改动大 / 影响面广（需专门排期）</h3>
+    <div class="card">
+      <h3>7. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <p>剩余<b>场景化联动</b>：场景化执行时按用例自动转储 / 抓包，每用例一份产物、报告按用例分组。其余采集能力已并入，实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
+    </div>
+
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ D · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
-      <h3>7. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
+      <h3>8. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把唤醒词、语速等提升为可参数化变量，用例内可覆盖</li>
       </ul>
@@ -329,48 +296,65 @@
     </div>
 
     <div class="card">
-      <h3>8. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
+      <h3>9. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
       <div class="example">💡 <b>打个比方：</b>像手机「快捷指令 / 宏」——把「打开 App → 输账号 → 输密码 → 点登录」这 5 步打包成一个「登录」关键字，以后任何用例点一下就好，不用重复拖 5 个步骤。</div>
     </div>
 
-    <div class="card">
-      <h3>9. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
-      <p>剩余<b>场景化联动</b>：场景化执行时按用例自动转储 / 抓包，每用例一份产物、报告按用例分组。其余采集能力已并入，实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
+    <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 已知缺口与桩实现</h3>
+    <p class="small" style="margin-top:0">当前尚未补齐、或做了半截的能力 —— 与上面的规划项互相呼应，是判断优先级时的依据。</p>
+
+<div class="grid2">
+      <div class="card">
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>无分支与步骤级循环</b> — 没有 if/else，也没有「这段步骤重复 N 次」（执行页的「循环次数」只是整轮重复）。失败重试与显式等待已落地。</div></div>
+      </div>
+      <div class="card">
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>无关键字复用</b> — 「登录」「搜索」等常用组合无法封装复用。</div></div>
+      </div>
+      <div class="card">
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>套件能力不完整</b> — 无套件级报告、无链式执行（A→B）。</div></div>
+      </div>
+      <div class="card">
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>GPU 采集缺失</b> — 渲染类指标（帧耗时分布 / GPU 占用）还没有采集手段；原方案的 GPU 仅支持高通 Adreno 且未接编排，属半成品。</div></div>
+      </div>
+      <div class="card">
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报待增强</b> — 唤醒词不能按用例切换；「回执验证」只能确认车机听懂了，还验不了界面真的变了（如地图是否全屏）。</div></div>
+      </div>
+      <div class="card">
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>无工程化配套</b> — 无 Git 集成（用例数据没有版本管理与回滚）。</div></div>
+      </div>
+      <div class="card">
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>数据与参考图按绝对路径绑定</b> — 数据驱动绑定的 CSV / Excel、图像定位的参考图存的都是绝对路径，换机器或挪动工程目录后要重新绑定。</div></div>
+      </div>
+
     </div>
 
-
-    <div class="tip">⚠ <b>注意依赖</b>：变量 / 参数化（含数据驱动）已落地，「关键字驱动 / 变量落地语音 / 接口链路编排」现在可以直接做，不再有前置地基。</div>
-  </section>
-
-  <!-- ============ 三、优先级速查表 ============ -->
-  <section class="chapter" id="s3">
-    <h2><span class="num">3</span>实施优先级速查表</h2>
-    <p class="small" style="margin-top:0">排序原则：<b>改动越小、影响面越可控的越先做</b>；要动数据结构、核心执行链路或跨模块渲染的往后排。⭐ 越多 = 越建议先动；阶段与第二章四段一一对应。</p>
+    <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 优先级速查表</h3>
+    <p class="small" style="margin-top:0">按档位排列：<b>A = 改动最小、最建议先动</b>；⭐ 只表示建议顺序，与档位一致。</p>
     <div class="card">
       <table>
-        <thead><tr><th>阶段</th><th>能力</th><th>优先级</th><th>理由</th></tr></thead>
+        <thead><tr><th>档位</th><th>能力</th><th>优先级</th><th>理由</th></tr></thead>
         <tbody>
-          <tr><td>阶段一</td><td>测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
-          <tr><td>阶段一</td><td>步骤模板</td><td class="stars">⭐⭐⭐</td><td>「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
-          <tr><td>阶段二</td><td>语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
-          <tr><td>阶段二</td><td>版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
-          <tr><td>阶段二</td><td>知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
-          <tr><td>阶段三</td><td>接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
-          <tr><td>阶段四</td><td>变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>变量地基已落地（v1，语音文案已可用 <code>${变量}</code>）；剩下把唤醒词 / 语速等语音参数也做成变量</td></tr>
-          <tr><td>阶段四</td><td>关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
-          <tr><td>阶段四</td><td>性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
+          <tr><td>A</td><td>1. 测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
+          <tr><td>A</td><td>2. 步骤模板</td><td class="stars">⭐⭐⭐</td><td>「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
+          <tr><td>A</td><td>3. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
+          <tr><td>B</td><td>4. 语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
+          <tr><td>B</td><td>5. 版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
+          <tr><td>C</td><td>6. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
+          <tr><td>C</td><td>7. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
+          <tr><td>D</td><td>8. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>变量地基已落地（v1，语音文案已可用 <code>${变量}</code>）；剩下把唤醒词 / 语速等语音参数也做成变量</td></tr>
+          <tr><td>D</td><td>9. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
         </tbody>
       </table>
     </div>
-    <div class="tip">💡 建议从「阶段一 · 改动小、见效快」起步——套件增强 / 步骤模板都是小步快跑、影响面可控的活，可立即穿插。</div>
+    <div class="tip">💡 建议从 <b>A 档</b> 起步：套件增强 / 步骤模板 / 知识库的几个小件都是小步快跑、影响面可控的活，可随时插进版本。</div>
   </section>
 
   <!-- ============ 四、性能检测页：堆转储与抓包整合设计 ============ -->
   
 
-  <section class="chapter" id="s4">
-    <h2><span class="num">4</span>macOS 移植注意事项 <span class="tag plan">📐 2026-10-10 初评 · 2026-10-17 复核 · 未开始</span></h2>
+  <section class="chapter" id="s2">
+    <h2><span class="num">2</span>macOS 移植注意事项 <span class="tag plan">📐 2026-10-10 初评 · 2026-10-17 复核 · 未开始</span></h2>
     <p class="small" style="margin-top:0">目标：把虫师跑在 Mac 上，连车机做同样的测试。下面按「不改就跑不起来 / 能跑但行为不对 / 已经写好不用动」三类梳理，每条都标了确切文件；第五节为 2026-10-14 二次核查的新增发现。</p>
 
     <div class="card">
