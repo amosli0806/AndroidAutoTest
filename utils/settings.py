@@ -383,6 +383,94 @@ class Settings:
         settings['monkey_start_mode'] = str(mode or '').strip()
         cls.save(settings)
 
+    # Monkey 面板里需要记忆的参数（键 → 默认值）。
+    # 新增参数时在这里补一行即可：读取侧会自动补齐默认值，老配置文件不用迁移。
+    MONKEY_DEFAULTS = {
+        "pkg": "",                 # 包名（同时写回老的 monkey_package 字段）
+        "event_count": 50000000,
+        "seed": 733,
+        "start_mode": "param",     # param（-p 参数）/ whitelist（白名单文件）
+        # 高级选项默认**不勾选**：多数压测用默认参数就够，一上来摊开一整屏
+        # 参数反而让人以为必须调；勾选状态本身也会被记住
+        "advanced": False,
+        "throttle": 800,
+        "pct_touch": 95,
+        "pct_motion": 5,
+        "pct_trackball": 0,
+        "pct_nav": 0,
+        "pct_majornav": 0,
+        "pct_appswitch": 0,
+        "pct_flip": 0,
+        "pct_anyevent": 0,
+        "pct_syskeys": 0,
+        "ignore_crashes": True,
+        "ignore_timeouts": True,
+        "ignore_security": True,
+        "ignore_native": True,
+        "monitor_native": True,
+        "verbosity": 3,
+    }
+
+    @classmethod
+    def get_monkey_config(cls) -> dict:
+        """读 Monkey 面板上次的配置：缺字段用默认值补齐，类型不对也回退默认。
+
+        容错是必要的：config.json 可能被手改、也可能是老版本写的（只有
+        monkey_package / monkey_start_mode 两个字段）。
+        """
+        settings = cls.load()
+        saved = settings.get("monkey_config")
+        if not isinstance(saved, dict):
+            saved = {}
+        cfg = {}
+        for key, default in cls.MONKEY_DEFAULTS.items():
+            value = saved.get(key, default)
+            if isinstance(default, bool):
+                cfg[key] = bool(value) if isinstance(value, (bool, int)) else default
+            elif isinstance(default, int):
+                try:
+                    cfg[key] = int(value)
+                except (TypeError, ValueError):
+                    cfg[key] = default
+            else:
+                cfg[key] = str(value or "")
+        # 老配置里只有 monkey_package / monkey_start_mode：新结构缺这两项时回退，
+        # 免得升级后包名和启动方式被清空
+        if not cfg.get("pkg"):
+            cfg["pkg"] = str(settings.get("monkey_package", "") or "").strip()
+        if "start_mode" not in saved:
+            legacy = str(settings.get("monkey_start_mode", "") or "").strip()
+            if legacy:
+                cfg["start_mode"] = legacy
+        if cfg.get("start_mode") not in ("param", "whitelist"):
+            cfg["start_mode"] = "param"
+        return cfg
+
+    @classmethod
+    def set_monkey_config(cls, cfg: dict):
+        """保存 Monkey 面板配置；`pkg` / `start_mode` 同时写回老字段（向后兼容）。"""
+        if not isinstance(cfg, dict):
+            return
+        settings = cls.load()
+        clean = {}
+        for key, default in cls.MONKEY_DEFAULTS.items():
+            value = cfg.get(key, default)
+            if isinstance(default, bool):
+                clean[key] = bool(value)
+            elif isinstance(default, int):
+                try:
+                    clean[key] = int(value)
+                except (TypeError, ValueError):
+                    clean[key] = default
+            else:
+                clean[key] = str(value or "").strip()
+        if clean.get("start_mode") not in ("param", "whitelist"):
+            clean["start_mode"] = "param"
+        settings["monkey_config"] = clean
+        settings["monkey_package"] = clean.get("pkg", "")
+        settings["monkey_start_mode"] = clean.get("start_mode", "param")
+        cls.save(settings)
+
     # ---------- 通知（系统托盘） ----------
     @classmethod
     def get_notify_config(cls) -> dict:

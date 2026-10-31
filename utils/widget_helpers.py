@@ -6,7 +6,7 @@
 直接设在弹出面板的 view 上 —— view 是面板里最"靠近"的控件，QSS 优先级最高，
 可以盖过各对话框自己写的 QComboBox QAbstractItemView 规则，做到全应用一致。
 """
-from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtCore import QEvent, QObject, Qt
 from PyQt6.QtWidgets import QApplication, QComboBox, QListView, QStyledItemDelegate
 
 # 当前生效的下拉面板样式
@@ -86,12 +86,45 @@ def _style_popup_container(view):
         pass
 
 
+def _sync_popup_width(view):
+    """按最长选项把弹出面板的最小宽度撑到够用。
+
+    背景：弹层默认宽度 = max(控件宽度, view.sizeHintForColumn)。前者常常更宽，
+    于是一刀切用了控件宽度 —— 性能页「间隔」下拉只有 78px，而「100 毫秒」
+    需要 85px，首项被裁成「：0 毫秒」（2026-10-31 用户反馈）。
+    """
+    try:
+        model = view.model()
+        if model is None or model.rowCount() == 0:
+            return
+        need = view.sizeHintForColumn(0) + 8
+        if need > view.minimumWidth():
+            view.setMinimumWidth(need)
+    except Exception:
+        pass
+
+
+class _PopupWidthFilter(QObject):
+    """每次弹出前重算一次弹层宽度（选项在构造后才填充的下拉也能生效）。"""
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Type.Show:
+            _sync_popup_width(obj)
+        return False
+
+
 def _apply_view_style(view):
     """把一个弹出面板的 view 设成统一样式（含容器底色与行高下限）。"""
     if view.styleSheet() != _popup_qss:
         view.setStyleSheet(_popup_qss)
     if not isinstance(view.itemDelegate(), _MinHeightDelegate):
         view.setItemDelegate(_MinHeightDelegate(_MIN_ROW_HEIGHT, view))
+    _sync_popup_width(view)
+    # 选项常在构造之后才填充（套件、应用列表等），弹层每次显示前再算一次；
+    # 过滤器挂在 view 上（不是 app 级），控件销毁时随之释放
+    if getattr(view, "_width_filter", None) is None:
+        view._width_filter = _PopupWidthFilter(view)
+        view.installEventFilter(view._width_filter)
     _style_popup_container(view)
 
 
@@ -154,6 +187,7 @@ def prepare_combo_view(combo: QComboBox, min_row_height: int = _MIN_ROW_HEIGHT,
     if min_popup_width:
         view.setMinimumWidth(min_popup_width)
     combo.setView(view)
+    _sync_popup_width(view)
     # setView() 之后弹出容器才存在，这时才能同步它的底色
     _style_popup_container(view)
     return view

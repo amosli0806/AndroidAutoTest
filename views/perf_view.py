@@ -879,11 +879,6 @@ class PerfView(QWidget):
         pairs = [
             (self.packet_config_btn, 'fa6s.sliders', flat),
             (self.app_refresh_btn, 'fa6s.rotate', '#ffffff'),
-            (self.threshold_btn, 'fa6s.sliders', '#ffffff'),
-            (self.baseline_btn, 'fa6s.bookmark', '#ffffff'),
-            (self.baseline_mgr_btn, 'fa6s.list-check', '#ffffff'),
-            (self.report_btn, 'fa6s.file-lines', '#ffffff'),
-            (self.export_csv_btn, 'fa6s.file-csv', '#ffffff'),
             (self.clear_btn, 'fa6s.trash-can', '#ffffff'),
         ]
         for btn, name, color in pairs:
@@ -1268,27 +1263,22 @@ class PerfView(QWidget):
 
         # 组 2：配置 / 数据
         self.threshold_btn = QPushButton("阈值设置")
-        self.threshold_btn.setIcon(qta.icon('fa6s.sliders', color='white'))
         self.threshold_btn.clicked.connect(self.threshold_config_requested.emit)
         b_layout.addWidget(self.threshold_btn)
 
         self.baseline_btn = QPushButton("保存基线")
-        self.baseline_btn.setIcon(qta.icon('fa6s.bookmark', color='white'))
         self.baseline_btn.clicked.connect(self.baseline_requested.emit)
         b_layout.addWidget(self.baseline_btn)
 
         self.baseline_mgr_btn = QPushButton("基线管理")
-        self.baseline_mgr_btn.setIcon(qta.icon('fa6s.list-check', color='white'))
         self.baseline_mgr_btn.clicked.connect(self.baseline_manager_requested.emit)
         b_layout.addWidget(self.baseline_mgr_btn)
 
         self.report_btn = QPushButton("生成报告")
-        self.report_btn.setIcon(qta.icon('fa6s.file-lines', color='white'))
         self.report_btn.clicked.connect(self.report_requested.emit)
         b_layout.addWidget(self.report_btn)
 
         self.export_csv_btn = QPushButton("导出")
-        self.export_csv_btn.setIcon(qta.icon('fa6s.file-csv', color='white'))
         self.export_csv_btn.clicked.connect(self.export_csv_requested.emit)
         b_layout.addWidget(self.export_csv_btn)
 
@@ -2616,9 +2606,11 @@ class PerfView(QWidget):
         bottom_btns = [self.threshold_btn, self.baseline_btn,
                        self.baseline_mgr_btn, self.report_btn,
                        self.export_csv_btn, self.clear_btn]
-        # 上限 92：不加限制时「导出 CSV」的自然宽（99）成了整排宽度，
-        # 底部栏最小宽跟着涨到 879；92 下四字按钮仍完整，小屏才放得下
-        uniform_w = min(max(b.sizeHint().width() for b in bottom_btns), 88)
+        # 固定 88：四字文案 48px + 左右 padding 28px = 76px，留 12px 余量。
+        # 不能再放大 —— 实测 96 时底部栏最小宽 827、整页 845，超过
+        # 1366×768@150% 的可用宽 814；也不能再缩小，四字会被裁。
+        # 这几个按钮已去掉图标（图标占 16+4=20px，88px 里放不下「图标+四字」）。
+        uniform_w = 88
         for b in bottom_btns:
             b.setFixedWidth(uniform_w)
 

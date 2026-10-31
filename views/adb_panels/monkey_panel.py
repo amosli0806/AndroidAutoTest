@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QCheckBox, QComboBox, QApplication,
     QScrollArea, QWidget, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 from utils.adb_path import get_adb_path
 from utils.theme import ThemeMode
@@ -48,6 +48,15 @@ class MonkeyPanel(QWidget):
         self.monkey_running = False
         self.monitor_thread = None
         self._whitelist_remote = None  # 白名单文件方式时设备侧的文件路径
+
+        # 上次用过的参数（2026-10-31）：整屏参数都记忆，重启后原样带出。
+        # _cfg_loading 期间控件在灌初值，此时不要触发回写，否则一开面板就写一遍配置。
+        self._monkey_cfg = Settings.get_monkey_config()
+        self._cfg_loading = True
+        self._cfg_timer = QTimer(self)
+        self._cfg_timer.setSingleShot(True)
+        self._cfg_timer.setInterval(600)     # 连续拖动数字框时只在停手后写一次
+        self._cfg_timer.timeout.connect(self._save_config)
 
         self.setObjectName("MonkeyPanel")
         # 让 QSS 里的 background-color / border / border-radius 真正生效。
@@ -104,13 +113,13 @@ class MonkeyPanel(QWidget):
 
         self.event_count = QSpinBox()
         self.event_count.setRange(1, 100000000)
-        self.event_count.setValue(50000000)
+        self.event_count.setValue(self._monkey_cfg['event_count'])
         grid.addWidget(form_label("事件数量:"), 0, 0)
         grid.addWidget(self.event_count, 0, 1)
 
         self.seed = QSpinBox()
         self.seed.setRange(0, 999)
-        self.seed.setValue(733)
+        self.seed.setValue(self._monkey_cfg['seed'])
         grid.addWidget(form_label("随机种子:"), 0, 2)
         grid.addWidget(self.seed, 0, 3)
 
@@ -118,7 +127,7 @@ class MonkeyPanel(QWidget):
         self.pkg = QLineEdit()
         self.pkg.setPlaceholderText("留空则测试所有应用。多个包名用英文逗号分隔")
         # 默认值从本机设置读（上次用过的包名），不把具体应用写死在代码里
-        self.pkg.setText(Settings.get_monkey_package())
+        self.pkg.setText(self._monkey_cfg['pkg'])
 
         self.select_pkg_btn = QPushButton("选择")
         self.select_pkg_btn.setObjectName("selectBtn")
@@ -143,7 +152,7 @@ class MonkeyPanel(QWidget):
             "白名单文件方式：把上面选择（可多选）的包名写入白名单文件推送到设备，\n"
             "以 --pkg-whitelist-file 启动 Monkey。\n"
             "若使用默认 -p 参数点「开始」后设备没动作，可切换此方式试试。")
-        idx = self.start_mode.findData(Settings.get_monkey_start_mode())
+        idx = self.start_mode.findData(self._monkey_cfg['start_mode'])
         self.start_mode.setCurrentIndex(idx if idx >= 0 else 0)
         grid.addWidget(self.start_mode, 2, 1, 1, 3)
 
@@ -154,7 +163,8 @@ class MonkeyPanel(QWidget):
         # 高级选项
         self.advanced_group = QGroupBox("高级选项")
         self.advanced_group.setCheckable(True)
-        self.advanced_group.setChecked(True)
+        # 默认不勾选（首次），勾选状态本身也会被记住
+        self.advanced_group.setChecked(self._monkey_cfg['advanced'])
         adv_layout = QVBoxLayout(self.advanced_group)
         adv_layout.setContentsMargins(8, 20, 8, 8)
 
@@ -173,7 +183,7 @@ class MonkeyPanel(QWidget):
         throttle_form = QFormLayout()
         self.throttle = QSpinBox()
         self.throttle.setRange(0, 10000)
-        self.throttle.setValue(800)
+        self.throttle.setValue(self._monkey_cfg['throttle'])
         self.throttle.setSuffix(" 毫秒")
         throttle_form.addRow("操作间隔:", self.throttle)
         c_layout.addLayout(throttle_form)
@@ -181,48 +191,48 @@ class MonkeyPanel(QWidget):
         # 事件百分比
         pct_form = QFormLayout()
         pct_form.setSpacing(6)
-        self.pct_touch = self._make_pct_spin(95)
+        self.pct_touch = self._make_pct_spin(self._monkey_cfg['pct_touch'])
         pct_form.addRow("触摸事件%:", self.pct_touch)
-        self.pct_motion = self._make_pct_spin(5)
+        self.pct_motion = self._make_pct_spin(self._monkey_cfg['pct_motion'])
         pct_form.addRow("滑动事件%:", self.pct_motion)
-        self.pct_trackball = self._make_pct_spin(0)
+        self.pct_trackball = self._make_pct_spin(self._monkey_cfg['pct_trackball'])
         pct_form.addRow("轨迹球%:", self.pct_trackball)
-        self.pct_nav = self._make_pct_spin(0)
+        self.pct_nav = self._make_pct_spin(self._monkey_cfg['pct_nav'])
         pct_form.addRow("导航事件%:", self.pct_nav)
-        self.pct_majornav = self._make_pct_spin(0)
+        self.pct_majornav = self._make_pct_spin(self._monkey_cfg['pct_majornav'])
         pct_form.addRow("主要导航%:", self.pct_majornav)
-        self.pct_appswitch = self._make_pct_spin(0)
+        self.pct_appswitch = self._make_pct_spin(self._monkey_cfg['pct_appswitch'])
         pct_form.addRow("应用切换%:", self.pct_appswitch)
-        self.pct_flip = self._make_pct_spin(0)
+        self.pct_flip = self._make_pct_spin(self._monkey_cfg['pct_flip'])
         pct_form.addRow("翻转事件%:", self.pct_flip)
-        self.pct_anyevent = self._make_pct_spin(0)
+        self.pct_anyevent = self._make_pct_spin(self._monkey_cfg['pct_anyevent'])
         pct_form.addRow("其他事件%:", self.pct_anyevent)
-        self.pct_syskeys = self._make_pct_spin(0)
+        self.pct_syskeys = self._make_pct_spin(self._monkey_cfg['pct_syskeys'])
         pct_form.addRow("系统按键%:", self.pct_syskeys)
         c_layout.addLayout(pct_form)
 
         # 忽略异常（用带明显边框的复选框，否则深色底上几乎看不出是可勾选项）
         ignore_row1 = QHBoxLayout()
         self.ignore_crashes = BorderedCheckBox("忽略崩溃")
-        self.ignore_crashes.setChecked(True)
+        self.ignore_crashes.setChecked(self._monkey_cfg['ignore_crashes'])
         ignore_row1.addWidget(self.ignore_crashes)
         self.ignore_timeouts = BorderedCheckBox("忽略超时")
-        self.ignore_timeouts.setChecked(True)
+        self.ignore_timeouts.setChecked(self._monkey_cfg['ignore_timeouts'])
         ignore_row1.addWidget(self.ignore_timeouts)
         c_layout.addLayout(ignore_row1)
 
         ignore_row2 = QHBoxLayout()
         self.ignore_security = BorderedCheckBox("忽略安全异常")
-        self.ignore_security.setChecked(True)
+        self.ignore_security.setChecked(self._monkey_cfg['ignore_security'])
         ignore_row2.addWidget(self.ignore_security)
         self.ignore_native = BorderedCheckBox("忽略原生崩溃")
-        self.ignore_native.setChecked(True)
+        self.ignore_native.setChecked(self._monkey_cfg['ignore_native'])
         ignore_row2.addWidget(self.ignore_native)
         c_layout.addLayout(ignore_row2)
 
         ignore_row3 = QHBoxLayout()
         self.monitor_native = BorderedCheckBox("监控原生崩溃")
-        self.monitor_native.setChecked(True)
+        self.monitor_native.setChecked(self._monkey_cfg['monitor_native'])
         ignore_row3.addWidget(self.monitor_native)
         ignore_row3.addStretch()
         c_layout.addLayout(ignore_row3)
@@ -231,7 +241,7 @@ class MonkeyPanel(QWidget):
         verbosity_form = QFormLayout()
         self.verbosity = QComboBox()
         self.verbosity.addItems(["0 (默认)", "1 (-v)", "2 (-v -v)", "3 (-v -v -v)"])
-        self.verbosity.setCurrentIndex(3)
+        self.verbosity.setCurrentIndex(self._monkey_cfg['verbosity'])
         verbosity_form.addRow("详细程度:", self.verbosity)
         c_layout.addLayout(verbosity_form)
 
@@ -260,6 +270,22 @@ class MonkeyPanel(QWidget):
         # 面板里所有输入控件禁用右键编辑菜单
         disable_context_menus(self)
 
+        # ---- 参数记忆（2026-10-31）----
+        # 灌完初值再连接信号，避免构造期把默认值写回配置
+        for spin in (self.event_count, self.seed, self.throttle,
+                     self.pct_touch, self.pct_motion, self.pct_trackball,
+                     self.pct_nav, self.pct_majornav, self.pct_appswitch,
+                     self.pct_flip, self.pct_anyevent, self.pct_syskeys):
+            spin.valueChanged.connect(self._on_cfg_changed)
+        for combo in (self.start_mode, self.verbosity):
+            combo.currentIndexChanged.connect(self._on_cfg_changed)
+        for box in (self.ignore_crashes, self.ignore_timeouts,
+                    self.ignore_security, self.ignore_native,
+                    self.monitor_native, self.advanced_group):
+            box.toggled.connect(self._on_cfg_changed)
+        self.pkg.textChanged.connect(self._on_cfg_changed)
+        self._cfg_loading = False
+
     def _log(self, text: str):
         """状态提示 -> 主窗口底部"虫师日志"（空文本直接忽略）"""
         if text:
@@ -270,6 +296,50 @@ class MonkeyPanel(QWidget):
         s.setRange(0, 100)
         s.setValue(value)
         return s
+
+    # ---- 参数记忆（2026-10-31）：整屏参数都存进 data/config.json ----
+    def _collect_config(self) -> dict:
+        """把面板上所有可记忆参数收成一个 dict（键与 Settings.MONKEY_DEFAULTS 对齐）。"""
+        return {
+            "pkg": self.pkg.text().strip(),
+            "event_count": self.event_count.value(),
+            "seed": self.seed.value(),
+            "start_mode": self.start_mode.currentData() or "param",
+            "advanced": self.advanced_group.isChecked(),
+            "throttle": self.throttle.value(),
+            "pct_touch": self.pct_touch.value(),
+            "pct_motion": self.pct_motion.value(),
+            "pct_trackball": self.pct_trackball.value(),
+            "pct_nav": self.pct_nav.value(),
+            "pct_majornav": self.pct_majornav.value(),
+            "pct_appswitch": self.pct_appswitch.value(),
+            "pct_flip": self.pct_flip.value(),
+            "pct_anyevent": self.pct_anyevent.value(),
+            "pct_syskeys": self.pct_syskeys.value(),
+            "ignore_crashes": self.ignore_crashes.isChecked(),
+            "ignore_timeouts": self.ignore_timeouts.isChecked(),
+            "ignore_security": self.ignore_security.isChecked(),
+            "ignore_native": self.ignore_native.isChecked(),
+            "monitor_native": self.monitor_native.isChecked(),
+            "verbosity": self.verbosity.currentIndex(),
+        }
+
+    def _on_cfg_changed(self, *_):
+        """任一参数变化 → 防抖 600ms 后写盘（拖动数字框只写最后一次）。"""
+        if getattr(self, "_cfg_loading", False):
+            return
+        self._cfg_timer.start()
+
+    def _save_config(self):
+        """把当前参数写进 data/config.json；异常只提示，不影响正在进行的操作。"""
+        if getattr(self, "_cfg_loading", False):
+            return
+        try:
+            cfg = self._collect_config()
+            Settings.set_monkey_config(cfg)
+            self._monkey_cfg = cfg
+        except Exception as e:                 # noqa: BLE001 - 存不上也要能继续跑
+            self._log(f"⚠️ 保存 Monkey 参数失败：{type(e).__name__}: {e}")
 
     # ------------------------------------------------------------------
     def set_device_service(self, device_service):
@@ -484,10 +554,10 @@ class MonkeyPanel(QWidget):
         event_count = self.event_count.value()
         seed = self.seed.value()
         pkg_str = self.pkg.text().strip()
-        # 记住这次用的包名和启动方式，下次打开面板直接带出来（存在本机 data/config.json）
-        Settings.set_monkey_package(pkg_str)
+        # 记住这次用的全部参数，下次打开面板原样带出（存本机 data/config.json）。
+        # 这里**同步**存一次：防抖是 600ms，用户调完参数立刻点开始可能还没落盘。
+        self._save_config()
         start_mode = self.start_mode.currentData() or 'param'
-        Settings.set_monkey_start_mode(start_mode)
 
         pkgs = [p.strip() for p in pkg_str.split(',') if p.strip()] if pkg_str else []
 
