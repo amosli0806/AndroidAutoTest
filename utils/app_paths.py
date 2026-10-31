@@ -10,6 +10,7 @@
 """
 import os
 import shutil
+import subprocess
 import sys
 
 # 数据目录名
@@ -77,3 +78,19 @@ def migrate_legacy_data_files():
     if moved:
         print(f"[app_paths] 已迁移 {len(moved)} 个数据文件到 {data_dir}: {', '.join(moved)}")
     return moved
+
+
+def open_containing_folder(file_path: str) -> bool:
+    """在系统文件管理器里打开文件所在目录；失败时返回 False，不抛异常。"""
+    folder = os.path.dirname(os.path.abspath(file_path))
+    try:
+        if os.name == 'nt':
+            os.startfile(folder)
+        elif sys.platform == 'darwin':
+            subprocess.Popen(['open', folder])
+        else:
+            subprocess.Popen(['xdg-open', folder])
+        return True
+    except Exception as e:
+        print(f"[app_paths] 打开目录失败 {folder}: {e}")
+        return False

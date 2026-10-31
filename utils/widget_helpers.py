@@ -6,6 +6,7 @@
 直接设在弹出面板的 view 上 —— view 是面板里最"靠近"的控件，QSS 优先级最高，
 可以盖过各对话框自己写的 QComboBox QAbstractItemView 规则，做到全应用一致。
 """
+from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QApplication, QComboBox, QListView, QStyledItemDelegate
 
 # 当前生效的下拉面板样式
@@ -156,3 +157,18 @@ def prepare_combo_view(combo: QComboBox, min_row_height: int = _MIN_ROW_HEIGHT,
     # setView() 之后弹出容器才存在，这时才能同步它的底色
     _style_popup_container(view)
     return view
+
+
+def clear_hover(widget):
+    """清掉控件残留的 :hover 状态。
+
+    场景：点击「指标 / 更多」后用 QMenu.popup() 弹出面板，鼠标虽然已经进了
+    面板，但按钮收不到 Leave 事件，QSS 的 :hover 会一直亮着。这里主动补一个
+    Leave，把 WA_UnderMouse / State_MouseOver 复位；用户把鼠标移回按钮时，
+    Qt 会重新发 Enter，悬停色照常出现。
+    """
+    if widget is None:
+        return
+    QApplication.sendEvent(widget, QEvent(QEvent.Type.Leave))
+    widget.setAttribute(Qt.WidgetAttribute.WA_UnderMouse, False)
+    widget.update()

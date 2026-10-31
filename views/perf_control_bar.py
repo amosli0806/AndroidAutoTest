@@ -21,6 +21,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QSize, QTimer
 
+from utils.widget_helpers import clear_hover
+
 
 class ChipBar(QWidget):
     """单行命令栏：装不下就把低频控件收进「更多」。"""
@@ -224,6 +226,9 @@ class ChipBar(QWidget):
     def _show_menu(self):
         self._menu.popup(
             self.more_btn.mapToGlobal(self.more_btn.rect().bottomLeft()))
+        # 面板弹出后鼠标已不归按钮管，主动清掉残留的悬停色。
+        # 延后一拍：popup() 显示过程中 Qt 可能还会给按钮补 Enter，同步清会被盖掉。
+        QTimer.singleShot(0, lambda: clear_hover(self.more_btn))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

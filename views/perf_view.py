@@ -19,6 +19,7 @@ import qtawesome as qta
 from utils.toast import show_toast
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
+from utils.widget_helpers import clear_hover
 from views.perf_widgets import MetricCard, ProbeValueCard
 from views.perf_control_bar import ChipBar
 from models.perf_model import MEM_CATEGORIES
@@ -1858,6 +1859,9 @@ class PerfView(QWidget):
     def _show_metrics_menu(self):
         self._metrics_menu.popup(
             self.metrics_btn.mapToGlobal(self.metrics_btn.rect().bottomLeft()))
+        # 面板弹出后鼠标已不归按钮管，主动清掉残留的悬停色。
+        # 延后一拍：popup() 显示过程中 Qt 可能还会给按钮补 Enter，同步清会被盖掉。
+        QTimer.singleShot(0, lambda: clear_hover(self.metrics_btn))
 
     def _sync_metrics_btn(self):
         """刷新「指标 N」的计数与悬停提示（N = 当前勾选的项数）。"""

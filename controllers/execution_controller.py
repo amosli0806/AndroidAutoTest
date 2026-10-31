@@ -1,16 +1,16 @@
 # controllers/execution_controller.py
 import os
 import re
-import subprocess
 import time
 from datetime import datetime
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
-from PyQt6.QtWidgets import QMessageBox
 
 from models.execution_model import ExecutionModel, FailureContext
 from models.project_model import ProjectModel
 from models.step_model import StepModel
 from utils.dialogs import ErrorDialog
+from utils.app_paths import open_containing_folder
+from utils.toast import show_toast
 from views.execute_view import ExecuteView
 from views.logs_view import LogsView
 from services.device_service import DeviceService
@@ -459,23 +459,9 @@ class ExecutionController(QObject):
         file_path = os.path.join(output_dir, f"TestReport_{timestamp}.html")
         try:
             report_path = ReportGenerator.generate(self.exec_model, file_path)
-
-            msg_box = QMessageBox(self.exec_view)
-            msg_box.setWindowTitle("报告已生成")
-            msg_box.setText(f"测试报告已保存到：\n{report_path}\n\n选择操作：")
-
-            open_folder_btn = msg_box.addButton("📂 打开文件夹", QMessageBox.ButtonRole.ActionRole)
-            ok_btn = msg_box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
-
-            msg_box.exec()
-
-            clicked = msg_box.clickedButton()
-            if clicked == open_folder_btn:
-                folder = os.path.dirname(report_path)
-                if os.name == 'nt':
-                    os.startfile(folder)
-                else:
-                    subprocess.Popen(['xdg-open', folder])
+            # 与性能检测「生成报告」保持一致：轻提示 + 自动打开所在文件夹
+            show_toast(self.exec_view, "报告已生成")
+            open_containing_folder(report_path)
 
         except Exception as e:
             ErrorDialog.show_error(

@@ -549,12 +549,12 @@ def main():
     app.setPalette(palette)
 
     # ---------- 移除全局样式表，由主题系统控制 ----------
-    # 仅保留 QToolTip 样式（在主题中未覆盖）
+    # QToolTip 的底色/文字色走应用调色板（Theme.apply_app_palette 已设置
+    # ToolTipBase / ToolTipText），这里只保留与主题无关的间距和字号。
+    # 不要在切主题时改这份全局样式表：app.setStyleSheet() 会 re-polish 整棵
+    # 控件树，实测一次约 4s，是日夜切换卡顿的主因。
     app.setStyleSheet("""
         QToolTip {
-            background-color: white;
-            color: black;
-            border: 1px solid #ccc;
             padding: 4px;
             font-size: 11px;
         }

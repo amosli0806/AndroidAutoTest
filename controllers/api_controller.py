@@ -8,15 +8,15 @@
 结果通过 Qt 信号回投，界面只在 GUI 线程被碰。
 """
 import os
-import subprocess
 from datetime import datetime
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
-from PyQt6.QtWidgets import QMessageBox
 
 from services.api_service import ApiService
 from utils.api_report import ApiReportGenerator
 from utils.dialogs import ErrorDialog
+from utils.app_paths import open_containing_folder
+from utils.toast import show_toast
 from utils.settings import Settings
 
 
@@ -134,16 +134,6 @@ class ApiController(QObject):
                                    f"生成接口测试报告时发生错误：\n{e}")
             return
 
-        # 与「自动化执行」的报告落地体验保持一致：生成后问要不要打开文件夹
-        msg_box = QMessageBox(self.view)
-        msg_box.setWindowTitle("报告已生成")
-        msg_box.setText(f"接口测试报告已保存到：\n{report_path}\n\n选择操作：")
-        open_btn = msg_box.addButton("📂 打开文件夹", QMessageBox.ButtonRole.ActionRole)
-        msg_box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
-        msg_box.exec()
-        if msg_box.clickedButton() == open_btn:
-            folder = os.path.dirname(report_path)
-            if os.name == "nt":
-                os.startfile(folder)
-            else:
-                subprocess.Popen(["xdg-open", folder])
+        # 与「自动化执行」的报告落地体验保持一致：轻提示 + 自动打开所在文件夹
+        show_toast(self.view, "报告已生成")
+        open_containing_folder(report_path)
