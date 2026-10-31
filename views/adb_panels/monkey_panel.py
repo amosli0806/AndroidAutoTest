@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLineEdit, QSpinBox, QPushButton, QLabel,
     QGroupBox, QCheckBox, QComboBox, QApplication,
-    QScrollArea, QWidget, QListWidget, QListWidgetItem
+    QScrollArea
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
@@ -489,46 +489,23 @@ class MonkeyPanel(QWidget):
             WarningDialog.show_warning(self, "提示", "无法获取应用列表，请检查设备连接")
             return
 
-        # 简单选择对话框
-        dlg = QDialog(self)
-        dlg.setWindowTitle("选择应用")
-        dlg.resize(500, 460)
-        lay = QVBoxLayout(dlg)
-
-        search = QLineEdit()
-        search.setPlaceholderText("🔍 搜索包名...")
-        lay.addWidget(search)
-
-        lst = QListWidget()
-        lst.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
-        for a in apps:
-            item = QListWidgetItem(a)
-            item.setData(Qt.ItemDataRole.UserRole, a)
-            lst.addItem(item)
-        lay.addWidget(lst, 1)
-
-        def on_search(text):
-            kw = text.lower().strip()
-            for i in range(lst.count()):
-                item = lst.item(i)
-                pkg = item.data(Qt.ItemDataRole.UserRole) or ""
-                item.setHidden(bool(kw) and kw not in pkg.lower())
-
-        search.textChanged.connect(on_search)
-
-        btn = QPushButton("确定")
-        btn.setObjectName("okBtn")
-        btn.setFixedHeight(32)
-        lay.addWidget(btn)
-
-        def on_ok():
-            selected = [item.text() for item in lst.selectedItems()]
-            if selected:
-                self.pkg.setText(','.join(selected))
-            dlg.accept()
-
-        btn.clicked.connect(on_ok)
-        dlg.exec()
+        # 复用通用勾选列表对话框（与性能检测「选择目标进程」同一套交互）：
+        # 自绘勾选框 + 点整行切换 + 细滚动条 + 搜索 + 确定/取消 + 深浅主题
+        from views.adb_dialogs.check_list_dialog import CheckListDialog
+        current = [p.strip() for p in self.pkg.text().split(',') if p.strip()]
+        dlg = CheckListDialog(
+            title="选择应用",
+            items=apps,
+            selected=current,
+            tip="勾选要压测的应用，可多选（搜索可快速过滤）。",
+            search_placeholder="搜索包名...",
+            ok_text="确定",
+            parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        picked = dlg.selected_items()
+        if picked:
+            self.pkg.setText(','.join(picked))
 
     # ------------------------------------------------------------------
     def _start_monkey(self):

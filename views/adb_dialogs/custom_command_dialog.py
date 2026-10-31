@@ -355,3 +355,38 @@ class CustomCommandDialog(QDialog):
                 background-color: {btn_cancel_hover};
             }}
         """)
+
+        # 滚动区：viewport 不画背景（否则深色主题下取调色板浅色、露白块），
+        # 滚动条改成 8px 细条、无箭头、轨道透明 —— 与性能页多进程对话框一致。
+        # 用带选择器的规则，避免「background: transparent」污染 QToolTip。
+        # 滚动区三层（QScrollArea / viewport / content）都设透明：
+        # setWidget() 会把 content 的 autoFillBackground 强制设为 True，
+        # 深色主题下它会取调色板浅灰（#f3f3f3），正文区就糊成一块浅色。
+        # 用带选择器的规则一次性覆盖三层（不会污染 QToolTip）。
+        self.content_scroll.viewport().setAutoFillBackground(False)
+        self.content_scroll.widget().setAutoFillBackground(False)
+        self.content_scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollArea > QWidget > QWidget { background: transparent; }")
+        bar_bg = "#4b5057" if theme_mode == ThemeMode.DARK else "#c9ced6"
+        bar_hover = "#5f656d" if theme_mode == ThemeMode.DARK else "#b3b9c2"
+        thin_bar_qss = f"""
+            QScrollBar:vertical {{
+                background: transparent; width: 8px; margin: 2px 0; border: none;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {bar_bg}; min-height: 28px; border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical:hover {{ background: {bar_hover}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0; border: none; background: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """
+        # 外层滚动区 + 命令内容 QTextEdit 的内部滚动条都改成细条。
+        # QTextEdit 是 QAbstractScrollArea，自带默认滚动条（带箭头、粗），
+        # 之前只改了外层 QScrollArea，正文多行时命令框里露出的还是老样式。
+        self.content_scroll.verticalScrollBar().setStyleSheet(thin_bar_qss)
+        self.command_edit.verticalScrollBar().setStyleSheet(thin_bar_qss)
