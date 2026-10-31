@@ -182,6 +182,7 @@ class MainWindow(QMainWindow):
         self._adb_toolbox_controller = None
         self._adb_toolbox_widget = None
         self._mini_mode = False
+        self._mini_refit_pending = False
         self.mini_mode_action = None
         self._nav_spacer_action = None
         self._element_container = None
@@ -1073,7 +1074,7 @@ class MainWindow(QMainWindow):
         self.left_toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.left_toolbar.setIconSize(QSize(20, 20))
         self.left_toolbar.setFixedWidth(40)
-        self.left_toolbar.setStyleSheet("""
+        self._left_toolbar_qss_base = """
             QToolBar {
                 background: #e9eaee;
                 border: none;
@@ -1096,7 +1097,14 @@ class MainWindow(QMainWindow):
             QToolButton:checked:hover {
                 background: #1565c0;
             }
-        """)
+        """
+        # 窗口被手动压矮时，13 个图标放不下会把「日志 / 迷你模式」挤进省略菜单，
+        # 而那个省略箭头只剩 12px 高、贴着窗口底边几乎看不见。高度不够时自动切成
+        # 紧凑密度（见 _sync_left_toolbar_density），保证最后一个图标仍能完整显示。
+        self._left_toolbar_compact = False
+        self._left_toolbar_normal_need = 0
+        self._toolbar_sync_scheduled = False
+        self.left_toolbar.setStyleSheet(self._left_toolbar_qss_base)
         self.addToolBar(Qt.LeftToolBarArea, self.left_toolbar)
 
         # ========== 新增：为左侧工具栏安装事件过滤器 ==========
@@ -1692,6 +1700,76 @@ class MainWindow(QMainWindow):
                         Qt.TransformationMode.SmoothTransformation
                     )
                     self.wallpaper_label.setPixmap(scaled)
+        # 高度变化后重新判断左工具栏是否需要紧凑密度（避免省略箭头被压没）
+        self._schedule_left_toolbar_sync()
+        # 迷你模式下窗口尺寸可能被系统还原流程改写，重新贴合屏幕
+        if getattr(self, "_mini_mode", False):
+            self._schedule_mini_refit()
+
+    # ---------- 左工具栏密度自适应 ----------
+    # 窗口高度不够时，13 个图标会自动溢出到 Qt 的省略菜单里；省略箭头此时被压到
+    # 12px 高、贴着窗口底边几乎看不见。这里在溢出发生前先切紧凑密度，让图标
+    # （尤其是最下面的迷你模式"收起"图标）继续完整显示。
+    _TOOLBAR_COMPACT_QSS = """
+        QToolBar { spacing: 0px; }
+        QToolButton { padding: 2px 1px; margin: 0px 2px; }
+    """
+
+    def _apply_left_toolbar_qss(self):
+        if self.left_toolbar is None:
+            return
+        base = getattr(self, "_left_toolbar_qss_base", "")
+        if not base:
+            return
+        if self._left_toolbar_compact:
+            base += self._TOOLBAR_COMPACT_QSS
+        self.left_toolbar.setStyleSheet(base)
+
+    def _left_toolbar_need_height(self) -> int:
+        """按当前密度算装下所有按钮需要的高度（不含可伸缩的弹簧）"""
+        tb = self.left_toolbar
+        if tb is None:
+            return 0
+        total = count = 0
+        for action in tb.actions():
+            widget = tb.widgetForAction(action)
+            if widget is None or not action.text():
+                continue          # 弹簧 spacer：QWidgetAction 没有文案
+            total += widget.sizeHint().height()
+            count += 1
+        if not count:
+            return 0
+        # 顶部约 9px 留白 + 按钮间距各 1px，再留 4px 余量
+        return total + (count - 1) + 13
+
+    def _sync_left_toolbar_density(self):
+        tb = self.left_toolbar
+        if tb is None or tb.height() <= 0:
+            return
+        if self._left_toolbar_compact:
+            # 用常规密度量出来的需求做回退阈值，加 8px 滞回，避免两种密度来回抖
+            need = self._left_toolbar_normal_need
+            if need and tb.height() >= need + 8:
+                self._left_toolbar_compact = False
+                self._apply_left_toolbar_qss()
+        else:
+            need = self._left_toolbar_need_height()
+            if need:
+                self._left_toolbar_normal_need = need
+                if tb.height() < need:
+                    self._left_toolbar_compact = True
+                    self._apply_left_toolbar_qss()
+
+    def _schedule_left_toolbar_sync(self):
+        # resizeEvent 里工具栏还没重新布局，等这一轮布局结束再量高度
+        if getattr(self, "_toolbar_sync_scheduled", True) or self.left_toolbar is None:
+            return
+        self._toolbar_sync_scheduled = True
+        QTimer.singleShot(0, self._run_left_toolbar_sync)
+
+    def _run_left_toolbar_sync(self):
+        self._toolbar_sync_scheduled = False
+        self._sync_left_toolbar_density()
 
     # ---------- 主题应用 ----------
     def apply_theme(self, theme_mode=None):
@@ -1810,6 +1888,8 @@ class MainWindow(QMainWindow):
             """
             self.left_toolbar.setStyleSheet(sidebar_style_dark)
             self.right_toolbar.setStyleSheet(sidebar_style_dark)
+            self._left_toolbar_qss_base = sidebar_style_dark
+            self._apply_left_toolbar_qss()
             self.statusBar().setStyleSheet(f"background: {toolbar_bg}; color: #ccc;")
 
             # 设备下拉框样式
@@ -2107,6 +2187,8 @@ class MainWindow(QMainWindow):
         """
         self.left_toolbar.setStyleSheet(sidebar_style)
         self.right_toolbar.setStyleSheet(sidebar_style)
+        self._left_toolbar_qss_base = sidebar_style
+        self._apply_left_toolbar_qss()
 
         self.statusBar().setStyleSheet(f"background: {toolbar_bg}; color: #333;")
         self.device_combo.setStyleSheet("""
@@ -2369,6 +2451,152 @@ class MainWindow(QMainWindow):
     # 160 足够放下 ADB 工具箱的指令管理区（列表本身可滚动）。
     MINI_TOP_MIN_HEIGHT = 160
 
+    def _mini_window_size(self, avail=None):
+        """迷你窗口的最终尺寸：设计值 500×620，但必须收进当前屏幕可用区。
+
+        这里仍用 setFixedSize（内部页面的 minimumSizeHint 会把普通 resize 顶回去），
+        所以在“设计值”这一层做屏幕适配：小屏 / 高缩放下按可用区收一收，保证底边、
+        状态栏和左下角「退出迷你模式」按钮都不会跑到屏幕外。
+        """
+        if avail is None:
+            from utils.dpi import avail_rect
+            avail = avail_rect(self)
+
+        w, h = self.MINI_WINDOW_SIZE
+        if avail is None:
+            return w, h
+        # 24px：左右边框 + 余量；56px：标题栏 + 底边余量
+        return (min(w, max(360, avail.width() - 24)),
+                min(h, max(360, avail.height() - 56)))
+
+    # ---------- 迷你模式：跟随屏幕切换重新适配 ----------
+    # 进出迷你模式都会改窗口 flag，Qt 会重建原生窗口，所以每次进入时重新挂监听。
+    def _attach_mini_screen_watch(self):
+        handle = self.windowHandle()
+        if handle is None:
+            return
+        try:
+            handle.screenChanged.disconnect(self._on_mini_screen_changed)
+        except (TypeError, RuntimeError):
+            pass
+        handle.screenChanged.connect(self._on_mini_screen_changed)
+
+    def _detach_mini_screen_watch(self):
+        handle = self.windowHandle()
+        if handle is None:
+            return
+        try:
+            handle.screenChanged.disconnect(self._on_mini_screen_changed)
+        except (TypeError, RuntimeError):
+            pass
+
+    def _on_mini_screen_changed(self, screen):
+        if not self._mini_mode:
+            return
+        # screen() 的属性要等这一轮窗口迁移结束后才稳定，延后一拍再量
+        QTimer.singleShot(0, lambda s=screen: self._refit_mini_window(s))
+
+    def _virtual_available_rect(self):
+        """所有屏幕可用区的并集（逻辑像素）。
+
+        夹取窗口位置时用并集而不是「当前屏幕」：否则窗口从 A 屏往 B 屏拖时，
+        刚越过边界就会被当前屏的边界拉回来，永远换不了屏。
+        """
+        from PyQt6.QtGui import QGuiApplication
+        rect = None
+        for screen in QGuiApplication.screens():
+            r = screen.availableGeometry()
+            rect = r if rect is None else rect.united(r)
+        return rect
+
+    def _refit_mini_window(self, screen=None):
+        """把迷你窗口收进新屏幕：装不下就缩，超出屏幕边界就贴着边拉回来。"""
+        if not self._mini_mode:
+            return
+        # 迷你窗口必须保持普通状态：Windows 的「从最大化还原」流程偶尔会把
+        # 窗口又切回最大化（此时固定尺寸被忽略，底部状态栏会被任务栏盖住）
+        if self.isMaximized() or self.isFullScreen():
+            self.showNormal()
+        avail = None
+        if screen is not None:
+            try:
+                avail = screen.availableGeometry()
+            except (AttributeError, RuntimeError):
+                avail = None
+        if avail is None:
+            from utils.dpi import avail_rect
+            avail = avail_rect(self)
+        if avail is None:
+            return
+
+        mini_w, mini_h = self._mini_window_size(avail)
+        if (mini_w, mini_h) != (self.width(), self.height()):
+            self.setFixedSize(mini_w, mini_h)
+
+        # 只在超出屏幕时把窗口贴边拉回来（不重新居中，避免拖动时窗口跳动）。
+        # frameGeometry 比 geometry 多出标题栏/边框：用两者的偏移与帧尺寸换算，
+        # 保证「整个窗口（含标题栏）」都落在可用区内，而不只是客户区。
+        bounds = self._virtual_available_rect() or avail
+        frame = self.frameGeometry()
+        frame_w = max(self.width(), frame.width())
+        frame_h = max(self.height(), frame.height())
+        off_x = max(0, self.x() - frame.x())
+        off_y = max(0, self.y() - frame.y())
+        max_x = bounds.right() - frame_w + 1 + off_x
+        max_y = bounds.bottom() - frame_h + 1 + off_y
+        new_x = min(max(self.x(), bounds.left() + off_x), max_x)
+        new_y = min(max(self.y(), bounds.top() + off_y), max_y)
+        if (new_x, new_y) != (self.x(), self.y()):
+            self.move(new_x, new_y)
+
+    def _schedule_mini_refit(self):
+        """窗口几何被外部改动后，等这一轮事件跑完再校正（避免在 moveEvent 里重入）。"""
+        if getattr(self, "_mini_refit_pending", False):
+            return
+        self._mini_refit_pending = True
+        QTimer.singleShot(0, self._run_mini_refit)
+
+    def _run_mini_refit(self):
+        self._mini_refit_pending = False
+        self._refit_mini_window()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        # 迷你模式下窗口位置可能被 Windows 的「还原」异步改写，或用户拖出屏幕；
+        # 统一在事件循环末尾校一次，保证右工具栏/底部状态栏始终可见。
+        if getattr(self, "_mini_mode", False):
+            self._schedule_mini_refit()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() != QEvent.Type.WindowStateChange:
+            return
+        # 迷你模式下被系统异步切回最大化时，等事件循环跑完再拉回普通状态
+        if getattr(self, "_mini_mode", False) and (
+                self.isMaximized() or self.isFullScreen()):
+            QTimer.singleShot(0, self._apply_mini_geometry)
+
+    def _apply_mini_geometry(self):
+        """把迷你窗口锁在屏幕可用区内并居中。
+
+        进入迷你模式时 showNormal() 之后，Windows 的「从最大化还原」并不总是
+        同步完成：有时窗口会先按旧的普通几何摆出来，把右工具栏和底部状态栏
+        推到屏幕外。等布局/窗口管理器这一拍走完再校正一次最稳。
+        """
+        if not self._mini_mode:
+            return
+        if self.isMaximized() or self.isFullScreen():
+            self.showNormal()
+        from utils.dpi import avail_rect
+        avail = avail_rect(self)
+        mini_w, mini_h = self._mini_window_size(avail)
+        if (mini_w, mini_h) != (self.width(), self.height()):
+            self.setFixedSize(mini_w, mini_h)
+        if avail is not None:
+            self.move(
+                avail.left() + max(0, (avail.width() - mini_w) // 2),
+                avail.top() + max(0, (avail.height() - mini_h) // 2))
+
     def _on_mini_mode_toggled(self, checked):
         self.set_mini_mode(checked)
 
@@ -2421,9 +2649,20 @@ class MainWindow(QMainWindow):
             # 先取消最大化再固定到紧凑尺寸（顺序不能反，否则会被最大化状态吃掉）。
             # 用 setFixedSize 而非 resize：主窗口最小宽度被内部页面的 minimumSizeHint
             # 顶到 680，resize 会被布局拉回，setFixedSize 能强制锁定迷你尺寸。
+            # 尺寸按当前屏幕可用区收一次，避免 1366×768@150% 这类小屏上底边出界。
             self.showNormal()
-            self.setFixedSize(*self.MINI_WINDOW_SIZE)
+            mini_w, mini_h = self._mini_window_size()
+            self.setFixedSize(mini_w, mini_h)
+            self._apply_mini_geometry()
+            # showNormal() 返回后窗口管理器可能还会把旧的普通窗口几何恢复回来，
+            # 导致右工具栏 / 底部状态栏跑到屏幕外（偶现）。等事件循环跑完、
+            # 再等 150ms 各校正一次，确保最终落在屏幕可用区内。
+            QTimer.singleShot(0, self._apply_mini_geometry)
+            QTimer.singleShot(150, self._apply_mini_geometry)
+            # 迷你模式下拖到另一块缩放不同的屏幕时，再收一次
+            self._attach_mini_screen_watch()
         else:
+            self._detach_mini_screen_watch()
             self.mini_mode_action.setIcon(qta.icon('fa6s.compress', color='#a3a6b0'))
             self.mini_mode_action.setToolTip("切换迷你模式：只显示 ADB 指令管理区")
             # 还原堆叠区的最小高度，让它在全屏下照旧撑住各页面
@@ -3034,7 +3273,13 @@ class MainWindow(QMainWindow):
         splitter.addWidget(project_group)
         splitter.addWidget(step_group)
         splitter.addWidget(action_group)
-        splitter.setSizes([200, 400, 400])
+        # 三栏默认宽：项目管理保持 210，步骤列表 350，动作卡片 520。
+        # 窗口变大时多出来的宽度按 1:2 分给步骤列表和动作卡片，动作卡片放得下
+        # 两列（约需 620px）就两列，放不下由 ActionCardView 自己退回一列。
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 2)
+        splitter.setSizes([210, 350, 520])
 
         layout.addWidget(splitter)
         old = self.stacked_widget.widget(1)

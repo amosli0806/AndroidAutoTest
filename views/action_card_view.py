@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QScrollArea, QWidget, QGridLayout, QGroupBox,
                              QLineEdit, QSpinBox, QDoubleSpinBox, QPushButton,
                              QSizePolicy, QMessageBox, QToolButton, QDialog,
                              QWIDGETSIZE_MAX)
-from PyQt6.QtCore import pyqtSignal, Qt, QPoint
+from PyQt6.QtCore import pyqtSignal, Qt, QPoint, QSize
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPolygon
 
 from utils.dialogs import WarningDialog
@@ -59,8 +59,11 @@ class ActionCardView(QScrollArea):
         self.setObjectName("ActionCardView")
         self.element_controller = None
         self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 列数会随宽度在 1/2 列之间切换；极端窄屏（单卡都放不下）仍允许横向滚动，
+        # 避免像以前那样把右侧卡片直接裁掉、用户看不到也点不到
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._columns = self.CARD_COLUMNS
         self.container = QWidget()
         self.container.setObjectName("ActionCardScrollContainer")
         self.container.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum)
@@ -172,6 +175,9 @@ class ActionCardView(QScrollArea):
         self._visible_types = new_types
         if persist:
             Settings.save_visible_action_cards(sorted(new_types))
+        # 可见卡片集合变了，最宽卡片的宽度也可能变（比如把最宽的卡片勾掉），
+        # 顺便重新判定一次列数，不然要等下一次窗口缩放才会从一列回到两列
+        self._columns = self._fit_columns()
         self._relayout_cards()
         return True
 
@@ -195,6 +201,8 @@ class ActionCardView(QScrollArea):
            而重建布局要用 QWidget.setLayout 摘旧布局，那会把卡片 reparent 到
            临时宿主上，宿主一销毁卡片就跟着没了。
         """
+        if not self._cards:
+            return
         while self.layout.count():
             self.layout.takeAt(0)
 
@@ -216,23 +224,61 @@ class ActionCardView(QScrollArea):
             else:
                 row_cards[-1].append(card)
             col += 1
-            if col >= self.CARD_COLUMNS:
+            if col >= self._columns:
                 col = 0
                 row += 1
 
-        # 同行两个卡片高度一致（与 _build_cards 里的处理保持一致）
+        # 同行卡片高度一致（与 _build_cards 里的处理保持一致）
         for cards in row_cards:
-            if len(cards) == 2:
+            if len(cards) > 1:
                 max_h = max(c.sizeHint().height() for c in cards)
-                cards[0].setFixedHeight(max_h)
-                cards[1].setFixedHeight(max_h)
+                for c in cards:
+                    c.setFixedHeight(max_h)
 
         if row_cards:
             self._empty_hint.hide()
         else:
-            self.layout.addWidget(self._empty_hint, 0, 0, 1, self.CARD_COLUMNS)
+            self.layout.addWidget(self._empty_hint, 0, 0, 1, self._columns)
             self._empty_hint.show()
 
+
+    def minimumSizeHint(self):
+        """最小宽度按**一列**算，而不是两列。
+
+        三栏 splitter 是不可折叠的（setChildrenCollapsible(False)），如果这里报
+        两列的最小宽（约 620），整个编辑页的最小宽会被顶到窗口放不下，右栏直接
+        被窗口边裁掉——连 resizeEvent 都收不到，永远切不到单列。报一列宽后，
+        页面可以正常缩，缩到放不下两列时由 resizeEvent 自动切成单列。
+        """
+        m = self.layout.contentsMargins()
+        widest = self._card_min_width()
+        return QSize(widest + m.left() + m.right() + 4, 120)
+
+    # ------------------------------------------------------------------
+    # 自适应列数：右栏变窄时 2 列 → 1 列，避免右侧卡片被窗口边裁掉
+    # ------------------------------------------------------------------
+    def _card_min_width(self) -> int:
+        # 按"将要显示"的卡片算，而不是 isVisible()：编辑页不在前台时子控件都算
+        # 不可见，用 isVisible() 会退回默认值，切回页面时列数就不准了
+        widths = [c.minimumSizeHint().width() for c in self._cards
+                  if c.config['type'] in self._visible_types]
+        return max(widths) if widths else 320
+
+    def _fit_columns(self) -> int:
+        margins = self.layout.contentsMargins()
+        spacing = max(0, self.layout.horizontalSpacing())
+        need_two = (2 * self._card_min_width() + spacing
+                    + margins.left() + margins.right() + 8)
+        return 2 if self.viewport().width() >= need_two else 1
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not self._cards:
+            return
+        cols = self._fit_columns()
+        if cols != self._columns:
+            self._columns = cols
+            self._relayout_cards()
 
     def _build_cards(self):
         # 语音播报卡片的默认文案 = 当前配置的唤醒词（设置 → 语音播报 → 唤醒词）。
@@ -369,7 +415,7 @@ class ActionCardView(QScrollArea):
         configs_sorted = [type_to_cfg[t] for t in ordered_types if t in type_to_cfg]
 
         row, col = 0, 0
-        max_cols = self.CARD_COLUMNS
+        max_cols = self._columns
         row_cards = []
         self._cards = []
         for cfg in configs_sorted:
@@ -392,14 +438,12 @@ class ActionCardView(QScrollArea):
                 col = 0
                 row += 1
 
-        # 调整每行内两个卡片高度一致
+        # 调整同一行内卡片高度一致
         for cards in row_cards:
-            if len(cards) == 2:
-                h1 = cards[0].sizeHint().height()
-                h2 = cards[1].sizeHint().height()
-                max_h = max(h1, h2)
-                cards[0].setFixedHeight(max_h)
-                cards[1].setFixedHeight(max_h)
+            if len(cards) > 1:
+                max_h = max(c.sizeHint().height() for c in cards)
+                for c in cards:
+                    c.setFixedHeight(max_h)
 
     def _on_add_step(self, action_type, params, name):
         self.add_step_signal.emit(action_type, params, name)

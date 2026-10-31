@@ -2406,7 +2406,7 @@ class PerfView(QWidget):
                 #PerfPopupPanel {{
                     background-color: {panel_bg};
                     border: 1px solid {panel_border};
-                    border-radius: 6px;
+                    border-radius: 0;
                 }}
                 #PerfPopupPanel QLabel {{
                     color: {text};
@@ -2450,7 +2450,8 @@ class PerfView(QWidget):
                 if panel is not None:
                     panel.setStyleSheet(popup_qss)
             menu_qss = (f"QMenu {{ background: {panel_bg};"
-                        f" border: 1px solid {panel_border}; padding: 0px; }}")
+                        f" border: 1px solid {panel_border}; padding: 0px;"
+                        f" border-radius: 0px; }}")
             for menu in (getattr(getattr(self, "control_bar", None), "_menu", None),
                          getattr(self, "_metrics_menu", None)):
                 if menu is not None:
