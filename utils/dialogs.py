@@ -129,10 +129,7 @@ class ConfirmDeleteDialog(AutoFreeDialog):
         title_layout.addWidget(title_label, 1)
         container_layout.addLayout(title_layout)
 
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("background-color: #e0e0e0; max-height: 1px;")
-        container_layout.addWidget(line)
+        container_layout.addWidget(_make_separator())
 
         container_layout.addWidget(_build_body_scroll(message, detail))
 
@@ -163,15 +160,6 @@ class ConfirmDeleteDialog(AutoFreeDialog):
         if theme_mode is None:
             theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
         Theme.apply_theme_to_widget(self, theme_mode)
-
-    def showEvent(self, event):
-        """出现时缩放淡入（只动 opacity + geometry，不触发布局）"""
-        super().showEvent(event)
-        try:
-            from utils.fx import scale_in
-            scale_in(self)
-        except Exception:
-            pass
 
     @staticmethod
     def ask(parent, title="确认删除", message="确定要删除吗？", detail=None):
@@ -251,14 +239,6 @@ class InputDialog(AutoFreeDialog):
             theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
         Theme.apply_theme_to_widget(self, theme_mode)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        try:
-            from utils.fx import scale_in
-            scale_in(self)
-        except Exception:
-            pass
-
     @staticmethod
     def get_text(parent, title="输入", label="请输入名称:", default_text="", placeholder=""):
         dialog = InputDialog(parent, title, label, default_text, placeholder)
@@ -285,6 +265,19 @@ def _body_max_height() -> int:
     return 380
 
 
+def _make_separator() -> QFrame:
+    """弹窗里唯一的那条分隔线：1px、半透明灰，深浅主题都不用改颜色。
+
+    以前用 HLine + `background-color: #e0e0e0`：深色背景上 #e0e0e0 太亮，
+    像一条白杠（2026-10-31 用户反馈）。改成半透明灰后，浅色底≈#dfdfdf、
+    深色底≈#363636，两边都是「细灰线」。
+    """
+    line = QFrame()
+    line.setFixedHeight(1)          # 不用 HLine：它会画 frame，宽度和对齐都不稳
+    line.setStyleSheet("background-color: rgba(128, 128, 128, 0.28); border: none;")
+    return line
+
+
 def _build_body_scroll(message: str, detail: str = None) -> QScrollArea:
     """正文 + 明细放进同一个滚动区（标题和按钮固定不动）。"""
     body = QWidget()
@@ -299,10 +292,8 @@ def _build_body_scroll(message: str, detail: str = None) -> QScrollArea:
     lay.addWidget(msg_label)
 
     if detail:
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background-color: #e0e0e0; max-height: 1px;")
-        lay.addWidget(sep)
+        # 这里原来还有一条分隔线，与标题下那条一起就变成「两条白杠」
+        # （2026-10-31 用户反馈）。明细本身用灰色小字，不需要再划线区分。
         detail_label = QLabel(detail)
         detail_label.setStyleSheet(
             "font-size: 13px; color: #888; background: transparent;")
@@ -319,7 +310,14 @@ def _build_body_scroll(message: str, detail: str = None) -> QScrollArea:
     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     # 细滚动条：6px 圆角滑块、无箭头（默认样式在弹窗里又宽又抢眼）
     scroll.setStyleSheet("""
-        QScrollArea { background: transparent; border: none; }
+        /* 视口和里面的 body 也要显式透明：QScrollArea 的 viewport 是独立控件，
+           只写 QScrollArea 时它仍取调色板底色 —— 一旦程序没有全局深色调色板
+           （例如单独构造弹窗），深色主题下正文区会变成一块浅灰、白字看不见。
+           选择器必须带上，不能写裸 background（会连带把 QToolTip 弄透明）。 */
+        QScrollArea, QScrollArea > QWidget, QScrollArea > QWidget > QWidget {
+            background: transparent;
+            border: none;
+        }
         QScrollBar:vertical {
             background: transparent;
             width: 6px;
@@ -404,10 +402,7 @@ class WarningDialog(AutoFreeDialog):
         title_layout.addWidget(title_label, 1)
         container_layout.addLayout(title_layout)
 
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("background-color: #e0e0e0; max-height: 1px;")
-        container_layout.addWidget(line)
+        container_layout.addWidget(_make_separator())
 
         container_layout.addWidget(_build_body_scroll(message, detail))
 
@@ -432,14 +427,6 @@ class WarningDialog(AutoFreeDialog):
         if theme_mode is None:
             theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
         Theme.apply_theme_to_widget(self, theme_mode)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        try:
-            from utils.fx import scale_in
-            scale_in(self)
-        except Exception:
-            pass
 
     @staticmethod
     def show_warning(parent, title="提示", message="", detail=None):
@@ -501,10 +488,7 @@ class ErrorDialog(AutoFreeDialog):
         title_layout.addWidget(title_label, 1)
         container_layout.addLayout(title_layout)
 
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("background-color: #e0e0e0; max-height: 1px;")
-        container_layout.addWidget(line)
+        container_layout.addWidget(_make_separator())
 
         container_layout.addWidget(_build_body_scroll(message, detail))
 
@@ -530,14 +514,6 @@ class ErrorDialog(AutoFreeDialog):
         if theme_mode is None:
             theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
         Theme.apply_theme_to_widget(self, theme_mode)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        try:
-            from utils.fx import scale_in
-            scale_in(self)
-        except Exception:
-            pass
 
     @staticmethod
     def show_error(parent, title="错误", message="", detail=None):
@@ -601,10 +577,7 @@ class QuestionDialog(AutoFreeDialog):
         title_layout.addWidget(title_label, 1)
         container_layout.addLayout(title_layout)
 
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("background-color: #e0e0e0; max-height: 1px;")
-        container_layout.addWidget(line)
+        container_layout.addWidget(_make_separator())
 
         container_layout.addWidget(_build_body_scroll(message, detail))
 
@@ -642,14 +615,6 @@ class QuestionDialog(AutoFreeDialog):
         if theme_mode is None:
             theme_mode = ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK else ThemeMode.LIGHT
         Theme.apply_theme_to_widget(self, theme_mode)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        try:
-            from utils.fx import scale_in
-            scale_in(self)
-        except Exception:
-            pass
 
     @staticmethod
     def ask(parent, title="请选择", message="", detail=None,
