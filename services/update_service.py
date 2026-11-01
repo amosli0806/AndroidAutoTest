@@ -327,17 +327,18 @@ def _check_for_update_impl() -> CheckResult:
         return CheckResult(status="error", error=f"网络不可达：{type(e).__name__}")
 
     # 403 且配额已用尽 = 被限流（未认证 60 次/小时，按出口 IP）。
-    # 单独给一句人话，别让用户以为更新本身坏了。
+    # 提示直接写成「请在 HH:MM 时间后重试」，配合 UI 的「检查更新失败，{这句}」。
     if resp.status_code == 403 and resp.headers.get("X-RateLimit-Remaining") == "0":
         reset = resp.headers.get("X-RateLimit-Reset", "")
-        hint = ""
+        when = ""
         try:
             import datetime
-            hint = f"（约 {datetime.datetime.fromtimestamp(int(reset)).strftime('%H:%M')} 恢复）"
+            when = datetime.datetime.fromtimestamp(int(reset)).strftime("%H:%M")
         except (TypeError, ValueError, OSError):
             pass
         logger.warning("检查更新被限流：HTTP 403，配额重置时间 %s", reset)
-        return CheckResult(status="error", error=f"请求过于频繁，请稍后再试{hint}")
+        msg = f"请在 {when} 时间后重试" if when else "请求过于频繁，请稍后再试"
+        return CheckResult(status="error", error=msg)
 
     if resp.status_code == 404:
         # 仓库里还没有任何 Release —— 不算错误。
