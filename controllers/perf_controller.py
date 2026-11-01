@@ -278,6 +278,9 @@ class PerfController(QObject):
         self.perf_worker = None
         self.scenario_worker = None
         self.voice_worker = None      # 语音场景的播报线程
+        # 本次收尾是否要「自动落盘报告与数据」：只有采集自然结束
+        # （到时长 / 语音播完）才置 True，手动点「停止」不自动存。
+        self._auto_save_on_stop = False
         self._alert_cache = {}  # {metric: bool}
         self._last_worker_error = None  # 采样异常去重（同一条只提示一次）
 
@@ -671,15 +674,18 @@ class PerfController(QObject):
                 self.model.add_session(self.current_session)
                 # 刷新最终统计
                 self._refresh_stats(final=True)
-                show_toast(
-                    self.view,
-                    f"采集完成，共 {len(self.current_session.samples)} 个采样点"
-                )
+                n = len(self.current_session.samples)
+                if self._auto_save_on_stop and \
+                        self._auto_save_artifacts(self.current_session):
+                    show_toast(self.view, "采集完成，报告与数据已保存到输出目录")
+                else:
+                    show_toast(self.view, f"采集完成，共 {n} 个采样点")
                 # 消息中心：采集完成留痕（纯新增信号）
-                self.perf_finished.emit(len(self.current_session.samples))
+                self.perf_finished.emit(n)
                 # 不再自动弹「性能劣化告警」：基线多起来后对比容易误报，
                 # 劣化情况统一看报告里的「基线对比」页（2026-10-30 用户要求）
             self.current_session = None
+        self._auto_save_on_stop = False
 
         self.view.set_state(self.view.STATE_IDLE)
 
@@ -1009,6 +1015,36 @@ class PerfController(QObject):
         if self.logs_view:
             self.logs_view.add_log(f"[性能] 采集异常：{msg}", "warning")
 
+    def _auto_save_artifacts(self, session) -> bool:
+        """采集自然结束后，把报告与数据自动写到「输出目录 / 设备号」。
+
+        不弹文件对话框、不打开文件夹 —— 用户要的是「跑完就有文件，省得手动点
+        生成报告/导出，也不会忘了点」（2026-11-01）。返回是否成功。
+        """
+        if session is None or not session.samples:
+            return False
+        try:
+            import json as _json
+            from utils.perf_report import PerfReportGenerator
+            folder = self._device_export_dir()
+            os.makedirs(folder, exist_ok=True)
+            html = os.path.join(folder, f"perf_report_{session.name}.html")
+            data = os.path.join(folder, f"perf_{session.name}.json")
+            baseline = self.model.find_baseline_for_package(
+                session.app_package, session.metrics)
+            PerfReportGenerator.generate(session, html, baseline=baseline)
+            with open(data, "w", encoding="utf-8") as f:
+                _json.dump(session.to_dict(), f, ensure_ascii=False, indent=2)
+            if self.logs_view:
+                self.logs_view.add_log(
+                    f"[性能] 报告与数据已保存：{html}", "info")
+            return True
+        except Exception as e:                       # noqa: BLE001 - 自动保存失败不致命
+            logger.exception("自动保存报告/数据失败")
+            ErrorDialog.show_error(
+                self.view, "自动保存失败", f"{type(e).__name__}: {e}")
+            return False
+
     def _on_worker_finished(self):
         """采集线程自然结束（达到预设监控时长）→ 走完整停止收尾。
 
@@ -1024,6 +1060,7 @@ class PerfController(QObject):
                 "info",
             )
         show_toast(self.view, f"已达到监控时长（{minutes} 分钟），自动停止")
+        self._auto_save_on_stop = True
         self._on_stop()
 
     # ------------------------------------------------------------------
@@ -1991,10 +2028,11 @@ class PerfController(QObject):
         """播报结束：停采集、出报告。失败/被打断也照常收尾（数据已经采到了）。"""
         if self.view.get_state() != self.view.STATE_SCENARIO:
             return
+        self._auto_save_on_stop = True
         self._on_stop()
-        if ok:
-            show_toast(self.view, "语音场景完成")
-        else:
+        # 自动保存成功后 _on_stop 会弹「报告与数据已保存」，这里别再盖掉；
+        # 失败/中断时补一句结果
+        if not ok:
             show_toast(self.view, f"语音场景结束：{message or '已中断'}", duration=2600)
 
     def _on_scenario_finished(self):
@@ -2176,15 +2214,8 @@ class PerfController(QObject):
                 session.app_package, session.metrics)
             PerfReportGenerator.generate(session, path, baseline=baseline)
             show_toast(self.view, "报告已生成")
-            # 可选：打开所在文件夹
-            import subprocess, sys
-            folder = os.path.dirname(path)
-            if sys.platform == "win32":
-                os.startfile(folder)
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", folder])
-            else:
-                subprocess.Popen(["xdg-open", folder])
+            # 不再自动打开所在文件夹：保存对话框里用户已经知道存哪了，
+            # 跳转反而打断手头的操作（2026-11-01 用户要求）
         except Exception as e:
             ErrorDialog.show_error(self.view, "报告生成失败", str(e))
 

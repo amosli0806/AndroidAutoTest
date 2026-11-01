@@ -1290,7 +1290,7 @@ class PerfView(QWidget):
         self.report_btn.clicked.connect(self.report_requested.emit)
         b_layout.addWidget(self.report_btn)
 
-        self.export_csv_btn = QPushButton("导出")
+        self.export_csv_btn = QPushButton("导出数据")
         self.export_csv_btn.clicked.connect(self.export_csv_requested.emit)
         b_layout.addWidget(self.export_csv_btn)
 
