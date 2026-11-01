@@ -791,13 +791,6 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(form)
 
-        # 试听反馈：默认隐藏（空标签也会占一行高度），有内容时才显示
-        self.voice_test_result = QLabel("")
-        self.voice_test_result.setObjectName("SettingsPageSubtitle")
-        self.voice_test_result.setWordWrap(True)
-        self.voice_test_result.setVisible(False)
-        layout.addWidget(self.voice_test_result)
-
         hint = QLabel(
             "音色、输出设备、语速、循环都与「语音播报」页共用，保存后立即生效；"
             "响度跟随系统音量。\n"
@@ -1040,6 +1033,12 @@ class SettingsDialog(QDialog):
         """用户切换引擎时刷新音色下拉。"""
         self._load_voice_tones()
 
+    @staticmethod
+    def _toast(message: str, duration: int = 2000):
+        """底部居中的轻提示。试听的进度/失败都走这里，不占页面高度。"""
+        from utils.toast import show_toast
+        show_toast(message=message, duration=duration)
+
     def _apply_voice_selection(self):
         """把下拉里**当前**的选择套到引擎上，但不落盘。
 
@@ -1061,7 +1060,8 @@ class SettingsDialog(QDialog):
             if hasattr(self, "voice_rate_spin"):
                 service.set_rate(int(self.voice_rate_spin.value()))
         except VoiceError as e:
-            self._set_voice_test_result(str(e))
+            # 试听相关的问题一律 toast，不占页面高度（2026-11-01 用户要求）
+            self._toast(str(e))
 
     def _save_voice_config(self):
         """写回语音配置并立即套到引擎上：试听和用例里的语音步骤都用这套"""
@@ -1100,11 +1100,6 @@ class SettingsDialog(QDialog):
         import re
         return [w.strip() for w in re.split(r"[,，]", text or "") if w.strip()]
 
-    def _set_voice_test_result(self, text: str):
-        """试听反馈：没内容就整条隐藏（空 QLabel 也会白占一行高度）。"""
-        self.voice_test_result.setText(text or "")
-        self.voice_test_result.setVisible(bool((text or "").strip()))
-
     def _on_test_voice(self):
         if self._voice_test_worker is not None and self._voice_test_worker.isRunning():
             return
@@ -1113,7 +1108,6 @@ class SettingsDialog(QDialog):
         # 进度只用按钮文案表达（2026-11-01 用户要求去掉下面那行「正在试听…」）：
         # 试听只有一两秒，再单占一行反而更吵
         self.voice_test_btn.setText("试听中…")
-        self._set_voice_test_result("")
 
         # 试听念的就是**唤醒词本身**：用户要确认的是"车机听不听得见这句话"，
         # 而用例里第一句正是它。留空时按同一套规则回落到默认唤醒词。
@@ -1127,7 +1121,8 @@ class SettingsDialog(QDialog):
     def _on_test_voice_done(self, ok: bool, msg: str):
         self.voice_test_btn.setEnabled(True)
         self.voice_test_btn.setText("试听")
-        self._set_voice_test_result("" if ok else f"试听失败：{msg}")
+        if not ok:
+            self._toast(f"试听失败：{msg}", duration=2600)
 
     # ------------------------------------------------------------------
     # AI 连接自测
