@@ -766,27 +766,37 @@ class SettingsDialog(QDialog):
 
         # 唤醒词：语音页「唤醒词」按钮追加到用例末尾的那句。
         # 车机助手得先被叫醒才听得进后面的指令，所以这句往往是每条用例的第一句。
+        # 「试听」紧跟在输入框右侧（2026-11-01 用户要求）：试听念的就是这一句，
+        # 贴在旁边比单独占一行更直观，也省掉一行高度。
         self.wake_word_edit = QLineEdit()
         self.wake_word_edit.setMinimumWidth(340)
         self.wake_word_edit.setPlaceholderText("例如：你好虫师")
-        form.addRow("唤醒词:", self.wake_word_edit)
 
-        layout.addLayout(form)
-
-        # 试听：用当前选中的音色与输出设备念一句，确认车机那边真能听见
-        test_row = QHBoxLayout()
-        test_row.setSpacing(10)
         self.voice_test_btn = QPushButton("试听")
         self.voice_test_btn.setObjectName("aiTestBtn")
         self.voice_test_btn.setFixedHeight(30)
+        # 文案会在「试听 / 试听中…」之间切换，固定宽度免得整行跟着跳
+        self.voice_test_btn.setFixedWidth(86)
+        self.voice_test_btn.setToolTip("用当前音色、设备与语速念一遍唤醒词")
         self.voice_test_btn.clicked.connect(self._on_test_voice)
-        test_row.addWidget(self.voice_test_btn)
 
+        wake_row = QHBoxLayout()
+        wake_row.setContentsMargins(0, 0, 0, 0)
+        wake_row.setSpacing(8)
+        wake_row.addWidget(self.wake_word_edit, 1)
+        wake_row.addWidget(self.voice_test_btn)
+        wake_holder = QWidget()
+        wake_holder.setLayout(wake_row)
+        form.addRow("唤醒词:", wake_holder)
+
+        layout.addLayout(form)
+
+        # 试听反馈：默认隐藏（空标签也会占一行高度），有内容时才显示
         self.voice_test_result = QLabel("")
         self.voice_test_result.setObjectName("SettingsPageSubtitle")
         self.voice_test_result.setWordWrap(True)
-        test_row.addWidget(self.voice_test_result, 1)
-        layout.addLayout(test_row)
+        self.voice_test_result.setVisible(False)
+        layout.addWidget(self.voice_test_result)
 
         hint = QLabel(
             "音色、输出设备、语速、循环都与「语音播报」页共用，保存后立即生效；"
@@ -1051,7 +1061,7 @@ class SettingsDialog(QDialog):
             if hasattr(self, "voice_rate_spin"):
                 service.set_rate(int(self.voice_rate_spin.value()))
         except VoiceError as e:
-            self.voice_test_result.setText(str(e))
+            self._set_voice_test_result(str(e))
 
     def _save_voice_config(self):
         """写回语音配置并立即套到引擎上：试听和用例里的语音步骤都用这套"""
@@ -1090,6 +1100,11 @@ class SettingsDialog(QDialog):
         import re
         return [w.strip() for w in re.split(r"[,，]", text or "") if w.strip()]
 
+    def _set_voice_test_result(self, text: str):
+        """试听反馈：没内容就整条隐藏（空 QLabel 也会白占一行高度）。"""
+        self.voice_test_result.setText(text or "")
+        self.voice_test_result.setVisible(bool((text or "").strip()))
+
     def _on_test_voice(self):
         if self._voice_test_worker is not None and self._voice_test_worker.isRunning():
             return
@@ -1101,7 +1116,7 @@ class SettingsDialog(QDialog):
         # 而用例里第一句正是它。留空时按同一套规则回落到默认唤醒词。
         from models.voice_model import DEFAULT_WAKE_WORD
         wake_word = (self.wake_word_edit.text() or "").strip() or DEFAULT_WAKE_WORD
-        self.voice_test_result.setText(
+        self._set_voice_test_result(
             f"正在用当前音色与输出设备试听「{wake_word}」…")
 
         self._voice_test_worker = VoiceTestWorker(wake_word, self)
@@ -1111,7 +1126,7 @@ class SettingsDialog(QDialog):
     def _on_test_voice_done(self, ok: bool, msg: str):
         self.voice_test_btn.setEnabled(True)
         self.voice_test_btn.setText("试听")
-        self.voice_test_result.setText("" if ok else f"试听失败：{msg}")
+        self._set_voice_test_result("" if ok else f"试听失败：{msg}")
 
     # ------------------------------------------------------------------
     # AI 连接自测
