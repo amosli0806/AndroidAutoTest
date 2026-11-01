@@ -1110,14 +1110,15 @@ class SettingsDialog(QDialog):
             return
         self._apply_voice_selection()      # 先套上当前选择，否则听到的是旧的
         self.voice_test_btn.setEnabled(False)
+        # 进度只用按钮文案表达（2026-11-01 用户要求去掉下面那行「正在试听…」）：
+        # 试听只有一两秒，再单占一行反而更吵
         self.voice_test_btn.setText("试听中…")
+        self._set_voice_test_result("")
 
         # 试听念的就是**唤醒词本身**：用户要确认的是"车机听不听得见这句话"，
         # 而用例里第一句正是它。留空时按同一套规则回落到默认唤醒词。
         from models.voice_model import DEFAULT_WAKE_WORD
         wake_word = (self.wake_word_edit.text() or "").strip() or DEFAULT_WAKE_WORD
-        self._set_voice_test_result(
-            f"正在用当前音色与输出设备试听「{wake_word}」…")
 
         self._voice_test_worker = VoiceTestWorker(wake_word, self)
         self._voice_test_worker.done.connect(self._on_test_voice_done)
