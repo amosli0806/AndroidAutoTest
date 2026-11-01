@@ -148,7 +148,7 @@ def main():
     serve_zip(zip_path, digest)
 
     os.environ[us.UPDATE_API_OVERRIDE_ENV] = f"http://127.0.0.1:{PORT}/latest"
-    res = us.check_for_update()
+    res = us.check_for_update(force=True)
     check("本地桩服务能查到新版本", res.status == "update_available", res.status)
     info = res.info
     check("拿到的期望摘要与实际一致", info.sha256 == digest)
@@ -189,7 +189,7 @@ def main():
     # 摘要不符必须拦住，且不留半成品
     build_package(zip_path)
     serve_zip(zip_path, "0" * 64)
-    res_bad = us.check_for_update()
+    res_bad = us.check_for_update(force=True)
     err = ""
     try:
         us.install_prepare(res_bad.info, on_stage=lambda s: None)
@@ -201,7 +201,7 @@ def main():
     build_package(zip_path, with_internal=False)
     digest2 = hashlib.sha256(open(zip_path, "rb").read()).hexdigest()
     serve_zip(zip_path, digest2)
-    res_inc = us.check_for_update()
+    res_inc = us.check_for_update(force=True)
     err2 = ""
     try:
         us.install_prepare(res_inc.info, on_stage=lambda s: None)
@@ -221,7 +221,7 @@ def main():
     build_package(zip_path)
     digest3 = hashlib.sha256(open(zip_path, "rb").read()).hexdigest()
     serve_zip(zip_path, digest3)
-    staging = us.install_prepare(us.check_for_update().info, on_stage=lambda s: None)
+    staging = us.install_prepare(us.check_for_update(force=True).info, on_stage=lambda s: None)
     check("重新准备好一份可用的暂存", os.path.isdir(staging), staging)
     check("pending_staged() 认得它", os.path.abspath(us.pending_staged()) == os.path.abspath(staging))
 
@@ -304,7 +304,7 @@ def main():
     serve_zip(zip_path, hashlib.sha256(open(zip_path, "rb").read()).hexdigest())
     serve_patch(patch_path, patch_digest)
 
-    res_p = us.check_for_update()
+    res_p = us.check_for_update(force=True)
     check("查到了增量补丁", us.patch_available(res_p.info), res_p.info.patch_name)
     check("补丁摘要与期望一致", res_p.info.patch_sha256 == patch_digest)
     check("补丁起点 = 本机当前版本", res_p.info.patch_from == _CUR, res_p.info.patch_from)
@@ -338,7 +338,7 @@ def main():
     # 负例：Release 里没有补丁 -> 老老实实走全量，不能报"有增量"
     us._install_root = real_install_root
     serve_patch("", "")
-    res_np = us.check_for_update()
+    res_np = us.check_for_update(force=True)
     check("没有补丁时 patch_available 为假", not us.patch_available(res_np.info))
 
     shutil.rmtree(staged_root, ignore_errors=True)
