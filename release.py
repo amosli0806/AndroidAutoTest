@@ -650,6 +650,16 @@ def commit_and_push(commit_msg):
     print("  main 已推送")
 
 
+def remote_tag_exists(tag):
+    """远程是否已有同名 tag（发版前查一下，避免推到一半才失败）。"""
+    try:
+        r = subprocess.run(["git", "ls-remote", "--tags", "origin", tag],
+                           cwd=ROOT, capture_output=True, text=True, timeout=30)
+        return bool((r.stdout or "").strip())
+    except Exception:
+        return False           # 查不到就按「没有」处理，交给 push 自己去撞
+
+
 def push_tag(tag, force=False):
     """打 tag 并推送（触发 CI）。幂等：先删本地同名 tag。"""
     r = subprocess.run(["git", "tag", "-l", tag], cwd=ROOT,
@@ -702,6 +712,25 @@ def do_release(version, dry_run, no_release, final=False, force_tag=False):
         print("\n== 演练结束，未做任何提交/推送/打 tag。请自行检查上面改动。 ==")
         sys.exit(0)
 
+    # ① 发版前先看远程有没有同名 tag：失败要在这里退出，别等写完 preview.json、
+    #    提交完才撞上（那样本机会指向一个根本没发出去的版本）。
+    if not no_release and remote_tag_exists(tag) and not force_tag:
+        print(f"""
+  !! 远程已经有 {tag} 这个 tag 了。
+
+     - 上次发到一半失败、想重发同一版：加 --force-tag 重推
+       例如：python release.py {version} --force-tag
+     - 这一版已经正常发过：请改版本号发下一个
+""")
+        sys.exit(1)
+
+    # ② 再把本机内测通道指向这一版（用户要求「先建文件再发」）。
+    # 发版成功后 CI 一建好 Release，本机重启就能收到，不用再单独去写文件。
+    # --no-release 不写（根本没发版）；dry_run 已在上面返回。
+    wrote = False
+    if not final and not no_release:
+        wrote = write_preview_tag(tag)
+
     commit_and_push(f"发布 {tag}")
 
     if no_release:
@@ -714,30 +743,30 @@ def do_release(version, dry_run, no_release, final=False, force_tag=False):
     push_tag(tag, force=force_tag)
 
     if not final:
-        # 本机自动切成内测通道：省掉手动建/改 data/preview.json
-        wrote = write_preview_tag(tag)
         print(f"""
 == 已发出【预发布】{tag} ==
   GitHub 的 /releases/latest 不会返回预发布，所以普通用户**收不到**，
   仍停在上一个正式版。""")
         if wrote:
-            print(f"""  本机已自动指向 {tag}：完全退出虫师后重新启动，点「检查更新」即可收到。
-  ⚠ 这台机器现在只认 {tag} 这一个 tag，验完记得转正（会自动清掉）：
-    python release.py promote {tag}
+            print(f"""  本机内测通道**在发版前就指好了**，指向 {tag}：
+    等 CI 建好 Release（约 6 分钟），完全退出虫师后重新启动，
+    点「检查更新」即可收到。
+  ⚠ 这台机器现在只认 {tag} 这一个 tag，验完记得转正：
+    python release.py manual-promote {tag}
 """)
         else:
-            print(f"""  本机没能自动配置，手动二选一：
+            print(f"""  本机没能自动配置（安装目录里没有 data 目录？），手动二选一：
     - 安装目录 data\\preview.json 写 {{"tag": "{tag}"}}
     - 环境变量 CHONGSHI_UPDATE_TAG={tag}
   验完确认没问题，再运行：
-    python release.py promote {tag}
+    python release.py manual-promote {tag}
 """)
         return
 
     # --final：等 CI 完成后转正
     rel = wait_for_release(tag)
     if not rel:
-        print(f"\n  改为手动收尾：CI 完成后运行 python release.py promote {tag}")
+        print(f"\n  改为手动收尾：CI 完成后运行 python release.py manual-promote {tag}")
         return
     rc = do_promote(tag)
     if rc == 0:
