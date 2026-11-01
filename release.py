@@ -9,7 +9,8 @@
     python release.py 1.5.17                # 发版：改版本号 → 提交 → 推送 → 打 tag（CI 建**预发布**）
     python release.py 1.5.17 --final        # 发版并**自动转正**（打 tag → 等 CI → 取消 pre-release）
     python release.py 1.5.17 --no-release   # 只改版本号 + 推送，不打 tag 不发版
-    python release.py promote               # 把**最新的预发布**转正（会二次确认）
+    python release.py manual-promote        # 手动转正：打印详细点击步骤并打开网页（推荐）
+    python release.py promote               # 自动转正（有令牌走 API，没有走 Actions）
     python release.py promote v1.5.17       # 指定 tag 转正
     python release.py clear-preview         # 只清本机的内测通道文件 data/preview.json
     python release.py 1.5.17 --dry-run      # 演练：只打印会做什么
@@ -254,7 +255,7 @@ def get_token():
     return ""
 
 
-def api(method, path, payload=None, token=None, allow_404=False):
+def api(method, path, payload=None, token=None, allow_404=False, quiet=False):
     """调 GitHub API，返回 (状态码, 解析后的 JSON 或 None)。网络错误返回 (0, None)。"""
     url = path if path.startswith("http") else API_BASE + path
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
@@ -275,10 +276,12 @@ def api(method, path, payload=None, token=None, allow_404=False):
         if e.code == 404 and allow_404:
             return 404, None
         body = e.read().decode("utf-8", "replace")[:300]
-        print(f"    !! API {method} {path} → HTTP {e.code}: {body}")
+        if not quiet:
+            print(f"    !! API {method} {path} → HTTP {e.code}: {body}")
         return e.code, None
     except Exception as e:  # noqa: BLE001 - 网络问题统一降级处理
-        print(f"    !! API 请求失败: {type(e).__name__}: {e}")
+        if not quiet:
+            print(f"    !! API 请求失败: {type(e).__name__}: {e}")
         return 0, None
 
 
@@ -315,12 +318,17 @@ def do_status():
             print("\n  预发布：无")
 
     # 本机内测通道：有的话这台机器只会查那个固定 tag，正式版反而收不到
+    latest_tag = (latest or {}).get("tag_name")
     for p in preview_paths():
         if os.path.exists(p):
+            cur = preview_tag_of(p)
             print(f"\n  ⚠ 内测通道文件：{p}")
-            print(f"     当前指向 {preview_tag_of(p) or '(空 tag)'}"
-                  f" —— 转正后请清掉，否则收不到后续正式版")
-            print(f"     清理命令：python release.py clear-preview")
+            print(f"     当前指向 {cur or '(空 tag)'}")
+            if cur and cur == latest_tag:
+                print("     它已经是正式版了 → 建议清理掉，否则会一直只查这个固定 tag")
+            else:
+                print("     转正后请清掉，否则收不到后续正式版")
+            print("     清理命令：python release.py clear-preview")
 
     print(f"\n  发布页：{RELEASES_PAGE}\n")
 
@@ -418,6 +426,74 @@ def _promote_via_actions(tag, dry_run=False):
         print(f"     最近一次运行：{run_url}")
     print("     列表里没有这次运行 = 工作流没触发（多半是 promote.yml 还没在 main 上）。")
     return 1
+
+
+def do_manual_promote(tag=None):
+    """打印手动转正的详细步骤（在 GitHub 网页上点），并打开浏览器。
+
+    给不想用 API / Actions 的人用：全程在网页上点，脚本只负责把步骤讲清楚。
+    """
+    token = get_token()
+    _code, rels = api("GET", "/releases?per_page=15", token=token, quiet=True)
+    previews = [r for r in (rels or []) if r.get("prerelease")]
+    if rels and not previews:
+        print("  当前没有预发布可转正。")
+        return 1
+
+    if not tag and previews:
+        if len(previews) == 1:
+            tag = previews[0].get("tag_name")
+        else:
+            print("  存在的预发布：")
+            for r in previews:
+                print(f"    {r.get('tag_name')}")
+            tag = input("\n  要转正哪个？（输入 tag，如 v1.5.17）：").strip()
+
+    tag = (tag or "").strip()
+    if tag and not tag.startswith("v"):
+        tag = "v" + tag
+
+    url = f"https://github.com/{REPO}/releases/tag/{tag}" if tag else RELEASES_PAGE
+    name = tag or "那个带 Pre-release 标记的版本"
+
+    print(f"""
+== 手动把预发布变成正式版 ==
+
+  要做的事：把 {name} 的「预发布」标记去掉。去掉之后它就是最新正式版，
+  所有用户下次点「检查更新」就能收到。
+
+  ────────────────────────────────────────────────
+  第 1 步  打开这个页面（脚本已经试着帮你打开浏览器，没弹出来就手动复制）
+           {url}
+
+  第 2 步  找到 {name}。它现在左边有个橙色 / 灰色的 "Pre-release" 标记
+
+  第 3 步  在它右上角点铅笔图标（鼠标悬停会显示 "Edit"）
+
+  第 4 步  往下滚，会看到两个勾选框：
+             [✓] Set as a pre-release        ← 把这个勾**去掉**
+             [ ] Set as the latest release   ← 把这个勾**勾上**（重要）
+           再往下的 "Set as a draft" 不要动、不要勾
+
+  第 5 步  拉到页面最底部，点绿色按钮 "Update release"
+
+  第 6 步  回到发布列表刷新，{name} 左边应该变成绿色 "Latest"，
+           橙色 "Pre-release" 消失 —— 这就成功了
+  ────────────────────────────────────────────────
+
+  怎么确认真的生效：
+    用另一台还是旧版本的电脑，虫师菜单 →「检查更新」，应该提示 {name}
+
+  转正后清掉本机的内测通道文件（否则这台机器会一直只查 {name}）：
+    python release.py clear-preview
+""")
+
+    try:
+        import webbrowser
+        webbrowser.open(url)
+    except Exception:
+        pass
+    return 0
 
 
 def do_promote(tag=None, assume_yes=False, dry_run=False):
@@ -686,7 +762,7 @@ def interactive_menu():
     print("  1) 只上传代码到 GitHub（不改版本号、不发版）")
     print("  2) 发【预发布】（改版本+提交+推送+打tag，并让本机自动能收到；普通用户收不到）")
     print("  3) 发【正式版】（同上，CI 完成后自动转正）")
-    print("  4) 把预发布转正（取消 pre-release，全量）")
+    print("  4) 手动转正（打开网页 + 详细点击步骤，推荐）")
     print("  5) 查看发布状态（最新正式版 / 预发布列表）")
     print("  6) 改版本号并推送，但暂不发版（不打 tag）")
     print("  7) 仅补打 tag 触发发版（版本号已改好时用）")
@@ -703,7 +779,7 @@ def interactive_menu():
             sys.exit(1)
         do_release(v, dry_run=False, no_release=False, final=(choice == "3"))
     elif choice == "4":
-        do_promote()
+        do_manual_promote()
     elif choice == "5":
         do_status()
     elif choice == "6":
@@ -746,6 +822,11 @@ def main():
         clear_preview_tag()
         return
 
+    if first in ("manual-promote", "manual_promote"):
+        tag = next((a for a in args[1:] if not a.startswith("--")), None)
+        do_manual_promote(tag)
+        return
+
     if first == "promote":
         tag = next((a for a in args[1:] if not a.startswith("--")), None)
         do_promote(tag,
@@ -778,7 +859,8 @@ def main():
         print("  python release.py 1.5.17 --final       # 发正式版（CI 后自动转正）")
         print("  python release.py 1.5.17 --no-release  # 改版本号+推送，不打tag")
         print("  python release.py 1.5.17 --dry-run     # 演练")
-        print("  python release.py promote [v1.5.17]    # 预发布转正")
+        print("  python release.py manual-promote [tag] # 手动转正（打印步骤+开网页）")
+        print("  python release.py promote [v1.5.17]    # 自动转正（需令牌或 Actions）")
         print("  python release.py --tag-only v1.5.17   # 仅打tag")
         sys.exit(1)
 
