@@ -217,6 +217,13 @@ jobs:
         with:
           name: 虫师 ${{ github.ref_name }}
           body_path: release_notes.md
+          # 默认发「预发布」= 灰度开关（2026-11-01）。
+          # GitHub 的 /releases/latest 只返回**非预发布**的 Release，所以标了
+          # prerelease 的版本普通客户端一律查不到，会继续停在上一个正式版。
+          # 流程：CI 建预发布 → 开发者本机验（应用内检查更新 / 手动下载）→ 没问题后
+          # 到 Release 网页取消勾选「Set as a pre-release」→ 这一步做完才算全量发布。
+          # 紧急情况想跳过验证：把下面改成 false，或在网页上直接取消勾选。
+          prerelease: true
           files: |
             chongshi-*-win64.zip
             patch-*-to-*.dpatch

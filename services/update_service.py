@@ -25,7 +25,7 @@ from typing import Callable, Optional
 import requests
 from packaging.version import InvalidVersion, Version
 
-from utils.app_paths import get_app_dir
+from utils.app_paths import data_path, get_app_dir
 from utils.version import APP_VERSION
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,21 @@ UPDATE_ASSET_PREFIX = "chongshi-"
 
 # 把接口地址整个换掉的开关（本地联调、或以后想改成内网镜像时用得上）。
 UPDATE_API_OVERRIDE_ENV = "CHONGSHI_UPDATE_API"
+
+# ---------- 内测通道（定向发版） ----------
+# 背景：GitHub 的 /releases/latest 只返回「最新的一条非草稿、非预发布 Release」，
+# 所以 CI 若把 Release 标成预发布（prerelease），普通客户端一律看不到 —— 这正好
+# 是一次天然的灰度：先发预发布给自己验，确认没问题再去网页上取消勾选转正。
+#
+# 但开发者自己也走 latest 的话，同样看不到预发布。于是留两个本机开关（只影响
+# 这一台机器，不改变任何人的行为）：
+#   1) 环境变量 CHONGSHI_UPDATE_TAG=v1.5.15     —— 临时验证用
+#   2) 安装目录下 data/preview.json = {"tag": "v1.5.15"}  —— 长期内测机用
+# 命中后改走 /releases/tags/<tag>，预发布也能取到，从而在应用内走完整自动更新链路
+# （含 updater 换文件、补丁组装、sha256 校验），这正是内测要验的东西。
+# 注意 data/ 不打进安装包，这个文件不会随版本发给用户。
+UPDATE_TAG_OVERRIDE_ENV = "CHONGSHI_UPDATE_TAG"
+PREVIEW_TAG_FILE = "preview.json"
 
 # ---------- 下载加速镜像 ----------
 # 国内直连 GitHub 的文件实体（objects.githubusercontent.com）经常超时/极慢，
@@ -177,10 +192,37 @@ def is_enabled() -> bool:
     return bool(UPDATE_REPO and "/" in UPDATE_REPO)
 
 
+def _preview_tag() -> str:
+    """本机指定的内测 tag（命中则检查这一条 Release，预发布也算）。
+
+    优先级：环境变量 > data/preview.json。都拿不到就返回空串，走正式通道。
+    任何异常都按「没配内测」处理 —— 这只是一个开发者开关，不该影响正常检查。
+    """
+    tag = os.environ.get(UPDATE_TAG_OVERRIDE_ENV, "").strip()
+    if tag:
+        return tag
+    try:
+        path = data_path(PREVIEW_TAG_FILE)
+        if not os.path.exists(path):
+            return ""
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        tag = str((data or {}).get("tag", "") or "").strip()
+        return tag
+    except Exception as e:
+        logger.warning("读取 %s 失败（按正式通道检查）: %s", PREVIEW_TAG_FILE, e)
+        return ""
+
+
 def _api_url() -> str:
     override = os.environ.get(UPDATE_API_OVERRIDE_ENV, "").strip()
     if override:
         return override
+    tag = _preview_tag()
+    if tag:
+        # /releases/tags/<tag> 能取到预发布；/releases/latest 会跳过预发布
+        logger.info("走内测通道：检查 tag %s（预发布也能取到）", tag)
+        return f"https://api.github.com/repos/{UPDATE_REPO}/releases/tags/{tag}"
     return f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
 
 
@@ -258,7 +300,10 @@ def check_for_update() -> CheckResult:
         return CheckResult(status="error", error=f"网络不可达：{type(e).__name__}")
 
     if resp.status_code == 404:
-        # 仓库里还没有任何 Release —— 不算错误
+        # 仓库里还没有任何 Release —— 不算错误。
+        # 内测 tag 写错 / 那个 tag 还没发 Release 时同样是 404，记一行日志方便排查
+        if "/releases/tags/" in url:
+            logger.warning("内测 tag 对应的 Release 不存在：%s", url)
         return CheckResult(status="up_to_date")
     if resp.status_code != 200:
         logger.warning("检查更新失败: HTTP %s %s", resp.status_code, resp.text[:200])

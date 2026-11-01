@@ -113,7 +113,32 @@ data/                运行期数据（不进仓库，见下）
 
 - 应用启动 4 秒后会**在后台线程**检查 GitHub Releases（不阻塞启动，失败静默只写日志）；
   菜单 →「检查更新」可手动查，有新版会在菜单项和菜单按钮上亮红点
-- 发版三步：改 `utils/version.py` 的 `APP_VERSION` → 提交推送 → `git tag v1.1.4 && git push origin v1.1.4`
+
+### 发版流程：先发预发布自测，再转正全量
+
+CI 默认把 Release 造成**预发布**（`release.yml` 的 `prerelease: true`）。
+GitHub 的 `/releases/latest` 只返回「非草稿、**非预发布**」的 Release，
+所以预发布期间普通客户端一律查不到，仍停在上一个正式版 —— 这就是灰度开关。
+
+1. 改 `utils/version.py` 的 `APP_VERSION` → 提交推送 → `git tag v1.5.15 && git push origin v1.5.15`
+2. CI 自动打包、跑自测、建**预发布** Release（带全量包与增量补丁）
+3. **自己先验**：本机任选一种方式让它走内测通道
+   - 临时：设环境变量 `CHONGSHI_UPDATE_TAG=v1.5.15`
+   - 长期：安装目录放 `data/preview.json`，内容 `{"tag": "v1.5.15"}`
+   
+   然后应用内「检查更新」就能收到这一条。**走的是和用户完全相同的自动更新链路**
+   （下载 → sha256 校验 → updater 替换 → 重启），这正是内测要验的东西。
+4. 确认没问题 → 到 Release 网页取消勾选「Set as a pre-release」→ 这一步做完才是全量发布
+
+> ⚠️ **内测必须用目标版本号打预发布**（`v1.5.15`），不要用 `v1.5.15-rc.1`。
+> 增量补丁按「上一个 tag → 本 tag」命名，中间插一个 rc 会让正式版的补丁变成
+> `patch-1.5.15-rc.1-to-1.5.15`，普通用户（1.5.14）匹配不上，全都走 440MB 全量包。
+>
+> ⚠️ 验证完成后记得**删掉 `data/preview.json` / 清掉环境变量**，否则这台机器会一直
+> 盯着那个固定 tag，收不到后续的正式版本。
+>
+> 验证不过就删 Release、删 tag，修复后发下一个版本号 —— tag 不能复用指向别的 commit。
+
 - `.github/workflows/release.yml` 会自动：校验 tag 与代码版本一致 → 跑更新器自测 → 打包主程序与更新器
   → 校验产物完整性 → 打 zip → 校验包内不含运行期数据 → 创建 Release 并上传产物
 - Release 的说明就是应用内「更新说明」显示的内容，发完可在网页上编辑
