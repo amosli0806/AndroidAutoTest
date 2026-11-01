@@ -597,7 +597,8 @@ def set_version(version, dry_run):
         sys.exit(1)
     if not dry_run:
         open(VERSION_FILE, "w", encoding="utf-8", newline="\n").write(new_text)
-    print(f"  [版本号] {version}（BUILD_DATE={now}）")
+    tail = "" if not dry_run else "  ← 演练，未写入文件"
+    print(f"  [版本号] {version}（BUILD_DATE={now}）{tail}")
 
 
 def update_changelog(version, tag, dry_run):
@@ -614,7 +615,8 @@ def update_changelog(version, tag, dry_run):
         cl = cl + insert
     if not dry_run:
         open(CHANGELOG_FILE, "w", encoding="utf-8", newline="\n").write(cl)
-    print(f"  [CHANGELOG] 已插入 {tag} 占位段（可事后补写内容）")
+    tail = "" if not dry_run else "  ← 演练，未写入文件"
+    print(f"  [CHANGELOG] 已插入 {tag} 占位段（可事后补写内容）{tail}")
 
 
 def has_unfinished_sections(version):
