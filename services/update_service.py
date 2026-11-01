@@ -87,6 +87,15 @@ _READ_TIMEOUT = 15
 _DOWNLOAD_READ_TIMEOUT = 60
 _DOWNLOAD_ATTEMPTS = 3
 
+# ---------- 检查节流（2026-11-01） ----------
+# 背景：GitHub 未认证 API 限额 60 次/小时，按**出口 IP** 计 —— 用户反复点
+# 「检查更新」，或一个办公室几个人共用出口 IP，很容易打满；打满后连续 403，
+# 界面就显示「检查更新失败」，看着像功能坏了。
+# 这里挡一道：30 秒内重复调用直接返回上次结果，不再打网络。
+# 30 秒足够挡住连点，又不影响「刚发完版想再确认一次」的正常使用。
+_CHECK_MIN_INTERVAL = 30.0
+_last_check = {"at": 0.0, "result": None}
+
 # ---------- 增量更新（差分补丁） ----------
 # 补丁资产命名：patch-<起点版本>-to-<目标版本>.dpatch，例如 patch-1.2.3-to-1.2.4.dpatch。
 #
@@ -279,8 +288,26 @@ def _pick_patch_asset(assets, from_version: str, to_version: str) -> dict:
     return {}
 
 
-def check_for_update() -> CheckResult:
-    """查最新 Release 并与本地版本比较。**同步阻塞**，别在 GUI 线程里直接调。"""
+def check_for_update(force: bool = False) -> CheckResult:
+    """查最新 Release 并与本地版本比较。**同步阻塞**，别在 GUI 线程里直接调。
+
+    30 秒内重复调用会返回上次的结果（不打网络），见 _CHECK_MIN_INTERVAL；
+    需要绕过节流时传 force=True。
+    """
+    now = time.monotonic()
+    cached = _last_check["result"]
+    if not force and cached is not None and (now - _last_check["at"]) < _CHECK_MIN_INTERVAL:
+        logger.debug("命中检查缓存（%.0f 秒前查过），不再请求", now - _last_check["at"])
+        return cached
+
+    result = _check_for_update_impl()
+    _last_check["at"] = time.monotonic()
+    _last_check["result"] = result
+    return result
+
+
+def _check_for_update_impl() -> CheckResult:
+    """真正发请求的那一层（带节流的 check_for_update 调它）。"""
     if not is_enabled():
         return CheckResult(status="disabled",
                            error="未配置更新仓库（services/update_service.py 的 UPDATE_REPO）")
@@ -298,6 +325,19 @@ def check_for_update() -> CheckResult:
     except Exception as e:
         logger.warning("检查更新失败（网络）: %s: %s", type(e).__name__, e)
         return CheckResult(status="error", error=f"网络不可达：{type(e).__name__}")
+
+    # 403 且配额已用尽 = 被限流（未认证 60 次/小时，按出口 IP）。
+    # 单独给一句人话，别让用户以为更新本身坏了。
+    if resp.status_code == 403 and resp.headers.get("X-RateLimit-Remaining") == "0":
+        reset = resp.headers.get("X-RateLimit-Reset", "")
+        hint = ""
+        try:
+            import datetime
+            hint = f"（约 {datetime.datetime.fromtimestamp(int(reset)).strftime('%H:%M')} 恢复）"
+        except (TypeError, ValueError, OSError):
+            pass
+        logger.warning("检查更新被限流：HTTP 403，配额重置时间 %s", reset)
+        return CheckResult(status="error", error=f"请求过于频繁，请稍后再试{hint}")
 
     if resp.status_code == 404:
         # 仓库里还没有任何 Release —— 不算错误。
