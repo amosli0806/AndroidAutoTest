@@ -8,10 +8,16 @@
 #
 # 触发：
 #   1) push 一个 promote-v* tag —— release.py 的 `promote` 在没有令牌时会这么干
+#      ⚠ tag 必须指向**已经包含本文件**的提交（release.py 会用 origin/main 打，
+#        别指向被转正的那个业务 tag，那个提交里可能还没有 promote.yml，
+#        GitHub 找不到工作流就什么都不跑 —— 2026-11-01 踩过）
 #   2) 或在 Actions 页面手动 Run workflow，填 tag
 #
 # 注意：转正后 /releases/latest 立刻返回这个版本，全量客户端下次检查更新就能收到。
 #       这是不可逆的对外动作，所以 release.py 那边要求手打 tag 全名确认。
+#
+# 这里的 HTTP 调用特意用 curl 而不是 gh：失败时能把状态码和响应体贴出来，
+# 排查「403 权限不足 / 404 tag 不对」比 gh 的黑盒报错直观得多。
 
 name: Promote Release
 
@@ -36,31 +42,50 @@ jobs:
     steps:
       - name: 取消预发布标记
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF_NAME: ${{ github.ref_name }}
           INPUT_TAG: ${{ inputs.tag }}
+          REPO: ${{ github.repository }}
         run: |
-          set -euo pipefail
+          # 不用 set -e：每一步自己检查，出错时把上下文打全再退出
+          set -u
           TAG="${INPUT_TAG:-}"
-          if [ -z "$TAG" ]; then
-            TAG="${REF_NAME#promote-}"
-          fi
+          if [ -z "$TAG" ]; then TAG="${REF_NAME#promote-}"; fi
           echo "目标 tag: $TAG"
+          if [ -z "$TAG" ]; then echo "!! 解析不出 tag"; exit 1; fi
 
-          echo "--- 转正前 ---"
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
-            --jq '"tag=" + .tag_name + "  prerelease=" + (.prerelease|tostring) + "  draft=" + (.draft|tostring)'
+          API="https://api.github.com/repos/${REPO}"
+          AUTH="Authorization: Bearer ${TOKEN}"
+          ACCEPT="Accept: application/vnd.github+json"
 
-          echo "--- 取消预发布 ---"
-          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
-            -F prerelease=false
+          echo "::group::转正前状态"
+          BODY=$(curl -sS -H "$AUTH" -H "$ACCEPT" "${API}/releases/tags/${TAG}") || true
+          echo "$BODY" | head -c 500; echo
+          RID=$(printf '%s' "$BODY" | python3 -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+          if [ -z "$RID" ]; then
+            echo "!! 查不到 ${TAG} 的 Release（tag 名写错 / 还没发版 / 令牌无权限）"
+            exit 1
+          fi
+          echo "release_id=${RID}"
+          echo "::endgroup::"
 
-          echo "--- 转正后 ---"
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
-            --jq '"prerelease=" + (.prerelease|tostring)'
+          echo "::group::取消预发布"
+          CODE=$(curl -sS -o resp.json -w "%{http_code}" -X PATCH \
+                   -H "$AUTH" -H "$ACCEPT" -H "Content-Type: application/json" \
+                   "${API}/releases/${RID}" --data '{"prerelease":false}')
+          echo "HTTP ${CODE}"
+          head -c 800 resp.json 2>/dev/null; echo
+          if [ "$CODE" != "200" ]; then
+            echo "!! 转正失败（HTTP ${CODE}）。403 多半是令牌权限不足，404 是 tag 不对。"
+            exit 1
+          fi
+          python3 -c "import json;d=json.load(open('resp.json'));print('prerelease =', d.get('prerelease'))"
+          echo "::endgroup::"
 
-          echo "--- 当前 latest ---"
-          gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name'
+          echo "::group::当前 latest"
+          curl -sS -H "$AUTH" -H "$ACCEPT" "${API}/releases/latest" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin).get('tag_name'))"
+          echo "::endgroup::"
 
       - name: 清理触发用的 promote-* tag
         if: startsWith(github.ref, 'refs/tags/promote-')
