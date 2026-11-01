@@ -1,51 +1,40 @@
 # -*- coding: utf-8 -*-
-"""虫师发版脚本 —— 只传代码 / 发预发布 / 发正式版 / 预发布转正。
+"""虫师发版脚本 —— 传代码 / 发预发布 / 手动转正。
 
 用法（在项目目录 D:/AndroidAutoTest 打开命令行）：
 
-    python release.py                       # 交互式菜单
-    python release.py status                # 查看当前发布状态（最新正式版 / 预发布列表）
-    python release.py push                  # 只提交并推送 main（不改版本号、不发版）
-    python release.py 1.5.17                # 发版：改版本号 → 提交 → 推送 → 打 tag（CI 建**预发布**）
-    python release.py 1.5.17 --final        # 发版并**自动转正**（打 tag → 等 CI → 取消 pre-release）
-    python release.py 1.5.17 --no-release   # 只改版本号 + 推送，不打 tag 不发版
-    python release.py manual-promote        # 手动转正：打印详细点击步骤并打开网页（推荐）
-    python release.py promote               # 自动转正（有令牌走 API，没有走 Actions）
-    python release.py promote v1.5.17       # 指定 tag 转正
-    python release.py clear-preview         # 只清本机的内测通道文件 data/preview.json
-    python release.py 1.5.17 --dry-run      # 演练：只打印会做什么
+    python release.py        # 交互式菜单，日常用这个就够
+    python release.py help   # 全部命令行用法（演练 / 仅打 tag / 自动转正等）
 
-两条发版路线：
+菜单只有 5 项，都是实际会用到的：
 
-  预发布（默认）  tag 推上去 → CI 建预发布 → GitHub 的 /releases/latest 不返回它，
-                  普通客户端收不到，你自己用内测通道验
-                  （**本机的 data/preview.json 会被自动写成这一版**，重启即可收到）
-  正式发布        --final，或事后 `promote`：取消 pre-release → /releases/latest 返回它 → 全量
+    1) 上传代码到 GitHub     只推 main，不改版本号、不打 tag，不触发 CI
+    2) 发预发布              改版本号 → 提交 → 推送 → 打 tag，CI 建**预发布**
+    3) 手动转正              打开 Release 网页 + 逐步点击说明（推荐）
+    4) 查看发布状态          最新正式版 + 预发布列表 + 本机内测文件状态
+    5) 清理本机内测文件      删掉 data/preview.json，回到正式通道
 
-转正成功后会**自动删掉本机的 data/preview.json**（安装目录和项目目录都检查）。
-不清它的话，这台机器会一直查那个固定 tag，反而收不到后续正式版。安装目录默认
-D:/chongshi，换机器时用环境变量 CHONGSHI_INSTALL_DIR 覆盖。
+一次完整发版：
 
-转正有两条路，脚本自动选，你不用关心走哪条：
+    菜单 2 → 输入新版本号 → 等 CI（约 6 分钟）→ 本机重启虫师点「检查更新」验收
+      → 菜单 3 手动转正 → 菜单 5 清理内测文件（下个版本起会自动清）
 
-  有个人令牌    直接调 GitHub API，立即生效
-  没有令牌      推一个 promote-<tag> tag，由仓库里的 .github/workflows/promote.yml
-                用 Actions 自带的 GITHUB_TOKEN 去改 —— 本机不需要任何凭证，
-                只用到已有的 SSH key，约 20~40 秒生效
+为什么分两步（预发布 / 转正）：
 
-个人令牌（可选）按顺序取，三处都没有就走 Actions：
+    GitHub 的 /releases/latest 只返回「非草稿、非预发布」的 Release。所以打了 tag
+    之后 CI 建的是**预发布** —— 普通用户查不到，还停在上一个正式版；本机的
+    data/preview.json 会被自动写成这一版，于是只有这台机器能收到，正好用来验。
+    验完在网页上取消勾选「Set as a pre-release」，那一刻才真正全量。
 
-  1) 环境变量 GITHUB_TOKEN 或 GH_TOKEN
-  2) 项目下 data/.gh_token（一行纯 token；data/ 已被 .gitignore 忽略，不会提交）
-  3) ~/.git-credentials 里的 https://user:token@github.com
+本机内测通道（data/preview.json）：
 
-令牌权限：fine-grained 只需本仓库的 Contents: Read and write；老式 token 勾 repo。
+    发预发布时自动写 {"tag": "vX.Y.Z"} → 重启虫师即可收到这一版；
+    转正后自动删掉，否则这台机器会一直盯着那个固定 tag，收不到后续正式版。
+    安装目录默认 D:/chongshi，换机器用环境变量 CHONGSHI_INSTALL_DIR 覆盖。
 
-其它说明：
-    - 「push」只上传代码，安全、不触发 CI；「打 tag」才会触发 CI 自动打包发版。
-    - 幂等：同名 tag 会先删本地再重打。
-    - 未转正时发现代码要改，可以直接重打 tag（`1.5.17 --force-tag`），
-      已转正后就不能再动 tag，只能发下一个版本号。
+转正还有一条全自动的路（`1.5.17 --final` 或 `promote`），代码保留但不在菜单里：
+需要令牌或仓库 Actions，之前 Actions 那条踩过坑（tag 指向错误 / 权限），
+不如网页点一下直接。
 """
 
 import json
@@ -642,9 +631,21 @@ def has_unfinished_sections(version):
 
 
 def commit_and_push(commit_msg):
-    """提交所有改动并推送到 main。"""
+    """提交所有改动并推送到 main。
+
+    没有改动时不报错、直接跳过提交 —— 否则「只上传代码」在没有新改动时
+    会因 `git commit` 退出码 1 而中止（2026-11-01 精简菜单时发现）。
+    发版中途失败后重跑同一版本也走这条路，同样不能因为「没东西可提交」而挂。
+    """
     run(["git", "add", "-A"])
-    run(["git", "commit", "-m", commit_msg])
+    r = run(["git", "commit", "-m", commit_msg], check=False)
+    if r.returncode != 0:
+        out = (r.stdout or "") + (r.stderr or "")
+        if "nothing to commit" in out or "no changes added" in out:
+            print("  没有需要提交的改动，跳过 commit")
+        else:
+            print(f"\n  !! git commit 失败（退出码 {r.returncode}），已中止。")
+            sys.exit(1)
     print("  提交完成，正在推送 main…")
     run_push(["git", "push", "origin", "main"])
     print("  main 已推送")
@@ -801,57 +802,67 @@ def do_tag_only(tag, force=False):
     push_tag(tag, force=force)
     print(f"""
 == 完成！{tag} 已推送，CI 开始发版 ==
-  CI 建的是**预发布**。验完没问题后运行：python release.py promote {tag}
+  CI 建的是**预发布**。验完没问题后运行：python release.py manual-promote {tag}
 """)
 
 
 def interactive_menu():
-    """不带参数时进入交互式选择。"""
+    """不带参数时进入交互式选择 —— 只留日常真正会用到的几项。
+
+    2026-11-01 精简：原来 8 项里有一半是一次性/兜底用的（改版本号不发版、
+    仅补打 tag、演练、CI 后自动转正），平时根本不会选，反而每次都要读完
+    8 行才能找到要按的那个。现在留 5 项，其余降级为命令行参数（见 help）。
+    """
     print(f"当前版本：{current_version()}\n")
     print("请选择要执行的操作：")
-    print("  1) 只上传代码到 GitHub（不改版本号、不发版）")
-    print("  2) 发【预发布】（改版本+提交+推送+打tag，并让本机自动能收到；普通用户收不到）")
-    print("  3) 发【正式版】（同上，CI 完成后自动转正）")
-    print("  4) 手动转正（打开网页 + 详细点击步骤，推荐）")
-    print("  5) 查看发布状态（最新正式版 / 预发布列表）")
-    print("  6) 改版本号并推送，但暂不发版（不打 tag）")
-    print("  7) 仅补打 tag 触发发版（版本号已改好时用）")
-    print("  8) 演练（dry-run，只预览改动）")
+    print("  1) 上传代码到 GitHub（不改版本号、不发版）")
+    print("  2) 发预发布（改版本号+提交+推送+打 tag；本机自动能收到，普通用户收不到）")
+    print("  3) 手动转正（打开网页 + 详细点击步骤）")
+    print("  4) 查看发布状态")
+    print("  5) 清理本机内测文件 data/preview.json")
     print("  q) 退出")
-    choice = input("\n输入序号（1-8 或 q）：").strip()
+    print("\n  演练 / 仅补打 tag / CI 后自动转正 等不常用操作走命令行，"
+          "见 python release.py help")
+    choice = input("\n输入序号（1-5 或 q）：").strip()
 
     if choice == "1":
         do_push_only()
-    elif choice in ("2", "3"):
+    elif choice == "2":
         v = input("请输入新版本号（如 1.5.17）：").strip().lstrip("vV")
         if not VERSION_RE.match(v):
             print("!! 版本号格式不对，应为 x.y.z")
             sys.exit(1)
-        do_release(v, dry_run=False, no_release=False, final=(choice == "3"))
-    elif choice == "4":
+        do_release(v, dry_run=False, no_release=False, final=False)
+    elif choice == "3":
         do_manual_promote()
-    elif choice == "5":
+    elif choice == "4":
         do_status()
-    elif choice == "6":
-        v = input("请输入新版本号（如 1.5.17）：").strip().lstrip("vV")
-        if not VERSION_RE.match(v):
-            print("!! 版本号格式不对，应为 x.y.z")
-            sys.exit(1)
-        do_release(v, dry_run=False, no_release=True)
-    elif choice == "7":
-        tag = input("请输入要打的 tag（如 v1.5.17）：").strip()
-        if not tag.startswith("v"):
-            tag = "v" + tag
-        do_tag_only(tag)
-    elif choice == "8":
-        v = input("请输入要演练的版本号（如 1.5.17）：").strip().lstrip("vV")
-        if not VERSION_RE.match(v):
-            print("!! 版本号格式不对，应为 x.y.z")
-            sys.exit(1)
-        do_release(v, dry_run=True, no_release=False)
+    elif choice == "5":
+        print("== 清理内测通道文件 ==")
+        clear_preview_tag()
+        print("  清理后本机回到正式通道，之后收到的是 /releases/latest 那一版。")
     else:
         print("已退出。")
         sys.exit(0)
+
+
+def print_usage():
+    """命令行用法（菜单只放了常用的 5 项，剩下这些靠参数）。"""
+    print("""用法：
+  python release.py                      # 交互式菜单（日常用这个就够）
+  python release.py status               # 查看发布状态
+  python release.py push                 # 只传代码，不发版
+  python release.py 1.5.17               # 发预发布
+  python release.py manual-promote [tag] # 手动转正（打印步骤 + 开网页）
+
+  不常用：
+  python release.py 1.5.17 --dry-run     # 演练，只打印改动不执行
+  python release.py 1.5.17 --no-release  # 只改版本号 + 推送，不打 tag
+  python release.py --tag-only v1.5.17   # 版本号已改好，仅补打 tag
+  python release.py 1.5.17 --final       # 打 tag → 等 CI → 自动转正
+  python release.py promote [tag]        # 自动转正（需令牌或 Actions）
+  python release.py clear-preview        # 只清本机内测文件
+""")
 
 
 def main():
@@ -899,19 +910,13 @@ def main():
         do_tag_only(tag, force=("--force-tag" in args))
         return
 
+    if first in ("help", "-h", "--help", "?"):
+        print_usage()
+        return
+
     version = first.lstrip("vV")
     if not VERSION_RE.match(version):
-        print("用法：")
-        print("  python release.py                      # 交互式菜单")
-        print("  python release.py status               # 查看发布状态")
-        print("  python release.py push                 # 只传代码，不发版")
-        print("  python release.py 1.5.17               # 发预发布")
-        print("  python release.py 1.5.17 --final       # 发正式版（CI 后自动转正）")
-        print("  python release.py 1.5.17 --no-release  # 改版本号+推送，不打tag")
-        print("  python release.py 1.5.17 --dry-run     # 演练")
-        print("  python release.py manual-promote [tag] # 手动转正（打印步骤+开网页）")
-        print("  python release.py promote [v1.5.17]    # 自动转正（需令牌或 Actions）")
-        print("  python release.py --tag-only v1.5.17   # 仅打tag")
+        print_usage()
         sys.exit(1)
 
     do_release(version,
