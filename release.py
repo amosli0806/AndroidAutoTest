@@ -347,6 +347,23 @@ def wait_for_release(tag, timeout=CI_WAIT_TIMEOUT):
     return None
 
 
+def _promote_trigger_ref():
+    """挑一个「远程确实存在、且包含 promote.yml」的提交，用来打触发 tag。
+
+    为什么不能直接指向被转正的那个 tag（2026-11-01 踩过）：
+    GitHub 只读 **tag 指向的那个提交**里的 workflow 文件。如果被转正的版本
+    是在加 promote.yml 之前发的，那个提交里根本没有这个工作流 —— tag 推上去
+    什么都不会发生，Actions 列表里也看不到任何运行，只会干等到超时。
+    """
+    for ref in ("origin/main", "main", "HEAD"):
+        r = subprocess.run(
+            ["git", "cat-file", "-e", f"{ref}:.github/workflows/promote.yml"],
+            cwd=ROOT, capture_output=True)
+        if r.returncode == 0:
+            return ref
+    return None
+
+
 def _promote_via_actions(tag, dry_run=False):
     """没有个人令牌时：推 promote-<tag> 触发仓库 Actions 转正（本机无需任何凭证）。
 
@@ -354,16 +371,20 @@ def _promote_via_actions(tag, dry_run=False):
     Release 状态；本机只负责推一个 tag（走已有的 SSH key）。
     """
     pt_tag = f"promote-{tag}"
+    ref = _promote_trigger_ref()
+    if not ref:
+        print("\n  !! 找不到包含 .github/workflows/promote.yml 的提交，Actions 转正用不了。")
+        print("     先把 promote.yml 推到 main，再重试。")
+        return 1
+
     print(f"\n  改用 Actions 转正（本机不需要令牌）：推送 tag {pt_tag}")
+    print(f"  触发用提交：{ref}（必须含 promote.yml，否则 GitHub 找不到工作流）")
     if dry_run:
-        print(f"  [演练] 会执行：git tag -f {pt_tag} {tag} && git push origin {pt_tag}")
+        print(f"  [演练] 会执行：git tag -f {pt_tag} {ref} && git push -f origin {pt_tag}")
         return 0
 
-    r = run(["git", "tag", "-f", pt_tag, tag], check=False)
-    if r.returncode != 0:
-        print(f"  !! 本地没有 {tag} 这个 tag。先 git fetch --tags 再试。")
-        return 1
-    run_push(["git", "push", "origin", pt_tag])
+    run(["git", "tag", "-f", pt_tag, ref], check=False)
+    run_push(["git", "push", "-f", "origin", pt_tag])
 
     print("  已触发，等 Actions 取消预发布（约 20~40 秒）…")
     for _ in range(20):
@@ -374,8 +395,9 @@ def _promote_via_actions(tag, dry_run=False):
             print(f"  发布页：{RELEASES_PAGE}")
             return 0
         print("  …", end="", flush=True)
-    print("\n  !! 等待超时。去 Actions 页面看看：")
-    print(f"     https://github.com/{REPO}/actions")
+    print("\n  !! 等待超时。去这里确认「Promote Release」有没有跑起来：")
+    print(f"     https://github.com/{REPO}/actions/workflows/promote.yml")
+    print("     列表里没有这次运行 = 工作流没触发（多半是 promote.yml 还没在 main 上）。")
     return 1
 
 
