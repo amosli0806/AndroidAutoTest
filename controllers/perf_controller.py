@@ -1909,6 +1909,25 @@ class PerfController(QObject):
     # 语音场景：边播语音边采集性能
     # ------------------------------------------------------------------
     def _start_voice_scenario(self, payload):
+        """语音场景入口：出错时兜底收尾，别把采集卡在半路。
+
+        这里包一层 try 而不是让异常冒到全局 excepthook —— 一旦构建播报组时
+        抛异常（2026-11-01 就踩过：把 suite.case_ids 的字符串当成对象取了 .id），
+        全局弹窗只是提示「程序错误」，而采集线程还在后台跑，页面状态也不会复原。
+        """
+        try:
+            self._start_voice_scenario_impl(payload)
+        except Exception as e:                       # noqa: BLE001 - 兜底收尾
+            logger.exception("语音场景启动失败")
+            try:
+                self._on_stop()
+            except Exception:
+                pass
+            ErrorDialog.show_error(
+                self.view, "语音场景启动失败",
+                f"{type(e).__name__}: {e}")
+
+    def _start_voice_scenario_impl(self, payload):
         """按语音套件的顺序播报，播完（或到时长上限）自动停采集。
 
         与自动化场景的区别只有「跑什么」：那边跑的是 App 操作步骤，这边是把
@@ -1949,8 +1968,10 @@ class PerfController(QObject):
         # 会话里记上场景名，报告标题/CSV 里能看出这是语音场景
         if self.current_session is not None:
             self.current_session.suite_name = full_name
-            self.current_session.case_ids = [c.id for c in suite.case_ids
-                                             if self.voice_model.get_case(c)]
+            # 注意 suite.case_ids 里存的就是字符串 id（VoiceSuite.case_ids: List[str]），
+            # 别再 .id —— 曾经这么写，一跑就 'str' object has no attribute 'id'
+            self.current_session.case_ids = [cid for cid in suite.case_ids
+                                             if self.voice_model.get_case(cid)]
             self.current_session.case_names = sorted({
                 it[5] for it in items})       # 去重后的用例名，仅用于报告
 
