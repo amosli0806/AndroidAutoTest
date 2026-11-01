@@ -1,31 +1,60 @@
 # -*- coding: utf-8 -*-
-"""虫师发版/提交脚本 —— 灵活控制「只传代码」还是「传代码并发版」。
+"""虫师发版脚本 —— 只传代码 / 发预发布 / 发正式版 / 预发布转正。
 
 用法（在项目目录 D:/AndroidAutoTest 打开命令行）：
 
-    python release.py                     # 不带参数 → 交互式菜单，逐步选择要做的事
-    python release.py push                # 只把当前改动提交并推送到 GitHub main（不改版本号、不发版）
-    python release.py 1.1.6               # 完整发版：改版本号 → 提交 → 推送 main → 打 tag（触发 CI）
-    python release.py 1.1.6 --no-release  # 改版本号 + 提交 + 推送 main，但**不打 tag 不发版**
-    python release.py 1.1.6 --dry-run     # 演练：只打印会做什么，不改文件、不提交
+    python release.py                       # 交互式菜单
+    python release.py status                # 查看当前发布状态（最新正式版 / 预发布列表）
+    python release.py push                  # 只提交并推送 main（不改版本号、不发版）
+    python release.py 1.5.17                # 发版：改版本号 → 提交 → 推送 → 打 tag（CI 建**预发布**）
+    python release.py 1.5.17 --final        # 发版并**自动转正**（打 tag → 等 CI → 取消 pre-release）
+    python release.py 1.5.17 --no-release   # 只改版本号 + 推送，不打 tag 不发版
+    python release.py promote               # 把**最新的预发布**转正（会二次确认）
+    python release.py promote v1.5.17       # 指定 tag 转正
+    python release.py 1.5.17 --dry-run      # 演练：只打印会做什么
 
-说明：
+两条发版路线：
+
+  预发布（默认）  tag 推上去 → CI 建预发布 → GitHub 的 /releases/latest 不返回它，
+                  普通客户端收不到，你自己用内测通道验
+  正式发布        --final，或事后 `promote`：取消 pre-release → /releases/latest 返回它 → 全量
+
+转正需要 GitHub 个人访问令牌（创建 Release 状态要用认证 API）。只需配一次，三种来源
+按顺序取，都找不到时脚本会把网页链接打出来让你手点：
+
+  1) 环境变量 GITHUB_TOKEN 或 GH_TOKEN
+  2) 项目下 data/.gh_token（一行纯 token；data/ 已被 .gitignore 忽略，不会提交）
+  3) ~/.git-credentials 里的 https://user:token@github.com
+
+令牌权限：fine-grained 只需本仓库的 Contents: Read and write；老式 token 勾 repo。
+
+其它说明：
     - 「push」只上传代码，安全、不触发 CI；「打 tag」才会触发 CI 自动打包发版。
-    - 完整发版会自动做 5 件事：改 utils/version.py 的版本号与构建时间 → 在 CHANGELOG.md
-      顶部插入占位段 → git add+commit+push main → git tag+push tag（触发 CI）。
-    - 幂等：重复执行安全（同名 tag 会先删本地再重打）。
-    - 发版前建议先 git pull 拉最新，避免覆盖别人改动。
+    - 幂等：同名 tag 会先删本地再重打。
+    - 未转正时发现代码要改，可以直接重打 tag（`1.5.17 --force-tag`），
+      已转正后就不能再动 tag，只能发下一个版本号。
 """
 
+import json
+import os
 import re
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime
 
 ROOT = r"D:\AndroidAutoTest"
 VERSION_FILE = ROOT + r"\utils\version.py"
 CHANGELOG_FILE = ROOT + r"\CHANGELOG.md"
+
+REPO = "amosli0806/AndroidAutoTest"
+API_BASE = f"https://api.github.com/repos/{REPO}"
+RELEASES_PAGE = f"https://github.com/{REPO}/releases"
+
+# 令牌文件（data/ 在 .gitignore 里，不会被提交）
+TOKEN_FILE = os.path.join(ROOT, "data", ".gh_token")
 
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
@@ -52,7 +81,14 @@ _NETWORK_HINTS = (
 PUSH_RETRIES = 3
 PUSH_RETRY_DELAY = 5  # 秒
 
+# CI 打包耗时（实测 6 分钟上下，补丁对比上一个 Release 会更久些）
+CI_WAIT_TIMEOUT = 25 * 60
+CI_POLL_INTERVAL = 20
 
+
+# ----------------------------------------------------------------------
+# 基础工具
+# ----------------------------------------------------------------------
 def run(cmd, check=True):
     print(f"\n  > {' '.join(cmd)}")
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
@@ -97,6 +133,191 @@ def current_version():
     return m.group(1) if m else "?"
 
 
+# ----------------------------------------------------------------------
+# GitHub API（转正 / 查状态用）
+# ----------------------------------------------------------------------
+def get_token():
+    """按优先级找一个 GitHub 令牌；都找不到返回空串。"""
+    for env in ("GITHUB_TOKEN", "GH_TOKEN"):
+        v = os.environ.get(env, "").strip()
+        if v:
+            return v
+    try:
+        if os.path.exists(TOKEN_FILE):
+            v = open(TOKEN_FILE, encoding="utf-8").read().strip().splitlines()
+            if v and v[0].strip():
+                return v[0].strip()
+    except OSError:
+        pass
+    try:
+        cred = os.path.expanduser("~/.git-credentials")
+        if os.path.exists(cred):
+            m = re.search(r"https://[^:\s]+:([^@\s]+)@github\.com",
+                          open(cred, encoding="utf-8").read())
+            if m:
+                return m.group(1)
+    except OSError:
+        pass
+    return ""
+
+
+def api(method, path, payload=None, token=None, allow_404=False):
+    """调 GitHub API，返回 (状态码, 解析后的 JSON 或 None)。网络错误返回 (0, None)。"""
+    url = path if path.startswith("http") else API_BASE + path
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "chongshi-release-script",
+    }
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8", "replace")
+            return resp.status, (json.loads(body) if body.strip() else None)
+    except urllib.error.HTTPError as e:
+        if e.code == 404 and allow_404:
+            return 404, None
+        body = e.read().decode("utf-8", "replace")[:300]
+        print(f"    !! API {method} {path} → HTTP {e.code}: {body}")
+        return e.code, None
+    except Exception as e:  # noqa: BLE001 - 网络问题统一降级处理
+        print(f"    !! API 请求失败: {type(e).__name__}: {e}")
+        return 0, None
+
+
+def release_assets_text(rel):
+    """把资产的「名字 + 大小」拼成一行行文本。"""
+    lines = []
+    for a in rel.get("assets") or []:
+        size = round((a.get("size") or 0) / 1024 / 1024, 1)
+        lines.append(f"      {a.get('name', '?'):44s} {size:7.1f} MB")
+    return "\n".join(lines) or "      （还没有资产，CI 可能还在上传）"
+
+
+def do_status():
+    """只读：打印最新正式版与预发布列表。"""
+    print("== 发布状态 ==\n")
+    code, latest = api("GET", "/releases/latest", allow_404=True)
+    if code == 404:
+        print("  最新正式版：还没有正式发布过")
+    elif latest:
+        print(f"  最新正式版（/releases/latest）：{latest.get('tag_name')}")
+        print(f"    本地版本号：{current_version()}")
+    elif code != 404:
+        print("  !! 查不到最新正式版（网络或限流），可稍后再试")
+
+    code, rels = api("GET", "/releases?per_page=15")
+    if rels:
+        previews = [r for r in rels if r.get("prerelease")]
+        if previews:
+            print("\n  预发布（只有内测通道看得到）：")
+            for r in previews:
+                print(f"    {r.get('tag_name'):12s} {r.get('created_at', '')[:10]}  "
+                      f"{len(r.get('assets') or [])} 个资产")
+        else:
+            print("\n  预发布：无")
+    print(f"\n  发布页：{RELEASES_PAGE}\n")
+
+
+def wait_for_release(tag, timeout=CI_WAIT_TIMEOUT):
+    """等 CI 把 Release 建出来（有全量 zip 且已上传）。成功返回 release dict。"""
+    print(f"\n== 等待 CI 产出 {tag}（最多 {timeout // 60} 分钟）==")
+    start = time.monotonic()
+    while time.monotonic() - start < timeout:
+        code, rel = api("GET", f"/releases/tags/{tag}", allow_404=True)
+        if rel:
+            names = [a.get("name", "") for a in rel.get("assets") or []]
+            states = [a.get("state") for a in rel.get("assets") or []]
+            has_zip = any(n.endswith("-win64.zip") for n in names)
+            uploading = any(s != "uploaded" for s in states)
+            if has_zip and not uploading:
+                print(f"  Release 已就绪，{len(names)} 个资产全部上传完成")
+                return rel
+        elapsed = int(time.monotonic() - start)
+        print(f"  …{elapsed}s", end="\r", flush=True)
+        time.sleep(CI_POLL_INTERVAL)
+    print("\n  !! 等待超时。CI 可能失败或还在排队，去发布页看一眼：")
+    print(f"     {RELEASES_PAGE}")
+    return None
+
+
+def do_promote(tag=None, assume_yes=False):
+    """把预发布转正（取消 pre-release）。tag 为空时取最新的那个预发布。"""
+    token = get_token()
+    if not token:
+        print("""
+!! 没有找到 GitHub 令牌，无法自动转正。
+
+  配置一次就行（三选一）：
+    1) 环境变量 GITHUB_TOKEN
+    2) 在 data\\.gh_token 里写一行纯 token（data/ 不会提交）
+    3) ~/.git-credentials 里有 https://user:token@github.com
+
+  或者手动点：
+    1. 打开 """ + RELEASES_PAGE + r"""
+    2. 找到要转正的版本 → Edit → 取消勾选 "Set as a pre-release" → Update release
+""")
+        return 1
+
+    if not tag:
+        _code, rels = api("GET", "/releases?per_page=15", token=token)
+        previews = [r for r in (rels or []) if r.get("prerelease")]
+        if not previews:
+            print("  当前没有预发布可转正。")
+            return 1
+        if len(previews) == 1:
+            tag = previews[0].get("tag_name")
+            print(f"  唯一的预发布：{tag}")
+        else:
+            print("  存在的预发布：")
+            for r in previews:
+                print(f"    {r.get('tag_name')}")
+            tag = input("\n  输入要转正的 tag（如 v1.5.17）：").strip()
+    if not tag.startswith("v"):
+        tag = "v" + tag
+
+    code, rel = api("GET", f"/releases/tags/{tag}", token=token, allow_404=True)
+    if code == 404 or not rel:
+        print(f"  !! 找不到 {tag} 对应的 Release。")
+        return 1
+    if not rel.get("prerelease"):
+        print(f"  {tag} 已经是正式发布了，无需转正。")
+        return 0
+
+    print(f"\n== 转正 {tag} ==（转正后所有用户都会收到这一版）")
+    print(f"  名称：{rel.get('name')}")
+    print(f"  资产：\n{release_assets_text(rel)}")
+
+    if not assume_yes:
+        print("\n  转正后 /releases/latest 立刻返回它，全量客户端下次检查更新就能收到。")
+        ans = input("  确认转正请输入 tag 全名（直接回车取消）：").strip()
+        if ans != tag:
+            print("  已取消，未做任何改动。")
+            return 1
+
+    code, updated = api("PATCH", f"/releases/{rel['id']}",
+                        {"prerelease": False}, token=token)
+    if code != 200 or not updated:
+        print("  !! 转正失败（见上面的 API 报错）。")
+        return 1
+
+    print(f"  OK：{tag} 已转为正式发布")
+    _code, latest = api("GET", "/releases/latest", token=token)
+    if latest:
+        ok = latest.get("tag_name") == tag
+        print(f"  校验 /releases/latest → {latest.get('tag_name')}"
+              f"{'  ✅' if ok else '  ❌（可能被更晚的版本盖住）'}")
+    print(f"  发布页：{RELEASES_PAGE}")
+    return 0
+
+
+# ----------------------------------------------------------------------
+# 版本号 / CHANGELOG / 提交 / 打 tag
+# ----------------------------------------------------------------------
 def set_version(version, dry_run):
     """改 utils/version.py 的版本号与构建时间。"""
     text = open(VERSION_FILE, encoding="utf-8").read()
@@ -130,6 +351,19 @@ def update_changelog(version, tag, dry_run):
     print(f"  [CHANGELOG] 已插入 {tag} 占位段（可事后补写内容）")
 
 
+def has_unfinished_sections(version):
+    """CHANGELOG 里该版本段落若还是占位/空，返回 True（提醒别发出去）。"""
+    cl = open(CHANGELOG_FILE, encoding="utf-8").read()
+    m = re.search(rf"(?m)^##\s+v?{re.escape(version)}\s*\n(.*?)(?=^##\s+|\Z)",
+                  cl, re.DOTALL)
+    if not m:
+        return True
+    body = m.group(1).strip()
+    if not body:
+        return True
+    return "（待补充" in body or "本段留空" in body
+
+
 def commit_and_push(commit_msg):
     """提交所有改动并推送到 main。"""
     run(["git", "add", "-A"])
@@ -139,18 +373,24 @@ def commit_and_push(commit_msg):
     print("  main 已推送")
 
 
-def push_tag(tag):
+def push_tag(tag, force=False):
     """打 tag 并推送（触发 CI）。幂等：先删本地同名 tag。"""
     r = subprocess.run(["git", "tag", "-l", tag], cwd=ROOT,
                        capture_output=True, text=True, encoding="utf-8")
     if r.stdout.strip() == tag:
         run(["git", "tag", "-d", tag], check=False)
         print(f"  [tag] 已删除本地旧的 {tag}")
-    run(["git", "tag", tag])
-    run_push(["git", "push", "origin", tag])
+    run(["git", "tag", "-a", tag, "-m", f"虫师 {tag}"])
+    if force:
+        run_push(["git", "push", "-f", "origin", tag])
+    else:
+        run_push(["git", "push", "origin", tag])
     print(f"  {tag} 已推送，CI 开始发版")
 
 
+# ----------------------------------------------------------------------
+# 各种模式
+# ----------------------------------------------------------------------
 def do_push_only():
     """模式：只传代码，不发版。"""
     print(f"== 只上传代码（当前版本 {current_version()}，不改版本号、不发版）==")
@@ -162,14 +402,24 @@ def do_push_only():
 """)
 
 
-def do_release(version, dry_run, no_release):
+def do_release(version, dry_run, no_release, final=False, force_tag=False):
     tag = f"v{version}"
     mode = "（演练，不实际执行）" if dry_run else \
-           "（只传代码，不打 tag 不发版）" if no_release else ""
+           "（只传代码，不打 tag 不发版）" if no_release else \
+           "（发预发布）" if not final else "（发正式版：CI 后自动转正）"
     print(f"== 发版 {tag} {mode}==")
 
     set_version(version, dry_run)
     update_changelog(version, tag, dry_run)
+
+    warn = has_unfinished_sections(version)
+    if warn and not dry_run:
+        print("\n  !! CHANGELOG 里这一版还没写更新说明（空段或占位）。")
+        print("     Release 正文会从这段提取，用户看到的更新说明就是它。")
+        ans = input("     仍然继续？输入 yes 继续，其他任意键取消：").strip().lower()
+        if ans != "yes":
+            print("  已取消。先去 CHANGELOG.md 补好这一版的内容再发。")
+            sys.exit(1)
 
     if dry_run:
         print("\n== 演练结束，未做任何提交/推送/打 tag。请自行检查上面改动。 ==")
@@ -180,24 +430,64 @@ def do_release(version, dry_run, no_release):
     if no_release:
         print(f"""
 == 完成！代码已推送到 main（版本已改为 {version}，但未打 tag、未发版）==
-  之后想正式发版时，只需运行：python release.py --tag-only {tag}
+  之后想发版时，只需运行：python release.py --tag-only {tag}
 """)
         sys.exit(0)
 
-    push_tag(tag)
-    print(f"""
-== 完成！已发布 {tag} ==
-  代码已推送到 main，tag {tag} 已推送。
-  GitHub CI 会自动：打包 → 自测 → 压包 → 建 Release，约 5~10 分钟。
-  结果查看：https://github.com/amosli0806/AndroidAutoTest/releases
+    push_tag(tag, force=force_tag)
+
+    if not final:
+        print(f"""
+== 已发出【预发布】{tag} ==
+  GitHub 的 /releases/latest 不会返回预发布，所以普通用户**收不到**，
+  仍停在上一个正式版。你自己验的方式（二选一）：
+    - 安装目录 data\\preview.json 写 {{"tag": "{tag}"}}
+    - 环境变量 CHONGSHI_UPDATE_TAG={tag}
+  验完确认没问题，再运行：
+    python release.py promote {tag}
 """)
+        return
+
+    # --final：等 CI 完成后转正
+    rel = wait_for_release(tag)
+    if not rel:
+        print(f"\n  改为手动收尾：CI 完成后运行 python release.py promote {tag}")
+        return
+    rc = do_promote(tag)
+    if rc == 0:
+        print(f"""
+== 完成！{tag} 已是正式发布 ==
+  全量客户端下次检查更新即可收到。
+""")
+        # 转正后重建「未发布」空段，方便下次记录
+        _ensure_unreleased_section()
 
 
-def do_tag_only(tag):
+def _ensure_unreleased_section():
+    """发完正式版后，若 CHANGELOG 顶部还没有「未发布」段就补一个。"""
+    try:
+        cl = open(CHANGELOG_FILE, encoding="utf-8").read()
+    except OSError:
+        return
+    if re.search(r"(?m)^##\s+未发布", cl):
+        return
+    block = ("## 未发布（下一个版本）\n\n"
+             "> 本段留空。下次改代码时把改动写在这里；发版前把标题改成版本号，"
+             "**别让空段直接发出去**。\n\n")
+    m = re.search(r"(?m)^##\s+", cl)
+    new = (cl[:m.start()] + block + cl[m.start():]) if m else (cl + "\n" + block)
+    open(CHANGELOG_FILE, "w", encoding="utf-8", newline="\n").write(new)
+    print("  [CHANGELOG] 已补回「未发布」空段")
+
+
+def do_tag_only(tag, force=False):
     """模式：版本号和代码都已就绪，只补打 tag 触发发版。"""
     print(f"== 仅打 tag 触发发版：{tag} ==")
-    push_tag(tag)
-    print(f"== 完成！{tag} 已推送，CI 开始发版 ==")
+    push_tag(tag, force=force)
+    print(f"""
+== 完成！{tag} 已推送，CI 开始发版 ==
+  CI 建的是**预发布**。验完没问题后运行：python release.py promote {tag}
+""")
 
 
 def interactive_menu():
@@ -205,34 +495,41 @@ def interactive_menu():
     print(f"当前版本：{current_version()}\n")
     print("请选择要执行的操作：")
     print("  1) 只上传代码到 GitHub（不改版本号、不发版）")
-    print("  2) 完整发版（改版本号 + 提交 + 推送 + 打 tag）")
-    print("  3) 改版本号并推送，但暂不发版（不打 tag）")
-    print("  4) 仅补打 tag 触发发版（版本号已改好时用）")
-    print("  5) 演练（dry-run，只预览改动）")
+    print("  2) 发【预发布】（改版本号 + 提交 + 推送 + 打 tag，普通用户收不到）")
+    print("  3) 发【正式版】（同上，CI 完成后自动转正）")
+    print("  4) 把预发布转正（取消 pre-release，全量）")
+    print("  5) 查看发布状态（最新正式版 / 预发布列表）")
+    print("  6) 改版本号并推送，但暂不发版（不打 tag）")
+    print("  7) 仅补打 tag 触发发版（版本号已改好时用）")
+    print("  8) 演练（dry-run，只预览改动）")
     print("  q) 退出")
-    choice = input("\n输入序号（1-5 或 q）：").strip()
+    choice = input("\n输入序号（1-8 或 q）：").strip()
 
     if choice == "1":
         do_push_only()
-    elif choice == "2":
-        v = input("请输入新版本号（如 1.1.6）：").strip().lstrip("vV")
+    elif choice in ("2", "3"):
+        v = input("请输入新版本号（如 1.5.17）：").strip().lstrip("vV")
         if not VERSION_RE.match(v):
             print("!! 版本号格式不对，应为 x.y.z")
             sys.exit(1)
-        do_release(v, dry_run=False, no_release=False)
-    elif choice == "3":
-        v = input("请输入新版本号（如 1.1.6）：").strip().lstrip("vV")
+        do_release(v, dry_run=False, no_release=False, final=(choice == "3"))
+    elif choice == "4":
+        do_promote()
+    elif choice == "5":
+        do_status()
+    elif choice == "6":
+        v = input("请输入新版本号（如 1.5.17）：").strip().lstrip("vV")
         if not VERSION_RE.match(v):
             print("!! 版本号格式不对，应为 x.y.z")
             sys.exit(1)
         do_release(v, dry_run=False, no_release=True)
-    elif choice == "4":
-        tag = input("请输入要打的 tag（如 v1.1.6）：").strip()
+    elif choice == "7":
+        tag = input("请输入要打的 tag（如 v1.5.17）：").strip()
         if not tag.startswith("v"):
             tag = "v" + tag
-        push_tag(tag)
-    elif choice == "5":
-        v = input("请输入要演练的版本号（如 1.1.6）：").strip().lstrip("vV")
+        do_tag_only(tag)
+    elif choice == "8":
+        v = input("请输入要演练的版本号（如 1.5.17）：").strip().lstrip("vV")
         if not VERSION_RE.match(v):
             print("!! 版本号格式不对，应为 x.y.z")
             sys.exit(1)
@@ -245,44 +542,55 @@ def interactive_menu():
 def main():
     args = sys.argv[1:]
 
-    # 不带参数 → 交互式菜单
     if not args:
         interactive_menu()
         return
 
     first = args[0].strip()
 
-    # 特殊模式：只传代码
+    if first in ("status", "-s", "--status"):
+        do_status()
+        return
+
+    if first == "promote":
+        tag = next((a for a in args[1:] if not a.startswith("--")), None)
+        do_promote(tag, assume_yes=("--yes" in args or "-y" in args))
+        return
+
     if first == "push":
         do_push_only()
         return
 
-    # 特殊模式：仅打 tag
     if first == "--tag-only":
-        if len(args) < 2:
-            print("用法：python release.py --tag-only v1.1.6")
+        rest = [a for a in args[1:] if not a.startswith("--")]
+        if not rest:
+            print("用法：python release.py --tag-only v1.5.17 [--force-tag]")
             sys.exit(1)
-        tag = args[1].strip()
+        tag = rest[0].strip()
         if not tag.startswith("v"):
             tag = "v" + tag
-        do_tag_only(tag)
+        do_tag_only(tag, force=("--force-tag" in args))
         return
 
-    # 其余：按版本号处理
     version = first.lstrip("vV")
     if not VERSION_RE.match(version):
         print("用法：")
-        print("  python release.py                 # 交互式菜单")
-        print("  python release.py push            # 只传代码，不发版")
-        print("  python release.py 1.1.6           # 完整发版")
-        print("  python release.py 1.1.6 --no-release   # 改版本号+推送，不打tag")
-        print("  python release.py 1.1.6 --dry-run      # 演练")
-        print("  python release.py --tag-only v1.1.6    # 仅打tag触发发版")
+        print("  python release.py                      # 交互式菜单")
+        print("  python release.py status               # 查看发布状态")
+        print("  python release.py push                 # 只传代码，不发版")
+        print("  python release.py 1.5.17               # 发预发布")
+        print("  python release.py 1.5.17 --final       # 发正式版（CI 后自动转正）")
+        print("  python release.py 1.5.17 --no-release  # 改版本号+推送，不打tag")
+        print("  python release.py 1.5.17 --dry-run     # 演练")
+        print("  python release.py promote [v1.5.17]    # 预发布转正")
+        print("  python release.py --tag-only v1.5.17   # 仅打tag")
         sys.exit(1)
 
-    dry_run = "--dry-run" in args
-    no_release = "--no-release" in args
-    do_release(version, dry_run, no_release)
+    do_release(version,
+               dry_run=("--dry-run" in args),
+               no_release=("--no-release" in args),
+               final=("--final" in args),
+               force_tag=("--force-tag" in args))
 
 
 if __name__ == "__main__":
