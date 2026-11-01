@@ -5,14 +5,40 @@ import sys
 
 def set_dark_title_bar(window, dark: bool):
     """设置 Windows 原生标题栏为深色或浅色。
-    仅在 Windows 平台生效，其他平台静默忽略。"""
+    仅在 Windows 平台生效，其他平台静默忽略。
+
+    **为什么设两次**（2026-11-01 用户反馈「亮色切暗色后标题栏还是亮」）：
+    切主题时 apply_theme() 会对整棵控件树重设 QSS，Qt 随后处理
+    StyleChange / 重绘，DWM 会按系统主题重新画一遍标题栏，把刚设的属性冲掉。
+    实测主窗口「亮 → 暗」只设一次：DWM 属性先变 1，0.25 秒后又回到 0，
+    标题栏停在浅色 —— 这正是用户看到的现象。
+    所以立即设一次（无感），再延迟补设一次把终态钉住。
+    """
+    if sys.platform != "win32":
+        return
+    _apply_dark_title_bar(window, dark)
+    try:
+        from PyQt6.QtCore import QTimer
+        # 220ms 足够越过这一轮 StyleChange / 重绘；再快仍会被冲掉
+        QTimer.singleShot(220, lambda: _apply_dark_title_bar(window, dark))
+    except Exception:
+        pass
+
+
+def _apply_dark_title_bar(window, dark: bool):
+    """真正调用 DWM API 的那一层（立即调用 / 延迟补设共用）。"""
     if sys.platform != "win32":
         return
     try:
         import ctypes
         from ctypes import wintypes
 
-        hwnd = int(window.winId())
+        try:
+            hwnd = int(window.winId())
+        except (RuntimeError, ValueError):
+            return                      # 窗口已销毁（延迟补设时可能发生）
+        if not hwnd or not ctypes.windll.user32.IsWindow(hwnd):
+            return
 
         # DWMWA_USE_IMMERSIVE_DARK_MODE:
         #   20 是 Windows 10 20H1+ 的属性号

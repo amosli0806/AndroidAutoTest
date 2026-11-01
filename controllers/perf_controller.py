@@ -1073,7 +1073,7 @@ class PerfController(QObject):
             show_toast(self.view, "请先在左上角选择要监控的应用")
             return
         if not self.device_service or not self.device_service.device:
-            show_toast(self.view, "设备未连接")
+            show_toast(self.view, "未检测到设备")
             return
         self._hprof_dumping = True
         self._hprof_cancel = False
@@ -1248,7 +1248,7 @@ class PerfController(QObject):
             show_toast(self.view, "请先在左上角选择要监控的应用")
             return
         if not self.device_service or not self.device_service.device:
-            show_toast(self.view, "设备未连接")
+            show_toast(self.view, "未检测到设备")
             return
         self._smaps_dumping = True
         self._smaps_cancel = False
@@ -1443,7 +1443,7 @@ class PerfController(QObject):
         if self._recording:
             return
         if not self.device_service or not self.device_service.serial:
-            show_toast(self.view, "设备未连接")
+            show_toast(self.view, "未检测到设备")
             return
         self._recording = True
         self._record_cancel = False
@@ -1598,7 +1598,7 @@ class PerfController(QObject):
             return
         device = getattr(self.device_service, 'device', None) if self.device_service else None
         if not device:
-            show_toast(self.view, "设备未连接")
+            show_toast(self.view, "未检测到设备")
             return
         self._screenshot_busy = True
         self._screenshot_cancel = False
@@ -1790,7 +1790,7 @@ class PerfController(QObject):
         self._capture_auto_started = auto
         self._capture_stop_requested = False
         if not self.device_service or not self.device_service.device:
-            show_toast(self.view, "设备未连接")
+            show_toast(self.view, "未检测到设备")
             self.view.set_packet_capturing(False)
             return
         if not self._check_disk_space_for_capture():

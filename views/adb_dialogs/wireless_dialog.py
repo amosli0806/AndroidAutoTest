@@ -180,7 +180,7 @@ class WirelessDialog(QDialog):
     def _on_get_ip(self):
         serial = self._get_serial()
         if not serial:
-            show_toast(self, "设备未连接", duration=1500)
+            show_toast(self, "未检测到设备", duration=1500)
             return
         ip = self.wireless_manager.get_device_ip(serial)
         if ip:

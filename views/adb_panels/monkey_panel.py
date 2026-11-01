@@ -480,7 +480,7 @@ class MonkeyPanel(QWidget):
         """
         if not self._get_serial():
             # 先单独判设备连接：未接设备给 Toast，别让它落进下面的「无法获取应用列表」对话框
-            show_toast(self.window(), "⚠️ 设备未连接，请先连接设备", duration=2000)
+            show_toast(self.window(), "未检测到设备", duration=2000)
             return
 
         apps = []
@@ -532,7 +532,7 @@ class MonkeyPanel(QWidget):
         serial = self._get_serial()
         if not serial:
             # 未接设备这类轻量提示用 Toast（弹对话框打断操作流，过重）
-            show_toast(self.window(), "⚠️ 设备未连接，请先连接设备", duration=2000)
+            show_toast(self.window(), "未检测到设备", duration=2000)
             return
 
         # 「开始」按钮不再置灰（运行中也能点），所以这里必须自己兜住重复启动：

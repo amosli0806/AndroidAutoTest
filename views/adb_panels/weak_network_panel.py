@@ -779,7 +779,7 @@ class WeakNetworkPanel(QWidget):
         serial = self._get_serial()
         if not serial:
             # 未接设备这类轻量提示用 Toast（弹对话框打断操作流，过重）
-            show_toast(self.window(), "⚠️ 设备未连接，请先连接设备", duration=2000)
+            show_toast(self.window(), "未检测到设备", duration=2000)
             return
 
         iface = self.iface_combo.currentText().strip()
@@ -843,7 +843,7 @@ class WeakNetworkPanel(QWidget):
 
         serial = self._get_serial()
         if not serial:
-            show_toast(self.window(), "⚠️ 设备未连接，请先连接设备", duration=2000)
+            show_toast(self.window(), "未检测到设备", duration=2000)
             return
 
         iface = self.iface_combo.currentText().strip()

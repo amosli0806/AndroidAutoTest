@@ -136,7 +136,7 @@ class AdbToolboxController(QObject):
     def _on_execute_selected(self, commands):
         serial = self._get_serial()
         if not serial:
-            show_toast(self.view, "未检测到设备，请先连接", duration=2000)
+            show_toast(self.view, "未检测到设备", duration=2000)
             self.view.reset_execute_selected_state()  # ← 新增：恢复按钮
             return
 
@@ -395,7 +395,7 @@ class AdbToolboxController(QObject):
 
         # 其他动作都需要设备
         if not self._get_serial():
-            show_toast(self.view, "未检测到设备，请先连接", duration=2000)
+            show_toast(self.view, "未检测到设备", duration=2000)
             return
 
         handlers = {
@@ -427,7 +427,7 @@ class AdbToolboxController(QObject):
         """
         serial = self._get_serial()
         if not serial:
-            show_toast(self.view, "⚠️ 设备未连接，请先连接设备")
+            show_toast(self.view, "未检测到设备")
             return
 
         if self.scrcpy_service.is_mirroring():
@@ -452,7 +452,7 @@ class AdbToolboxController(QObject):
         # 先查设备再弹文件框：没设备时让用户挑完 APK 才说连不上，白折腾一趟
         serial = self._get_serial()
         if not serial:
-            show_toast(self.view, "⚠️ 设备未连接，请先连接设备")
+            show_toast(self.view, "未检测到设备")
             return
 
         path, _ = QFileDialog.getOpenFileName(
@@ -520,7 +520,7 @@ class AdbToolboxController(QObject):
 
     def _action_push(self):
         if not self._get_serial():
-            show_toast(self.view, "⚠️ 设备未连接，请先连接设备")
+            show_toast(self.view, "未检测到设备")
             return
         # 本地文件/文件夹 + 远程路径在一个对话框里一次填完
         dlg = PushSetupDialog(self.view)

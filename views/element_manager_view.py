@@ -568,7 +568,7 @@ class ElementManagerView(QWidget):
     def _on_scrape(self):
         """抓取当前屏幕 UI 树 → 解析出可定位元素 → 勾选批量入库"""
         if not self.device_service or not self.device_service.device:
-            show_toast(parent=self, message="⚠️ 请先连接设备")
+            show_toast(parent=self, message="未检测到设备")
             return
         show_toast(parent=self, message="正在抓取界面…", duration=2000)
         device = self.device_service.device

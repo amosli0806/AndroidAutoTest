@@ -822,7 +822,7 @@ class StepController(QObject):
 
         # 快速检查设备是否在线
         if not self.device_service.check_device_online():
-            show_toast(message="设备未连接")
+            show_toast(message="未检测到设备")
             return
 
         if self.device_service.device is None:

@@ -4268,7 +4268,7 @@ class MainWindow(QMainWindow):
             try:
                 show_toast(message=ds.restore_ime())
             except Exception as e:
-                show_toast(message="设备未连接" if "设备未连接" in str(e)
+                show_toast(message="未检测到设备" if "设备未连接" in str(e)
                            else "恢复输入法失败")
 
     def eventFilter(self, obj, event):

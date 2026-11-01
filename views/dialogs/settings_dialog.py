@@ -388,7 +388,9 @@ class SettingsDialog(QDialog):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems(["跟随系统", "亮色", "暗色"])
+        # 名称用「高亮 / 暗夜」而不是「亮色 / 暗色」（2026-11-01 用户要求）：
+        # 与「跟随系统」并列时更像一套主题名，也不再和「颜色深浅」混淆
+        self.theme_combo.addItems(["跟随系统", "高亮", "暗夜"])
         self.theme_combo.setFixedWidth(220)
         form.addRow("主题:", self.theme_combo)
 

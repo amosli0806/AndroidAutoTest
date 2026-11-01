@@ -183,7 +183,7 @@ class TaskController(QObject):
             self.task_model.update_task(task_id, last_result="device_offline", last_run=QDateTime.currentDateTime().toString(Qt.DateFormat.ISODate))
             self.task_model.save()
             self.task_view.refresh_list()
-            show_toast(f"设备未连接")
+            show_toast("未检测到设备")
             self.task_skipped.emit(task.name, "设备未连接")
             return
 
