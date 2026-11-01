@@ -1155,6 +1155,9 @@ def main():
     voice_view = VoiceView(model=voice_model, service=voice_service,
                            device_service=device_svc)
     main_window.set_voice_view(voice_view)
+    # 语音页保存/删除「语音套件」后，即时同步到性能检测页的「模式」下拉。
+    # 那边只做展示（语音套件不能做场景化，见 perf_view._on_mode_changed）。
+    voice_view.suites_changed.connect(perf_view.refresh_suite_combo)
 
     # ---------- 装配完成：统一刷一次主题 ----------
     # 到这里所有视图都装好了，把装配期跳过的那些 apply_theme 合并成这一次。

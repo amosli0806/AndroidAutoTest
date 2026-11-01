@@ -754,14 +754,12 @@ class SettingsDialog(QDialog):
         self.voice_rate_spin = QSpinBox()
         self.voice_rate_spin.setRange(-10, 10)
         self.voice_rate_spin.setFixedWidth(90)
-        self.voice_rate_spin.setToolTip("负数更慢、正数更快，0 为系统默认语速")
         form.addRow("语速:", self.voice_rate_spin)
 
         self.voice_loop_spin = QSpinBox()
         self.voice_loop_spin.setRange(1, 99)
         self.voice_loop_spin.setSuffix(" 轮")
         self.voice_loop_spin.setFixedWidth(90)
-        self.voice_loop_spin.setToolTip("「执行选中」把勾选的用例整体播几遍")
         form.addRow("循环:", self.voice_loop_spin)
 
         # 唤醒词：语音页「唤醒词」按钮追加到用例末尾的那句。

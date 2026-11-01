@@ -319,6 +319,11 @@ class MultiProcessDialog(QDialog):
         return out
 
 
+# 「模式」下拉里语音套件的展示前缀。语音套件存的是语音用例 id，
+# 与自动化套件不是一套东西，所以只在这里列出来给人看，选中时会被挡回去。
+VOICE_SUITE_PREFIX = "语音 · "
+
+
 class PerfView(QWidget):
     """性能检测视图"""
 
@@ -1118,7 +1123,10 @@ class PerfView(QWidget):
         # 「有套件」时由 _rebuild_mode_combo 换成真实的套件名
         self.mode_combo.addItem("（无套件）")
         self.mode_combo.setFixedWidth(150)
-        self.mode_combo.setToolTip("独立监控：只看当前应用\n选择套件：按套件顺序做场景化测试")
+        self.mode_combo.setToolTip(
+            "独立监控：只看当前应用\n"
+            "选择套件：按套件顺序做场景化测试\n"
+            "「语音 · 」开头的套件来自语音播报页，只能在那边使用")
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         # 监控时长：到点自动停止（典型场景：车机跑 12 小时 Monkey 检测内存泄露）
         self.duration_label = QLabel("时长")
@@ -1794,7 +1802,16 @@ class PerfView(QWidget):
             self.suite_combo.setCurrentText("(无套件)")
         else:
             name = self.mode_combo.itemText(index).strip()
-            if name and name not in ("（无套件）", "(无套件)"):
+            if name.startswith(VOICE_SUITE_PREFIX):
+                # 语音套件只做展示：它存的是语音用例，场景化要的是自动化用例，
+                # 真跑起来只会得到「套件无有效用例」。直接说明并退回独立监控。
+                from utils.toast import show_toast
+                show_toast(self, "语音套件只能在「语音播报」页使用", duration=2600)
+                self.mode_combo.blockSignals(True)
+                self.mode_combo.setCurrentIndex(0)
+                self.mode_combo.blockSignals(False)
+                self.suite_combo.setCurrentText("(无套件)")
+            elif name and name not in ("（无套件）", "(无套件)"):
                 self.suite_combo.setCurrentText(name)
             else:
                 self.suite_combo.setCurrentText("(无套件)")
@@ -1809,6 +1826,11 @@ class PerfView(QWidget):
         current = self.mode_combo.currentText()
         names = [self.suite_combo.itemText(i)
                  for i in range(1, self.suite_combo.count())]
+        # 语音播报页保存的套件也列出来（只读文件，不构造 VoiceModel）：
+        # 让用户在同一个地方看到"我一共有哪些勾选组合"，但它们不能做场景化
+        from models.voice_model import get_all_voice_suites
+        voice_names = [f"{VOICE_SUITE_PREFIX}{x['name']}"
+                       for x in get_all_voice_suites()]
 
         self.mode_combo.blockSignals(True)
         self.mode_combo.clear()
@@ -1816,8 +1838,10 @@ class PerfView(QWidget):
         if names:
             self.mode_combo.addItems(names)
         else:
-            # 一个套件都没有时给个占位，让用户知道"选了套件才能做场景化"
+            # 一个自动化套件都没有时给个占位，让用户知道"选了套件才能做场景化"
             self.mode_combo.addItem("（无套件）")
+        for vn in voice_names:
+            self.mode_combo.addItem(vn)
 
         target = ""
         pref = self.suite_combo.currentText()

@@ -204,6 +204,26 @@ class VoiceGroup:
         return cls(id=str(data.get("id", "")), name=str(data.get("name", "")))
 
 
+@dataclass
+class VoiceSuite:
+    """一组勾选好的语音用例，用来一键把右栏的勾选状态套回来。
+
+    与自动化套件（models/suite_model.py）**完全独立**：
+    那边存自动化用例 id，这边存语音用例 id，两套 id 空间不同，
+    混进同一份数据会导致另一方「找不到用例」。
+    """
+    name: str
+    case_ids: List[str] = field(default_factory=list)
+
+    def to_dict(self):
+        return {"name": self.name, "case_ids": list(self.case_ids)}
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(name=str(data.get("name", "") or "").strip(),
+                   case_ids=[str(x) for x in (data.get("case_ids") or [])])
+
+
 class VoiceModel:
     DATA_FILE = data_path("voice_data.json")
 
@@ -218,6 +238,8 @@ class VoiceModel:
         # 只存「换车会变」的配置；引擎 / 音色 / 输出设备跟测试机有关、不随车变，不进模板。
         self.car_profiles: dict = {}
         self.current_car_profile = ""      # 最近套用/保存的模板名，供设置页下拉回显
+        # 语音套件：勾选组合的命名快照（与自动化套件互不影响，见 VoiceSuite 注释）
+        self.suites: List[VoiceSuite] = []
         self.load()
 
     # ---------------- 读写 ----------------
@@ -244,6 +266,9 @@ class VoiceModel:
                               for c in (data.get("cases") or [])]
                 self.car_profiles = dict(data.get("car_profiles") or {})
                 self.current_car_profile = str(data.get("current_car_profile") or "")
+                self.suites = [VoiceSuite.from_dict(x)
+                               for x in (data.get("suites") or [])
+                               if str(x.get("name", "") or "").strip()]
                 return
             except Exception:
                 pass
@@ -256,6 +281,7 @@ class VoiceModel:
         self.cases = []
         self.car_profiles = {}
         self.current_car_profile = ""
+        self.suites = []
         self.save()
 
     def _merge_settings_for_save(self) -> dict:
@@ -290,6 +316,7 @@ class VoiceModel:
                     "cases": [c.to_dict() for c in self.cases],
                     "car_profiles": self.car_profiles,
                     "current_car_profile": self.current_car_profile,
+                    "suites": [x.to_dict() for x in self.suites],
                 }, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"[voice_model] 保存失败 {self.DATA_FILE}: {e}")
@@ -329,6 +356,37 @@ class VoiceModel:
         del self.car_profiles[name]
         if self.current_car_profile == name:
             self.current_car_profile = ""
+        self.save()
+        return True
+
+    # ---------------- 语音套件 ----------------
+    def suite_names(self) -> List[str]:
+        """已保存的语音套件名（按保存顺序）。"""
+        return [s.name for s in self.suites]
+
+    def get_suite(self, name: str) -> Optional[VoiceSuite]:
+        for s in self.suites:
+            if s.name == name:
+                return s
+        return None
+
+    def save_suite(self, name: str, case_ids) -> VoiceSuite:
+        """保存/覆盖一个语音套件（同名即更新勾选内容）。"""
+        ids = [str(x) for x in (case_ids or [])]
+        suite = self.get_suite(name)
+        if suite is None:
+            suite = VoiceSuite(name=name, case_ids=ids)
+            self.suites.append(suite)
+        else:
+            suite.case_ids = ids
+        self.save()
+        return suite
+
+    def delete_suite(self, name: str) -> bool:
+        suite = self.get_suite(name)
+        if suite is None:
+            return False
+        self.suites.remove(suite)
         self.save()
         return True
 
@@ -707,6 +765,27 @@ def get_loop() -> int:
     except Exception:
         return 1
     return max(1, min(loop, 99))
+
+
+def get_all_voice_suites() -> List[dict]:
+    """读出全部语音套件（只读 settings 同级段，不构造 VoiceModel）。
+
+    性能检测页要把语音套件列进「模式」下拉框，它只需要名字 ——
+    没必要为几个字符串把上千条语音用例读进内存。
+    """
+    try:
+        with open(VoiceModel.DATA_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        out = []
+        for item in (data.get("suites") or []):
+            name = str(item.get("name", "") or "").strip()
+            if not name:
+                continue
+            out.append({"name": name,
+                        "case_ids": [str(x) for x in (item.get("case_ids") or [])]})
+        return out
+    except Exception:
+        return []
 
 
 def get_verify_config() -> dict:

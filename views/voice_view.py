@@ -24,7 +24,7 @@
 import os
 import time
 
-from PyQt6.QtCore import QRectF, QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QRectF, QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QDialog, QDoubleSpinBox, QFileDialog,
@@ -583,6 +583,10 @@ class VoiceView(QWidget):
     ROLE_ID = int(Qt.ItemDataRole.UserRole)
     ROLE_KIND = int(Qt.ItemDataRole.UserRole) + 1
 
+    # 语音套件增删后发出：性能检测页的「模式」下拉要跟着刷新
+    # （与「自动化执行」页的 suites_changed 同思路，但两边数据互不相干）
+    suites_changed = pyqtSignal()
+
     @classmethod
     def _group_title_qss(cls, color: str) -> str:
         return (
@@ -607,6 +611,8 @@ class VoiceView(QWidget):
 
         self._worker = None
         self._rows = []
+        # 当前套用的语音套件名（空 = 未套用任何套件），只用于菜单里的勾选标记
+        self._suite_name = ""
         self._current_case_id = None
         # 语音回应录制（方向二）：None=未录制 / VoiceFeedbackService=录制中
         self._record_feedback = None
@@ -789,12 +795,23 @@ class VoiceView(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(6)
 
-        # 单行工具栏：执行选中 / 停止  +  右侧全选 / 取消全选
-        # 语速与循环 2026-11-01 移到「设置 → 语音播报」：这两个是调好就长期不动的
-        # 配置，放在这里既挤又容易被误碰（执行中还要跟着置灰）。
+        # 单行工具栏：全选 / 执行选中 / 更多
+        # 语速与循环 2026-11-01 移到「设置 → 语音播报」；套件三件事（选择 / 保存 /
+        # 删除）收进「更多」面板 —— 右栏可用宽只有 366px，五个控件一行约需 430，
+        # 摊开会被压窄或折行（2026-11-01 用户定的方案）。
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(6)
+
+        # 「全选 / 取消全选」二合一：文案跟着树里实际勾选情况走，
+        # 全勾着时显示「取消全选」，其余情况（含部分勾选）显示「全选」
+        self.select_all_btn = QPushButton("全选")
+        self.select_all_btn.setObjectName("VoiceToolBtn")
+        self.select_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.select_all_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.select_all_btn.setFixedHeight(26)
+        self.select_all_btn.clicked.connect(self._on_select_all_clicked)
+        title_row.addWidget(self.select_all_btn)
 
         # 「执行选中 / 停止」二合一：同一个按钮两种状态（蓝「执行选中」/ 红「停止」）。
         # 原来的两个按钮并排，空闲时「停止」恒灰，白占一格还让这一行显得挤
@@ -808,17 +825,16 @@ class VoiceView(QWidget):
         self.play_stop_btn.clicked.connect(self._on_play_stop_clicked)
         title_row.addWidget(self.play_stop_btn)
 
-        title_row.addStretch()
+        # 更多：选择套件 / 保存套件 / 删除套件（面板里全是文字项，不再加悬浮提示）
+        self.more_btn = QPushButton("更多")
+        self.more_btn.setObjectName("VoiceToolBtn")
+        self.more_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.more_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.more_btn.setFixedHeight(26)
+        self.more_btn.clicked.connect(self._show_more_menu)
+        title_row.addWidget(self.more_btn)
 
-        # 「全选 / 取消全选」二合一：文案跟着树里实际勾选情况走，
-        # 全勾着时显示「取消全选」，其余情况（含部分勾选）显示「全选」
-        self.select_all_btn = QPushButton("全选")
-        self.select_all_btn.setObjectName("VoiceToolBtn")
-        self.select_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.select_all_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.select_all_btn.setFixedHeight(26)
-        self.select_all_btn.clicked.connect(self._on_select_all_clicked)
-        title_row.addWidget(self.select_all_btn)
+        title_row.addStretch()
 
         v.addLayout(title_row)
 
@@ -1889,6 +1905,116 @@ class VoiceView(QWidget):
         """二合一全选：当前已全勾就取消全选，否则全部勾上。"""
         total, checked = self._check_counts()
         self._set_all_checked(not (total and checked == total))
+
+    # ------------------------------------------------------------------
+    # 语音套件：把当前勾选存成命名组合，下次一键套回来
+    # ------------------------------------------------------------------
+    def _show_more_menu(self):
+        """「更多」面板：选择套件 / 保存套件 / 删除套件。
+
+        用子菜单而不是把 QComboBox 塞进菜单里 —— 下拉框放进 QMenu 后，
+        点它展开列表会把菜单顶掉（Windows 上必现），子菜单是原生、稳的做法。
+        """
+        from utils.widget_helpers import clear_hover
+
+        menu = QMenu(self)
+        names = self.model.suite_names()
+        current = self._suite_name
+
+        pick = menu.addMenu("选择套件")
+        if names:
+            for name in names:
+                act = pick.addAction(name)
+                act.setCheckable(True)
+                act.setChecked(name == current)
+                act.triggered.connect(lambda _c=False, n=name: self._apply_suite(n))
+        else:
+            act = pick.addAction("（还没有套件）")
+            act.setEnabled(False)
+
+        menu.addSeparator()
+        menu.addAction("保存套件…", self._on_save_suite)
+
+        remove = menu.addMenu("删除套件")
+        if names:
+            for name in names:
+                act = remove.addAction(name)
+                act.triggered.connect(lambda _c=False, n=name: self._on_delete_suite(n))
+        else:
+            act = remove.addAction("（还没有套件）")
+            act.setEnabled(False)
+
+        menu.popup(self.more_btn.mapToGlobal(self.more_btn.rect().bottomLeft()))
+        # 面板弹出后鼠标已不归按钮管，主动清掉残留悬停色（与性能页「指标」按钮同法）
+        QTimer.singleShot(0, lambda: clear_hover(self.more_btn))
+
+    def _apply_suite(self, name):
+        """按套件里的用例 id 重设右栏勾选（其余全部取消）。"""
+        suite = self.model.get_suite(name)
+        if suite is None:
+            return
+        ids = set(suite.case_ids)
+        tree = self.check_tree
+        tree.blockSignals(True)
+        hit = 0
+        for i in range(tree.topLevelItemCount()):
+            group_item = tree.topLevelItem(i)
+            for j in range(group_item.childCount()):
+                case_item = group_item.child(j)
+                on = case_item.data(0, Qt.ItemDataRole.UserRole) in ids
+                case_item.setCheckState(
+                    0, Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
+                if on:
+                    hit += 1
+            self._update_group_check_state(group_item)
+        tree.blockSignals(False)
+        self._suite_name = name
+        self._sync_play_buttons()
+        if hit:
+            self.status_label.setText(f"已套用套件「{name}」（{hit} 个用例）")
+        else:
+            self.status_label.setText(f"套件「{name}」里的用例都已不存在")
+
+    def _on_save_suite(self):
+        """把当前勾选保存成套件；同名即更新。"""
+        from utils.toast import show_toast
+
+        ids = self._collect_checked_case_ids()
+        if not ids:
+            show_toast(self, "先勾选要保存的语音用例", duration=1800)
+            return
+        default = self._suite_name or f"套件{len(self.model.suites) + 1}"
+        name, ok = InputDialog.get_text(
+            self,
+            title="保存语音套件",
+            label="套件名称:",
+            default_text=default,
+            placeholder="例如：冒烟播报",
+        )
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        existed = self.model.get_suite(name) is not None
+        self.model.save_suite(name, ids)
+        self._suite_name = name
+        # 通知性能检测页刷新「模式」下拉（那边只做展示，见 perf_view 的处理）
+        self.suites_changed.emit()
+        self.status_label.setText(
+            f"已{'更新' if existed else '保存'}套件「{name}」（{len(ids)} 个用例）")
+
+    def _on_delete_suite(self, name):
+        if self.model.get_suite(name) is None:
+            return
+        if not ConfirmDeleteDialog.ask(
+                self, title="删除套件",
+                message=f"确定删除套件「{name}」？只删除这个勾选组合，"
+                        f"里面的语音用例本身不受影响。"):
+            return
+        self.model.delete_suite(name)
+        if self._suite_name == name:
+            self._suite_name = ""
+        self.suites_changed.emit()
+        self.status_label.setText(f"已删除套件「{name}」")
 
     def _build_feedback(self):
         """按当前配置与设备状态构建回执抓取服务；不满足条件返回 None。
