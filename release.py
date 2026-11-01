@@ -432,12 +432,28 @@ def do_manual_promote(tag=None):
     """打印手动转正的详细步骤（在 GitHub 网页上点），并打开浏览器。
 
     给不想用 API / Actions 的人用：全程在网页上点，脚本只负责把步骤讲清楚。
+
+    顺序：**先清本机内测通道文件，再列步骤**。清理必须放在最前面 ——
+    之前是先查「有没有预发布」再清理，结果转正过的机器（列表里已没有预发布）
+    会在判断处直接 return，文件却一个都没删（2026-11-01 用户实测）。
     """
+    print("== 手动把预发布变成正式版 ==\n")
+    print("  ① 先清掉本机的内测通道文件（转正后不再需要）：")
+    had_preview = clear_preview_tag()
+    print()
+
     token = get_token()
     _code, rels = api("GET", "/releases?per_page=15", token=token, quiet=True)
     previews = [r for r in (rels or []) if r.get("prerelease")]
-    if rels and not previews:
-        print("  当前没有预发布可转正。")
+    # 只有「没指定 tag」且「确实查到了列表、里面没有预发布」才收尾；
+    # rels 为 None 表示查询失败（限流/网络），这时给通用步骤更有用。
+    # 注意用 is not None：查询成功但一个都没有时 rels 是 []，那也算「查到了」，
+    # 不能让 `if rels` 把它当成查询失败（2026-11-01 修）。
+    if not tag and rels is not None and not previews:
+        print("  当前没有预发布可转正 —— 可能你已经转正过了。")
+        print(f"     去确认一下：{RELEASES_PAGE}")
+        if had_preview:
+            print("     本机的内测通道文件已按上面的结果清理完毕。")
         return 1
 
     if not tag and previews:
@@ -455,12 +471,6 @@ def do_manual_promote(tag=None):
 
     url = f"https://github.com/{REPO}/releases/tag/{tag}" if tag else RELEASES_PAGE
     name = tag or "那个带 Pre-release 标记的版本"
-
-    print("== 手动把预发布变成正式版 ==\n")
-    # 用户要求：先把内测通道文件清掉，再展示步骤 —— 转正后本来就不该再用它，
-    # 放在前面可以避免"看完步骤就忘了清"。
-    print("  ① 先清掉本机的内测通道文件（转正后不再需要）：")
-    had_preview = clear_preview_tag()
 
     print(f"""
   ② 再做下面这几步（这才是真正的转正操作）
