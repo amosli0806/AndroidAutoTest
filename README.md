@@ -120,7 +120,8 @@ CI 默认把 Release 造成**预发布**（`release.yml` 的 `prerelease: true`�
 GitHub 的 `/releases/latest` 只返回「非草稿、**非预发布**」的 Release，
 所以预发布期间普通客户端一律查不到，仍停在上一个正式版 —— 这就是灰度开关。
 
-1. 改 `utils/version.py` 的 `APP_VERSION` → 提交推送 → `git tag v1.5.15 && git push origin v1.5.15`
+1. 改 `utils/version.py` 的 `APP_VERSION` → 提交推送 →
+   `git tag -a v1.5.15 -m "虫师 v1.5.15" && git push origin v1.5.15`
 2. CI 自动打包、跑自测、建**预发布** Release（带全量包与增量补丁）
 3. **自己先验**：本机任选一种方式让它走内测通道
    - 临时：设环境变量 `CHONGSHI_UPDATE_TAG=v1.5.15`
@@ -136,8 +137,32 @@ GitHub 的 `/releases/latest` 只返回「非草稿、**非预发布**」的 Rel
 >
 > ⚠️ 验证完成后记得**删掉 `data/preview.json` / 清掉环境变量**，否则这台机器会一直
 > 盯着那个固定 tag，收不到后续的正式版本。
+
+### 验证没过、要改代码（还没转正时）
+
+这一步只在自己看得见的时候做。tag 可以直接重打，**不用改版本号**：
+
+1. 改代码 → **先在本地跑 `python update_pipeline_selftest.py`**。
+   跑之前必须先打包更新器，否则会固定报一条「跳过端到端」的失败：
+   `python -m PyInstaller updater.spec --noconfirm --distpath dist_updater --workpath build_updater`
+2. 提交推送 `main`
+3. 把 tag 移到新提交并强推：
+
+   ```bash
+   git tag -f -a v1.5.15 -m "虫师 v1.5.15" && git push -f origin v1.5.15
+   ```
+
+   CI 会重跑，并**覆盖同名资产**（实测 zip 与补丁都会被替换，`updated_at` 会变）。
+4. 重新验，直到没问题再转正
+
+> ⚠️ **已经转正（发给了用户）就不能这么干**：用户手里已经装着同一版本号，
+> 重打 tag 会让「一个版本号对应两份不同内容」，补丁起点和 sha256 全对不上。
+> 那时只能改 `APP_VERSION` 发下一个版本号。
 >
-> 验证不过就删 Release、删 tag，修复后发下一个版本号 —— tag 不能复用指向别的 commit。
+> ⚠️ 重推 tag 前先把 CI 等完。构建跑到一半移动 tag，产物会是旧提交的。
+>
+> 💡 顺带一条：`prerelease` 的取消目前只能网页点。本机没有 GitHub API 凭证时
+> （`git credential fill` 为空、未装 gh CLI），脚本改不了 Release 状态。
 
 - `.github/workflows/release.yml` 会自动：校验 tag 与代码版本一致 → 跑更新器自测 → 打包主程序与更新器
   → 校验产物完整性 → 打 zip → 校验包内不含运行期数据 → 创建 Release 并上传产物
