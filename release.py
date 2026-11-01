@@ -456,8 +456,14 @@ def do_manual_promote(tag=None):
     url = f"https://github.com/{REPO}/releases/tag/{tag}" if tag else RELEASES_PAGE
     name = tag or "那个带 Pre-release 标记的版本"
 
+    print("== 手动把预发布变成正式版 ==\n")
+    # 用户要求：先把内测通道文件清掉，再展示步骤 —— 转正后本来就不该再用它，
+    # 放在前面可以避免"看完步骤就忘了清"。
+    print("  ① 先清掉本机的内测通道文件（转正后不再需要）：")
+    had_preview = clear_preview_tag()
+
     print(f"""
-== 手动把预发布变成正式版 ==
+  ② 再做下面这几步（这才是真正的转正操作）
 
   要做的事：把 {name} 的「预发布」标记去掉。去掉之后它就是最新正式版，
   所有用户下次点「检查更新」就能收到。
@@ -483,11 +489,15 @@ def do_manual_promote(tag=None):
 
   怎么确认真的生效：
     用另一台还是旧版本的电脑，虫师菜单 →「检查更新」，应该提示 {name}
-
-  转正后清掉本机的内测通道文件（否则这台机器会一直只查 {name}）：
-    python release.py clear-preview
-  （装了下个版本后不必手动：虫师检查更新时发现它已转正，会自己删掉）
 """)
+
+    if had_preview:
+        print(f"""  ⚠ 内测通道文件已经删了。如果你中途放弃转正，本机会回到正式通道
+     （只查最新正式版）。想重新盯 {name} 的话，在安装目录 data\\preview.json
+     写 {{\"tag\": \"{tag or 'vX.Y.Z'}\"}} 即可。
+""")
+    else:
+        print("  （本机没有内测通道文件要清理，直接按上面步骤操作即可）\n")
 
     try:
         import webbrowser
