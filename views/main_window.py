@@ -2712,10 +2712,35 @@ class MainWindow(QMainWindow):
         if getattr(self, "_mini_mode", False):
             self._schedule_mini_refit()
 
+    def _refresh_title_bar_dark(self, delayed: bool = True):
+        """按当前主题重设 Windows 原生标题栏深浅。
+
+        除了 apply_theme() 里那次，窗口状态变化 / 重新激活时也要补一刀：
+        Windows 在「最大化↔还原」会重建非客户区，切到别的窗口再切回来也可能
+        按系统主题重画标题栏，DWM 的深色属性会被重置回系统色（2026-11-01 用户
+        反馈「切暗夜后顶部还是白的」）。
+
+        `delayed=False`：只设一次、不排补设。给高频的「窗口激活」用，
+        否则每切一次窗口都堆三个定时器。
+        """
+        try:
+            set_dark_title_bar(self, Settings.get_theme_mode() == THEME_MODE_DARK,
+                               delayed=delayed)
+        except Exception as e:
+            print(f"[apply_theme] 标题栏深浅重设失败: {e}")
+
+    def event(self, e):
+        if e.type() == QEvent.Type.WindowActivate:
+            # 从别的窗口切回来：非客户区可能已被系统按主题重画过
+            self._refresh_title_bar_dark(delayed=False)
+        return super().event(e)
+
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() != QEvent.Type.WindowStateChange:
             return
+        # 最大化 / 还原会重建非客户区，标题栏深浅跟着重设一次
+        self._refresh_title_bar_dark()
         # 迷你模式下被系统异步切回最大化时，等事件循环跑完再拉回普通状态
         if getattr(self, "_mini_mode", False) and (
                 self.isMaximized() or self.isFullScreen()):

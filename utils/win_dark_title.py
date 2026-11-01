@@ -3,24 +3,32 @@
 import sys
 
 
-def set_dark_title_bar(window, dark: bool):
+def set_dark_title_bar(window, dark: bool, delayed: bool = True):
     """设置 Windows 原生标题栏为深色或浅色。
     仅在 Windows 平台生效，其他平台静默忽略。
 
-    **为什么设两次**（2026-11-01 用户反馈「亮色切暗色后标题栏还是亮」）：
-    切主题时 apply_theme() 会对整棵控件树重设 QSS，Qt 随后处理
-    StyleChange / 重绘，DWM 会按系统主题重新画一遍标题栏，把刚设的属性冲掉。
-    实测主窗口「亮 → 暗」只设一次：DWM 属性先变 1，0.25 秒后又回到 0，
-    标题栏停在浅色 —— 这正是用户看到的现象。
-    所以立即设一次（无感），再延迟补设一次把终态钉住。
+    `delayed=False` 时只设一次、不排补设 —— 给「窗口激活」这类高频事件用，
+    避免每次切窗口都堆三个定时器。
+
+    **为什么要补设**：
+    切主题时 apply_theme() 会对整棵控件树重设 QSS + 重画壁纸，界面复杂时
+    重绘会持续 1~2 秒；DWM 在重绘/非客户区重建后按系统主题重画标题栏，
+    把刚设的属性冲掉。实测主窗口「亮 → 暗」只设一次：属性先变 1，0.25 秒后
+    又回到 0，标题栏停在浅色 —— 这正是用户看到的现象。
     """
     if sys.platform != "win32":
         return
     _apply_dark_title_bar(window, dark)
+    if not delayed:
+        return
     try:
         from PyQt6.QtCore import QTimer
-        # 220ms 足够越过这一轮 StyleChange / 重绘；再快仍会被冲掉
-        QTimer.singleShot(220, lambda: _apply_dark_title_bar(window, dark))
+        # 补设三次（2026-11-01 加）。
+        # 一次 220ms 在空壳窗口上够用，但真实使用场景下界面复杂、重绘更久，
+        # 中途的补设照样会被冲掉（用户报「切暗夜后顶部还是白的」，本地空窗口
+        # 复现不出）。三个时间点覆盖重绘结束前后，多打两次 DWM 调用无副作用。
+        for delay in (220, 700, 1600):
+            QTimer.singleShot(delay, lambda d=dark: _apply_dark_title_bar(window, d))
     except Exception:
         pass
 
