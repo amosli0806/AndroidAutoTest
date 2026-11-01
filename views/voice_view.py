@@ -8,7 +8,7 @@
 三栏结构（观感与「自动化编辑」「自动化执行」两页一致）：
     左  语音管理  —— 独立的「语音用例」列表，可新建/删除/导入/导出
     中  播报文案  —— 选中用例的文案列表（增删改 + 单条播报）
-    右  执行      —— 勾选要播的语音用例、全选、语速、循环、执行选中（播报中变「停止」）
+    右  执行      —— 勾选要播的语音用例、全选、执行选中（播报中变「停止」）
 
 重要：**语音用例与「自动化编辑」里的用例是两套独立的东西**。
 那边是 App 操作序列（点击/输入/断言…），这里是纯播报脚本，互不影响。
@@ -37,7 +37,8 @@ import qtawesome as qta
 from utils.icons import menu_icon
 
 from models.voice_model import (
-    DEFAULT_DELAY, DEFAULT_WAKE_WORD, KIND_PHRASE, KIND_VERIFY, VoiceModel)
+    DEFAULT_DELAY, DEFAULT_WAKE_WORD, KIND_PHRASE, KIND_VERIFY, VoiceModel,
+    get_loop)
 from services.voice_service import VoiceError
 from utils import tree_state, voice_table
 # InputDialog 是项目自定义的圆角卡片式对话框，与编辑页"创建项目"用同一个
@@ -788,32 +789,13 @@ class VoiceView(QWidget):
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(6)
 
-        # 单行工具栏：语速 / 循环 / 执行选中 / 停止  +  右侧全选 / 取消全选
-        # 不再有"执行"标题，控件全部集中在这一行
+        # 单行工具栏：执行选中 / 停止  +  右侧全选 / 取消全选
+        # 语速与循环 2026-11-01 移到「设置 → 语音播报」：这两个是调好就长期不动的
+        # 配置，放在这里既挤又容易被误碰（执行中还要跟着置灰）。
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(6)
 
-        title_row.addWidget(QLabel("语速"))
-        self.rate_spin = QSpinBox()
-        self.rate_spin.setObjectName("VoiceRateSpin")
-        self.rate_spin.setRange(-10, 10)
-        self.rate_spin.setFixedWidth(56)
-        self.rate_spin.setFixedHeight(26)
-        self.rate_spin.valueChanged.connect(self._on_rate_changed)
-        title_row.addWidget(self.rate_spin)
-
-        title_row.addSpacing(4)
-        title_row.addWidget(QLabel("循环"))
-        self.loop_spin = QSpinBox()
-        self.loop_spin.setObjectName("VoiceLoopSpin")
-        self.loop_spin.setRange(1, 99)
-        self.loop_spin.setValue(1)
-        self.loop_spin.setFixedWidth(64)
-        self.loop_spin.setFixedHeight(26)
-        title_row.addWidget(self.loop_spin)
-
-        title_row.addSpacing(8)
         # 「执行选中 / 停止」二合一：同一个按钮两种状态（蓝「执行选中」/ 红「停止」）。
         # 原来的两个按钮并排，空闲时「停止」恒灰，白占一格还让这一行显得挤
         # （2026-10-30 用户要求合并）。状态由 _set_play_stop_state 切换。
@@ -1632,17 +1614,23 @@ class VoiceView(QWidget):
     # ------------------------------------------------------------------
     # 配置
     # ------------------------------------------------------------------
-    def _load_settings_into_ui(self):
-        """回填语速，并把整份配置（含音色/输出设备）套到引擎上"""
-        settings = self.model.settings
-        self.rate_spin.blockSignals(True)
-        self.rate_spin.setValue(int(settings.get("rate", 0)))
-        self.rate_spin.blockSignals(False)
-        self._apply(lambda: self.service.apply_cfg(settings))
+    def _load_settings_into_ui(self, settings=None):
+        """把整份配置（音色 / 输出设备 / 语速）套到引擎上。
 
-    def _on_rate_changed(self, value):
-        self.model.set_settings(rate=int(value))
-        self._apply(lambda: self.service.set_rate(int(value)))
+        语速与循环 2026-11-01 移到「设置 → 语音播报」，本页不再有对应控件，
+        所以这里只负责把配置套给引擎；播放时的轮数用 get_loop() 现读磁盘。
+
+        settings 传 None 时用本页持有的 model 快照（启动那一刻就是磁盘上的值），
+        不额外构造 VoiceModel —— 那会把上千条用例再读一遍。
+        """
+        self._apply(lambda: self.service.apply_cfg(settings or self.model.settings))
+
+    def reload_voice_settings(self):
+        """设置页保存后回调：重新读磁盘配置并套到引擎（语速改动立即生效）。"""
+        try:
+            self._load_settings_into_ui(VoiceModel().settings)
+        except Exception as e:                      # noqa: BLE001 - 不能让设置保存失败
+            print(f"[voice_view] 重新套用语音配置失败: {e}")
 
     def _apply(self, action):
         if not self.service.is_available():
@@ -1823,8 +1811,7 @@ class VoiceView(QWidget):
         # 「全选 / 取消全选」二合一：文案跟着树里实际勾选情况走
         self._sync_select_all_btn()
         self.select_all_btn.setEnabled(not running)
-        self.loop_spin.setEnabled(not running)
-        self.rate_spin.setEnabled(available and not running)
+        # 语速 / 循环已移到设置页，本页没有对应控件可置灰
         # 左右两棵树执行中不再 setEnabled(False)：禁用会把整个树的图标
         # 压成灰样式（用户反馈"执行中树图标变了"）。树保持可用，交互
         # 风险在各自的处理入口里按 running 状态拦截（见下面两个方法）。
@@ -1975,7 +1962,9 @@ class VoiceView(QWidget):
             from utils.toast import show_toast
             show_toast(self, "没有勾选可播报的文案", duration=1500)
             return
-        loop_count = self.loop_spin.value()
+        # 轮数从磁盘现读（设置页 → 语音播报 → 循环）：本页 model.settings 是
+        # 启动时的快照，设置页改完不会回写它
+        loop_count = get_loop()
         case_count = len(self._collect_checked_case_ids())
         label = f"正在播报 {case_count} 个用例 / {len(items)} 条"
         if loop_count > 1:

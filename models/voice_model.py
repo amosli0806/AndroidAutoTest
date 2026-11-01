@@ -42,6 +42,7 @@ DEFAULT_SETTINGS = {
     "engine": "windows_sapi",
     "voice_id": "",
     "rate": 0,          # SAPI -10..10
+    "loop": 1,          # 「执行选中」循环轮数 1..99
     "device_id": "",    # 空 = 系统默认输出设备
     "wake_word": DEFAULT_WAKE_WORD,
     # 没有 volume：响度直接用电脑的系统音量，界面上不提供音量调节
@@ -690,6 +691,22 @@ def get_rate() -> int:
         return int((data.get("settings") or {}).get("rate", 0) or 0)
     except Exception:
         return 0
+
+
+def get_loop() -> int:
+    """当前配置的循环轮数（1..99）。只读 settings 段，不构造 VoiceModel。
+
+    与 get_rate 同理：语音播报页点「执行选中」时只需要一个 int，没必要把
+    上千条语音用例读进内存。语速与循环都放在设置页，所以这里读的是**磁盘**上
+    的最新值 —— 语音页持有的 model.settings 是启动时的快照，设置页改完不会回写它。
+    """
+    try:
+        with open(VoiceModel.DATA_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        loop = int((data.get("settings") or {}).get("loop", 1) or 1)
+    except Exception:
+        return 1
+    return max(1, min(loop, 99))
 
 
 def get_verify_config() -> dict:

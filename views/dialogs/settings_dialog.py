@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QPushButton, QFileDialog, QSlider, QLabel,
     QComboBox, QWidget, QStackedWidget, QTreeWidget, QTreeWidgetItem,
     QFrame, QScrollArea, QKeySequenceEdit, QCheckBox, QToolButton,
-    QTableWidget, QTableWidgetItem, QHeaderView
+    QTableWidget, QTableWidgetItem, QHeaderView, QSpinBox
 )
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QKeySequence, QIcon, QPixmap, QImageReader
@@ -702,7 +702,7 @@ class SettingsDialog(QDialog):
         title.setObjectName("SettingsPageTitle")
         layout.addWidget(title)
 
-        subtitle = QLabel("设置播报的音色与输出设备；选错设备，车机会听不见。")
+        subtitle = QLabel("设置播报的音色、设备、语速与循环；选错设备，车机会听不见。")
         subtitle.setObjectName("SettingsPageSubtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -748,6 +748,22 @@ class SettingsDialog(QDialog):
         self.voice_device_combo.setMinimumWidth(340)
         form.addRow("输出设备:", self.voice_device_combo)
 
+        # 语速 / 循环：原来在「语音播报」页的工具栏上，2026-11-01 移到设置页。
+        # 这两个是「一次调好、长期不变」的配置，摆在每页都要扫一眼的工具栏上
+        # 既碍事又挤（那一行还要放执行/全选），而语音页只剩「按顺序播」这一个动作。
+        self.voice_rate_spin = QSpinBox()
+        self.voice_rate_spin.setRange(-10, 10)
+        self.voice_rate_spin.setFixedWidth(90)
+        self.voice_rate_spin.setToolTip("负数更慢、正数更快，0 为系统默认语速")
+        form.addRow("语速:", self.voice_rate_spin)
+
+        self.voice_loop_spin = QSpinBox()
+        self.voice_loop_spin.setRange(1, 99)
+        self.voice_loop_spin.setSuffix(" 轮")
+        self.voice_loop_spin.setFixedWidth(90)
+        self.voice_loop_spin.setToolTip("「执行选中」把勾选的用例整体播几遍")
+        form.addRow("循环:", self.voice_loop_spin)
+
         # 唤醒词：语音页「唤醒词」按钮追加到用例末尾的那句。
         # 车机助手得先被叫醒才听得进后面的指令，所以这句往往是每条用例的第一句。
         self.wake_word_edit = QLineEdit()
@@ -773,7 +789,9 @@ class SettingsDialog(QDialog):
         layout.addLayout(test_row)
 
         hint = QLabel(
-            "音色与输出设备与「语音播报」页共用，保存后立即生效；响度跟随系统音量。\n"
+            "音色、输出设备、语速、循环都与「语音播报」页共用，保存后立即生效；"
+            "响度跟随系统音量。\n"
+            "语速还会影响「播后等待」的估算值；循环是「执行选中」把勾选的用例整体播几遍。\n"
             f"唤醒词会追加到用例末尾，留空则用默认「{DEFAULT_WAKE_WORD}」。\n"
             "引擎：「Windows 内置语音」离线可用；「Edge 在线语音」需联网、普通话更自然。"
         )
@@ -939,6 +957,16 @@ class SettingsDialog(QDialog):
         self.wake_word_edit.setText(
             (settings.get("wake_word") or "").strip() or DEFAULT_WAKE_WORD)
 
+        # 语速 / 循环（从语音播报页移过来的）
+        try:
+            self.voice_rate_spin.setValue(int(settings.get("rate", 0) or 0))
+        except (TypeError, ValueError):
+            self.voice_rate_spin.setValue(0)
+        try:
+            self.voice_loop_spin.setValue(max(1, int(settings.get("loop", 1) or 1)))
+        except (TypeError, ValueError):
+            self.voice_loop_spin.setValue(1)
+
         # 语音回执验证规则
         verify = settings.get("verify") or {}
         self.verify_enabled_check.setChecked(bool(verify.get("enabled", False)))
@@ -1019,6 +1047,9 @@ class SettingsDialog(QDialog):
                 service.set_engine(engine_key)
             service.set_voice(self.voice_tone_combo.currentData() or "")
             service.set_output_device(self.voice_device_combo.currentData() or "")
+            # 语速也一起套上：试听要听到的是刚调的语速，不能等保存
+            if hasattr(self, "voice_rate_spin"):
+                service.set_rate(int(self.voice_rate_spin.value()))
         except VoiceError as e:
             self.voice_test_result.setText(str(e))
 
@@ -1037,6 +1068,9 @@ class SettingsDialog(QDialog):
             engine=self.voice_engine_combo.currentData() or "",
             voice_id=self.voice_tone_combo.currentData() or "",
             device_id=self.voice_device_combo.currentData() or "",
+            # 语速 / 循环（2026-11-01 从语音播报页移到这一页）
+            rate=int(self.voice_rate_spin.value()),
+            loop=max(1, int(self.voice_loop_spin.value())),
             # 留空也存空串：语音页取空值时回落到 DEFAULT_WAKE_WORD
             wake_word=(self.wake_word_edit.text() or "").strip(),
             verify={

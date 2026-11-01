@@ -1014,8 +1014,10 @@ def step_voice_shots():
         grab_widget(left, "voice_1_manage.png")
     mid = find_obj(vv, "VoiceMiddleGroup", QGroupBox)
     right = None
-    if vv.rate_spin is not None:
-        right = ancestor_of(vv.rate_spin, QGroupBox)
+    # 右栏锚点用「执行选中」按钮（语速/循环 2026-11-01 移到设置页，原来的
+    # rate_spin 不再存在）
+    if getattr(vv, "play_stop_btn", None) is not None:
+        right = ancestor_of(vv.play_stop_btn, QGroupBox)
     if right is not None:
         grab_widget(right, "voice_3_execute.png")
     # 保存引用给后续步骤

@@ -3282,6 +3282,10 @@ class MainWindow(QMainWindow):
             # （只在用户没动过那个输入框时才刷，见 ActionCardView.refresh_voice_default）
             if self.action_card is not None:
                 self.action_card.refresh_voice_default()
+            # 语速也可能改过，套到语音引擎上（不然要重启才生效）
+            vv = getattr(self, "_voice_view", None)
+            if vv is not None:
+                vv.reload_voice_settings()
 
     # ---------- 设置各种视图 ----------
     # 「步骤列表」「动作卡片」的标题是 QLabel，「项目管理」的标题是 QToolButton，
