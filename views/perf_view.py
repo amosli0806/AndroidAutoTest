@@ -647,9 +647,9 @@ class PerfView(QWidget):
 
     def update_probe(self, key: str, data: dict):
         """旁路探针的最新快照（由 PerfController 每秒推一次）。"""
-        # 整机 CPU / 线程已并入 CPU 指标：没有独立卡片，摘要挂到 CPU 卡片的 tooltip
+        # 整机 CPU / 线程无独立卡片，也不再往卡片上挂悬停摘要；数据入库由控制器负责，
+        # 需要看整机 / 线程明细时去报告里的「设备 CPU / 线程」章节（2026-11-01 用户要求）。
         if key in ("sys_cpu", "threads"):
-            self._update_cpu_side_summary(key, data)
             return
         card = self._cards.get(key)
         if card is None or not hasattr(card, "set_values"):
@@ -676,41 +676,6 @@ class PerfView(QWidget):
         if zram:
             detail += f" · ZRAM {zram:.0f} MB"
         card.set_values(value, detail, error=data.get("error", ""))
-
-    def _update_cpu_side_summary(self, key: str, data: dict):
-        """整机 CPU / 线程的实时摘要 → CPU 卡片 tooltip（不额外占版面）。
-
-        这两项是 CPU 分析的附属数据：只看数值时鼠标悬停 CPU 卡就能看到，
-        需要完整数据时看报告里的「CPU 分析 / 整机 CPU / 线程分析」章节。
-        """
-        if not hasattr(self, "_cpu_side"):
-            self._cpu_side = {}
-        self._cpu_side[key] = data or {}
-
-        parts = []
-        sc = self._cpu_side.get("sys_cpu") or {}
-        if "cpu_pct" in sc:
-            cores = sc.get("cores") or 0
-            txt = f"整机 CPU {sc['cpu_pct']:.0f}%"
-            if cores:
-                busy = sc.get("busy_raw")
-                busy = busy if busy is not None else sc['cpu_pct'] * cores
-                txt += f"（{cores} 核累计 {busy:.0f}%）"
-            parts.append(txt)
-        th = self._cpu_side.get("threads") or {}
-        if "thread_total" in th:
-            parts.append(f"线程 {th['thread_total']} 个（活跃 {th['thread_active']}）")
-            tops = (th.get("top") or [])[:3]
-            if tops:
-                parts.append("最忙线程：" + "、".join(
-                    f"{t.get('name', '')} {float(t.get('cpu') or 0):.1f}%" for t in tops))
-        errs = [str(d.get("error")) for d in (sc, th) if d.get("error")]
-        if errs:
-            parts.append("⚠ " + "；".join(errs))
-        card = self._cards.get("cpu")
-        if card is not None:
-            card.setToolTip("\n".join(parts))
-
 
     @staticmethod
     def _update_netdev_card(card, data: dict):
