@@ -38,6 +38,11 @@ from utils.app_paths import data_path
 # 没配置（清空过）时回落到这个值，保证按钮任何时候点下去都有内容可插。
 DEFAULT_WAKE_WORD = "你好虫师"
 
+# 性能检测「模式」下拉里语音套件的展示前缀。
+# 放模型层而不是 perf_view：控制器也要用它判断"这条是语音套件还是自动化套件"，
+# 控制器不该 import 视图。
+VOICE_SUITE_PREFIX = "语音 · "
+
 DEFAULT_SETTINGS = {
     "engine": "windows_sapi",
     "voice_id": "",
@@ -381,6 +386,38 @@ class VoiceModel:
             suite.case_ids = ids
         self.save()
         return suite
+
+    def build_play_items(self, case_ids) -> list:
+        """把若干语音用例展开成「播报组」列表（播放器吃的格式）。
+
+        每组 = (case_id, 播报步骤下标, 文案, 播后等待, [紧随的检测步骤...], 用例名)。
+        传进来的 case_ids 顺序即播放顺序；不存在的 id 自动跳过。
+
+        这段逻辑原来长在语音页的勾选树里（_checked_items），性能检测的
+        「语音场景」也要用，所以挪到模型层按 id 展开（2026-11-01）。
+        """
+        items = []
+        for case_id in case_ids:
+            case = self.get_case(case_id)
+            if case is None:
+                continue
+            for idx, step in enumerate(case.steps):
+                if step.kind != KIND_PHRASE:
+                    continue
+                text = (step.text or "").strip()
+                if not text:
+                    continue
+                # 收集紧跟其后的连续检测步骤（碰到下一个播报步骤即止）
+                verifies = []
+                k = idx + 1
+                while k < len(case.steps) and case.steps[k].kind == KIND_VERIFY:
+                    kw = [x for x in case.steps[k].keywords if x]
+                    if kw:
+                        verifies.append((k, kw))
+                    k += 1
+                items.append((case_id, idx, text, float(step.delay or 0),
+                              verifies, case.name))
+        return items
 
     def delete_suite(self, name: str) -> bool:
         suite = self.get_suite(name)

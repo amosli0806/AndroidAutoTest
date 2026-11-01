@@ -319,9 +319,9 @@ class MultiProcessDialog(QDialog):
         return out
 
 
-# 「模式」下拉里语音套件的展示前缀。语音套件存的是语音用例 id，
-# 与自动化套件不是一套东西，所以只在这里列出来给人看，选中时会被挡回去。
-VOICE_SUITE_PREFIX = "语音 · "
+# 「模式」下拉里语音套件的展示前缀（定义在模型层，控制器也要用来分流）。
+# 选中语音套件 = 走「语音场景」：边播语音边采集性能（2026-11-01）。
+from models.voice_model import VOICE_SUITE_PREFIX  # noqa: E402
 
 
 class PerfView(QWidget):
@@ -412,6 +412,10 @@ class PerfView(QWidget):
         self._pref_package = ""
         # 记忆里的上次套件名：套件列表由 set_suite_model 稍后填充，届时回选
         self._pref_suite = ""
+        # 当前选中的语音套件名（不带前缀，空 = 没选）。
+        # 语音套件与自动化套件是两套数据，不能都塞进 suite_combo，
+        # 所以单独存一份，启动时按它决定走哪种场景。
+        self._voice_suite = ""
         # 多进程目标：当前列表里可选的运行中进程，以及已勾选的目标进程（主进程在第一个）
         self._running_processes = []
         self._multi_processes = []
@@ -1126,7 +1130,7 @@ class PerfView(QWidget):
         self.mode_combo.setToolTip(
             "独立监控：只看当前应用\n"
             "选择套件：按套件顺序做场景化测试\n"
-            "「语音 · 」开头的套件来自语音播报页，只能在那边使用")
+            "「语音 · 」开头的套件：边播语音边采集性能，播完自动停")
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         # 监控时长：到点自动停止（典型场景：车机跑 12 小时 Monkey 检测内存泄露）
         self.duration_label = QLabel("时长")
@@ -1803,17 +1807,16 @@ class PerfView(QWidget):
         else:
             name = self.mode_combo.itemText(index).strip()
             if name.startswith(VOICE_SUITE_PREFIX):
-                # 语音套件只做展示：它存的是语音用例，场景化要的是自动化用例，
-                # 真跑起来只会得到「套件无有效用例」。直接说明并退回独立监控。
-                from utils.toast import show_toast
-                show_toast(self, "语音套件只能在「语音播报」页使用", duration=2600)
-                self.mode_combo.blockSignals(True)
-                self.mode_combo.setCurrentIndex(0)
-                self.mode_combo.blockSignals(False)
+                # 语音套件 = 「语音场景」：边播语音边采集性能。
+                # 它走的是另一套数据（语音用例 id），所以只记在这份状态里，
+                # 不写进 suite_combo（那股是自动化套件的载体）。
+                self._voice_suite = name[len(VOICE_SUITE_PREFIX):]
                 self.suite_combo.setCurrentText("(无套件)")
             elif name and name not in ("（无套件）", "(无套件)"):
+                self._voice_suite = ""
                 self.suite_combo.setCurrentText(name)
             else:
+                self._voice_suite = ""
                 self.suite_combo.setCurrentText("(无套件)")
         self._apply_state()
 
@@ -1862,11 +1865,20 @@ class PerfView(QWidget):
             # 之前在"无套件"占位上：套件就绪后回到记得的那个
             target = pref
         self.mode_combo.setCurrentText(target or "独立监控")
+        # 语音套件的选中态单独恢复：它不在 suite_combo 里，target 逻辑管不到
+        if self._voice_suite:
+            full = f"{VOICE_SUITE_PREFIX}{self._voice_suite}"
+            if self.mode_combo.findText(full) >= 0:
+                self.mode_combo.setCurrentText(full)
+            else:
+                self._voice_suite = ""      # 套件被删了
         self.mode_combo.blockSignals(False)
         # blockSignals 期间 _on_mode_changed 不会跑，这里补一次套件名同步，
         # 否则「模式=冒烟套件、suite_combo=(无套件)」会对不上
         chosen = self.mode_combo.currentText()
-        if chosen and chosen not in ("独立监控", "（无套件）"):
+        if chosen.startswith(VOICE_SUITE_PREFIX):
+            self.suite_combo.setCurrentText("(无套件)")
+        elif chosen and chosen not in ("独立监控", "（无套件）"):
             self.suite_combo.setCurrentText(chosen)
         elif self.mode_combo.currentIndex() <= 0:
             self.suite_combo.setCurrentText("(无套件)")
@@ -2034,11 +2046,19 @@ class PerfView(QWidget):
         self._active_metrics = list(metrics)
 
         scenario = (self.mode_combo.currentIndex() > 0)
-        if scenario:
+        voice_suite = self._voice_suite if scenario else ""
+        if scenario and not voice_suite:
             suite_name = self.suite_combo.currentText()
             if not suite_name or suite_name == "(无套件)":
                 show_toast(message="请先选择测试套件", parent=self)
                 return
+
+        # 语音场景：suite 里放带前缀的名字，控制器据此去 voice_model 找套件；
+        # 自动化场景维持原样（suite_combo 里就是套件名）
+        if voice_suite:
+            suite_for_payload = f"{VOICE_SUITE_PREFIX}{voice_suite}"
+        else:
+            suite_for_payload = self.suite_combo.currentText() if scenario else ""
 
         payload = {
             'package': package,
@@ -2048,7 +2068,10 @@ class PerfView(QWidget):
             'metrics': metrics,
             'mode': 'scenario' if scenario else 'monitor',
             'duration_minutes': self.duration_spin.value(),
-            'suite': self.suite_combo.currentText() if scenario else "",
+            'suite': suite_for_payload,
+            # voice = 语音套件（边播边测）；auto = 自动化套件；空 = 独立监控
+            'suite_type': ('voice' if voice_suite
+                           else ('auto' if scenario else '')),
             'loop': self.loop_spin.value() if scenario else 1,
             'stop_on_fail': self.stop_on_fail_check.isChecked() if scenario else False,
         }
@@ -2154,7 +2177,8 @@ class PerfView(QWidget):
             'package': pkg,
             # 多进程目标（主进程不含在内，启动时由 package + 这个列表拼成）
             'processes': [p for p in self._multi_processes if p != pkg],
-            'suite': self.suite_combo.currentText(),
+            'suite': (f"{VOICE_SUITE_PREFIX}{self._voice_suite}" if self._voice_suite
+                      else self.suite_combo.currentText()),
             'loop': self.loop_spin.value(),
             'stop_on_fail': self.stop_on_fail_check.isChecked(),
         }
@@ -2245,7 +2269,12 @@ class PerfView(QWidget):
         # 由 _refresh_suite_combo 在列表就绪时回选
         suite = cfg.get('suite')
         if suite and suite != "(无套件)":
-            self._pref_suite = suite
+            if suite.startswith(VOICE_SUITE_PREFIX):
+                # 上次选的是语音套件：记在专门的状态里，
+                # 等 _rebuild_mode_combo 把下拉铺好后回选
+                self._voice_suite = suite[len(VOICE_SUITE_PREFIX):]
+            else:
+                self._pref_suite = suite
         loop = cfg.get('loop')
         if isinstance(loop, int):
             self.loop_spin.setValue(loop)

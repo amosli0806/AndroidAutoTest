@@ -1140,6 +1140,9 @@ def main():
 
     voice_model = VoiceModel()
     voice_service = get_voice_service()
+    # 性能检测的「语音场景」（边播语音边采性能）也要用这份模型。
+    # 控制器在前面已经建好了，这里补挂引用 —— 语音模型不依赖其它视图，早建晚挂都一样。
+    perf_controller.voice_model = voice_model
     # 把持久化的播报配置（音色/语速/音量/输出设备）套到引擎上：
     # 用例里的「语音播报」步骤要用用户调好的这套配置，
     # 不能因为没打开过语音页就退回系统默认音色和扬声器。

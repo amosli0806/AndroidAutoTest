@@ -262,7 +262,7 @@ class PerfController(QObject):
 
     def __init__(self, perf_model: PerfModel, perf_view,
                  device_service, project_model, step_model, suite_model,
-                 logs_view=None, parent=None):
+                 logs_view=None, voice_model=None, parent=None):
         super().__init__(parent)
         self.model = perf_model
         self.view = perf_view
@@ -270,11 +270,14 @@ class PerfController(QObject):
         self.project_model = project_model
         self.step_model = step_model
         self.suite_model = suite_model
+        # 语音模型：只有「语音场景」（边播语音边测性能）会用到，可为 None
+        self.voice_model = voice_model
         self.logs_view = logs_view
 
         self.current_session = None
         self.perf_worker = None
         self.scenario_worker = None
+        self.voice_worker = None      # 语音场景的播报线程
         self._alert_cache = {}  # {metric: bool}
         self._last_worker_error = None  # 采样异常去重（同一条只提示一次）
 
@@ -574,6 +577,11 @@ class PerfController(QObject):
         self._start_probes(session)
 
         # 根据模式更新视图状态
+        if mode == 'scenario' and payload.get('suite_type') == 'voice':
+            # 语音场景：不是跑自动化用例，而是按套件顺序播报，播完即停
+            self._start_voice_scenario(payload)
+            return
+
         if mode == 'scenario':
             # 场景化：同时启动用例执行线程
             suite_name = payload['suite']
@@ -623,13 +631,19 @@ class PerfController(QObject):
     def _on_stop(self):
         # 幂等：已经停止则直接返回，避免场景化结束信号与用户点击重复触发
         if self.current_session is None and self.perf_worker is None \
-                and self.scenario_worker is None:
+                and self.scenario_worker is None and self.voice_worker is None:
             return
         # 停止采集
         if self.perf_worker:
             self.perf_worker.stop()
             self.perf_worker.wait(2000)
             self.perf_worker = None
+
+        # 停止语音场景：播报线程内部按分片轮询响应 stop()，wait 一下再置空
+        if self.voice_worker:
+            self.voice_worker.stop()
+            self.voice_worker.wait(3000)
+            self.voice_worker = None
 
         # 停止场景化执行：必须把中止请求转发给内部真正干活的 ExecutionWorker
         # （见 ScenarioWorker.stop 的说明），否则车机端会一直跑到循环次数用尽
@@ -1890,6 +1904,77 @@ class PerfController(QObject):
     def _on_scenario_progress(self, message, log_type):
         if self.logs_view:
             self.logs_view.add_log(message, log_type)
+
+    # ------------------------------------------------------------------
+    # 语音场景：边播语音边采集性能
+    # ------------------------------------------------------------------
+    def _start_voice_scenario(self, payload):
+        """按语音套件的顺序播报，播完（或到时长上限）自动停采集。
+
+        与自动化场景的区别只有「跑什么」：那边跑的是 App 操作步骤，这边是把
+        文案念给车机听 —— 采集、报告、基线、图表全部复用。
+        """
+        from models.voice_model import VOICE_SUITE_PREFIX
+        from services.voice_player import VoicePlaybackWorker
+        from services.voice_service import get_voice_service
+
+        full_name = payload.get('suite') or ""
+        name = (full_name[len(VOICE_SUITE_PREFIX):]
+                if full_name.startswith(VOICE_SUITE_PREFIX) else full_name)
+
+        suite = None
+        if self.voice_model is not None:
+            suite = self.voice_model.get_suite(name)
+        if suite is None:
+            self._on_stop()
+            WarningDialog.show_warning(self.view, "套件不存在", name)
+            return
+
+        items = self.voice_model.build_play_items(suite.case_ids)
+        if not items:
+            self._on_stop()
+            WarningDialog.show_warning(
+                self.view, "套件里没有可播报的文案",
+                f"「{name}」里的用例没有播报步骤，或用例已被删除。")
+            return
+
+        service = get_voice_service()
+        if not service.is_available():
+            self._on_stop()
+            ErrorDialog.show_error(
+                self.view, "语音引擎不可用",
+                "无法播报：请到「设置 → 语音播报」检查引擎与输出设备。")
+            return
+
+        # 会话里记上场景名，报告标题/CSV 里能看出这是语音场景
+        if self.current_session is not None:
+            self.current_session.suite_name = full_name
+            self.current_session.case_ids = [c.id for c in suite.case_ids
+                                             if self.voice_model.get_case(c)]
+            self.current_session.case_names = sorted({
+                it[5] for it in items})       # 去重后的用例名，仅用于报告
+
+        loop_count = int(payload.get('loop') or 1)
+        self.voice_worker = VoicePlaybackWorker(
+            service, items, loop_count=loop_count)
+        self.voice_worker.done.connect(self._on_voice_scenario_finished)
+        self.voice_worker.start()
+
+        self.view.set_state(self.view.STATE_SCENARIO)
+        if self.logs_view:
+            self.logs_view.add_log(
+                f"[性能+语音] 开始播报套件 '{name}'（{len(items)} 条 / {loop_count} 轮）"
+                f"并采集性能数据", "info")
+
+    def _on_voice_scenario_finished(self, ok: bool, message: str):
+        """播报结束：停采集、出报告。失败/被打断也照常收尾（数据已经采到了）。"""
+        if self.view.get_state() != self.view.STATE_SCENARIO:
+            return
+        self._on_stop()
+        if ok:
+            show_toast(self.view, "语音场景完成")
+        else:
+            show_toast(self.view, f"语音场景结束：{message or '已中断'}", duration=2600)
 
     def _on_scenario_finished(self):
         """场景化执行完成，停止采集"""
