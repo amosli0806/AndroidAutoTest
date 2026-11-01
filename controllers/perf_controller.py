@@ -1024,20 +1024,18 @@ class PerfController(QObject):
         if session is None or not session.samples:
             return False
         try:
-            import json as _json
             from utils.perf_report import PerfReportGenerator
             folder = self._device_export_dir()
             os.makedirs(folder, exist_ok=True)
             html = os.path.join(folder, f"perf_report_{session.name}.html")
-            data = os.path.join(folder, f"perf_{session.name}.json")
+            csv_path = os.path.join(folder, f"perf_{session.name}.csv")
             baseline = self.model.find_baseline_for_package(
                 session.app_package, session.metrics)
             PerfReportGenerator.generate(session, html, baseline=baseline)
-            with open(data, "w", encoding="utf-8") as f:
-                _json.dump(session.to_dict(), f, ensure_ascii=False, indent=2)
+            self._write_session_csv(session, csv_path)
             if self.logs_view:
                 self.logs_view.add_log(
-                    f"[性能] 报告与数据已保存：{html}", "info")
+                    f"[性能] 报告与数据已保存：{html}、{csv_path}", "info")
             return True
         except Exception as e:                       # noqa: BLE001 - 自动保存失败不致命
             logger.exception("自动保存报告/数据失败")
@@ -2120,49 +2118,56 @@ class PerfController(QObject):
             return
 
         try:
-            with open(path, 'w', newline='', encoding='utf-8-sig') as f:
-                writer = csv.writer(f)
-                writer.writerow([
-                    'timestamp', 'cpu_percent', 'mem_pss_mb',
-                    'mem_java_mb', 'mem_native_mb', 'mem_graphics_mb',
-                    'mem_stack_mb', 'mem_code_mb', 'mem_others_mb',
-                    'fps', 'rx_bytes', 'tx_bytes'
-                ])
-                for s in session.samples:
-                    bd = getattr(s, 'mem_breakdown', {}) or {}
-                    # 没采到 CPU 的样本写空单元格，不写 0 —— 0 会被读成"真的不占 CPU"
-                    cpu_txt = ("" if any(e.startswith('cpu:')
-                                         for e in getattr(s, 'errors', ()))
-                               else f"{s.cpu_percent:.2f}")
-                    writer.writerow([
-                        f"{s.timestamp:.3f}", cpu_txt,
-                        f"{s.mem_pss_mb:.2f}",
-                        f"{bd.get('Java', 0.0):.2f}",
-                        f"{bd.get('Native', 0.0):.2f}",
-                        f"{bd.get('Graphics', 0.0):.2f}",
-                        f"{bd.get('Stack', 0.0):.2f}",
-                        f"{bd.get('Code', 0.0):.2f}",
-                        f"{bd.get('Others', 0.0):.2f}",
-                        s.fps,
-                        s.rx_bytes, s.tx_bytes
-                    ])
-            # 诊断产物清单：与主 CSV 并列写一个 <名称>_诊断产物.csv，方便一并归档
-            if getattr(session, 'events', None):
-                manifest = os.path.splitext(path)[0] + "_诊断产物.csv"
-                _labels = {"heap": "堆转储", "capture": "抓包", "screenshot": "截图",
-                           "record": "录屏", "smaps": "内存明细"}
-                t0 = session.samples[0].timestamp if session.samples else 0.0
-                with open(manifest, 'w', newline='', encoding='utf-8-sig') as mf:
-                    w2 = csv.writer(mf)
-                    w2.writerow(['相对秒', '类型', '文件', '备注'])
-                    for e in sorted(session.events, key=lambda x: x.get('ts', 0)):
-                        rel = (e.get('ts', 0) - t0) if t0 else 0.0
-                        w2.writerow([f"{rel:.1f}",
-                                     _labels.get(e.get('type'), e.get('type')),
-                                     e.get('file', ''), e.get('note', '')])
+            self._write_session_csv(session, path)
             show_toast(self.view, "导出成功")
         except Exception as e:
             ErrorDialog.show_error(self.view, "导出失败", str(e))
+
+    def _write_session_csv(self, session, path) -> None:
+        """把会话样本写成 CSV（含诊断产物清单）。
+
+        「导出数据」按钮与采集自然结束自动落盘共用这一份，保证格式完全一致。
+        """
+        with open(path, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                'timestamp', 'cpu_percent', 'mem_pss_mb',
+                'mem_java_mb', 'mem_native_mb', 'mem_graphics_mb',
+                'mem_stack_mb', 'mem_code_mb', 'mem_others_mb',
+                'fps', 'rx_bytes', 'tx_bytes'
+            ])
+            for s in session.samples:
+                bd = getattr(s, 'mem_breakdown', {}) or {}
+                # 没采到 CPU 的样本写空单元格，不写 0 —— 0 会被读成"真的不占 CPU"
+                cpu_txt = ("" if any(e.startswith('cpu:')
+                                     for e in getattr(s, 'errors', ()))
+                           else f"{s.cpu_percent:.2f}")
+                writer.writerow([
+                    f"{s.timestamp:.3f}", cpu_txt,
+                    f"{s.mem_pss_mb:.2f}",
+                    f"{bd.get('Java', 0.0):.2f}",
+                    f"{bd.get('Native', 0.0):.2f}",
+                    f"{bd.get('Graphics', 0.0):.2f}",
+                    f"{bd.get('Stack', 0.0):.2f}",
+                    f"{bd.get('Code', 0.0):.2f}",
+                    f"{bd.get('Others', 0.0):.2f}",
+                    s.fps,
+                    s.rx_bytes, s.tx_bytes
+                ])
+        # 诊断产物清单：与主 CSV 并列写一个 <名称>_诊断产物.csv，方便一并归档
+        if getattr(session, 'events', None):
+            manifest = os.path.splitext(path)[0] + "_诊断产物.csv"
+            _labels = {"heap": "堆转储", "capture": "抓包", "screenshot": "截图",
+                       "record": "录屏", "smaps": "内存明细"}
+            t0 = session.samples[0].timestamp if session.samples else 0.0
+            with open(manifest, 'w', newline='', encoding='utf-8-sig') as mf:
+                w2 = csv.writer(mf)
+                w2.writerow(['相对秒', '类型', '文件', '备注'])
+                for e in sorted(session.events, key=lambda x: x.get('ts', 0)):
+                    rel = (e.get('ts', 0) - t0) if t0 else 0.0
+                    w2.writerow([f"{rel:.1f}",
+                                 _labels.get(e.get('type'), e.get('type')),
+                                 e.get('file', ''), e.get('note', '')])
 
     def _on_export_json(self):
         if not self.current_session and not self.model.sessions:
