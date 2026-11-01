@@ -388,28 +388,29 @@ def _promote_via_actions(tag, dry_run=False):
 
     print("  已触发，等 Actions 取消预发布（约 20~40 秒）…")
     run_url = ""
-    for _ in range(20):
-        time.sleep(15)
-        # 成功判据：latest 真的变成目标版本
-        _code, latest = api("GET", "/releases/latest")
-        if latest and latest.get("tag_name") == tag:
-            print(f"\n  OK：{tag} 已成为最新正式版 ✅")
-            print(f"  发布页：{RELEASES_PAGE}")
-            return 0
-        # 失败也要立刻返回，别让人干等 5 分钟（2026-11-01 踩过）
+    # 每轮只查一次 runs（不查 latest），18 轮 ≈ 6 分钟、18 个请求。
+    # 未认证 API 只有 60 次/小时，之前每轮查两个接口很容易把自己限流掉。
+    for _ in range(18):
+        time.sleep(20)
         _c, runs = api("GET", "/actions/runs?per_page=3")
         for r in (runs or {}).get("workflow_runs", []):
             if r.get("name") == "Promote Release" and r.get("head_branch") == pt_tag:
                 run_url = r.get("html_url") or run_url
-                if r.get("status") == "completed":
-                    print(f"\n  !! Actions 运行结束但不是成功：{r.get('conclusion')}")
-                    print(f"     {run_url}")
-                    print("     点进去看「取消预发布标记」那步的 HTTP 状态：")
-                    print("       403 = 令牌权限不足 —— 仓库 Settings → Actions → General")
-                    print("             → Workflow permissions 改成 Read and write")
-                    print("       404 = tag 在 Release 里不存在（tag 名写错或还没发版）")
-                    return 1
-                break
+                if r.get("status") != "completed":
+                    break
+                if r.get("conclusion") == "success":
+                    _code, latest = api("GET", "/releases/latest")
+                    got = (latest or {}).get("tag_name")
+                    print(f"\n  OK：Actions 已转正，latest = {got} {'✅' if got == tag else '（可能被更晚的版本盖住）'}")
+                    print(f"  发布页：{RELEASES_PAGE}")
+                    return 0
+                print(f"\n  !! Actions 运行结束但不是成功：{r.get('conclusion')}")
+                print(f"     {run_url}")
+                print("     点进去看「取消预发布标记」那步的 HTTP 状态：")
+                print("       403 = 令牌权限不足 —— 仓库 Settings → Actions → General")
+                print("             → Workflow permissions 改成 Read and write")
+                print("       404 = tag 在 Release 里不存在（tag 名写错或还没发版）")
+                return 1
         print("  …", end="", flush=True)
     print("\n  !! 等待超时。去这里确认「Promote Release」有没有跑起来：")
     print(f"     https://github.com/{REPO}/actions/workflows/promote.yml")
