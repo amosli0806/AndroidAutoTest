@@ -1558,6 +1558,8 @@ class VoiceView(QWidget):
            原来是按组内最宽值定宽（「+ 添加步骤」带加号最宽），四个按钮被撑得
            比右边的执行按钮宽一截；去掉加号后文字都是 4 字，与执行选中同宽最齐
            （2026-10-30 用户要求）。
+        3. 右栏工具栏三个按钮（全选 / 执行选中 / 更多）也统一到这一档：
+           「更多」只有 2 字，不补最小宽就会比旁边两个窄一截（2026-11-01 用户反馈）。
         必须在 QSS 下发之后调用，sizeHint 才是按按钮那套 12px 字号算出来的。
         """
         play = getattr(self, "play_stop_btn", None)
@@ -1580,6 +1582,12 @@ class VoiceView(QWidget):
         sel = getattr(self, "select_all_btn", None)
         if sel is not None:
             sel.setMinimumWidth(_widest(sel, ("全选", "取消全选")))
+
+        # 「更多」只有两个字，按文字算会比其他两个窄一截（用户反馈宽窄不齐），
+        # 直接对齐到「执行选中」那一档
+        more = getattr(self, "more_btn", None)
+        if more is not None:
+            more.setMinimumWidth(play_w)
 
         for btn in (self.wake_btn, self.add_btn, self.add_verify_btn,
                     self.recalc_btn):
