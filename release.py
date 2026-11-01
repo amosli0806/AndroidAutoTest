@@ -486,6 +486,7 @@ def do_manual_promote(tag=None):
 
   转正后清掉本机的内测通道文件（否则这台机器会一直只查 {name}）：
     python release.py clear-preview
+  （装了下个版本后不必手动：虫师检查更新时发现它已转正，会自己删掉）
 """)
 
     try:
