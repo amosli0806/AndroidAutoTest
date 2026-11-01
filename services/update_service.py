@@ -201,6 +201,34 @@ def is_enabled() -> bool:
     return bool(UPDATE_REPO and "/" in UPDATE_REPO)
 
 
+def _auto_clear_preview_if_promoted(data) -> None:
+    """内测通道指向的那一版已经转正了 → 删掉 data/preview.json，回到正式通道。
+
+    为什么放在客户端做（2026-11-01）：转正是人在 GitHub 网页上点的，脚本感知不到；
+    不删这个文件，这台机器会永远只查那个固定 tag，后续正式版反而收不到。
+    这里利用一次现成的检查结果判断：走 tags 接口拿到的 Release 如果
+    `prerelease == false` 且 tag 与文件里写的一致，说明它已经转正了。
+
+    只在文件确实存在时动作；环境变量方式（CHONGSHI_UPDATE_TAG）不动文件。
+    """
+    if data.get("prerelease"):
+        return                      # 还是预发布，别动
+    try:
+        path = data_path(PREVIEW_TAG_FILE)
+        if not os.path.exists(path):
+            return                  # 正常用户没有这个文件，直接结束
+        with open(path, encoding="utf-8") as f:
+            cfg = json.load(f) or {}
+        want = str(cfg.get("tag", "") or "").strip()
+        got = str(data.get("tag_name", "") or "").strip()
+        if not want or want != got:
+            return                  # 文件里写的不是这一条，不碰
+        os.remove(path)
+        logger.info("内测版本 %s 已转正，自动删除 %s（之后走正式通道）", want, path)
+    except Exception as e:          # noqa: BLE001 - 清不掉也不该影响检查更新
+        logger.warning("自动清理 %s 失败: %s", PREVIEW_TAG_FILE, e)
+
+
 def _preview_tag() -> str:
     """本机指定的内测 tag（命中则检查这一条 Release，预发布也算）。
 
@@ -358,6 +386,9 @@ def _check_for_update_impl() -> CheckResult:
     tag = str(data.get("tag_name", ""))
     if not tag:
         return CheckResult(status="error", error="Release 里没有 tag_name")
+
+    # 目标是预发布→说明还是内测阶段；一旦它变成正式版，顺手清掉本机内测通道文件
+    _auto_clear_preview_if_promoted(data)
 
     if not _is_newer(tag, APP_VERSION):
         return CheckResult(status="up_to_date")
