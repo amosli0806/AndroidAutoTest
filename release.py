@@ -11,6 +11,7 @@
     python release.py 1.5.17 --no-release   # 只改版本号 + 推送，不打 tag 不发版
     python release.py promote               # 把**最新的预发布**转正（会二次确认）
     python release.py promote v1.5.17       # 指定 tag 转正
+    python release.py clear-preview         # 只清本机的内测通道文件 data/preview.json
     python release.py 1.5.17 --dry-run      # 演练：只打印会做什么
 
 两条发版路线：
@@ -18,6 +19,10 @@
   预发布（默认）  tag 推上去 → CI 建预发布 → GitHub 的 /releases/latest 不返回它，
                   普通客户端收不到，你自己用内测通道验
   正式发布        --final，或事后 `promote`：取消 pre-release → /releases/latest 返回它 → 全量
+
+转正成功后会**自动删掉本机的 data/preview.json**（安装目录和项目目录都检查）。
+不清它的话，这台机器会一直查那个固定 tag，反而收不到后续正式版。安装目录默认
+D:/chongshi，换机器时用环境变量 CHONGSHI_INSTALL_DIR 覆盖。
 
 转正有两条路，脚本自动选，你不用关心走哪条：
 
@@ -61,6 +66,12 @@ RELEASES_PAGE = f"https://github.com/{REPO}/releases"
 
 # 令牌文件（data/ 在 .gitignore 里，不会被提交）
 TOKEN_FILE = os.path.join(ROOT, "data", ".gh_token")
+
+# 打包后的安装目录：转正后要清掉这里的 data/preview.json（内测通道文件），
+# 否则这台机器会一直盯着那个固定 tag，收不到后续正式版。
+# 换机器/换目录时用环境变量 CHONGSHI_INSTALL_DIR 覆盖。
+INSTALL_DIR = os.environ.get("CHONGSHI_INSTALL_DIR", r"D:\chongshi")
+PREVIEW_NAME = "preview.json"
 
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
@@ -137,6 +148,57 @@ def current_version():
     text = open(VERSION_FILE, encoding="utf-8").read()
     m = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', text)
     return m.group(1) if m else "?"
+
+
+# ----------------------------------------------------------------------
+# 内测通道文件（data/preview.json）
+# ----------------------------------------------------------------------
+def preview_paths():
+    """可能存在的内测通道文件：安装目录 + 开发目录（去重）。"""
+    cand = []
+    if INSTALL_DIR:
+        cand.append(os.path.join(INSTALL_DIR, "data", PREVIEW_NAME))
+    cand.append(os.path.join(ROOT, "data", PREVIEW_NAME))
+    out, seen = [], set()
+    for p in cand:
+        k = os.path.abspath(p).lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(p)
+    return out
+
+
+def preview_tag_of(path):
+    """读 preview.json 里的 tag（读不到返回空串）。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return str((json.load(f) or {}).get("tag", "") or "").strip()
+    except (OSError, ValueError):
+        return ""
+
+
+def clear_preview_tag():
+    """删掉内测通道文件。
+
+    转正后必须清：不清的话这台机器会一直查那个固定 tag，永远收不到后续正式版。
+    安装目录和开发目录都清，删不掉的只提示不中断。
+    """
+    removed = []
+    for p in preview_paths():
+        if not os.path.exists(p):
+            continue
+        try:
+            os.remove(p)
+            removed.append(p)
+        except OSError as e:
+            print(f"  !! 删除失败 {p}: {e}")
+    if removed:
+        for p in removed:
+            print(f"  [内测通道] 已删除 {p}")
+    else:
+        print("  [内测通道] 没有 preview.json 需要清理")
+    return bool(removed)
+
 
 
 # ----------------------------------------------------------------------
@@ -226,6 +288,15 @@ def do_status():
                       f"{len(r.get('assets') or [])} 个资产")
         else:
             print("\n  预发布：无")
+
+    # 本机内测通道：有的话这台机器只会查那个固定 tag，正式版反而收不到
+    for p in preview_paths():
+        if os.path.exists(p):
+            print(f"\n  ⚠ 内测通道文件：{p}")
+            print(f"     当前指向 {preview_tag_of(p) or '(空 tag)'}"
+                  f" —— 转正后请清掉，否则收不到后续正式版")
+            print(f"     清理命令：python release.py clear-preview")
+
     print(f"\n  发布页：{RELEASES_PAGE}\n")
 
 
@@ -331,7 +402,11 @@ def do_promote(tag=None, assume_yes=False, dry_run=False):
             return 1
 
     if not token:
-        return _promote_via_actions(tag, dry_run=dry_run)
+        rc = _promote_via_actions(tag, dry_run=dry_run)
+        if rc == 0 and not dry_run:
+            # 转正成功 → 内测通道文件没用了，留着会让这台机器一直盯着旧 tag
+            clear_preview_tag()
+        return rc
 
     if dry_run:
         print(f"  [演练] 会 PATCH /releases/{rel['id']} 把 prerelease 设为 false")
@@ -349,6 +424,7 @@ def do_promote(tag=None, assume_yes=False, dry_run=False):
         ok = latest.get("tag_name") == tag
         print(f"  校验 /releases/latest → {latest.get('tag_name')}"
               f"{'  ✅' if ok else '  ❌（可能被更晚的版本盖住）'}")
+    clear_preview_tag()
     print(f"  发布页：{RELEASES_PAGE}")
     return 0
 
@@ -588,6 +664,11 @@ def main():
 
     if first in ("status", "-s", "--status"):
         do_status()
+        return
+
+    if first in ("clear-preview", "clear_preview"):
+        print("== 清理内测通道文件 ==")
+        clear_preview_tag()
         return
 
     if first == "promote":
