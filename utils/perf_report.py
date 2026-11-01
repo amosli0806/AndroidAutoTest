@@ -883,17 +883,15 @@ class PerfReportGenerator:
             </tr>"""
 
         # 场景化信息
+        # 只留「关联套件」：执行用例列表在用例多时会撑成一长串（几十个名字糊成
+        # 一片），报告反而更难读，2026-11-01 用户要求去掉。数据本身仍存在
+        # session.case_names 里（JSON 导出保留），只是报告正文不展示。
         scenario_info = ""
         if session.suite_name:
-            cases_str = "、".join(session.case_names) if session.case_names else "-"
             scenario_info = f"""
                 <tr>
                     <td class="label">关联套件</td>
                     <td>{session.suite_name}</td>
-                </tr>
-                <tr>
-                    <td class="label">执行用例</td>
-                    <td>{cases_str}</td>
                 </tr>
             """
 
