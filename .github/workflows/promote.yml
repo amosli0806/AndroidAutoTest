@@ -1,0 +1,73 @@
+# 把「预发布」转成「正式发布」（取消 pre-release 标记）。
+#
+# 为什么要这个工作流：
+#   改 Release 状态必须用认证 API。个人令牌要单独生成、保存、到期还得换，
+#   而本机平时推代码只用 SSH key —— 为了转正再维护一个长期令牌不划算。
+#   Actions 里自带的 GITHUB_TOKEN 就有 contents: write 权限，让它去改，
+#   本机只需要**推一个 tag**（走已有 SSH key），不需要任何凭证。
+#
+# 触发：
+#   1) push 一个 promote-v* tag —— release.py 的 `promote` 在没有令牌时会这么干
+#   2) 或在 Actions 页面手动 Run workflow，填 tag
+#
+# 注意：转正后 /releases/latest 立刻返回这个版本，全量客户端下次检查更新就能收到。
+#       这是不可逆的对外动作，所以 release.py 那边要求手打 tag 全名确认。
+
+name: Promote Release
+
+on:
+  push:
+    tags:
+      - 'promote-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要转正的 tag（如 v1.5.16）'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 取消预发布标记
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-}"
+          if [ -z "$TAG" ]; then
+            TAG="${REF_NAME#promote-}"
+          fi
+          echo "目标 tag: $TAG"
+
+          echo "--- 转正前 ---"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            --jq '"tag=" + .tag_name + "  prerelease=" + (.prerelease|tostring) + "  draft=" + (.draft|tostring)'
+
+          echo "--- 取消预发布 ---"
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            -F prerelease=false
+
+          echo "--- 转正后 ---"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            --jq '"prerelease=" + (.prerelease|tostring)'
+
+          echo "--- 当前 latest ---"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name'
+
+      - name: 清理触发用的 promote-* tag
+        if: startsWith(github.ref, 'refs/tags/promote-')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRIGGER_TAG: ${{ github.ref_name }}
+        run: |
+          # 这个 tag 只用来触发转正，留着会污染仓库；删自己不影响已跑起来的 job
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${TRIGGER_TAG}" || true
+          echo "已删除 ${TRIGGER_TAG}"

@@ -19,8 +19,14 @@
                   普通客户端收不到，你自己用内测通道验
   正式发布        --final，或事后 `promote`：取消 pre-release → /releases/latest 返回它 → 全量
 
-转正需要 GitHub 个人访问令牌（创建 Release 状态要用认证 API）。只需配一次，三种来源
-按顺序取，都找不到时脚本会把网页链接打出来让你手点：
+转正有两条路，脚本自动选，你不用关心走哪条：
+
+  有个人令牌    直接调 GitHub API，立即生效
+  没有令牌      推一个 promote-<tag> tag，由仓库里的 .github/workflows/promote.yml
+                用 Actions 自带的 GITHUB_TOKEN 去改 —— 本机不需要任何凭证，
+                只用到已有的 SSH key，约 20~40 秒生效
+
+个人令牌（可选）按顺序取，三处都没有就走 Actions：
 
   1) 环境变量 GITHUB_TOKEN 或 GH_TOKEN
   2) 项目下 data/.gh_token（一行纯 token；data/ 已被 .gitignore 忽略，不会提交）
@@ -245,23 +251,47 @@ def wait_for_release(tag, timeout=CI_WAIT_TIMEOUT):
     return None
 
 
-def do_promote(tag=None, assume_yes=False):
-    """把预发布转正（取消 pre-release）。tag 为空时取最新的那个预发布。"""
-    token = get_token()
-    if not token:
-        print("""
-!! 没有找到 GitHub 令牌，无法自动转正。
+def _promote_via_actions(tag, dry_run=False):
+    """没有个人令牌时：推 promote-<tag> 触发仓库 Actions 转正（本机无需任何凭证）。
 
-  配置一次就行（三选一）：
-    1) 环境变量 GITHUB_TOKEN
-    2) 在 data\\.gh_token 里写一行纯 token（data/ 不会提交）
-    3) ~/.git-credentials 里有 https://user:token@github.com
+    原理：Actions 自带的 GITHUB_TOKEN 有 contents: write 权限，让它调 API 改
+    Release 状态；本机只负责推一个 tag（走已有的 SSH key）。
+    """
+    pt_tag = f"promote-{tag}"
+    print(f"\n  改用 Actions 转正（本机不需要令牌）：推送 tag {pt_tag}")
+    if dry_run:
+        print(f"  [演练] 会执行：git tag -f {pt_tag} {tag} && git push origin {pt_tag}")
+        return 0
 
-  或者手动点：
-    1. 打开 """ + RELEASES_PAGE + r"""
-    2. 找到要转正的版本 → Edit → 取消勾选 "Set as a pre-release" → Update release
-""")
+    r = run(["git", "tag", "-f", pt_tag, tag], check=False)
+    if r.returncode != 0:
+        print(f"  !! 本地没有 {tag} 这个 tag。先 git fetch --tags 再试。")
         return 1
+    run_push(["git", "push", "origin", pt_tag])
+
+    print("  已触发，等 Actions 取消预发布（约 20~40 秒）…")
+    for _ in range(20):
+        time.sleep(15)
+        _code, latest = api("GET", "/releases/latest")
+        if latest and latest.get("tag_name") == tag:
+            print(f"\n  OK：{tag} 已成为最新正式版 ✅")
+            print(f"  发布页：{RELEASES_PAGE}")
+            return 0
+        print("  …", end="", flush=True)
+    print("\n  !! 等待超时。去 Actions 页面看看：")
+    print(f"     https://github.com/{REPO}/actions")
+    return 1
+
+
+def do_promote(tag=None, assume_yes=False, dry_run=False):
+    """把预发布转正（取消 pre-release）。tag 为空时取最新的那个预发布。
+
+    有个人令牌 → 直接调 API（立即生效）；
+    没有 → 推 promote-<tag> 触发仓库 Actions 转正（不需要任何凭证）。
+    """
+    token = get_token()
+    via = "直接调 API" if token else "通过仓库 Actions（无需令牌）"
+    print(f"== 转正（{via}）==\n")
 
     if not tag:
         _code, rels = api("GET", "/releases?per_page=15", token=token)
@@ -291,6 +321,7 @@ def do_promote(tag=None, assume_yes=False):
     print(f"\n== 转正 {tag} ==（转正后所有用户都会收到这一版）")
     print(f"  名称：{rel.get('name')}")
     print(f"  资产：\n{release_assets_text(rel)}")
+    print(f"  执行方式：{via}")
 
     if not assume_yes:
         print("\n  转正后 /releases/latest 立刻返回它，全量客户端下次检查更新就能收到。")
@@ -298,6 +329,13 @@ def do_promote(tag=None, assume_yes=False):
         if ans != tag:
             print("  已取消，未做任何改动。")
             return 1
+
+    if not token:
+        return _promote_via_actions(tag, dry_run=dry_run)
+
+    if dry_run:
+        print(f"  [演练] 会 PATCH /releases/{rel['id']} 把 prerelease 设为 false")
+        return 0
 
     code, updated = api("PATCH", f"/releases/{rel['id']}",
                         {"prerelease": False}, token=token)
@@ -554,7 +592,9 @@ def main():
 
     if first == "promote":
         tag = next((a for a in args[1:] if not a.startswith("--")), None)
-        do_promote(tag, assume_yes=("--yes" in args or "-y" in args))
+        do_promote(tag,
+                   assume_yes=("--yes" in args or "-y" in args),
+                   dry_run=("--dry-run" in args))
         return
 
     if first == "push":
