@@ -18,6 +18,7 @@
 
   预发布（默认）  tag 推上去 → CI 建预发布 → GitHub 的 /releases/latest 不返回它，
                   普通客户端收不到，你自己用内测通道验
+                  （**本机的 data/preview.json 会被自动写成这一版**，重启即可收到）
   正式发布        --final，或事后 `promote`：取消 pre-release → /releases/latest 返回它 → 全量
 
 转正成功后会**自动删掉本机的 data/preview.json**（安装目录和项目目录都检查）。
@@ -175,6 +176,30 @@ def preview_tag_of(path):
             return str((json.load(f) or {}).get("tag", "") or "").strip()
     except (OSError, ValueError):
         return ""
+
+
+def write_preview_tag(tag):
+    """在本机安装目录写内测通道文件，让这台机器能收到预发布。
+
+    发预发布时自动调用：省掉「每次手动建/改 data/preview.json」这一步。
+    只在安装目录**确实有 data 子目录**时才写（没装或路径不对就跳过，
+    由调用方打印手动方式），不擅自 mkdir 到未知路径。
+    """
+    if not INSTALL_DIR:
+        return False
+    data_dir = os.path.join(INSTALL_DIR, "data")
+    if not os.path.isdir(data_dir):
+        print(f"  [内测通道] 安装目录下没有 data 子目录（{data_dir}），跳过自动写入")
+        return False
+    path = os.path.join(data_dir, PREVIEW_NAME)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"tag": tag}, f)
+        print(f"  [内测通道] 已写入 {path} → {tag}")
+        return True
+    except OSError as e:
+        print(f"  !! 写入内测通道失败 {path}: {e}")
+        return False
 
 
 def clear_preview_tag():
@@ -551,10 +576,19 @@ def do_release(version, dry_run, no_release, final=False, force_tag=False):
     push_tag(tag, force=force_tag)
 
     if not final:
+        # 本机自动切成内测通道：省掉手动建/改 data/preview.json
+        wrote = write_preview_tag(tag)
         print(f"""
 == 已发出【预发布】{tag} ==
   GitHub 的 /releases/latest 不会返回预发布，所以普通用户**收不到**，
-  仍停在上一个正式版。你自己验的方式（二选一）：
+  仍停在上一个正式版。""")
+        if wrote:
+            print(f"""  本机已自动指向 {tag}：完全退出虫师后重新启动，点「检查更新」即可收到。
+  ⚠ 这台机器现在只认 {tag} 这一个 tag，验完记得转正（会自动清掉）：
+    python release.py promote {tag}
+""")
+        else:
+            print(f"""  本机没能自动配置，手动二选一：
     - 安装目录 data\\preview.json 写 {{"tag": "{tag}"}}
     - 环境变量 CHONGSHI_UPDATE_TAG={tag}
   验完确认没问题，再运行：
@@ -609,7 +643,7 @@ def interactive_menu():
     print(f"当前版本：{current_version()}\n")
     print("请选择要执行的操作：")
     print("  1) 只上传代码到 GitHub（不改版本号、不发版）")
-    print("  2) 发【预发布】（改版本号 + 提交 + 推送 + 打 tag，普通用户收不到）")
+    print("  2) 发【预发布】（改版本+提交+推送+打tag，并让本机自动能收到；普通用户收不到）")
     print("  3) 发【正式版】（同上，CI 完成后自动转正）")
     print("  4) 把预发布转正（取消 pre-release，全量）")
     print("  5) 查看发布状态（最新正式版 / 预发布列表）")
