@@ -1837,8 +1837,10 @@ class PerfView(QWidget):
         self.mode_combo.addItem("独立监控")
         if names:
             self.mode_combo.addItems(names)
-        else:
-            # 一个自动化套件都没有时给个占位，让用户知道"选了套件才能做场景化"
+        elif not voice_names:
+            # 只有「一个套件都没有」时才给占位（让用户知道"选了套件才能做场景化"）。
+            # 有语音套件时不再插这行占位 —— 列表里已经有套件了，再放一句
+            # 「无套件」互相打脸（2026-11-01 用户反馈）。
             self.mode_combo.addItem("（无套件）")
         for vn in voice_names:
             self.mode_combo.addItem(vn)
@@ -1849,7 +1851,8 @@ class PerfView(QWidget):
             self.mode_combo.findText(pref) >= 0
         if getattr(self, "_pref_scenario", False):
             # 上次退出时是场景化：优先回到记住的那个套件，找不到就取第一个
-            target = pref if pref_ok else (names[0] if names else "（无套件）")
+            # 没有自动化套件时不能退回「（无套件）」—— 那个占位可能压根没插进来
+            target = pref if pref_ok else (names[0] if names else "独立监控")
         elif current == "独立监控":
             target = "独立监控"
         elif current and current != "（无套件）" and \
