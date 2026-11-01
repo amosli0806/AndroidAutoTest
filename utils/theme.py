@@ -1285,6 +1285,15 @@ class Theme:
             border-radius: 6px;
             font-size: 14px;
             font-weight: 600;
+            /* 尺寸必须写死。弹窗的 parent 是某个页面，页面的通用
+               「#XxxView QPushButton { min-height: 24px }」会顺着父链漏进来
+               （弹窗也是它的子控件），把 42px 的按钮压成 24px —— 两个按钮还会
+               因为各自的 border/padding 不同而高度不一致（2026-11-01 用户反馈）。 */
+            min-height: 42px;
+            max-height: 42px;
+            min-width: 120px;
+            max-width: 120px;
+            padding: 0px;
         }
         #ConfirmDeleteDialog QPushButton#cancelBtn {
             background-color: #f0f0f0;
@@ -1321,6 +1330,15 @@ class Theme:
             border-radius: 6px;
             font-size: 14px;
             font-weight: 600;
+            /* 尺寸必须写死。弹窗的 parent 是某个页面，页面的通用
+               「#XxxView QPushButton { min-height: 24px }」会顺着父链漏进来
+               （弹窗也是它的子控件），把 42px 的按钮压成 24px —— 两个按钮还会
+               因为各自的 border/padding 不同而高度不一致（2026-11-01 用户反馈）。 */
+            min-height: 42px;
+            max-height: 42px;
+            min-width: 120px;
+            max-width: 120px;
+            padding: 0px;
         }
         #ConfirmDeleteDialog QPushButton#cancelBtn {
             background-color: #555;
@@ -1371,6 +1389,12 @@ class Theme:
             border-radius: 6px;
             font-size: 14px;
             font-weight: 600;
+            /* 同 ConfirmDeleteDialog：挡住父页面通用按钮样式漏进来的 min-height */
+            min-height: 42px;
+            max-height: 42px;
+            min-width: 120px;
+            max-width: 120px;
+            padding: 0px;
         }
         #InputDialog QPushButton#cancelBtn {
             background-color: #f0f0f0;
@@ -1419,6 +1443,12 @@ class Theme:
             border-radius: 6px;
             font-size: 14px;
             font-weight: 600;
+            /* 同 ConfirmDeleteDialog：挡住父页面通用按钮样式漏进来的 min-height */
+            min-height: 42px;
+            max-height: 42px;
+            min-width: 120px;
+            max-width: 120px;
+            padding: 0px;
         }
         #InputDialog QPushButton#cancelBtn {
             background-color: #555;
