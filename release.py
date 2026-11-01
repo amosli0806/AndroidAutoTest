@@ -30,7 +30,7 @@
 
     发预发布时自动写 {"tag": "vX.Y.Z"} → 重启虫师即可收到这一版；
     转正后自动删掉，否则这台机器会一直盯着那个固定 tag，收不到后续正式版。
-    安装目录默认 D:/chongshi，换机器用环境变量 CHONGSHI_INSTALL_DIR 覆盖。
+    安装目录默认 D:/虫师，换机器用环境变量 CHONGSHI_INSTALL_DIR 覆盖。
 
 转正还有一条全自动的路（`1.5.17 --final` 或 `promote`），代码保留但不在菜单里：
 需要令牌或仓库 Actions，之前 Actions 那条踩过坑（tag 指向错误 / 权限），
@@ -61,7 +61,7 @@ TOKEN_FILE = os.path.join(ROOT, "data", ".gh_token")
 # 打包后的安装目录：转正后要清掉这里的 data/preview.json（内测通道文件），
 # 否则这台机器会一直盯着那个固定 tag，收不到后续正式版。
 # 换机器/换目录时用环境变量 CHONGSHI_INSTALL_DIR 覆盖。
-INSTALL_DIR = os.environ.get("CHONGSHI_INSTALL_DIR", r"D:\chongshi")
+INSTALL_DIR = os.environ.get("CHONGSHI_INSTALL_DIR", r"D:\虫师")
 PREVIEW_NAME = "preview.json"
 
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
