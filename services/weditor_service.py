@@ -182,11 +182,17 @@ except Exception:
         # 单线程的 tornado IOLoop 整个停摆（实测连 `/api/v1/version` 都超时），
         # 表现就是「应用可视化一直转圈」。
         # 对照实验：开发环境 `python -m weditor` 输出到文件时完全正常。
-        log_path = os.path.join(get_app_dir(), "weditor.log")
-        try:
-            self._log_file = open(log_path, "w", encoding="utf-8", errors="replace")
-        except Exception:
+        # 输出必须落到**文件**，绝不能再用 PIPE（否则 tornado 的 access log
+        # 写满 4KB 管道会卡死 —— 详见下方历史说明）。
+        # 但发布版不落任何日志：直接用 DEVNULL，失败原因退化为通用提示。
+        if getattr(sys, "frozen", False):
             self._log_file = None
+        else:
+            log_path = os.path.join(get_app_dir(), "weditor.log")
+            try:
+                self._log_file = open(log_path, "w", encoding="utf-8", errors="replace")
+            except Exception:
+                self._log_file = None
 
         # 启动新进程
         try:

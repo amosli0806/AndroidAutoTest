@@ -1049,17 +1049,31 @@ class SettingsDialog(QDialog):
         if not service.is_available():
             return
         try:
+            cfg = service.get_cfg()
+        except Exception:
+            cfg = {}
+        try:
             engine_key = self.voice_engine_combo.currentData() or ""
-            if engine_key:
+            if engine_key and engine_key != service.current_engine_key():
                 service.set_engine(engine_key)
-            service.set_voice(self.voice_tone_combo.currentData() or "")
-            service.set_output_device(self.voice_device_combo.currentData() or "")
-            # 语速也一起套上：试听要听到的是刚调的语速，不能等保存
+                cfg = service.get_cfg()
+            voice_id = self.voice_tone_combo.currentData() or ""
+            if (voice_id or None) != cfg.get("voice_id"):
+                service.set_voice(voice_id)
+            device_id = self.voice_device_combo.currentData() or ""
+            if (device_id or None) != cfg.get("device_id"):
+                service.set_output_device(device_id)
+            # 语速只在变了的时候套：避免每次都清空 Edge 的预合成缓存
             if hasattr(self, "voice_rate_spin"):
-                service.set_rate(int(self.voice_rate_spin.value()))
+                rate = int(self.voice_rate_spin.value())
+                if rate != cfg.get("rate"):
+                    service.set_rate(rate)
         except VoiceError as e:
             # 试听相关的问题一律 toast，不占页面高度（2026-11-01 用户要求）
             self._toast(str(e))
+        except Exception as e:
+            # 语音引擎是可选功能：初始化/COM 出问题不能把「应用」整条流程带崩
+            print(f"[SettingsDialog] 应用语音配置失败: {e}")
 
     def _save_voice_config(self):
         """写回语音配置并立即套到引擎上：试听和用例里的语音步骤都用这套"""
@@ -1610,7 +1624,13 @@ class SettingsDialog(QDialog):
     # 按钮行为
     # ------------------------------------------------------------------
     def _on_apply(self):
-        self._save_settings()
+        try:
+            self._save_settings()
+        except Exception as e:
+            # PyQt6 里槽函数抛未捕获异常会直接终止进程；保存失败只提示，不让窗口挂掉
+            print(f"[SettingsDialog] 保存设置失败: {e}")
+            self._toast("保存设置失败，详见日志")
+            return
         # 设置页自己也要跟着换主题：只通知父窗口的话，弹窗会停留在旧主题
         try:
             self.apply_theme()
@@ -1636,7 +1656,12 @@ class SettingsDialog(QDialog):
                     print(f"[SettingsDialog] apply_theme 失败: {e}")
 
     def _on_ok(self):
-        self._save_settings()
+        try:
+            self._save_settings()
+        except Exception as e:
+            print(f"[SettingsDialog] 保存设置失败: {e}")
+            self._toast("保存设置失败，详见日志")
+            return
         self.accept()
 
     # ------------------------------------------------------------------

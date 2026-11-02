@@ -753,6 +753,10 @@ class VoiceService:
 
     def set_engine(self, key) -> bool:
         """切换到指定引擎（不可用则返回 False）。切换后需重新 set_voice 选音色。"""
+        # 已经是这个引擎就别重建：每次点「应用」都新建引擎会重复初始化 COM，
+        # 在部分机器上会卡住界面（用户反馈点应用后未响应）。
+        if key and self._engine is not None and self._engine_key == key:
+            return True
         for cls in self.ENGINE_CLASSES:
             if cls.key == key and cls.is_available():
                 self._engine = cls()

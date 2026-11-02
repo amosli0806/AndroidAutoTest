@@ -53,11 +53,19 @@ from views.api_view import ApiView
 from controllers.api_controller import ApiController
 
 
-logging.basicConfig(
-    filename='app_debug.log',
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+_IS_FROZEN = getattr(sys, "frozen", False)
+
+if _IS_FROZEN:
+    # 发布版不落任何调试日志：不创建 app_debug.log，logging 全部静默。
+    # 源码运行仍保留 DEBUG 日志，方便排查。
+    logging.disable(logging.CRITICAL)
+    logging.getLogger().addHandler(logging.NullHandler())
+else:
+    logging.basicConfig(
+        filename='app_debug.log',
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 logger = logging.getLogger(__name__)
 
 # 全局验证线程
@@ -439,7 +447,9 @@ def main():
         )
         # 先把封面关掉再弹错误框：封面是 always_on_top，留着会把错误框压在下面
         splash_close()
-        ErrorDialog.show_error(None, "程序错误", f"发生未捕获异常：\n{exc_value}\n\n详情请查看 app_debug.log")
+        detail = "" if _IS_FROZEN else "\n\n详情请查看 app_debug.log"
+        ErrorDialog.show_error(None, "程序错误",
+                               f"发生未捕获异常：\n{exc_value}{detail}")
 
     sys.excepthook = global_exception_hook
 
@@ -1319,9 +1329,10 @@ def main():
                        else f"{_freed / 1024:.0f} KB")
         _startup_notes.append(f"回收 {_gc_stat['steps']} 个无用步骤（省下 {_freed_text}）")
     if _startup_notes:
+        suffix = "" if _IS_FROZEN else "（详见 app_debug.log）"
         show_toast(
             main_window,
-            "启动自愈：" + "；".join(_startup_notes) + "（详见 app_debug.log）",
+            "启动自愈：" + "；".join(_startup_notes) + suffix,
             duration=5000,
         )
     sys.exit(app.exec())

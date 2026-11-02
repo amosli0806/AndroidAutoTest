@@ -179,6 +179,7 @@ class MainWindow(QMainWindow):
         self._adb_toolbox_widget = None
         self._mini_mode = False
         self._mini_refit_pending = False
+        self._titlebar_refresh_pending = False
         self.mini_mode_action = None
         self._nav_spacer_action = None
         self._element_container = None
@@ -2723,16 +2724,27 @@ class MainWindow(QMainWindow):
         `delayed=False`：只设一次、不排补设。给高频的「窗口激活」用，
         否则每切一次窗口都堆三个定时器。
         """
+        # 模态对话框（设置页）打开期间不要去动主窗口框架：DWM/窗口激活
+        # 与模态禁用叠加时容易死锁（用户实测：确定后再打开设置会卡死）。
+        if QApplication.activeModalWidget() is not None:
+            return
         try:
             set_dark_title_bar(self, Settings.get_theme_mode() == THEME_MODE_DARK,
                                delayed=delayed)
         except Exception as e:
             print(f"[apply_theme] 标题栏深浅重设失败: {e}")
 
+    def _run_titlebar_refresh(self):
+        self._titlebar_refresh_pending = False
+        self._refresh_title_bar_dark(delayed=False)
+
     def event(self, e):
         if e.type() == QEvent.Type.WindowActivate:
-            # 从别的窗口切回来：非客户区可能已被系统按主题重画过
-            self._refresh_title_bar_dark(delayed=False)
+            # 从别的窗口切回来：非客户区可能已被系统按主题重画过。
+            # 延后到事件循环末尾再设，绝不在激活事件里同步改窗口框架。
+            if not getattr(self, "_titlebar_refresh_pending", False):
+                self._titlebar_refresh_pending = True
+                QTimer.singleShot(0, self._run_titlebar_refresh)
         return super().event(e)
 
     def changeEvent(self, event):
@@ -2976,12 +2988,9 @@ class MainWindow(QMainWindow):
             doc.setMaximumBlockCount(0)
             if kind == "log":
                 # 日志带 HTML 行内配色，需按当前主题重新上色
-                from utils import log_colors
-                text.clear()
-                for html in getattr(self, "_bottom_log_entries", []):
-                    text.append(log_colors.recolor(html))
-                sb = text.verticalScrollBar()
-                sb.setValue(sb.maximum())
+                self._render_bottom_log_entries(
+                    getattr(self, "_bottom_log_entries", []),
+                    force_bottom=True)
             else:
                 text.setPlainText(self._bottom_panel_contents.get(kind) or "（暂无内容）")
                 text.verticalScrollBar().setValue(0)
@@ -3871,6 +3880,27 @@ class MainWindow(QMainWindow):
                 if vp is not None:
                     vp.setPalette(pal)
 
+    def _render_bottom_log_entries(self, entries, force_bottom=False):
+        """把缓存的日志 HTML 一次性灌进底部面板。
+
+        逐行 append 在几千行日志下会反复布局/重绘，切主题时表现为界面卡死；
+        setHtml 只解析一次，快很多。force_bottom 用于「刚打开面板」时滚到最新。
+        """
+        text = getattr(self, "_bottom_log_text", None)
+        if text is None or not entries:
+            return
+        from utils import log_colors
+        sb = text.verticalScrollBar()
+        keep_bottom = sb.value() >= sb.maximum() - 2
+        html = "<br>".join(log_colors.recolor(h) for h in entries)
+        text.setUpdatesEnabled(False)
+        try:
+            text.setHtml(html)
+        finally:
+            text.setUpdatesEnabled(True)
+        if force_bottom or keep_bottom:
+            sb.setValue(sb.maximum())
+
     def _apply_bottom_log_theme(self, is_dark, has_wallpaper=False):
         """捕虫师日志面板：圆角 + 主题背景（兼容壁纸）"""
         # 日志是以 HTML span 上色的，行内颜色优先于控件配色，
@@ -3886,14 +3916,9 @@ class MainWindow(QMainWindow):
         # （当前若在看 Crash / ANR，不要去覆盖它的内容）
         entries = getattr(self, "_bottom_log_entries", None)
         log_text = getattr(self, "_bottom_log_text", None)
-        if entries and log_text is not None and self._bottom_panel_kind == "log":
-            sb = log_text.verticalScrollBar()
-            keep_bottom = sb.value() >= sb.maximum() - 2
-            log_text.clear()
-            for html in entries:
-                log_text.append(log_colors.recolor(html))
-            if keep_bottom:
-                sb.setValue(sb.maximum())
+        if entries and log_text is not None and self._bottom_panel_kind == "log" \
+                and self.bottom_placeholder.isVisible():
+            self._render_bottom_log_entries(entries)
 
         if is_dark:
             bg = "transparent" if has_wallpaper else "#191a1c"

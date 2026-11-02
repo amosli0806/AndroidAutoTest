@@ -5,7 +5,10 @@ import sys
 from datetime import datetime
 
 LOG_DIR = "logs"
-os.makedirs(LOG_DIR, exist_ok=True)
+# 发布版不落任何日志文件；源码运行仍写 logs/ 便于排查
+_FROZEN = getattr(sys, "frozen", False)
+if not _FROZEN:
+    os.makedirs(LOG_DIR, exist_ok=True)
 
 def setup_logger(name: str, level=logging.INFO):
     """配置并返回指定名称的logger"""
@@ -14,6 +17,11 @@ def setup_logger(name: str, level=logging.INFO):
 
     # 避免重复添加handler
     if logger.handlers:
+        return logger
+
+    if _FROZEN:
+        # 发布版：只挂空 handler，不写文件/控制台
+        logger.addHandler(logging.NullHandler())
         return logger
 
     # 控制台处理器（输出到stderr）

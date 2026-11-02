@@ -240,6 +240,7 @@ class LogsView(QWidget):
         kw = self.search_edit.text().strip().lower() \
             if hasattr(self, 'search_edit') else ''
 
+        parts = []
         for msg, typ in self.model.logs:
             if sel != 'all' and typ != sel:
                 continue
@@ -249,14 +250,28 @@ class LogsView(QWidget):
             if kw:
                 # 命中关键字高亮：保留原大小写、转义 HTML，避免日志里的 <>& 破坏标记
                 highlighted = self._highlight(msg, kw)
-                self.log_text.append(
-                    f'<font color="{color}">{highlighted}</font>')
+                parts.append(f'<font color="{color}">{highlighted}</font>')
             else:
-                self.log_text.append(f'<font color="{color}">{msg}</font>')
+                parts.append(f'<font color="{color}">{msg}</font>')
+
+        # 一次性 setHtml，而不是逐行 append：长日志时 append 每次都要重排/重绘，
+        # 几千行会让切主题/刷新界面卡到「未响应」。
+        sb = self.log_text.verticalScrollBar()
+        keep_bottom = sb.value() >= sb.maximum() - 2
+        self.log_text.setUpdatesEnabled(False)
+        try:
+            if parts:
+                self.log_text.setHtml("<br>".join(parts))
+            else:
+                self.log_text.clear()
+        finally:
+            self.log_text.setUpdatesEnabled(True)
 
         # 重渲染后补回已缓存的 AI 分析结论（原 __init__ 里没有初始化列表，此处惰性建）
         for i, s in getattr(self, '_ai_blocks', []):
             self._append_suggestion_block(i, s)
+        if keep_bottom:
+            sb.setValue(sb.maximum())
 
     @staticmethod
     def _highlight(msg: str, kw: str) -> str:
@@ -288,9 +303,31 @@ class LogsView(QWidget):
             self.donut.set_stats(pass_count, fail_count)
 
     def add_log(self, message, log_type='info'):
-        if self.model:
-            self.model.add_log(message, log_type)
-            self._on_logs_changed()
+        if not self.model:
+            return
+        self.model.add_log(message, log_type)
+
+        # 没有筛选/搜索时只追加这一行，不再全量重渲染：
+        # 长日志逐条重渲染是 O(n²)，执行久了点「应用」会直接卡成未响应。
+        sel = self._LEVEL_KEYS[self.level_combo.currentIndex()] \
+            if hasattr(self, 'level_combo') else 'all'
+        kw = self.search_edit.text().strip().lower() \
+            if hasattr(self, 'search_edit') else ''
+        if sel == 'all' and not kw:
+            level_of = {
+                'error': log_colors.ERROR,
+                'success': log_colors.SUCCESS,
+                'warning': log_colors.WARNING,
+            }
+            color = log_colors.log_color(level_of.get(log_type, log_colors.INFO))
+            sb = self.log_text.verticalScrollBar()
+            keep_bottom = sb.value() >= sb.maximum() - 2
+            self.log_text.append(f'<font color="{color}">{message}</font>')
+            if keep_bottom:
+                sb.setValue(sb.maximum())
+        else:
+            self._render_logs()
+        self.update_stats()
 
     # ---------- AI 分析 ----------
     def set_ai_available(self, available: bool):

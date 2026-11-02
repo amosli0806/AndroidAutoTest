@@ -72,15 +72,15 @@ def _apply_dark_title_bar(window, dark: bool):
                 ctypes.sizeof(value),
             )
 
-        # 强制重绘标题栏
+        # 只让非客户区失效、由系统异步重绘。
+        # 不要用 SetWindowPos(..., SWP_FRAMECHANGED)：它会同步发送 WM_NCCALCSIZE，
+        # 在「设置窗口正在 exec()/主窗口被禁用」的模态切换过程中会死锁
+        # （用户实测：打开设置 → 确定 → 再打开设置，进程卡在 SetWindowPos）。
         try:
-            SWP_NOMOVE = 0x0002
-            SWP_NOSIZE = 0x0001
-            SWP_NOZORDER = 0x0004
-            SWP_FRAMECHANGED = 0x0020
-            ctypes.windll.user32.SetWindowPos(
-                hwnd, 0, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+            RDW_INVALIDATE = 0x0001
+            RDW_FRAME = 0x0400
+            ctypes.windll.user32.RedrawWindow(
+                hwnd, None, None, RDW_INVALIDATE | RDW_FRAME,
             )
         except Exception:
             pass
