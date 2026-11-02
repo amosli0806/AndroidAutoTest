@@ -569,11 +569,14 @@ def do_promote(tag=None, assume_yes=False, dry_run=False):
         return rc
 
     if dry_run:
-        print(f"  [演练] 会 PATCH /releases/{rel['id']} 把 prerelease 设为 false")
+        print(f"  [演练] 会 PATCH /releases/{rel['id']} "
+              f"把 prerelease 设为 false、make_latest 设为 true")
         return 0
 
+    # 只把 prerelease 设为 false 不够：GitHub 不会自动把从预发布转正的版本
+    # 标成 latest，/releases/latest 仍可能返回上一版。必须显式 make_latest。
     code, updated = api("PATCH", f"/releases/{rel['id']}",
-                        {"prerelease": False}, token=token)
+                        {"prerelease": False, "make_latest": "true"}, token=token)
     if code != 200 or not updated:
         print("  !! 转正失败（见上面的 API 报错）。")
         return 1
@@ -779,7 +782,8 @@ def do_release(version, dry_run, no_release, final=False, force_tag=False):
     if not rel:
         print(f"\n  改为手动收尾：CI 完成后运行 python release.py manual-promote {tag}")
         return
-    rc = do_promote(tag)
+    # --final 是无人值守流程，不能停下来等交互确认（否则 stdin 结束会 EOFError）
+    rc = do_promote(tag, assume_yes=True)
     if rc == 0:
         print(f"""
 == 完成！{tag} 已是正式发布 ==
