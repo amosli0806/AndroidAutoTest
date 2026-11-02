@@ -97,6 +97,7 @@ class SplashWindow(QWidget):
         self._closing = False
         # finish() 用：完成回调 + 已等待毫秒（见 _poll_finish）
         self._finish_cb = None
+        self._reveal_cb = None
         self._finish_waited_ms = 0
         self._finish_timer = None
         # 阶段排队：主程序给的阶段常常挤在一瞬间发出来（真实工作分不出那么多停顿），
@@ -200,48 +201,47 @@ class SplashWindow(QWidget):
             self._fade.finished.connect(self.close)
         self._fade.start()
 
-    def finish(self, on_done=None) -> None:
-        """收尾：把队列里剩的阶段快速走完，补到 100%，再淡出。
+    def finish(self, on_done=None, on_reveal=None) -> None:
+        """收尾：直接跳到末句、补满进度，停一小段后淡出。
 
-        要点：
-        * 队列里可能还有没轮到的阶段（比如「正在整理界面…」刚设上就收尾了）。
-          这里不直接丢弃 —— 而是进入「收尾模式」，让 _pump_stage 把停留时间
-          从 _MIN_DWELL_MS 缩到 _FINISH_DWELL_MS，快速把每句都闪一遍。
-          全丢弃的话用户会漏看阶段；按正常停留又太拖，折中。
-        * 等到队列走空，再补满进度、显示「即将就绪…」、停 200ms 后淡出。
+        为什么不再把队列里没展示的阶段逐句回放：主窗口会在淡出开始时显示，
+        若此时封面还停在「正在加载数据…」，看起来就是「主界面已经出来了、
+        封面还在加载」并且叠在一起。工作已经完成，直接显示「即将就绪…」更合理。
+        on_reveal 在开始淡出前回调（用于显示主窗口，避免主窗口提前露出）。
         """
         self._finish_cb = on_done
+        self._reveal_cb = on_reveal
         self._finishing = True
         self._target = 1.0
-        # 确保末句在队列里（若还没排过）
-        if not self._pending and self._label != _STAGES[-1][1]:
-            self._pending.append((_STAGES[-1][1], 1.0))
-        self._pump_stage()
+        # 丢掉队列里还没轮到的阶段，直接显示末句 + 满进度
+        self._pending.clear()
+        self._progress = 1.0
+        self._label = _STAGES[-1][1]
+        self._shown_at = 0
+        self.update()
 
+        self._finish_waited_ms = 0
         self._finish_timer = QTimer(self)
         self._finish_timer.setInterval(30)
         self._finish_timer.timeout.connect(self._poll_finish)
         self._finish_timer.start()
 
     def _poll_finish(self) -> None:
-        """等队列走空 + 留一小段停顿后淡出。
-
-        注：这个定时器要等 main() 跑到 app.exec() 才真正开始走（之前是同步代码），
-        所以实际停留时间会比这里设的略长一点 —— 观感上正好，不必刻意补偿。
-        """
-        # 队列还没走完，先让它继续（_pump_stage 在收尾模式下会加速）
-        if self._pending:
-            self._finish_waited_ms = 0
-            self._pump_stage()
-            return
-        # 队列空了：补满进度 + 显示末句
+        """停 200ms 让用户看清「即将就绪」，然后显示主窗口并淡出。"""
         self._progress = 1.0
         self._label = _STAGES[-1][1]
-        self.update()
         self._finish_waited_ms += 30
         if self._finish_waited_ms < 200:
             return
         self._finish_timer.stop()
+        # 先让主窗口出现，再淡出封面：淡出期间主界面已经在下面渲染好，不会露白
+        cb = getattr(self, "_reveal_cb", None)
+        self._reveal_cb = None
+        if cb:
+            try:
+                cb()
+            except Exception:
+                pass
         self.fade_out(260, getattr(self, '_finish_cb', None))
 
     # ---------- 内部 ----------

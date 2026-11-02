@@ -47,6 +47,14 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 
+# Windows 控制台默认 GBK：日志里带 ⚠/✅ 等符号时 print 会 UnicodeEncodeError，
+# 且恰好发生在 tag 已推送之后，让人误以为发版失败。统一切到 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 ROOT = r"D:\AndroidAutoTest"
 VERSION_FILE = ROOT + r"\utils\version.py"
 CHANGELOG_FILE = ROOT + r"\CHANGELOG.md"

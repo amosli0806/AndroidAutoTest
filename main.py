@@ -123,29 +123,31 @@ def _flush_splash() -> None:
         pass
 
 
-def splash_close(on_done=None) -> None:
+def splash_close(on_done=None, on_reveal=None) -> None:
     """收尾启动封面：把进度补满、走完、再淡出关掉（幂等）。
 
-    走 win.finish() 而不是直接 fade_out()：finish 会把进度推到 100% 并等进度条
-    真正走完（留一小段停顿让用户看清）才淡出。直接 fade_out 的话，调用点通常
-    还停在 60% 左右，用户会看到「进度条没到头，首页已经打开」。
-    on_done 为空时只关不回调。
+    走 win.finish()：直接跳到「即将就绪…」+ 满进度，停一小段后先回调
+    on_reveal（显示主窗口）再淡出。on_done 在封面真正关闭后回调。
     """
     global _splash_win
     win = _splash_win
     if win is None:
+        if on_reveal:
+            on_reveal()
         if on_done:
             on_done()
         return
     _splash_win = None
     try:
         # 无论进度到没到，都走 finish()（它内部会补满 + 等走完 + 淡出）
-        win.finish(on_done)
+        win.finish(on_done, on_reveal)
     except Exception:
         try:
             win.close()
         except Exception:
             pass
+        if on_reveal:
+            on_reveal()
         if on_done:
             on_done()
 
@@ -1306,10 +1308,14 @@ def main():
     # 再让封面淡出。之前是「更新到 62% 就 showMaximized + 立刻淡出」，
     # 用户看到的是「进度条没到头，首页已经打开」——所以这里必须走 finish()。
     splash_update("即将就绪…", 1.0)
-    # 主窗口先显示出来（封面是置顶的，会盖在它上面直到淡出结束），
-    # 这样淡出动画期间主界面已经渲染好，不会有白光/白屏。
-    main_window.showMaximized()
-    splash_close()
+    # 主窗口等封面开始淡出时再显示（on_reveal）：避免封面还停在
+    # 「正在加载数据…」时主界面已经露出来、并且叠在一起。
+    # 显示前把几何预设成屏幕可用区：Windows 上 showMaximized() 偶尔会先闪一帧
+    # 普通尺寸，几何已经是全屏就看不出来「先变小再全屏」。
+    _screen = main_window.screen() or QApplication.primaryScreen()
+    if _screen is not None:
+        main_window.setGeometry(_screen.availableGeometry())
+    splash_close(on_reveal=main_window.showMaximized)
     # 设备链路（adb server / 设备列表 / u2 连接）等界面显示后再在后台线程里做，
     # 别让它堵在进入主界面的路上 —— 详见 _start_device_link 上方的注释
     QTimer.singleShot(60, _start_device_link)
@@ -1344,6 +1350,50 @@ def main():
 # 必然失败（2026-10-10 实测：连续失败三次，全是这个原因）。
 # 互斥体句柄必须活到进程结束，所以存在模块级全局里（句柄一关锁就没了）。
 _SINGLE_INSTANCE_MUTEX = None
+
+
+def _find_existing_chongshi_window() -> bool:
+    """检测是否已有「虫师」主窗口（含没有单实例锁的旧版本）。
+
+    为什么还需要这一步：老版本可能没有互斥体保护；此时新实例会正常启动，
+    启动封面就叠在旧实例的主窗口上，看起来像「启动画面和主界面同时出现」。
+    只要能看到一个标题为「虫师」/「虫师 - …」的可见顶层窗口，就按已有实例处理。
+    任何异常一律返回 False（不能反过来挡住启动）。
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        found = []
+        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND,
+                                         wintypes.LPARAM)
+        own_pid = os.getpid()
+
+        def _cb(hwnd, _lparam):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            n = user32.GetWindowTextLengthW(hwnd)
+            if n <= 0:
+                return True
+            buf = ctypes.create_unicode_buffer(n + 1)
+            user32.GetWindowTextW(hwnd, buf, n + 1)
+            title = (buf.value or "").strip()
+            if not (title == "虫师" or title.startswith("虫师 -")):
+                return True
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value != own_pid:
+                found.append(hwnd)
+                return False
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(_cb), 0)
+        return bool(found)
+    except Exception:
+        return False
 
 
 def _acquire_single_instance() -> bool:
@@ -1392,7 +1442,7 @@ def _warn_already_running():
 
 if __name__ == "__main__":
     # ---------- 单实例检查排在最前面：第二个实例直接退出，不加载任何重活 ----------
-    if not _acquire_single_instance():
+    if not _acquire_single_instance() or _find_existing_chongshi_window():
         _warn_already_running()
         sys.exit(0)
 

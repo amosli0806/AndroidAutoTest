@@ -1268,6 +1268,9 @@ class MainWindow(QMainWindow):
         self.device_status_label = QLabel("○ 未连接设备")
         self.device_status_label.setStyleSheet("padding: 2px 8px; color: #c0392b; background: transparent;")
         self.statusBar().addWidget(self.device_status_label)
+        # 临时文案清空后由 messageChanged 把设备状态标签恢复回来，避免定时器
+        # 和 QStatusBar 自己的清除时机竞争导致标签一直不显示。
+        self.statusBar().messageChanged.connect(self._on_status_message_changed)
         self._last_device_list = None   # update_device_list 的内容去重基线
         self.apply_shortcuts()
         # ---------- 应用可视化 Dock ----------
@@ -1861,7 +1864,20 @@ class MainWindow(QMainWindow):
                 if hasattr(view, '_apply_scrollbar_style'):
                     view._apply_scrollbar_style(mode)
             elif hasattr(view, 'apply_theme'):
-                view.apply_theme(mode)
+                fn = view.apply_theme
+                # 部分页面（性能检测、ADB 工具箱）的 apply_theme 还接收
+                # has_wallpaper；隐藏页延后刷新时也必须带上当前壁纸状态，
+                # 否则切过去会先按「无壁纸」刷成不透明，要再切一次主题才正常。
+                accepts_wallpaper = False
+                try:
+                    import inspect
+                    accepts_wallpaper = len(inspect.signature(fn).parameters) >= 2
+                except (TypeError, ValueError):
+                    accepts_wallpaper = False
+                if accepts_wallpaper:
+                    fn(mode, self._has_wallpaper())
+                else:
+                    fn(mode)
             else:
                 Theme.apply_theme_to_widget(view, mode)
         except Exception as e:
@@ -2511,6 +2527,30 @@ class MainWindow(QMainWindow):
             action.setChecked(on)
             action.setIcon(qta.icon(icon, color='white' if on else self._toolbar_icon_color()))
 
+    # ---------- 状态栏：临时文案与设备状态互斥 ----------
+    def _show_status_message(self, text, timeout=2000):
+        """显示临时状态文案时先把设备状态标签藏起来，避免两行文字叠在一起。
+
+        退出迷你模式 → 回欢迎页会触发 showMessage("欢迎")，而设备 ID 标签是
+        QStatusBar 的普通控件；在窗口尺寸切换的瞬间 Qt 不一定会把它隐藏，
+        结果就是「欢迎」和设备 ID 重叠。这里显式互斥。
+        """
+        if self.device_status_label is not None:
+            self.device_status_label.hide()
+        self.statusBar().showMessage(text, timeout)
+
+    def _on_status_message_changed(self, text):
+        """QStatusBar 的临时文案变化：清空时把设备状态标签显示回来。"""
+        if not text and self.device_status_label is not None:
+            self.device_status_label.show()
+
+    def _clear_status_message(self):
+        self.statusBar().clearMessage()
+        # 双保险：部分 Qt 版本 clearMessage() 不触发 messageChanged（或触发时机在
+        # 标签被 QStatusBar 重新隐藏之后），这里直接恢复设备状态。
+        if self.device_status_label is not None:
+            self.device_status_label.show()
+
     def _on_nav_clicked(self, index, checked):
         """左侧/右侧功能按钮的点击处理。
 
@@ -2523,7 +2563,7 @@ class MainWindow(QMainWindow):
             # 应用可视化是开关 Dock、不切页，所以不报"当前功能"；但要把上一条清掉，
             # 否则刚点过语音播报再点它，状态栏会残留"当前功能: 语音播报"（最长 2 秒），
             # 看着就像点错了页面。
-            self.statusBar().clearMessage()
+            self._clear_status_message()
             return
         if checked:
             self.switch_view(index)
@@ -2562,7 +2602,7 @@ class MainWindow(QMainWindow):
                 # 关键：图标颜色也同步改回灰色，否则会停留在白色
                 action.setIcon(qta.icon(self.nav_icons[i], color=self._toolbar_icon_color()))
             self._sync_right_toolbar_pages(index)
-            self.statusBar().showMessage(
+            self._show_status_message(
                 f"当前功能: {toolbar_pages[index][2]}", 2000)
         elif index == self.WELCOME_PAGE_INDEX:
             for i, action in enumerate(self.nav_actions):
@@ -2571,7 +2611,7 @@ class MainWindow(QMainWindow):
                 action.setChecked(False)
                 action.setIcon(qta.icon(self.nav_icons[i], color=self._toolbar_icon_color()))
             self._sync_right_toolbar_pages(None)
-            self.statusBar().showMessage("欢迎", 2000)
+            self._show_status_message("欢迎", 2000)
         else:
             for i, action in enumerate(self.nav_actions):
                 if i == 2:
@@ -2587,7 +2627,7 @@ class MainWindow(QMainWindow):
             nav_pos = next((i for i, idx in enumerate(self.nav_indices) if idx == index),
                            None)
             if nav_pos is not None:
-                self.statusBar().showMessage(
+                self._show_status_message(
                     f"当前功能: {self.nav_actions[nav_pos].text()}", 2000)
 
     # ---------- 迷你窗口模式 ----------
