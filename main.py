@@ -80,6 +80,10 @@ _verify_lock = threading.Lock()
 # 之前「两层并存」会让打包版先后出现新旧两个封面）。
 #   _splash_win 为 None 时（没建起来 / 没打到封面图）所有调用都是安全空操作。
 _splash_win = None
+# 正在淡出/关闭中的封面：splash_close 会把 _splash_win 置空，但 finish() 的
+# 定时器、淡出动画还挂在这个对象上。没有强引用时 Python 会回收 wrapper，
+# 连带销毁 C++ 窗口和定时器 —— 表现就是「封面停一帧后消失、主窗口不显示」。
+_splash_closing = None
 # 由 __main__ 入口提前建好的 QApplication（见文件末尾）。提前建的原因：
 # 顶层 import 在开发环境要 1 秒多，而 main() 是 import 之后才跑的 ——
 # 把 QApplication + 启动封面提到 import 之后、但 main() 重活之前，尽量早见到封面。
@@ -129,19 +133,37 @@ def splash_close(on_done=None, on_reveal=None) -> None:
     走 win.finish()：直接跳到「即将就绪…」+ 满进度，停一小段后先回调
     on_reveal（显示主窗口）再淡出。on_done 在封面真正关闭后回调。
     """
-    global _splash_win
+    global _splash_win, _splash_closing
     win = _splash_win
     if win is None:
+        # 已经在关闭流程中：保留对象直到淡出结束，不重复 finish
+        if _splash_closing is not None:
+            if on_reveal:
+                on_reveal()
+            if on_done:
+                on_done()
+            return
         if on_reveal:
             on_reveal()
         if on_done:
             on_done()
         return
     _splash_win = None
+    _splash_closing = win       # 强引用，保证 finish/淡出期间对象不被回收
+
+    def _done():
+        global _splash_closing
+        if _splash_closing is win:
+            _splash_closing = None
+        if on_done:
+            on_done()
+
     try:
         # 无论进度到没到，都走 finish()（它内部会补满 + 等走完 + 淡出）
-        win.finish(on_done, on_reveal)
+        win.finish(_done, on_reveal)
     except Exception:
+        if _splash_closing is win:
+            _splash_closing = None
         try:
             win.close()
         except Exception:

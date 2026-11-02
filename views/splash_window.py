@@ -204,10 +204,11 @@ class SplashWindow(QWidget):
     def finish(self, on_done=None, on_reveal=None) -> None:
         """收尾：直接跳到末句、补满进度，停一小段后淡出。
 
-        为什么不再把队列里没展示的阶段逐句回放：主窗口会在淡出开始时显示，
+        为什么不再把队列里没展示的阶段逐句回放：主窗口会在收尾时显示，
         若此时封面还停在「正在加载数据…」，看起来就是「主界面已经出来了、
         封面还在加载」并且叠在一起。工作已经完成，直接显示「即将就绪…」更合理。
-        on_reveal 在开始淡出前回调（用于显示主窗口，避免主窗口提前露出）。
+        on_reveal 在设置末句后同步回调（用于显示主窗口）。封面置顶且不透明，
+        主窗口在下面先渲染好，淡出时不会露白，也不依赖可能被饿住的定时器。
         """
         self._finish_cb = on_done
         self._reveal_cb = on_reveal
@@ -220,21 +221,19 @@ class SplashWindow(QWidget):
         self._shown_at = 0
         self.update()
 
+        # 主窗口立即显示。封面是置顶且不透明的窗口，会一直盖在上面，用户看不到
+        # 底下的切换；而收尾定时器可能被启动后期的大量初始化任务饿住（实测几秒
+        # 才轮到下一次 tick），等定时器再 reveal 会让主窗口迟迟不出现。
+        self._reveal_now()
+
         self._finish_waited_ms = 0
         self._finish_timer = QTimer(self)
         self._finish_timer.setInterval(30)
         self._finish_timer.timeout.connect(self._poll_finish)
         self._finish_timer.start()
 
-    def _poll_finish(self) -> None:
-        """停 200ms 让用户看清「即将就绪」，然后显示主窗口并淡出。"""
-        self._progress = 1.0
-        self._label = _STAGES[-1][1]
-        self._finish_waited_ms += 30
-        if self._finish_waited_ms < 200:
-            return
-        self._finish_timer.stop()
-        # 先让主窗口出现，再淡出封面：淡出期间主界面已经在下面渲染好，不会露白
+    def _reveal_now(self) -> None:
+        """回调主窗口显示（只回调一次；finish 正常路径已调用，这里是兜底）。"""
         cb = getattr(self, "_reveal_cb", None)
         self._reveal_cb = None
         if cb:
@@ -242,6 +241,17 @@ class SplashWindow(QWidget):
                 cb()
             except Exception:
                 pass
+
+    def _poll_finish(self) -> None:
+        """停 200ms 让用户看清「即将就绪」，然后淡出（主窗口已在 finish 中显示）。"""
+        self._progress = 1.0
+        self._label = _STAGES[-1][1]
+        self._finish_waited_ms += 30
+        if self._finish_waited_ms < 200:
+            return
+        self._finish_timer.stop()
+        # 兜底：若 finish 里的同步显示没有执行（例如对象状态异常），这里补一次
+        self._reveal_now()
         self.fade_out(260, getattr(self, '_finish_cb', None))
 
     # ---------- 内部 ----------

@@ -185,6 +185,7 @@ class MainWindow(QMainWindow):
         self._element_container = None
         self._logs_view_ref = None
         self._execute_view_ref = None
+        self._execute_page_container = None
         self._task_frame_ref = None
         self.main_menu = None
         self._main_menu_actions = {}
@@ -2581,6 +2582,13 @@ class MainWindow(QMainWindow):
         # 隐藏页在切主题时被延后了，切过去之前先按最新主题刷一遍
         if page is not None:
             self._flush_pending_theme(page)
+        # 执行页的面板/树背景由 _apply_execute_page_theme 单独负责（含壁纸透明
+        # 与 6px 细滚动条）。上面的 flush 会调 execute_view.apply_theme()，用
+        # EXECUTE_VIEW_* 把面板重新刷成不透明，所以这里必须再补一次。
+        if page is not None and page is self._execute_page_container:
+            self._apply_execute_page_theme(
+                self._has_wallpaper(),
+                Settings.get_theme_mode() == THEME_MODE_DARK)
         self.stacked_widget.setCurrentIndex(index)
         # 换页后重算快捷键的启用状态：同一键位在不同页归属不同动作（如 Ctrl+F 在
         # ADB 工具箱是"指令搜索"、在自动化编辑是"步骤搜索"），必须跟着页走
@@ -3736,6 +3744,7 @@ class MainWindow(QMainWindow):
         self.register_sub_view(execute_view)
         self.register_sub_view(logs_view)
         self.register_sub_view(container)
+        self._execute_page_container = container
         self.apply_theme()
 
     def _apply_execute_page_theme(self, has_wallpaper, is_dark):

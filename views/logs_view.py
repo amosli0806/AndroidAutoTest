@@ -346,8 +346,14 @@ class LogsView(QWidget):
         if self.model is None or not self.model.failure_contexts:
             show_toast(self.window(), "暂无失败用例可分析", duration=2500)
             return
-        if self._ai_worker is not None and self._ai_worker.isRunning():
-            return
+        if self._ai_worker is not None:
+            if self._ai_worker.isRunning():
+                return
+            # 上一轮的 all_done 已处理、但 finished 还没到：这里兜底收尾
+            old = self._ai_worker
+            self._ai_worker = None
+            old.wait(1000)
+            old.deleteLater()
 
         # 已经全部分析过就直接重渲染
         if all(ctx.ai_suggestion for ctx in self.model.failure_contexts):
@@ -357,10 +363,21 @@ class LogsView(QWidget):
         self.ai_btn.setEnabled(False)
         self.ai_btn.setText("分析中…")
 
-        self._ai_worker = AIAnalyzeWorker(self.model.failure_contexts)
-        self._ai_worker.one_ready.connect(self._on_one_suggestion)
-        self._ai_worker.all_done.connect(self._on_analysis_done)
-        self._ai_worker.start()
+        worker = AIAnalyzeWorker(self.model.failure_contexts)
+        self._ai_worker = worker
+        worker.one_ready.connect(self._on_one_suggestion)
+        worker.all_done.connect(self._on_analysis_done)
+        # all_done 是在 run() 里发的，此时 QThread 可能还没退出；必须等
+        # finished 再释放引用，否则析构运行中的线程会让 Qt 直接 abort。
+        worker.finished.connect(lambda w=worker: self._release_ai_worker(w))
+        worker.start()
+
+    def _release_ai_worker(self, worker):
+        """线程真正退出后再丢掉最后一个引用。"""
+        worker.wait(1000)
+        if self._ai_worker is worker:
+            self._ai_worker = None
+        worker.deleteLater()
 
     def _on_one_suggestion(self, index, suggestion):
         # 缓存起来，切换筛选/搜索导致重渲染后仍能补回
@@ -373,7 +390,8 @@ class LogsView(QWidget):
         self._append_suggestion_block(index, suggestion)
 
     def _on_analysis_done(self, ok, total):
-        self._ai_worker = None   # 线程结束，放引用（无 parent，随引用释放）
+        # 这里不能置空 _ai_worker：all_done 由 run() 发出，线程可能还在收尾。
+        # 引用释放交给 finished → _release_ai_worker。
         self.ai_btn.setEnabled(True)
         if ok == 0:
             self.ai_btn.setText("✨ AI 分析失败")

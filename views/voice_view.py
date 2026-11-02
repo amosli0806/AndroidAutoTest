@@ -1829,8 +1829,15 @@ class VoiceView(QWidget):
         return VoiceFeedbackService(serial), ""
 
     def _start_playback(self, items, loop_count, label, verify=True):
-        if self._worker is not None and self._worker.isRunning():
-            return
+        if self._worker is not None:
+            if self._worker.isRunning():
+                return
+            # 上一轮的 done 已经处理过、但 finished 还没到：在这里兜底收尾，
+            # 保证新线程不会和旧对象抢 self._worker
+            old = self._worker
+            self._worker = None
+            old.wait(1000)
+            old.deleteLater()
         if not self.service.is_available():
             self.status_label.setText("本机没有可用的语音引擎，无法播报")
             return
@@ -1839,14 +1846,27 @@ class VoiceView(QWidget):
             feedback, verify_block = self._build_feedback()
         else:
             feedback, verify_block = None, ""
-        self._worker = VoicePlaybackWorker(self.service, items, loop_count,
-                                       feedback=feedback, verify_block=verify_block)
-        self._worker.progress.connect(self._on_progress)
-        self._worker.round_changed.connect(self._on_round_changed)
-        self._worker.done.connect(self._on_playback_done)
+        worker = VoicePlaybackWorker(self.service, items, loop_count,
+                                     feedback=feedback, verify_block=verify_block)
+        self._worker = worker
+        worker.progress.connect(self._on_progress)
+        worker.round_changed.connect(self._on_round_changed)
+        worker.done.connect(self._on_playback_done)
+        # done 是在 run() 里发的，此时 QThread 可能还没真正退出；必须等
+        # finished 再释放引用。若在 done 槽里直接 self._worker=None，会把
+        # 仍在运行的 QThread 析构 —— Qt 直接 qFatal 退出进程（表现为播完闪退）。
+        worker.finished.connect(lambda w=worker: self._release_worker(w))
         self._sync_play_buttons(running=True)
         self.status_label.setText(label)
-        self._worker.start()
+        worker.start()
+
+    def _release_worker(self, worker):
+        """线程真正退出后再丢掉最后一个引用。"""
+        # finished 发出时 running 可能还没置 false，先等它彻底停下
+        worker.wait(1000)
+        if self._worker is worker:
+            self._worker = None
+        worker.deleteLater()
 
     def _on_play_one(self, index):
         # 执行中不允许再点单条试听：SAPI 是同一播放器实例，会打断正在
@@ -1911,7 +1931,9 @@ class VoiceView(QWidget):
             self.status_label.setText("播报完成")
         else:
             self.status_label.setText("已停止")
-        self._worker = None
+        # 这里**不能**把 self._worker 置空：done 是在 run() 里发出的，线程可能
+        # 还没退出，析构运行中的 QThread 会让 Qt 直接 abort（播完闪退）。
+        # 引用的释放交给 finished → _release_worker。
 
     def _iter_tree_items(self):
         return [self.tree.topLevelItem(i)

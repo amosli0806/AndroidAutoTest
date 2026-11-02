@@ -86,13 +86,32 @@ class ApiController(QObject):
         self._start(cases)
 
     def _start(self, cases):
-        self._worker = _ApiRunWorker(self.service, cases, self.model.get_env())
-        self._worker.result_ready.connect(self.view.show_result)
-        self._worker.finished_all.connect(self._on_finished)
+        if self._worker is not None:
+            if self._worker.isRunning():
+                return
+            # 上一轮的 finished_all 已处理、但 finished 还没到：这里兜底收尾
+            old = self._worker
+            self._worker = None
+            old.wait(1000)
+            old.deleteLater()
+        worker = _ApiRunWorker(self.service, cases, self.model.get_env())
+        self._worker = worker
+        worker.result_ready.connect(self.view.show_result)
+        worker.finished_all.connect(self._on_finished)
+        # finished_all 是在 run() 里发的，此时 QThread 可能还没退出；必须等
+        # finished 再释放引用，否则析构运行中的线程会让 Qt 直接 abort。
+        worker.finished.connect(lambda w=worker: self._release_worker(w))
         self.view.set_running(True)
         self.view.summary_label.setText(
             f"正在执行 {len(cases)} 个接口…")
-        self._worker.start()
+        worker.start()
+
+    def _release_worker(self, worker):
+        """线程真正退出后再丢掉最后一个引用。"""
+        worker.wait(1000)
+        if self._worker is worker:
+            self._worker = None
+        worker.deleteLater()
 
     def _on_stop(self):
         if self._worker is not None:
@@ -102,7 +121,8 @@ class ApiController(QObject):
     def _on_finished(self, results):
         self._last_results = list(results)
         self.view.set_running(False)
-        self._worker = None
+        # 这里不能置空 _worker：finished_all 由 run() 发出，线程可能还在收尾。
+        # 引用释放交给 finished → _release_worker。
         if not results:
             self.view.summary_label.setText("已停止，没有执行任何接口")
             return
