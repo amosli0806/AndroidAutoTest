@@ -1260,7 +1260,13 @@ def main():
                 show_toast(main_window, f"已是最新版本 V{result.current_version}",
                            duration=2500)
             else:
-                show_toast(main_window, f"检查更新失败，{result.error}", duration=3000)
+                # 网络类错误本身就是完整提示（「网络异常，请稍后重试」），
+                # 其余错误（限流 / HTTP 状态码）仍加前缀说明是哪一步出的问题
+                err = result.error or "未知错误"
+                if err.startswith("网络异常"):
+                    show_toast(main_window, err, duration=3000)
+                else:
+                    show_toast(main_window, f"检查更新失败，{err}", duration=3000)
 
     # ---------- 自动更新：下载 -> 确认 -> 交给独立更新器 ----------
     # 更新器是安装目录外的一个独立进程（updater.exe，随更新包分发），

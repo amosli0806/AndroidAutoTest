@@ -608,13 +608,13 @@ class HelpView(QFrame):
                     便于备份、迁移、团队共享，以及用 Excel 批量维护。
                 </p>
                 {self._get_steps_html([
-                    {'image': 'import_1_export_cases.png', 'desc': '右上角菜单 → "导出用例"，选择保存位置'},
-                    {'image': 'import_2_import_cases.png', 'desc': '右上角菜单 → "导入用例"，选择 JSON 文件（增量导入，不覆盖）'},
+                    {'image': 'import_1_export_cases.png', 'desc': '右上角菜单 → "导出自动化用例"，选择保存位置'},
+                    {'image': 'import_2_import_cases.png', 'desc': '右上角菜单 → "导入自动化用例"，选择 JSON 文件（增量导入，不覆盖）'},
                     {'image': 'import_3_export_elements.png', 'desc': '在元素库 Tab 点击"导出"，保存为 Excel 表格'},
                     {'image': 'import_4_import_elements.png', 'desc': '在元素库 Tab 点击"导入"，选择元素库表格（只新增+覆盖，不删除）'},
                 ])}
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 导入用例是增量模式，已存在的项目/模块/用例会跳过，不会覆盖。
+                    💡 导入自动化用例是增量模式，已存在的项目/模块/用例会跳过，不会覆盖。
                     元素表格与语音用例表格的合并规则见各自章节。
                 </div>
                 """

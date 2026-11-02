@@ -464,10 +464,10 @@ class VoiceView(QWidget):
         self.voice_menu = QMenu(self.voice_menu_btn)
         self.voice_menu.setObjectName("VoiceMenu")  # 供主题 QSS 精确定位
         self.voice_menu.addAction(
-            qta.icon('fa6s.file-import', color='#555555'), "导入用例表格",
+            qta.icon('fa6s.file-import', color='#555555'), "导入语音用例",
             self._on_import_all)
         self.voice_menu.addAction(
-            qta.icon('fa6s.file-export', color='#555555'), "导出用例表格",
+            qta.icon('fa6s.file-export', color='#555555'), "导出语音用例",
             self._on_export_all)
         self.voice_menu_btn.setMenu(self.voice_menu)
         title_row.addWidget(self.voice_menu_btn)
@@ -2018,8 +2018,8 @@ class VoiceView(QWidget):
         #（「语音文案」是导入导出改 Excel 前的旧名，改完没同步这里，
         #  导致夜间模式重建图标一直没生效，深底上仍是深灰图标）
         icon_map = {
-            "导入用例表格": 'fa6s.file-import',
-            "导出用例表格": 'fa6s.file-export',
+            "导入语音用例": 'fa6s.file-import',
+            "导出语音用例": 'fa6s.file-export',
         }
         for act in self.voice_menu.actions():
             name = act.text()

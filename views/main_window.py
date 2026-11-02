@@ -464,9 +464,9 @@ class MainWindow(QMainWindow):
             # 更新菜单图标颜色
             for action in self._project_menu.actions():
                 txt = action.text()
-                if txt == "导入用例":
+                if txt == "导入自动化用例":
                     action.setIcon(qta.icon('fa6s.file-import', color=icon_color))
-                elif txt == "导出用例":
+                elif txt == "导出自动化用例":
                     action.setIcon(qta.icon('fa6s.file-export', color=icon_color))
 
     # ------------------------------------------------------------------
@@ -3435,10 +3435,10 @@ class MainWindow(QMainWindow):
         project_menu = QMenu(project_menu_btn)
         project_menu.setObjectName("ProjectMenu")
         project_menu.addAction(
-            qta.icon('fa6s.file-import', color='#555555'), "导入用例",
+            qta.icon('fa6s.file-import', color='#555555'), "导入自动化用例",
             lambda: self._on_menu_action("import_cases"))
         project_menu.addAction(
-            qta.icon('fa6s.file-export', color='#555555'), "导出用例",
+            qta.icon('fa6s.file-export', color='#555555'), "导出自动化用例",
             lambda: self._on_menu_action("export_cases"))
         project_menu_btn.setMenu(project_menu)
 
@@ -4328,7 +4328,7 @@ class MainWindow(QMainWindow):
     # ---------- 菜单操作 ----------
     def _on_menu_action(self, action):
         if action == "import_cases":
-            file_path, _ = QFileDialog.getOpenFileName(self, "导入用例", "", "JSON Files (*.json)")
+            file_path, _ = QFileDialog.getOpenFileName(self, "导入自动化用例", "", "JSON Files (*.json)")
             if file_path:
                 self._import_cases(file_path)
         elif action == "export_cases":
@@ -4337,7 +4337,7 @@ class MainWindow(QMainWindow):
                 return
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
-                "导出用例",
+                "导出自动化用例",
                 "cases_export.json",
                 "JSON Files (*.json)"
             )
@@ -4354,9 +4354,9 @@ class MainWindow(QMainWindow):
                 }
                 with open(file_path, 'w', encoding='utf-8') as f:
                     json.dump(export_data, f, ensure_ascii=False, indent=2)
-                show_toast(message="导出用例成功")
+                show_toast(message="导出自动化用例成功")
             except Exception as e:
-                ErrorDialog.show_error(self, "导出失败", f"导出用例时发生错误:\n{str(e)}")
+                ErrorDialog.show_error(self, "导出失败", f"导出自动化用例时发生错误:\n{str(e)}")
         elif action == "about":
             self._show_about_dialog()
         elif action == "settings":
@@ -4520,7 +4520,7 @@ class MainWindow(QMainWindow):
         except json.JSONDecodeError as e:
             ErrorDialog.show_error(self, "导入失败", f"JSON 解析错误:\n{str(e)}")
         except Exception as e:
-            ErrorDialog.show_error(self, "导入失败", f"导入用例时发生错误:\n{str(e)}")
+            ErrorDialog.show_error(self, "导入失败", f"导入自动化用例时发生错误:\n{str(e)}")
 
     def _on_step_search(self, text):
         if hasattr(self, 'step_list') and self.step_list:

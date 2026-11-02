@@ -352,7 +352,9 @@ def _check_for_update_impl() -> CheckResult:
         )
     except Exception as e:
         logger.warning("检查更新失败（网络）: %s: %s", type(e).__name__, e)
-        return CheckResult(status="error", error=f"网络不可达：{type(e).__name__}")
+        # 异常类名（ConnectTimeout / SSLError…）对用户没意义，统一成一句可读提示；
+        # 具体原因已写进日志。main.py 见到这条文案就不再拼「检查更新失败，」前缀。
+        return CheckResult(status="error", error="网络异常，请稍后重试")
 
     # 403 且配额已用尽 = 被限流（未认证 60 次/小时，按出口 IP）。
     # 提示直接写成「请在 HH:MM 时间后重试」，配合 UI 的「检查更新失败，{这句}」。
