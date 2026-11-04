@@ -25,7 +25,7 @@ import os
 import time
 
 from PyQt6.QtCore import QRectF, QThread, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QKeySequence, QPainter, QPalette, QPen, QShortcut
+from PyQt6.QtGui import QColor, QPainter, QPalette, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QDoubleSpinBox, QFileDialog,
     QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -495,7 +495,6 @@ class VoiceView(QWidget):
         self._reload_tree()
         self._reload_steps()
         self._sync_play_buttons()
-        self._install_voice_shortcut()
 
     # ------------------------------------------------------------------
     # 构建
@@ -1598,27 +1597,8 @@ class VoiceView(QWidget):
     # 录音上限：防止用户忘了点结束一直录下去（后续可挪到设置页）
     VOICE_MAX_SECONDS = 8.0
 
-    def _install_voice_shortcut(self):
-        """Ctrl+Shift+Space：对当前有焦点的输入框起停录音。
-
-        写用例时手一直在键盘上，每句都去够鼠标点话筒会打断节奏，
-        所以「话筒」和「快捷键」两条路都留。
-        """
-        self._voice_shortcut = QShortcut(
-            QKeySequence("Ctrl+Shift+Space"), self)
-        self._voice_shortcut.activated.connect(self._on_voice_shortcut)
-
-    def _on_voice_shortcut(self):
-        if self._voice_worker is not None:
-            self._stop_voice_input()
-            return
-        focus = QApplication.focusWidget()
-        for row in self._rows:
-            if getattr(row, "text_edit", None) is focus:
-                self._start_voice_input(row)
-                return
-        self.status_label.setText(
-            "先把光标放进要填写的输入框，再按 Ctrl+Shift+Space")
+    # 触发方式只有「点输入框右端的话筒」：起停都在这一个按钮上。
+    # （曾做过 Ctrl+Shift+Space 全局快捷键，用户反馈用不上，已去掉）
 
     def _on_voice_input_requested(self, index, edit):
         """点话筒：录音中就当「停止」（不区分点了哪一行），否则从这一行开始。"""
