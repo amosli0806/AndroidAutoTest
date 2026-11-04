@@ -82,6 +82,12 @@ a = Analysis(
         'miniaudio',
         'cffi',
         '_cffi_backend',
+        # ---------- 新增：语音输入（本地 vosk 识别） ----------
+        # services.speech_input 由 voice_view 函数级导入；vosk 是 cffi 扩展，
+        # 自带 dll，必须显式登记。**模型文件不入包**：42MB 的模型放在
+        # 用户数据目录，由界面按需提示下载（见 services/speech_input.py）。
+        'services.speech_input',
+        'vosk',
         # ---------- 新增：检查更新 ----------
         # 更新相关的对话框/服务都是函数级导入（点菜单、点更新才用），显式登记避免打包漏掉
         'services.update_service',
