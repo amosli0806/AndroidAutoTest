@@ -38,7 +38,7 @@ from utils.icons import menu_icon
 
 from models.voice_model import (
     DEFAULT_DELAY, DEFAULT_WAKE_WORD, KIND_PHRASE, KIND_VERIFY, VoiceModel,
-    get_loop)
+    get_loop, get_wake_word)
 from services.voice_player import VoicePlaybackWorker
 from services.voice_service import VoiceError
 from utils import tree_state, voice_table
@@ -1805,28 +1805,32 @@ class VoiceView(QWidget):
         self.status_label.setText(f"已删除套件「{name}」")
 
     def _build_feedback(self):
-        """按当前配置与设备状态构建回执抓取服务；不满足条件返回 None。
+        """按当前配置与设备状态构建回执抓取服务。
 
-        返回 (服务, 不可用原因)：服务为 None 时，原因说明是「未开启」还是
-        「开启了但环境不满足」（如未连接设备），供日志把话说准。
-        三个条件都满足才做验证：设置里开启了验证、注入了设备服务、当前有设备在线。
+        返回 (服务, 回执总闸, 不可用原因, 唤醒配置)：
+        * 服务为 None 时，回执总闸仍按设置页开关返回；
+        * 不可用原因只针对「回执验证」：唤醒确认自己有独立开关，
+          它拿不到设备时由 worker 单独提示，不混进回执的提示里。
+        回执验证或唤醒确认任一开启，都需要一个 adb 日志通道。
         """
         from models.voice_model import get_verify_config
         cfg = get_verify_config()
-        if not cfg["enabled"]:
-            return None, ""
+        verify_enabled = bool(cfg["enabled"])
+        wake_cfg = cfg["wake"]
+        if not verify_enabled and not wake_cfg.get("enabled"):
+            return None, verify_enabled, "", wake_cfg
         ds = getattr(self, "_device_service", None)
         if ds is None:
-            return None, "设备服务未就绪"
+            return None, verify_enabled, ("设备服务未就绪" if verify_enabled else ""), wake_cfg
         try:
             devices = ds.get_devices()
         except Exception:
             devices = []
         if not devices:
-            return None, "未连接设备"
+            return None, verify_enabled, ("未连接设备" if verify_enabled else ""), wake_cfg
         from services.voice_feedback_service import VoiceFeedbackService
         serial = getattr(ds, "serial", None) or devices[0]
-        return VoiceFeedbackService(serial), ""
+        return VoiceFeedbackService(serial), verify_enabled, "", wake_cfg
 
     def _start_playback(self, items, loop_count, label, verify=True):
         if self._worker is not None:
@@ -1841,13 +1845,18 @@ class VoiceView(QWidget):
         if not self.service.is_available():
             self.status_label.setText("本机没有可用的语音引擎，无法播报")
             return
-        # 单条试听不验证（人耳确认场景）；「执行选中」才抓回执
+        # 单条试听不验证（人耳确认场景）；「执行选中」才抓回执/确认唤醒
         if verify:
-            feedback, verify_block = self._build_feedback()
+            feedback, verify_enabled, verify_block, wake_cfg = self._build_feedback()
+            wake_word = get_wake_word()
         else:
-            feedback, verify_block = None, ""
-        worker = VoicePlaybackWorker(self.service, items, loop_count,
-                                     feedback=feedback, verify_block=verify_block)
+            feedback, verify_enabled, verify_block = None, False, ""
+            wake_cfg, wake_word = {}, ""
+        worker = VoicePlaybackWorker(
+            self.service, items, loop_count,
+            feedback=feedback, verify_block=verify_block,
+            wake_cfg=wake_cfg, wake_word=wake_word,
+            verify_enabled=verify_enabled)
         self._worker = worker
         worker.progress.connect(self._on_progress)
         worker.round_changed.connect(self._on_round_changed)

@@ -1336,14 +1336,16 @@ def main():
     # 再让封面淡出。之前是「更新到 62% 就 showMaximized + 立刻淡出」，
     # 用户看到的是「进度条没到头，首页已经打开」——所以这里必须走 finish()。
     splash_update("即将就绪…", 1.0)
-    # 主窗口等封面开始淡出时再显示（on_reveal）：避免封面还停在
-    # 「正在加载数据…」时主界面已经露出来、并且叠在一起。
+    # 主窗口等封面**完全关闭后**再显示（on_done）：启动时把主窗口提前露在
+    # 封面四周，Windows 会先按「最大化前的普通几何」挂一次任务栏，底部
+    # 状态栏被任务栏压住；等封面关闭后再 showMaximized，窗口已完成布局，
+    # 底部栏直接就在任务栏上方。
     # 显示前把几何预设成屏幕可用区：Windows 上 showMaximized() 偶尔会先闪一帧
     # 普通尺寸，几何已经是全屏就看不出来「先变小再全屏」。
     _screen = main_window.screen() or QApplication.primaryScreen()
     if _screen is not None:
         main_window.setGeometry(_screen.availableGeometry())
-    splash_close(on_reveal=main_window.showMaximized)
+    splash_close(on_done=main_window.showMaximized)
     # 设备链路（adb server / 设备列表 / u2 连接）等界面显示后再在后台线程里做，
     # 别让它堵在进入主界面的路上 —— 详见 _start_device_link 上方的注释
     QTimer.singleShot(60, _start_device_link)

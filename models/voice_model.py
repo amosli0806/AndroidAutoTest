@@ -58,11 +58,49 @@ DEFAULT_SETTINGS = {
     # 这里的默认值已无消费方，仅为兼容旧数据文件保留，不在设置页里编辑。
     "verify": {
         "enabled": False,
-        "log_tag": "",            # 车机语音助手的 log tag；留空抓全量日志
+        # 默认取自本田车机实测：车机回应/TTS 业务层都打在这两个 tag 上
+        "log_tag": "TtsBusinessManager TestManager",
         "success_keywords": ["识别成功", "已为您", "导航到"],
         "fail_keywords": ["没听清", "无法识别", "未识别", "抱歉"],
+        # 唤醒词确认与自动重试（独立于上面的回执验证开关）。
+        # 默认关键词/tag 来自 2026-11-03 本田车机（讯飞语音客户端）实测日志：
+        #   唤醒成功：issmvw_log  ****Succeed to WakeUp****
+        #             MvwManagerAdapter  onWakeup() called
+        # 换车型后按实际日志改这里，或通过「车型模板」随车切换。
+        "wake": {
+            "enabled": False,
+            "max_retries": 2,       # 失败后最多重播几次（总尝试 = 1 + 该值）
+            "settle_ms": 2000,      # 播完唤醒词后等车机响应的时长
+            "success_keywords": ["Succeed to WakeUp", "onWakeup() called"],
+            "fail_keywords": [],    # 留空 = 未命中成功词即判失败
+            "log_tag": "issmvw_log MvwManagerAdapter",
+            "on_fail": "continue",  # continue=继续播后续 / skip_case=跳过本用例
+        },
     },
 }
+
+def _merge_settings_dict(base) -> dict:
+    """把磁盘上的 settings 合并到默认值上，verify.wake 再多深一层。
+
+    只做浅合并时，旧数据文件里的 verify 没有 wake 段（或只有其中几个键），
+    整个默认 wake 会被覆盖掉，新加的关键词/tag 就读不到了。
+    """
+    merged = dict(DEFAULT_SETTINGS)
+    for key, value in (base or {}).items():
+        if key not in DEFAULT_SETTINGS:
+            continue
+        default_value = DEFAULT_SETTINGS[key]
+        if isinstance(default_value, dict) and isinstance(value, dict):
+            inner = {**default_value, **value}
+            default_wake = default_value.get("wake")
+            user_wake = value.get("wake")
+            if isinstance(default_wake, dict) and isinstance(user_wake, dict):
+                inner["wake"] = {**default_wake, **user_wake}
+            merged[key] = inner
+        else:
+            merged[key] = value
+    return merged
+
 
 # 首次使用（还没有数据文件时）给一个示例分组 + 用例，直接演示「唤醒 + 指令」
 SEED_GROUP_NAME = "示例分组"
@@ -239,7 +277,8 @@ class VoiceModel:
         self._dirty_settings = set()
         self.groups: List[VoiceGroup] = []
         self.cases: List[VoiceCase] = []
-        # 车型模板：名称 -> {"wake_word": str, "verify": {enabled, log_tag, fail_keywords}}
+        # 车型模板：名称 -> {"wake_word": str,
+        #                    "verify": {enabled, log_tag, fail_keywords, wake{...}}}
         # 只存「换车会变」的配置；引擎 / 音色 / 输出设备跟测试机有关、不随车变，不进模板。
         self.car_profiles: dict = {}
         self.current_car_profile = ""      # 最近套用/保存的模板名，供设置页下拉回显
@@ -253,16 +292,7 @@ class VoiceModel:
             try:
                 with open(self.DATA_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                merged = dict(DEFAULT_SETTINGS)
-                # 只认已知键：早先版本写进去的 volume 之类会被丢掉。
-                # dict 类型的值（verify）做浅合并，用户只覆盖改动的键，默认关键词保留。
-                for key, value in (data.get("settings") or {}).items():
-                    if key not in DEFAULT_SETTINGS:
-                        continue
-                    if isinstance(DEFAULT_SETTINGS[key], dict) and isinstance(value, dict):
-                        merged[key] = {**DEFAULT_SETTINGS[key], **value}
-                    else:
-                        merged[key] = value
+                merged = _merge_settings_dict(data.get("settings") or {})
                 self.settings = merged
                 self._dirty_settings = set()
                 self.groups = [VoiceGroup.from_dict(g)
@@ -304,7 +334,7 @@ class VoiceModel:
                 base = json.load(f).get("settings") or {}
         except Exception:
             base = {}
-        merged = {**DEFAULT_SETTINGS, **base}
+        merged = _merge_settings_dict(base)
         for key in self._dirty_settings:
             if key in self.settings:
                 merged[key] = self.settings[key]
@@ -828,27 +858,67 @@ def get_all_voice_suites() -> List[dict]:
 def get_verify_config() -> dict:
     """当前配置的语音回执验证规则。只读 settings 段，不构造 VoiceModel。
 
-    返回 {enabled, log_tag, success_keywords, fail_keywords}，都带安全的默认值。
+    返回 {enabled, log_tag, success_keywords, fail_keywords, wake}，都带安全的默认值。
+    wake 是唤醒词确认/重试的独立配置（见 DEFAULT_SETTINGS["verify"]["wake"]）：
+    它不看上面的 enabled，只要 wake.enabled 打开就生效。
     供语音页 worker 在执行线程里读取，避免构造 VoiceModel。
     其中 success_keywords 已无消费方（成功关键词按用例配在检测步骤里），
     保留只是为了不破坏旧数据文件。
     """
+    wake_defaults = DEFAULT_SETTINGS["verify"]["wake"]
     cfg = {
         "enabled": False,
-        "log_tag": "",
+        "log_tag": DEFAULT_SETTINGS["verify"]["log_tag"],
         "success_keywords": DEFAULT_SETTINGS["verify"]["success_keywords"],
         "fail_keywords": DEFAULT_SETTINGS["verify"]["fail_keywords"],
+        "wake": {
+            **wake_defaults,
+            "success_keywords": list(wake_defaults["success_keywords"]),
+            "fail_keywords": list(wake_defaults["fail_keywords"]),
+        },
     }
     try:
         with open(VoiceModel.DATA_FILE, encoding="utf-8") as f:
             data = json.load(f)
         v = ((data.get("settings") or {}).get("verify") or {})
         cfg["enabled"] = bool(v.get("enabled", False))
-        cfg["log_tag"] = str(v.get("log_tag") or "").strip()
+        if "log_tag" in v:
+            cfg["log_tag"] = str(v.get("log_tag") or "").strip()
         if v.get("success_keywords"):
             cfg["success_keywords"] = [str(x) for x in v["success_keywords"] if str(x).strip()]
         if v.get("fail_keywords"):
             cfg["fail_keywords"] = [str(x) for x in v["fail_keywords"] if str(x).strip()]
+
+        w = v.get("wake")
+        if isinstance(w, dict):
+            wake = cfg["wake"]
+            if "enabled" in w:
+                wake["enabled"] = bool(w.get("enabled"))
+            if "max_retries" in w:
+                try:
+                    wake["max_retries"] = max(0, min(10, int(w.get("max_retries"))))
+                except (TypeError, ValueError):
+                    pass
+            if "settle_ms" in w:
+                try:
+                    wake["settle_ms"] = max(200, min(20000, int(w.get("settle_ms"))))
+                except (TypeError, ValueError):
+                    pass
+            # 显式写空列表 = 用户清空了关键词，要尊重；不能回落到默认值
+            if "success_keywords" in w:
+                wake["success_keywords"] = [
+                    str(x).strip() for x in (w.get("success_keywords") or [])
+                    if str(x).strip()]
+            if "fail_keywords" in w:
+                wake["fail_keywords"] = [
+                    str(x).strip() for x in (w.get("fail_keywords") or [])
+                    if str(x).strip()]
+            if "log_tag" in w:
+                wake["log_tag"] = str(w.get("log_tag") or "").strip()
+            if "on_fail" in w:
+                wake["on_fail"] = ("skip_case"
+                                   if str(w.get("on_fail")) == "skip_case"
+                                   else "continue")
     except Exception:
         pass
     return cfg

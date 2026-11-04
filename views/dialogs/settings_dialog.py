@@ -267,7 +267,7 @@ class SettingsDialog(QDialog):
         self.content_stack.addWidget(self._build_voice_page())
         idx += 1
 
-        voice_verify_item = QTreeWidgetItem(["回执验证"])
+        voice_verify_item = QTreeWidgetItem(["预期检证"])
         voice_verify_item.setData(0, Qt.ItemDataRole.UserRole, idx)
         voice_root.addChild(voice_verify_item)
         self.content_stack.addWidget(self._build_voice_verify_page())
@@ -691,21 +691,15 @@ class SettingsDialog(QDialog):
     # 语音播报设置
     # ------------------------------------------------------------------
     def _build_voice_page(self):
-        from models.voice_model import DEFAULT_WAKE_WORD
-
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        content = QWidget()
+        content.setObjectName("VoicePage")
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
 
         title = QLabel("语音播报")
         title.setObjectName("SettingsPageTitle")
         layout.addWidget(title)
-
-        subtitle = QLabel("设置播报的音色、设备、语速与循环；选错设备，车机会听不见。")
-        subtitle.setObjectName("SettingsPageSubtitle")
-        subtitle.setWordWrap(True)
-        layout.addWidget(subtitle)
 
         form = QFormLayout()
         form.setSpacing(12)
@@ -732,7 +726,7 @@ class SettingsDialog(QDialog):
         profile_row.addWidget(self.car_profile_del_btn)
         profile_holder = QWidget()
         profile_holder.setLayout(profile_row)
-        form.addRow("车型模板:", profile_holder)
+        form.addRow("车企:", profile_holder)
 
         self.voice_engine_combo = QComboBox()
         self.voice_engine_combo.setMinimumWidth(340)
@@ -742,25 +736,23 @@ class SettingsDialog(QDialog):
 
         self.voice_tone_combo = QComboBox()
         self.voice_tone_combo.setMinimumWidth(340)
-        form.addRow("音色:", self.voice_tone_combo)
+        form.addRow("输出音色:", self.voice_tone_combo)
 
         self.voice_device_combo = QComboBox()
         self.voice_device_combo.setMinimumWidth(340)
         form.addRow("输出设备:", self.voice_device_combo)
 
-        # 语速 / 循环：原来在「语音播报」页的工具栏上，2026-11-01 移到设置页。
+        # 执行语速 / 执行循环：原来在「语音播报」页的工具栏上，2026-11-01 移到设置页。
         # 这两个是「一次调好、长期不变」的配置，摆在每页都要扫一眼的工具栏上
         # 既碍事又挤（那一行还要放执行/全选），而语音页只剩「按顺序播」这一个动作。
         self.voice_rate_spin = QSpinBox()
         self.voice_rate_spin.setRange(-10, 10)
-        self.voice_rate_spin.setFixedWidth(90)
-        form.addRow("语速:", self.voice_rate_spin)
+        form.addRow("执行语速:", self.voice_rate_spin)
 
         self.voice_loop_spin = QSpinBox()
         self.voice_loop_spin.setRange(1, 99)
         self.voice_loop_spin.setSuffix(" 轮")
-        self.voice_loop_spin.setFixedWidth(90)
-        form.addRow("循环:", self.voice_loop_spin)
+        form.addRow("执行循环:", self.voice_loop_spin)
 
         # 唤醒词：语音页「唤醒词」按钮追加到用例末尾的那句。
         # 车机助手得先被叫醒才听得进后面的指令，所以这句往往是每条用例的第一句。
@@ -775,7 +767,7 @@ class SettingsDialog(QDialog):
         self.voice_test_btn.setFixedHeight(30)
         # 文案会在「试听 / 试听中…」之间切换，固定宽度免得整行跟着跳
         self.voice_test_btn.setFixedWidth(86)
-        self.voice_test_btn.setToolTip("用当前音色、设备与语速念一遍唤醒词")
+        self.voice_test_btn.setToolTip("用当前输出音色、设备与执行语速念一遍唤醒词")
         self.voice_test_btn.clicked.connect(self._on_test_voice)
 
         wake_row = QHBoxLayout()
@@ -789,41 +781,86 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(form)
 
-        hint = QLabel(
-            "音色、输出设备、语速、循环都与「语音播报」页共用，保存后立即生效；"
-            "响度跟随系统音量。\n"
-            "语速还会影响「播后等待」的估算值；循环是「执行选中」把勾选的用例整体播几遍。\n"
-            f"唤醒词会追加到用例末尾，留空则用默认「{DEFAULT_WAKE_WORD}」。\n"
-            "引擎：「Windows 内置语音」离线可用；「Edge 在线语音」需联网、普通话更自然。"
-        )
-        hint.setObjectName("SettingsPageSubtitle")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-
         layout.addStretch()
-        return page
+
+        # 和「预期检证」页一样套滚动区：两页的视口宽度一致，
+        # 数字框/下拉框的右边界才能严格对齐。
+        scroll = QScrollArea()
+        scroll.setObjectName("VoiceScroll")
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        return scroll
 
     def _build_voice_verify_page(self):
-        """回执验证独立一页：播报后抓车机日志反馈文案，判定这句是否被正确识别。"""
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        """预期检证：唤醒确认 + 预期结果（回执）验证。"""
+        content = QWidget()
+        content.setObjectName("VoiceVerifyPage")
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(16)
+        layout.setSpacing(12)
 
-        title = QLabel("语音回执验证")
-        title.setObjectName("SettingsPageTitle")
-        layout.addWidget(title)
+        # ---------------- 唤醒确认 ----------------
+        wake_title = QLabel("唤醒确认")
+        wake_title.setStyleSheet("font-weight: bold; margin-top: 8px;")
+        layout.addWidget(wake_title)
 
-        subtitle = QLabel("播报后抓车机日志，判定这句是否被正确识别；失败时该步骤标红并附反馈原文。")
-        subtitle.setObjectName("SettingsPageSubtitle")
-        subtitle.setWordWrap(True)
-        layout.addWidget(subtitle)
+        wake_form = QFormLayout()
+        wake_form.setSpacing(10)
+        wake_form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.wake_enabled_check = QCheckBox("唤醒词播完后确认，失败自动重播")
+        wake_form.addRow("开关:", self.wake_enabled_check)
+
+        self.wake_retries_spin = QSpinBox()
+        self.wake_retries_spin.setRange(0, 10)
+        self.wake_retries_spin.setSuffix(" 次")
+        self.wake_retries_spin.setValue(2)
+        wake_form.addRow("重播:", self.wake_retries_spin)
+
+        self.wake_settle_spin = QSpinBox()
+        self.wake_settle_spin.setRange(200, 20000)
+        self.wake_settle_spin.setSingleStep(100)
+        self.wake_settle_spin.setSuffix(" ms")
+        self.wake_settle_spin.setValue(2000)
+        wake_form.addRow("唤醒等待:", self.wake_settle_spin)
+
+        self.wake_success_edit = QLineEdit()
+        self.wake_success_edit.setMinimumWidth(340)
+        self.wake_success_edit.setPlaceholderText(
+            "逗号分隔，如：Succeed to WakeUp, onWakeup() called")
+        wake_form.addRow("成功关键词:", self.wake_success_edit)
+
+        self.wake_fail_edit = QLineEdit()
+        self.wake_fail_edit.setMinimumWidth(340)
+        self.wake_fail_edit.setPlaceholderText("可留空：未命中成功词即判失败")
+        wake_form.addRow("失败关键词:", self.wake_fail_edit)
+
+        self.wake_tag_edit = QLineEdit()
+        self.wake_tag_edit.setMinimumWidth(340)
+        self.wake_tag_edit.setPlaceholderText("留空则复用下面的日志标签")
+        wake_form.addRow("日志标签:", self.wake_tag_edit)
+
+        self.wake_on_fail_combo = QComboBox()
+        self.wake_on_fail_combo.addItem("继续播后续", "continue")
+        self.wake_on_fail_combo.addItem("跳过本用例", "skip_case")
+        wake_form.addRow("重试用尽:", self.wake_on_fail_combo)
+
+        layout.addLayout(wake_form)
+
+        # ---------------- 预期结果验证 ----------------
+        verify_title = QLabel("预期结果验证")
+        verify_title.setStyleSheet("font-weight: bold; margin-top: 8px;")
+        layout.addWidget(verify_title)
 
         form = QFormLayout()
-        form.setSpacing(12)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form.setSpacing(10)
+        form.setLabelAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.verify_enabled_check = QCheckBox("启用回执验证")
+        self.verify_enabled_check = QCheckBox("启用预期结果验证")
         form.addRow("开关:", self.verify_enabled_check)
 
         self.verify_tag_edit = QLineEdit()
@@ -839,18 +876,17 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(form)
 
-        hint = QLabel(
-            "日志标签填车机语音助手打日志用的 tag，可多个、空格或逗号分隔"
-            "（如：TtsBusinessManager TestManager）。留空会抓全量日志，量大且容易误判，"
-            "建议至少填一个。\n"
-            "开关只对「配了检测步骤的播报」生效，检测步骤在「语音播报」页按用例配置。"
-        )
-        hint.setObjectName("SettingsPageSubtitle")
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-
         layout.addStretch()
-        return page
+
+        # 配置项比原来多了一组，560px 高的对话框放不下；套一层滚动区，
+        # 小屏 / 高缩放下也能滚到底部。
+        scroll = QScrollArea()
+        scroll.setObjectName("VoiceVerifyScroll")
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        return scroll
 
     # ---------------- 车型模板 ----------------
     def _refresh_car_profiles(self):
@@ -862,13 +898,56 @@ class SettingsDialog(QDialog):
         cur = vm.current_car_profile
         self.car_profile_combo.blockSignals(True)
         self.car_profile_combo.clear()
-        self.car_profile_combo.addItem("（不使用模板）", "")
+        self.car_profile_combo.addItem("（不使用车企）", "")
         for n in names:
             self.car_profile_combo.addItem(n, n)
         idx = self.car_profile_combo.findData(cur)
         self.car_profile_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.car_profile_combo.blockSignals(False)
         self.car_profile_del_btn.setEnabled(bool(cur) and cur in names)
+
+    def _wake_config_from_ui(self) -> dict:
+        """当前界面的唤醒确认配置（保存与车型模板共用）。"""
+        if not hasattr(self, "wake_enabled_check"):
+            return {}
+        return {
+            "enabled": self.wake_enabled_check.isChecked(),
+            "max_retries": int(self.wake_retries_spin.value()),
+            "settle_ms": int(self.wake_settle_spin.value()),
+            "success_keywords": self._split_keywords(self.wake_success_edit.text()),
+            "fail_keywords": self._split_keywords(self.wake_fail_edit.text()),
+            "log_tag": (self.wake_tag_edit.text() or "").strip(),
+            "on_fail": self.wake_on_fail_combo.currentData() or "continue",
+        }
+
+    def _fill_wake_config(self, wake: dict) -> None:
+        """把唤醒配置回填到控件（只覆盖模板里出现过/读到的键）。"""
+        if not isinstance(wake, dict) or not hasattr(self, "wake_enabled_check"):
+            return
+        if "enabled" in wake:
+            self.wake_enabled_check.setChecked(bool(wake["enabled"]))
+        if "max_retries" in wake:
+            try:
+                self.wake_retries_spin.setValue(max(0, min(10, int(wake["max_retries"]))))
+            except (TypeError, ValueError):
+                pass
+        if "settle_ms" in wake:
+            try:
+                self.wake_settle_spin.setValue(
+                    max(200, min(20000, int(wake["settle_ms"]))))
+            except (TypeError, ValueError):
+                pass
+        if "success_keywords" in wake:
+            self.wake_success_edit.setText(
+                "，".join(wake.get("success_keywords") or []))
+        if "fail_keywords" in wake:
+            self.wake_fail_edit.setText(
+                "，".join(wake.get("fail_keywords") or []))
+        if "log_tag" in wake:
+            self.wake_tag_edit.setText(str(wake.get("log_tag") or ""))
+        if "on_fail" in wake:
+            idx = self.wake_on_fail_combo.findData(str(wake.get("on_fail") or "continue"))
+            self.wake_on_fail_combo.setCurrentIndex(idx if idx >= 0 else 0)
 
     def _car_profile_snapshot(self) -> dict:
         """从当前界面取一份模板内容（只含随车字段）。"""
@@ -878,11 +957,12 @@ class SettingsDialog(QDialog):
                 "enabled": self.verify_enabled_check.isChecked(),
                 "log_tag": (self.verify_tag_edit.text() or "").strip(),
                 "fail_keywords": self._split_keywords(self.verify_fail_edit.text()),
+                "wake": self._wake_config_from_ui(),
             },
         }
 
     def _fill_car_profile_fields(self, prof: dict):
-        """把模板内容回填到界面（唤醒词在本页，日志标签/关键词在「回执验证」页）。"""
+        """把模板内容回填到界面（唤醒词在本页，日志标签/关键词在「预期检证」页）。"""
         if "wake_word" in prof:
             self.wake_word_edit.setText(str(prof.get("wake_word") or ""))
         verify = prof.get("verify") or {}
@@ -893,6 +973,7 @@ class SettingsDialog(QDialog):
         if "fail_keywords" in verify:
             self.verify_fail_edit.setText(
                 "，".join(verify.get("fail_keywords") or []))
+        self._fill_wake_config(verify.get("wake") or {})
 
     def _on_car_profile_selected(self, _index):
         """选中某个模板 → 只把内容回填到界面；点「应用 / 确定」才真正生效。
@@ -912,40 +993,40 @@ class SettingsDialog(QDialog):
         show_toast(self, f"已载入「{name}」，点「应用」或「确定」后生效", duration=2500)
 
     def _on_save_car_profile(self):
-        """把当前界面的随车配置另存为一个车型模板。"""
+        """把当前界面的随车配置另存为一个车企。"""
         from models.voice_model import VoiceModel
 
         vm = VoiceModel()
         default = self.car_profile_combo.currentData() or ""
         name, ok = InputDialog.get_text(
-            self, "另存为车型模板", "模板名称（如：本田）:",
+            self, "另存为车企", "车企名称（如：本田）:",
             default_text=default)
         name = (name or "").strip()
         if not ok or not name:
             return
         if name in vm.car_profile_names():
             if not QuestionDialog.ask(
-                    self, "覆盖车型模板",
+                    self, "覆盖车企",
                     f"「{name}」已存在，要用当前配置覆盖吗？",
                     yes_text="覆盖", no_text="取消"):
                 return
         if vm.save_car_profile(name, self._car_profile_snapshot()):
             self._refresh_car_profiles()
-            show_toast(self, f"已保存车型模板「{name}」", duration=2000)
+            show_toast(self, f"已保存车企「{name}」", duration=2000)
 
     def _on_delete_car_profile(self):
         name = self.car_profile_combo.currentData() or ""
         if not name:
             return
         if not ConfirmDeleteDialog.ask(
-                self, "删除车型模板", f"确定删除车型模板「{name}」吗？",
+                self, "删除车企", f"确定删除车企「{name}」吗？",
                 detail="只删掉这组预设，不会改动当前的语音配置。"):
             return
         from models.voice_model import VoiceModel
 
         if VoiceModel().delete_car_profile(name):
             self._refresh_car_profiles()
-            show_toast(self, f"已删除车型模板「{name}」", duration=2000)
+            show_toast(self, f"已删除车企「{name}」", duration=2000)
 
     def _load_voice_config(self):
         """把引擎/音色/输出设备选项灌进下拉框，并回填已保存的选择"""
@@ -973,6 +1054,7 @@ class SettingsDialog(QDialog):
         self.verify_enabled_check.setChecked(bool(verify.get("enabled", False)))
         self.verify_tag_edit.setText(str(verify.get("log_tag") or ""))
         self.verify_fail_edit.setText("，".join(verify.get("fail_keywords") or []))
+        self._fill_wake_config(verify.get("wake") or {})
 
         # 引擎下拉（blockSignals 避免 setCurrentIndex 触发 _on_voice_engine_changed 重复刷新）
         self.voice_engine_combo.blockSignals(True)
@@ -1102,6 +1184,7 @@ class SettingsDialog(QDialog):
                 # 这里原样保留旧值（兜底），不再在设置页编辑
                 "success_keywords": verify.get("success_keywords") or [],
                 "fail_keywords": self._split_keywords(self.verify_fail_edit.text()),
+                "wake": self._wake_config_from_ui(),
             },
         )
         self._apply_voice_selection()
@@ -1930,6 +2013,20 @@ class SettingsDialog(QDialog):
             #SettingsDialog QLineEdit:focus {{
                 border-color: {input_focus};
             }}
+            /* 数字输入框：不写这段时会退回原生 palette 的深色底，
+               和旁边的下拉框/文本框明显不是一个颜色，文字也发灰。 */
+            #SettingsDialog QSpinBox {{
+                background-color: {input_bg};
+                color: {input_text};
+                border: 1px solid {input_border};
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 13px;
+                min-height: 22px;
+            }}
+            #SettingsDialog QSpinBox:focus {{
+                border-color: {input_focus};
+            }}
             #SettingsDialog QComboBox {{
                 background-color: {input_bg};
                 color: {input_text};
@@ -2150,6 +2247,17 @@ class SettingsDialog(QDialog):
             #NotifyScroll,
             #NotifyScroll > QWidget#qt_scrollarea_viewport,
             #NotifyPage {{
+                background-color: {content_bg};
+                border: none;
+            }}
+
+            /* ---------- 预期检证 / 语音设置页滚动区（跟随主题背景） ---------- */
+            #VoiceScroll,
+            #VoiceScroll > QWidget#qt_scrollarea_viewport,
+            #VoicePage,
+            #VoiceVerifyScroll,
+            #VoiceVerifyScroll > QWidget#qt_scrollarea_viewport,
+            #VoiceVerifyPage {{
                 background-color: {content_bg};
                 border: none;
             }}

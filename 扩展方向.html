@@ -264,10 +264,14 @@
 
       <details style="margin-top:16px;border:1px solid var(--border);border-radius:10px;background:#fbfcfe;padding:0 18px">
         <summary style="cursor:pointer;padding:13px 0;font-weight:700;color:var(--primary);font-size:15px">
-          4.1 唤醒确认与自动重试 —— 方案已定，待排期（2026-11-02）
+          4.1 唤醒确认与自动重试 —— 已实现（2026-11-03）
         </summary>
 
         <p class="small" style="margin-top:4px">痛点：播报「你好本田」后，车机有概率没被唤醒，后面整条用例等于对着待机状态的车机白播。</p>
+        <div class="tip">✅ <b>已实现（2026-11-03）</b>：默认关键词取自本田车机实测日志
+          （<code>issmvw_log</code> 的 <code>Succeed to WakeUp</code> /
+          <code>MvwManagerAdapter</code> 的 <code>onWakeup() called</code>）。
+          设置页「回执验证」下方可配置开关、重播次数、唤醒等待、成功/失败关键词、日志标签与「重试用尽」策略。</div>
 
         <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">现状：唤醒这一步其实没被验证过</h4>
         <ul class="small" style="padding-left:20px">
@@ -296,9 +300,10 @@
             <tr><td><code>enabled</code></td><td><code>false</code></td><td>是否在唤醒词播完后确认、没成功就重播</td></tr>
             <tr><td><code>max_retries</code></td><td><code>2</code></td><td>失败后最多重播几次（总尝试次数 = 1 + 该值）</td></tr>
             <tr><td><code>settle_ms</code></td><td><code>2000</code></td><td>播完唤醒词后等车机响应的时长</td></tr>
-            <tr><td><code>success_keywords</code></td><td><code>[]</code></td><td>唤醒成功标志，如 <code>onWakeup</code> / <code>唤醒成功</code> / <code>enterListening</code></td></tr>
+            <tr><td><code>success_keywords</code></td><td><code>["Succeed to WakeUp", "onWakeup() called"]</code></td><td>唤醒成功标志（已按本田车机日志预置）</td></tr>
             <tr><td><code>fail_keywords</code></td><td><code>[]</code></td><td>唤醒失败标志（可选）；为空时按「未命中成功词」判失败</td></tr>
-            <tr><td><code>log_tag</code></td><td><code>""</code></td><td>唤醒专用日志标签，留空则复用回执验证的 <code>log_tag</code></td></tr>
+            <tr><td><code>log_tag</code></td><td><code>issmvw_log MvwManagerAdapter</code></td><td>唤醒专用日志标签；留空则复用回执验证的 <code>log_tag</code></td></tr>
+            <tr><td><code>on_fail</code></td><td><code>continue</code></td><td>重试用尽后：<code>continue</code> 继续播后续 / <code>skip_case</code> 跳过本用例</td></tr>
           </tbody>
         </table>
 
