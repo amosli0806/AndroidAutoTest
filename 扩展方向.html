@@ -166,17 +166,18 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-10-31（v1.5.14）</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-04（v1.5.202）</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.5.14</span>
-      <span class="badge">9 项待办</span>
+      <span class="badge">当前版本 v1.5.202</span>
+      <span class="badge">9 项规划 · 1 子项已完成</span>
       <span class="badge">按改动量分 A~D 四档</span>
     </div>
   </header>
 
   <div class="legend">
     <span class="lbl">状态图例：</span>
-    <span class="chip part">🚧 进行中</span>
+    <span class="chip done">✅ 已完成</span>
+    <span class="chip part">🚧 部分完成</span>
     <span class="chip plan">📋 规划中</span>
   </div>
 
@@ -212,19 +213,20 @@
     <div class="card">
       <h3>3. 知识库增强（检索与关联）<span class="tag plan">📋 规划中</span></h3>
       <p><b>现状</b>：<code>views/knowledge_view.py</code>（1329 行）+ <code>models/knowledge_model.py</code>（747 行）
-        已具备「项目 → 分类 → 笔记」树、富文本编辑器（落库转 Markdown）、标签、全文搜索、图片资源、Markdown 导出。
-        基础功能够用，但<b>提效交互几乎没有</b>。</p>
+        已具备「项目 → 分类 → 笔记」树、富文本编辑器（落库转 Markdown）、标签、全文搜索、图片资源、Markdown 导出，
+        以及右栏的<b>「速查」卡片带</b>（当前项目置顶、点卡片直接跳转）。
+        基础功能够用，但<b>提效交互仍然偏少</b>。</p>
       <div class="example">💡 <b>打个比方：</b>现在的知识库像一本装订整齐的笔记本 —— 纸和目录都不缺，
         缺的是书签、索引卡和「上次看到哪儿」。</div>
-      <p><b>三个短板</b>：① 无大纲、无快速跳转，搜索必须切到搜索页；② 只有行内代码（<code>toggle_code</code>），
-        没有代码块，而内容里全是 <code>adb</code> 命令；③ 笔记之间完全孤立，没有关联与反向链接，
-        「踩坑」和「环境信息」互相指不到。</p>
+      <p><b>三个短板</b>：① 无大纲，长笔记只能靠滚动；搜索也必须切到搜索页（速查卡片带只覆盖了「置顶几条」）；
+        ② 只有行内代码（<code>toggle_code</code>），没有代码块，而内容里全是 <code>adb</code> 命令；
+        ③ 笔记之间完全孤立，没有关联与反向链接，「踩坑」和「环境信息」互相指不到。</p>
       <p><b>六个改造点（按投入产出排序）</b>：</p>
       <ul>
         <li><b>代码块 + 高亮 + 复制 + 一键发到 ADB 工具箱执行</b>（约 0.5 天）：贴合度最高 —— 复制完直接跑，
           省掉切页面粘贴</li>
-        <li><b>速查字段卡</b>（约 0.5 天）：包名 / 启动 Activity / 账号做成键值行 + 一键复制，
-          把「每次翻笔记复制」变成「点一下」</li>
+        <li><b>速查字段卡</b>（约 0.5 天）：现有「速查」卡片带做的是<b>跳转</b>；再进一步，
+          把包名 / 启动 Activity / 账号做成键值行 + 一键复制，把「翻笔记复制」变成「点一下」</li>
         <li><b>命令面板 <code>Ctrl+P</code></b>（约 1 天）：跨项目搜标题 / 正文 / 标签，还能直接执行
           「新建笔记」「切换项目」。<b>注意 <code>Ctrl+K</code> 已被「插入链接」占用</b>，别撞键</li>
         <li><b>右侧「大纲 + 被引用」面板</b>（约 1 天）：长笔记的结构感</li>
@@ -254,10 +256,11 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ B · 改动适中、模块独立（1 ~ 2 天，独立开发不影响别处）</h3>
 
     <div class="card">
-        <h3>4. 语音播报增强 <span class="tag plan">📋 规划中</span></h3>
+        <h3>4. 语音播报增强 <span class="tag part">🚧 部分完成</span></h3>
       <ul>
-        <li>唤醒词多套管理（按用例切换、多条候选轮播）</li>
-        <li>「真执行了」校验：回执验证已能确认「被正确识别」，但如果界面是否真的变了（如地图是否全屏）还没有手段</li>
+        <li class="done-li">✅ <b>唤醒确认与自动重试</b>—— 2026-11-03 已实现，详见下方 4.1</li>
+        <li>唤醒词多套管理（按用例切换、多条候选轮播）—— 目前只有全局一个唤醒词，靠车型模板整体切换</li>
+        <li>「真执行了」校验：回执验证已能确认「被正确识别」，但界面是否真的变了（如地图是否全屏）还没有手段</li>
         <li>语音用例 ↔ 自动化用例互转</li>
       </ul>
       <div class="example">💡 <b>打个比方：</b>换车已经能整套套用（车型模板）；这一步要再细到「按用例切换唤醒词、多条候选轮播」，并验明正身 —— 确认「地图真的切成全屏了没有」，而不只是「车机听懂了没有」。</div>
@@ -273,7 +276,7 @@
           <code>MvwManagerAdapter</code> 的 <code>onWakeup() called</code>）。
           设置页「回执验证」下方可配置开关、重播次数、唤醒等待、成功/失败关键词、日志标签与「重试用尽」策略。</div>
 
-        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">现状：唤醒这一步其实没被验证过</h4>
+        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">改造前的现状（已解决，留作背景）</h4>
         <ul class="small" style="padding-left:20px">
           <li><code>VoicePlaybackWorker</code> 的流程是「播完一句 → 等 delay → <b>只有这句后面跟了检测步骤才抓 logcat 判定</b>」，且判定失败只记一行 ❌，<b>从不重试</b>。</li>
           <li>唤醒词通常只当普通播报，后面没配检测步骤 —— 那就完全不验证，车机没醒也照样往下播。</li>
@@ -319,14 +322,17 @@
           </tbody>
         </table>
 
-        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">动手前要拍板的三件事</h4>
+        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">当时三个待定项，最终这样定的</h4>
         <ol class="small" style="padding-left:22px">
-          <li><b>唤醒成功在车机 logcat 里长什么样？</b>这是整个方案的地基。需要某车型的唤醒日志样本（tag + 关键行）。没有的话先做一个「唤醒日志采样」小工具：点一下抓 30 秒日志给人挑特征词。</li>
-          <li><b>重试用尽后怎么办？</b>继续播后续（默认，推荐 —— 有时车机其实醒了只是没打日志），还是跳过本用例剩余步骤。</li>
-          <li><b>重试时要不要调播报参数</b>（放慢语速 / 提音量）？建议第一版不做，先验证重试本身够不够；需要时在子循环里临时降 <code>rate</code> 即可。</li>
+          <li><b>唤醒成功的日志特征</b>：已在本田车机上确认 —— <code>issmvw_log</code> 的 <code>Succeed to WakeUp</code>、
+            <code>MvwManagerAdapter</code> 的 <code>onWakeup() called</code>，已作为默认关键词预置；换车型可在设置页改。</li>
+          <li><b>重试用尽后</b>：做成设置项 <code>on_fail</code>，默认 <code>continue</code>（继续播后续）——
+            有时车机其实醒了只是没打日志，跳过反而更亏；需要严格时可切 <code>skip_case</code>。</li>
+          <li><b>重试时调播报参数</b>：第一版没做，保持原语速。理由是先把「重试本身够不够」验证清楚，
+            避免两个变量一起动、分不清是谁的功劳。</li>
         </ol>
 
-        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">不写代码也能先试的（可能直接见效）</h4>
+        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">配套的物理层排查（仍适用）</h4>
         <ul class="small" style="padding-left:20px">
           <li>把唤醒词那条的<b>播后等待</b>加到 2.5~3 秒 —— 现在可能在车机还没醒时就播下一句了。</li>
           <li>唤醒词用<b>稍慢一档的语速</b> —— SAPI 念「你好本田」偏快时识别率明显下降。</li>
@@ -334,7 +340,12 @@
           <li>确认电脑输出音量、车机麦克风距离 —— 这套是声学耦合，音量掉一档成功率就掉一截。</li>
         </ul>
 
-        <p class="small" style="margin:14px 0 18px"><b>建议推进顺序：</b>先做「唤醒日志采样工具 + 唤醒确认重试」，配置给保守默认（2 次 / 2 秒），跑一轮看实际提升，再决定要不要加语速自适应。</p>
+        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">留待后续（不急）</h4>
+        <ul class="small" style="padding-left:20px;margin-bottom:18px">
+          <li><b>唤醒日志采样工具</b>：点一下抓 30 秒指定 tag 的日志，换车型时不用手工翻 <code>adb logcat</code>。</li>
+          <li><b>重试时自适应放慢语速</b>：第一次按原速、第二次降一档，成功率还能再抬一点。</li>
+          <li><b>唤醒词按用例切换</b>：已并入第 4 项主列表，属于「多套唤醒词」的一部分。</li>
+        </ul>
       </details>
     </div>
 
@@ -356,8 +367,10 @@
     </div>
 
     <div class="card">
-      <h3>7. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
-      <p>剩余<b>场景化联动</b>：场景化执行时按用例自动转储 / 抓包，每用例一份产物、报告按用例分组。其余采集能力已并入，实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
+      <h3>7. 性能检测补全 <span class="tag part">🚧 部分完成</span></h3>
+      <p><b>已落地</b>：采集能力已全部并入；性能页可直接选<b>语音套件</b>边播语音边采集（v1.5.17）；自动化场景化已有
+        <code>ScenarioWorker</code> 驱动用例执行，采集结束还会自动生成报告与数据表格。</p>
+      <p><b>剩余</b>：场景化执行时<b>按用例自动转储 / 抓包</b>，每用例一份产物、报告按用例分组。实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
     </div>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ D · 改动大 / 影响面广（需专门排期）</h3>
@@ -393,7 +406,7 @@
         <div class="gap-item"><span class="tag plan">📋</span><div><b>GPU 采集缺失</b> — 渲染类指标（帧耗时分布 / GPU 占用）还没有采集手段；原方案的 GPU 仅支持高通 Adreno 且未接编排，属半成品。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报待增强</b> — 唤醒词不能按用例切换；「回执验证」只能确认车机听懂了，还验不了界面真的变了（如地图是否全屏）。</div></div>
+        <div class="gap-item"><span class="tag part">🚧</span><div><b>语音播报待增强</b> — 唤醒确认与自动重试已落地；仍缺「唤醒词按用例切换」与「界面真的变了」的校验（如地图是否全屏）。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>无工程化配套</b> — 无 Git 集成（用例数据没有版本管理与回滚）。</div></div>
@@ -413,11 +426,11 @@
           <tr><td>A</td><td>1. 测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
           <tr><td>A</td><td>2. 步骤模板</td><td class="stars">⭐⭐⭐</td><td>「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
           <tr><td>A</td><td>3. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
-          <tr><td>B</td><td>4. 语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
+          <tr><td>B</td><td>4. 语音播报增强</td><td class="stars">⭐⭐</td><td>唤醒确认已完成；剩下唤醒词多套（数据 + UI）、「真执行了」校验、用例互转，仍在语音模块内</td></tr>
           <tr><td>B</td><td>5. 版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
           <tr><td>C</td><td>6. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
-          <tr><td>C</td><td>7. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
-          <tr><td>D</td><td>8. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>变量地基已落地（v1，语音文案已可用 <code>${变量}</code>）；剩下把唤醒词 / 语速等语音参数也做成变量</td></tr>
+          <tr><td>C</td><td>7. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>语音场景与「采集结束自动出报告/数据」已通；剩下按用例切分产物与报告分组，改动集中在场景化执行器</td></tr>
+          <tr><td>D</td><td>8. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>变量地基已落地（<code>utils/vars.py</code>，自动化步骤可用 <code>${变量}</code>）；<b>语音模块尚未接入替换</b>，要先补这一层再接唤醒词 / 语速</td></tr>
           <tr><td>D</td><td>9. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
         </tbody>
       </table>
@@ -508,7 +521,7 @@
     <div class="example">💡 <b>打个比方：</b>这就像把一间按自家户型装修好的房子搬到另一栋楼 —— 家具（Qt 界面、adb / uiautomator2 那套逻辑）都能直接用，但门框尺寸（打包成 <code>.app</code>）、水电接口（路径规范）、门锁（签名 / 公证）都不一样；至于「自动更新」，它更像埋在墙里的暗线，到新楼只能整条重走。</div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-10-30 · v1.5.11</footer>
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-04 · v1.5.202</footer>
 </div>
 </body>
 </html>
