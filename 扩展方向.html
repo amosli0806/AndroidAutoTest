@@ -169,15 +169,14 @@
     <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-04（v1.5.202）</div>
     <div class="badges">
       <span class="badge">当前版本 v1.5.202</span>
-      <span class="badge">9 项规划 · 1 子项已完成</span>
+      <span class="badge">9 项待办</span>
       <span class="badge">按改动量分 A~D 四档</span>
     </div>
   </header>
 
   <div class="legend">
     <span class="lbl">状态图例：</span>
-    <span class="chip done">✅ 已完成</span>
-    <span class="chip part">🚧 部分完成</span>
+    <span class="chip part">🚧 进行中</span>
     <span class="chip plan">📋 规划中</span>
   </div>
 
@@ -256,97 +255,13 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ B · 改动适中、模块独立（1 ~ 2 天，独立开发不影响别处）</h3>
 
     <div class="card">
-        <h3>4. 语音播报增强 <span class="tag part">🚧 部分完成</span></h3>
+        <h3>4. 语音播报增强 <span class="tag plan">📋 规划中</span></h3>
       <ul>
-        <li class="done-li">✅ <b>唤醒确认与自动重试</b>—— 2026-11-03 已实现，详见下方 4.1</li>
         <li>唤醒词多套管理（按用例切换、多条候选轮播）—— 目前只有全局一个唤醒词，靠车型模板整体切换</li>
         <li>「真执行了」校验：回执验证已能确认「被正确识别」，但界面是否真的变了（如地图是否全屏）还没有手段</li>
         <li>语音用例 ↔ 自动化用例互转</li>
       </ul>
       <div class="example">💡 <b>打个比方：</b>换车已经能整套套用（车型模板）；这一步要再细到「按用例切换唤醒词、多条候选轮播」，并验明正身 —— 确认「地图真的切成全屏了没有」，而不只是「车机听懂了没有」。</div>
-
-      <details style="margin-top:16px;border:1px solid var(--border);border-radius:10px;background:#fbfcfe;padding:0 18px">
-        <summary style="cursor:pointer;padding:13px 0;font-weight:700;color:var(--primary);font-size:15px">
-          4.1 唤醒确认与自动重试 —— 已实现（2026-11-03）
-        </summary>
-
-        <p class="small" style="margin-top:4px">痛点：播报「你好本田」后，车机有概率没被唤醒，后面整条用例等于对着待机状态的车机白播。</p>
-        <div class="tip">✅ <b>已实现（2026-11-03）</b>：默认关键词取自本田车机实测日志
-          （<code>issmvw_log</code> 的 <code>Succeed to WakeUp</code> /
-          <code>MvwManagerAdapter</code> 的 <code>onWakeup() called</code>）。
-          设置页「回执验证」下方可配置开关、重播次数、唤醒等待、成功/失败关键词、日志标签与「重试用尽」策略。</div>
-
-        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">改造前的现状（已解决，留作背景）</h4>
-        <ul class="small" style="padding-left:20px">
-          <li><code>VoicePlaybackWorker</code> 的流程是「播完一句 → 等 delay → <b>只有这句后面跟了检测步骤才抓 logcat 判定</b>」，且判定失败只记一行 ❌，<b>从不重试</b>。</li>
-          <li>唤醒词通常只当普通播报，后面没配检测步骤 —— 那就完全不验证，车机没醒也照样往下播。</li>
-          <li>就算配了检测步骤，失败也只记录，下一句指令直接播给一个还在待机的车机。</li>
-        </ul>
-
-        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">方案：让唤醒词走「确认 + 重试」独立通道</h4>
-        <p class="small" style="margin:6px 0">不依赖用户手动配检测步骤，按文本匹配唤醒词自动接管（<code>text.strip() == get_wake_word()</code>），用例里任何位置都生效，循环播放每轮开头也能吃到。每遇到唤醒词执行一个子循环：</p>
-        <ol class="small" style="padding-left:22px">
-          <li><code>feedback.clear()</code> 清 logcat 基线</li>
-          <li><code>speak_async(text)</code> → <code>wait_done()</code></li>
-          <li>等一个<b>唤醒稳定窗口</b>（默认 2 秒，可配）—— 车机从唤醒到进入聆听态本身有延迟</li>
-          <li><code>capture(tag)</code> → 用<b>唤醒专用关键词</b>判定是否唤醒成功</li>
-          <li>命中成功标志 → 继续播下一句；未命中 → 回到第 1 步重播，最多 N 次</li>
-          <li>重试用尽 → 记 ❌，按配置决定「继续播后续」还是「跳过本用例」</li>
-        </ol>
-        <div class="tip">⚠ <b>关键点：唤醒要单独配一组关键词和 tag。</b>唤醒日志和「指令识别回执」往往不在同一个 tag 上，直接复用现有的 <code>log_tag</code> 大概率判定不了。</div>
-
-        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">配置项</h4>
-        <p class="small" style="margin:6px 0">存进 <code>voice_data.json</code> 的 <code>settings.verify.wake</code>，由 <code>get_verify_config()</code> 一并读出传给 worker。UI 放在「设置 → 语音播报 → 回执验证」页下方。</p>
-        <table>
-          <thead><tr><th style="width:150px">字段</th><th style="width:110px">默认值</th><th>含义</th></tr></thead>
-          <tbody>
-            <tr><td><code>enabled</code></td><td><code>false</code></td><td>是否在唤醒词播完后确认、没成功就重播</td></tr>
-            <tr><td><code>max_retries</code></td><td><code>2</code></td><td>失败后最多重播几次（总尝试次数 = 1 + 该值）</td></tr>
-            <tr><td><code>settle_ms</code></td><td><code>2000</code></td><td>播完唤醒词后等车机响应的时长</td></tr>
-            <tr><td><code>success_keywords</code></td><td><code>["Succeed to WakeUp", "onWakeup() called"]</code></td><td>唤醒成功标志（已按本田车机日志预置）</td></tr>
-            <tr><td><code>fail_keywords</code></td><td><code>[]</code></td><td>唤醒失败标志（可选）；为空时按「未命中成功词」判失败</td></tr>
-            <tr><td><code>log_tag</code></td><td><code>issmvw_log MvwManagerAdapter</code></td><td>唤醒专用日志标签；留空则复用回执验证的 <code>log_tag</code></td></tr>
-            <tr><td><code>on_fail</code></td><td><code>continue</code></td><td>重试用尽后：<code>continue</code> 继续播后续 / <code>skip_case</code> 跳过本用例</td></tr>
-          </tbody>
-        </table>
-
-        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">实现落点（改动很小）</h4>
-        <table>
-          <thead><tr><th style="width:280px">文件</th><th>改什么</th></tr></thead>
-          <tbody>
-            <tr><td><code>models/voice_model.py</code></td><td><code>get_verify_config()</code> 增加 <code>wake</code> 子段读取</td></tr>
-            <tr><td><code>services/voice_player.py</code></td><td><code>run()</code> 里加唤醒分支 —— <b>唯一需要新逻辑的地方</b></td></tr>
-            <tr><td><code>views/voice_view.py</code></td><td><code>_start_playback</code> 把 wake 配置传进 worker</td></tr>
-            <tr><td><code>views/dialogs/settings_dialog.py</code></td><td>回执验证页加 4 个控件 + 保存/回填 + 车型模板带出</td></tr>
-            <tr><td><code>services/voice_feedback_service.py</code></td><td><b>不用改</b>，<code>clear / capture / judge</code> 直接复用</td></tr>
-          </tbody>
-        </table>
-
-        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">当时三个待定项，最终这样定的</h4>
-        <ol class="small" style="padding-left:22px">
-          <li><b>唤醒成功的日志特征</b>：已在本田车机上确认 —— <code>issmvw_log</code> 的 <code>Succeed to WakeUp</code>、
-            <code>MvwManagerAdapter</code> 的 <code>onWakeup() called</code>，已作为默认关键词预置；换车型可在设置页改。</li>
-          <li><b>重试用尽后</b>：做成设置项 <code>on_fail</code>，默认 <code>continue</code>（继续播后续）——
-            有时车机其实醒了只是没打日志，跳过反而更亏；需要严格时可切 <code>skip_case</code>。</li>
-          <li><b>重试时调播报参数</b>：第一版没做，保持原语速。理由是先把「重试本身够不够」验证清楚，
-            避免两个变量一起动、分不清是谁的功劳。</li>
-        </ol>
-
-        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">配套的物理层排查（仍适用）</h4>
-        <ul class="small" style="padding-left:20px">
-          <li>把唤醒词那条的<b>播后等待</b>加到 2.5~3 秒 —— 现在可能在车机还没醒时就播下一句了。</li>
-          <li>唤醒词用<b>稍慢一档的语速</b> —— SAPI 念「你好本田」偏快时识别率明显下降。</li>
-          <li>核对<b>唤醒词文本</b>：<code>你好本田</code> / <code>你好，本田</code> / <code>小田小田</code>，多一个逗号都可能不认。</li>
-          <li>确认电脑输出音量、车机麦克风距离 —— 这套是声学耦合，音量掉一档成功率就掉一截。</li>
-        </ul>
-
-        <h4 style="margin:16px 0 8px;font-size:15px;color:var(--text)">留待后续（不急）</h4>
-        <ul class="small" style="padding-left:20px;margin-bottom:18px">
-          <li><b>唤醒日志采样工具</b>：点一下抓 30 秒指定 tag 的日志，换车型时不用手工翻 <code>adb logcat</code>。</li>
-          <li><b>重试时自适应放慢语速</b>：第一次按原速、第二次降一档，成功率还能再抬一点。</li>
-          <li><b>唤醒词按用例切换</b>：已并入第 4 项主列表，属于「多套唤醒词」的一部分。</li>
-        </ul>
-      </details>
     </div>
 
     <div class="card">
@@ -367,10 +282,8 @@
     </div>
 
     <div class="card">
-      <h3>7. 性能检测补全 <span class="tag part">🚧 部分完成</span></h3>
-      <p><b>已落地</b>：采集能力已全部并入；性能页可直接选<b>语音套件</b>边播语音边采集（v1.5.17）；自动化场景化已有
-        <code>ScenarioWorker</code> 驱动用例执行，采集结束还会自动生成报告与数据表格。</p>
-      <p><b>剩余</b>：场景化执行时<b>按用例自动转储 / 抓包</b>，每用例一份产物、报告按用例分组。实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
+      <h3>7. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <p>剩余<b>场景化联动</b>：场景化执行时按用例自动转储 / 抓包，每用例一份产物、报告按用例分组。其余采集能力已并入，实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
     </div>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ D · 改动大 / 影响面广（需专门排期）</h3>
@@ -406,7 +319,7 @@
         <div class="gap-item"><span class="tag plan">📋</span><div><b>GPU 采集缺失</b> — 渲染类指标（帧耗时分布 / GPU 占用）还没有采集手段；原方案的 GPU 仅支持高通 Adreno 且未接编排，属半成品。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag part">🚧</span><div><b>语音播报待增强</b> — 唤醒确认与自动重试已落地；仍缺「唤醒词按用例切换」与「界面真的变了」的校验（如地图是否全屏）。</div></div>
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报待增强</b> — 唤醒词不能按用例切换；「回执验证」只能确认车机听懂了，还验不了界面真的变了（如地图是否全屏）。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>无工程化配套</b> — 无 Git 集成（用例数据没有版本管理与回滚）。</div></div>
@@ -426,10 +339,10 @@
           <tr><td>A</td><td>1. 测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
           <tr><td>A</td><td>2. 步骤模板</td><td class="stars">⭐⭐⭐</td><td>「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
           <tr><td>A</td><td>3. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
-          <tr><td>B</td><td>4. 语音播报增强</td><td class="stars">⭐⭐</td><td>唤醒确认已完成；剩下唤醒词多套（数据 + UI）、「真执行了」校验、用例互转，仍在语音模块内</td></tr>
+          <tr><td>B</td><td>4. 语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
           <tr><td>B</td><td>5. 版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
           <tr><td>C</td><td>6. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
-          <tr><td>C</td><td>7. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>语音场景与「采集结束自动出报告/数据」已通；剩下按用例切分产物与报告分组，改动集中在场景化执行器</td></tr>
+          <tr><td>C</td><td>7. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
           <tr><td>D</td><td>8. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>变量地基已落地（<code>utils/vars.py</code>，自动化步骤可用 <code>${变量}</code>）；<b>语音模块尚未接入替换</b>，要先补这一层再接唤醒词 / 语速</td></tr>
           <tr><td>D</td><td>9. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
         </tbody>
