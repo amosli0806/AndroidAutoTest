@@ -2342,6 +2342,17 @@ class PerfView(QWidget):
                     color: {text};
                     background: transparent;
                 }}
+                /* 提示框：和工具卡片里的那套一字不差（白底 / 1px 细边 / 直角）。
+                   不写这条时提示走系统绘制，和卡片里对不上。
+                   必须排在 QLabel 规则之后，同特异性靠先后定胜负。
+                   不加 border-radius：QTipLabel 是不透明窗口，圆角只会把边框
+                   掰弯、底色仍是方块，角上反而缺一块（2026-11-05 实测）。 */
+                #PerfControlPanel QToolTip {{
+                    background-color: {input_bg};
+                    color: {text};
+                    border: 1px solid {panel_border};
+                    padding: 4px 8px;
+                }}
                 #PerfControlPanel QComboBox,
                 #PerfControlPanel QSpinBox {{
                     background-color: {input_bg};
@@ -2688,12 +2699,14 @@ class PerfView(QWidget):
                 }}
                 /* 提示框必须显式给底色：QTipLabel 会匹配上面的 QLabel 规则（它也是
                    QLabel），透明背景让提示直接压在壁纸上，白天模式几乎看不清。
-                   这条紧跟在 QLabel 之后 —— 同特异性靠先后定胜负（2026-11-05 反馈）。 */
+                   这条紧跟在 QLabel 之后 —— 同特异性靠先后定胜负（2026-11-05 反馈）。
+                   与「多进程」等控制栏提示保持完全一致：白底 / 1px 细边 / 直角。
+                   不加 border-radius：QTipLabel 是不透明窗口，圆角只会把边框掰弯、
+                   底色仍是方块，角上反而缺一块（2026-11-05 实测）。 */
                 #PerfToolCard QToolTip {{
                     background-color: {input_bg};
                     color: {text};
                     border: 1px solid {panel_border};
-                    border-radius: 4px;
                     padding: 4px 8px;
                 }}
                 #PerfToolCard QComboBox {{
