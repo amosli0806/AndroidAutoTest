@@ -612,7 +612,7 @@ class VoiceView(QWidget):
         self.play_stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.play_stop_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.play_stop_btn.setFixedHeight(26)
-        self.play_stop_btn.setToolTip("播报所有勾选的语音用例")
+        # 不加悬浮提示：「执行选中」「停止」文案本身够直白，多一层提示只是噪音
         self.play_stop_btn.clicked.connect(self._on_play_stop_clicked)
         title_row.addWidget(self.play_stop_btn)
 
@@ -1542,15 +1542,12 @@ class VoiceView(QWidget):
             return
         name = "VoiceStopBtn" if running else "VoicePlayAllBtn"
         text = "停止" if running else "执行选中"
-        tip = "停止正在进行的播报" if running else "播报所有勾选的语音用例"
         if btn.objectName() == name:
             if btn.text() != text:
                 btn.setText(text)
-            btn.setToolTip(tip)
             return
         btn.setObjectName(name)
         btn.setText(text)
-        btn.setToolTip(tip)
         btn.style().unpolish(btn)
         btn.style().polish(btn)
         btn.update()
