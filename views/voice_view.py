@@ -179,8 +179,6 @@ class _PhraseRow(QFrame):
     estimate_requested = pyqtSignal(int)
     text_changed = pyqtSignal(int, str)
     delay_changed = pyqtSignal(int, float)
-    # 语音输入：把「点的是哪一行、哪个输入框」交给视图去起录音
-    voice_input_requested = pyqtSignal(int, object)
 
     def __init__(self, index, phrase, parent=None):
         super().__init__(parent)
@@ -202,16 +200,6 @@ class _PhraseRow(QFrame):
         self.text_edit.setObjectName("PhraseText")
         self.text_edit.setPlaceholderText("要播报的文案，例如：你好，虫师")
         self.text_edit.editingFinished.connect(self._on_text_edited)
-        # 语音输入：话筒放进输入框内部右端（不占行宽 —— 这行已经被
-        # 播后等待 / 估算 / 播放 / 复制 / 删除占满了）。常驻浅灰，
-        # 录音时转红并给输入框加浅红底（见 set_recording）。
-        self._mic_normal = qta.icon('fa6s.microphone', color='#999999')
-        self._mic_recording = qta.icon('fa6s.microphone', color='#e74c3c')
-        self.mic_action = self.text_edit.addAction(
-            self._mic_normal, QLineEdit.ActionPosition.TrailingPosition)
-        self.mic_action.setToolTip("语音输入：点一下开始，说完再点一下")
-        self.mic_action.triggered.connect(
-            lambda: self.voice_input_requested.emit(self.index, self.text_edit))
         layout.addWidget(self.text_edit, 1)
 
         layout.addWidget(QLabel("播后等待"))
@@ -271,28 +259,10 @@ class _PhraseRow(QFrame):
     def _on_text_edited(self):
         self.text_changed.emit(self.index, self.text_edit.text())
 
-    def insert_voice_text(self, text):
-        """语音识别结果：插到光标处（文案是一句连续的话，不拆不拼接）。"""
-        self.text_edit.insert(text)
-        self.text_edit.editingFinished.emit()
-
     def set_playing(self, playing: bool):
         self.setProperty("playing", "true" if playing else "false")
         self.style().unpolish(self)
         self.style().polish(self)
-
-    def set_recording(self, recording: bool):
-        """录音态：话筒转红 + 输入框浅红底。
-
-        只改底色、不加边框 —— 加边框会让输入框 box model 变化 2px，
-        整行高度跟着抖一下，录音一开一关看着像界面在跳。
-        """
-        self.mic_action.setIcon(self._mic_recording if recording
-                                else self._mic_normal)
-        self.text_edit.setProperty(
-            "recording", "true" if recording else "false")
-        self.text_edit.style().unpolish(self.text_edit)
-        self.text_edit.style().polish(self.text_edit)
 
     def apply_theme(self, theme_mode):
         """刷新行内图标颜色。
@@ -310,12 +280,6 @@ class _PhraseRow(QFrame):
         self.copy_btn.setIcon(qta.icon('fa6s.copy', color=icon_color))
         self.estimate_btn.setIcon(qta.icon('fa6s.calculator', color=icon_color))
         self.del_btn.setIcon(qta.icon('fa6s.trash-can', color=del_color))
-        # 话筒也跟随主题（qta 图标是位图，QSS 改不了颜色）；录音态保持红
-        self._mic_normal = qta.icon('fa6s.microphone', color=icon_color)
-        self.mic_action.setIcon(
-            self._mic_recording
-            if self.text_edit.property("recording") == "true"
-            else self._mic_normal)
 
 
 class _VerifyRow(QFrame):
@@ -328,8 +292,6 @@ class _VerifyRow(QFrame):
     copy_requested = pyqtSignal(int)
     remove_requested = pyqtSignal(int)
     keywords_changed = pyqtSignal(int, str)   # (下标, 原始文本，逗号分隔)
-    # 与播报行一致：检测行也支持语音输入
-    voice_input_requested = pyqtSignal(int, object)
 
     def __init__(self, index, step, parent=None):
         super().__init__(parent)
@@ -358,14 +320,6 @@ class _VerifyRow(QFrame):
         self.text_edit.setPlaceholderText(
             "预期结果关键词，多个用逗号分隔（命中任一即通过），如：已为您导航,导航到")
         self.text_edit.editingFinished.connect(self._on_edited)
-        # 语音输入：与播报行同一套（话筒内置右端、常驻浅灰、录音转红）
-        self._mic_normal = qta.icon('fa6s.microphone', color='#999999')
-        self._mic_recording = qta.icon('fa6s.microphone', color='#e74c3c')
-        self.mic_action = self.text_edit.addAction(
-            self._mic_normal, QLineEdit.ActionPosition.TrailingPosition)
-        self.mic_action.setToolTip("语音输入：点一下开始，说完再点一下")
-        self.mic_action.triggered.connect(
-            lambda: self.voice_input_requested.emit(self.index, self.text_edit))
         layout.addWidget(self.text_edit, 1)
 
         # 检测行没有「播后等待 / 估算 / 播放」这些控件，但**不要**用固定占位去补这段空。
@@ -397,32 +351,8 @@ class _VerifyRow(QFrame):
     def _on_edited(self):
         self.keywords_changed.emit(self.index, self.text_edit.text())
 
-    def insert_voice_text(self, text):
-        """语音识别结果：当关键词追加到末尾（逗号分隔）。
-
-        这里不能像播报行那样往光标处插 —— 关键词是「逗号分隔的列表」，
-        插到中间会把已有词切开；而关键词的先后顺序本身没有意义。
-        """
-        cur = self.text_edit.text().strip()
-        if not cur:
-            self.text_edit.setText(text)
-        elif cur.endswith(("，", ",")):
-            self.text_edit.setText(cur + text)
-        else:
-            self.text_edit.setText(cur + "，" + text)
-        self.text_edit.editingFinished.emit()
-
     def set_playing(self, playing: bool):
         pass   # 检测步骤不发声，无播放高亮
-
-    def set_recording(self, recording: bool):
-        """录音态：与播报行同一套（话筒转红 + 输入框浅红底）"""
-        self.mic_action.setIcon(self._mic_recording if recording
-                                else self._mic_normal)
-        self.text_edit.setProperty(
-            "recording", "true" if recording else "false")
-        self.text_edit.style().unpolish(self.text_edit)
-        self.text_edit.style().polish(self.text_edit)
 
     def apply_theme(self, theme_mode):
         # 复制按钮与播报行、步骤卡片保持一致（灰阶）
@@ -434,12 +364,6 @@ class _VerifyRow(QFrame):
             del_color = "#e74c3c"
         self.copy_btn.setIcon(qta.icon('fa6s.copy', color=color))
         self.del_btn.setIcon(qta.icon('fa6s.trash-can', color=del_color))
-        # 话筒跟随主题；录音态保持红
-        self._mic_normal = qta.icon('fa6s.microphone', color=color)
-        self.mic_action.setIcon(
-            self._mic_recording
-            if self.text_edit.property("recording") == "true"
-            else self._mic_normal)
 
 
 class VoiceView(QWidget):
@@ -484,9 +408,6 @@ class VoiceView(QWidget):
         # 当前套用的语音套件名（空 = 未套用任何套件），只用于菜单里的勾选标记
         self._suite_name = ""
         self._current_case_id = None
-        # 语音输入（麦克风 → 文字）：worker 与当前正在录的那一行
-        self._voice_worker = None
-        self._voice_target = None
         # 记录当前主题，_reload_steps 里新建的 _PhraseRow 需要用它上图标颜色
         self._current_theme = ThemeMode.LIGHT
 
@@ -939,8 +860,6 @@ class VoiceView(QWidget):
                     row.estimate_requested.connect(self._on_estimate_delay)
                     row.text_changed.connect(self._on_text_changed)
                     row.delay_changed.connect(self._on_delay_changed)
-                # 语音输入：播报行 / 检测行同一套处理
-                row.voice_input_requested.connect(self._on_voice_input_requested)
                 # 新建的行不会自动拿到当前主题，这里手动上一次
                 row.apply_theme(self._current_theme)
                 self._list_layout.addWidget(row)
@@ -1591,89 +1510,6 @@ class VoiceView(QWidget):
                 row.estimate_btn.setEnabled(not running)
                 row.delay_spin.setEnabled(not running)
 
-    # ------------------------------------------------------------------
-    # 语音输入（麦克风 → 文字，本地 vosk 识别）
-    # ------------------------------------------------------------------
-    # 录音上限：防止用户忘了点结束一直录下去（后续可挪到设置页）
-    VOICE_MAX_SECONDS = 8.0
-
-    # 触发方式只有「点输入框右端的话筒」：起停都在这一个按钮上。
-    # （曾做过 Ctrl+Shift+Space 全局快捷键，用户反馈用不上，已去掉）
-
-    def _on_voice_input_requested(self, index, edit):
-        """点话筒：录音中就当「停止」（不区分点了哪一行），否则从这一行开始。"""
-        if self._voice_worker is not None:
-            self._stop_voice_input()
-            return
-        row = next((r for r in self._rows
-                    if getattr(r, "text_edit", None) is edit), None)
-        if row is not None:
-            self._start_voice_input(row)
-
-    def _start_voice_input(self, row):
-        from services.speech_input import SpeechInputWorker, model_installed
-        if not model_installed():
-            from utils.toast import show_toast
-            show_toast(self, "语音模型未安装，暂时不能用语音输入")
-            return
-        worker = SpeechInputWorker(max_seconds=self.VOICE_MAX_SECONDS)
-        worker.tick.connect(self._on_voice_tick)
-        worker.recognized.connect(self._on_voice_recognized)
-        worker.failed.connect(self._on_voice_failed)
-        # 引用等 finished 再清：信号发出时 QThread 可能还没退出，
-        # 提前置空会把仍在运行的线程析构掉（Qt 直接 abort）
-        worker.finished.connect(lambda w=worker: self._release_voice_worker(w))
-        self._voice_worker = worker
-        self._voice_target = row
-        row.set_recording(True)
-        self.status_label.setText("正在听… 说完再点一次话筒")
-        worker.start()
-
-    def _stop_voice_input(self):
-        worker = self._voice_worker
-        if worker is not None:
-            worker.stop()
-            self.status_label.setText("正在识别…")
-
-    def _on_voice_tick(self, elapsed):
-        self.status_label.setText(
-            f"正在听… {elapsed:.0f} 秒（说完再点一次话筒）")
-
-    def _on_voice_recognized(self, text):
-        target = self._voice_target
-        self._finish_voice_input()
-        if target is None:
-            return
-        try:
-            # 播报行插到光标处；检测行按逗号追加 —— 具体规则由行自己决定
-            target.insert_voice_text(text)
-        except RuntimeError:
-            return                        # 行已随用例切换被销毁
-        self.status_label.setText(f"已识别：{text}")
-
-    def _on_voice_failed(self, msg):
-        from utils.toast import show_toast
-        self._finish_voice_input()
-        # 状态栏也留一句：toast 几秒就散了，状态栏能让人回头看看刚才为什么没成
-        self.status_label.setText(msg)
-        show_toast(self, msg)
-
-    def _finish_voice_input(self):
-        """收尾：行恢复常态（worker 引用等 finished 再清）。"""
-        row = self._voice_target
-        self._voice_target = None
-        if row is not None:
-            try:
-                row.set_recording(False)
-            except RuntimeError:
-                pass
-
-    def _release_voice_worker(self, worker):
-        worker.wait(1000)
-        if self._voice_worker is worker:
-            self._voice_worker = None
-        worker.deleteLater()
-
     def _playback_running(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
 
@@ -2099,8 +1935,6 @@ class VoiceView(QWidget):
             text, muted = "#e8e8e8", "#9aa0a6"
             row_hover, row_border = "#33353a", "#3a3c42"
             row_playing = "#2f3a4a"
-            # 语音输入录音态：输入框浅红底（深色底用低透明度红，不刺眼）
-            record_bg = "rgba(255, 107, 107, 0.12)"
             # 「预期」徽标：深色底上用亮绿字 + 微透明的绿底
             verify_tag_fg, verify_tag_bg, verify_tag_border = (
                 "#81c784", "rgba(129, 199, 132, 0.15)", "rgba(129, 199, 132, 0.4)")
@@ -2131,7 +1965,6 @@ class VoiceView(QWidget):
             text, muted = "#333333", "#8a9099"
             row_hover, row_border = "#f2f5fa", "#e6e8ec"
             row_playing = "#e3f0ff"
-            record_bg = "rgba(231, 76, 60, 0.07)"
             # 「预期」徽标：浅色底上用深绿字 + 浅绿底
             verify_tag_fg, verify_tag_bg, verify_tag_border = (
                 "#2e7d32", "rgba(46, 125, 50, 0.10)", "rgba(46, 125, 50, 0.35)")
@@ -2270,11 +2103,6 @@ class VoiceView(QWidget):
             }}
             #VoiceView QFrame#PhraseRow:hover {{ background: {row_hover}; }}
             #VoiceView QFrame#PhraseRow[playing="true"] {{ background: {row_playing}; }}
-            /* 语音输入录音中：只改底色，不加边框 —— 加边框会让输入框
-               box model 变 2px，整行高度跟着抖一下 */
-            #VoiceView QLineEdit#PhraseText[recording="true"] {{
-                background: {record_bg};
-            }}
             #VoiceView QLabel#PhraseNo {{ color: {muted}; }}
             /* 检测步骤的「预期」徽标：绿色系，和播报行一眼区分开 */
             #VoiceView QLabel#VerifyTag {{

@@ -82,13 +82,6 @@ a = Analysis(
         'miniaudio',
         'cffi',
         '_cffi_backend',
-        # ---------- 新增：语音输入（本地 vosk 识别） ----------
-        # services.speech_input 由 voice_view 函数级导入；vosk 是 cffi 扩展，
-        # 自带 dll，必须显式登记。中文模型由 CI 放到 _internal/models/ 下
-        # （见 .github/workflows/release.yml）：updater 会整目录替换 _internal，
-        # 所以模型能随增量更新一起升级；放安装根目录则会被忽略。
-        'services.speech_input',
-        'vosk',
         # ---------- 新增：检查更新 ----------
         # 更新相关的对话框/服务都是函数级导入（点菜单、点更新才用），显式登记避免打包漏掉
         'services.update_service',
