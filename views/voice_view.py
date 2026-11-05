@@ -273,13 +273,24 @@ class _PhraseRow(QFrame):
         if theme_mode == ThemeMode.DARK:
             icon_color = "#bbbbbb"   # 深色底：中亮灰
             del_color = "#ff6b6b"    # 亮红
+            icon_off = "#565a61"     # 禁用：暗到几乎只剩轮廓
         else:
             icon_color = "#555555"   # 浅色底：中深灰
             del_color = "#e74c3c"    # 主题红
-        self.play_btn.setIcon(qta.icon('fa6s.play', color=icon_color))
-        self.copy_btn.setIcon(qta.icon('fa6s.copy', color=icon_color))
-        self.estimate_btn.setIcon(qta.icon('fa6s.calculator', color=icon_color))
-        self.del_btn.setIcon(qta.icon('fa6s.trash-can', color=del_color))
+            icon_off = "#c2c6cd"     # 禁用：淡灰，明显弱于常态
+        # 必须显式给 color_disabled：qtawesome 的 QIconEngine 不生成 Disabled
+        # 位图，只给 color 时禁用态仍画原色 —— 实色图标（播放三角就是实心）
+        # 会看着和可点的一模一样，用户分不出「执行中不能点」。
+        # 也不能用 QIcon.addPixmap 补 Disabled 位图：那个引擎没实现 clone()，
+        # 补位图会在 detach 时直接崩进程（见 2026-10-14 那次）。
+        self.play_btn.setIcon(qta.icon(
+            'fa6s.play', color=icon_color, color_disabled=icon_off))
+        self.copy_btn.setIcon(qta.icon(
+            'fa6s.copy', color=icon_color, color_disabled=icon_off))
+        self.estimate_btn.setIcon(qta.icon(
+            'fa6s.calculator', color=icon_color, color_disabled=icon_off))
+        self.del_btn.setIcon(qta.icon(
+            'fa6s.trash-can', color=del_color, color_disabled=icon_off))
 
 
 class _VerifyRow(QFrame):
@@ -359,11 +370,16 @@ class _VerifyRow(QFrame):
         if theme_mode == ThemeMode.DARK:
             color = "#bbbbbb"
             del_color = "#ff6b6b"
+            icon_off = "#565a61"
         else:
             color = "#555555"
             del_color = "#e74c3c"
-        self.copy_btn.setIcon(qta.icon('fa6s.copy', color=color))
-        self.del_btn.setIcon(qta.icon('fa6s.trash-can', color=del_color))
+            icon_off = "#c2c6cd"
+        # 与播报行同理：不给 color_disabled，执行中被禁用的图标还是原色
+        self.copy_btn.setIcon(qta.icon(
+            'fa6s.copy', color=color, color_disabled=icon_off))
+        self.del_btn.setIcon(qta.icon(
+            'fa6s.trash-can', color=del_color, color_disabled=icon_off))
 
 
 class VoiceView(QWidget):
