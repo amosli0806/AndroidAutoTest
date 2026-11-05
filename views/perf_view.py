@@ -2686,6 +2686,16 @@ class PerfView(QWidget):
                     color: {text};
                     background: transparent;
                 }}
+                /* 提示框必须显式给底色：QTipLabel 会匹配上面的 QLabel 规则（它也是
+                   QLabel），透明背景让提示直接压在壁纸上，白天模式几乎看不清。
+                   这条紧跟在 QLabel 之后 —— 同特异性靠先后定胜负（2026-11-05 反馈）。 */
+                #PerfToolCard QToolTip {{
+                    background-color: {input_bg};
+                    color: {text};
+                    border: 1px solid {panel_border};
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                }}
                 #PerfToolCard QComboBox {{
                     background-color: {input_bg};
                     color: {text};
