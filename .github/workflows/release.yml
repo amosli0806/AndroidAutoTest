@@ -135,7 +135,9 @@ jobs:
                       time.sleep(10)
               if last is not None:
                   sys.exit(f"语音模型下载失败，终止发版：{last}")
-          out = os.path.join("dist", "虫师", "models")
+          # 必须放进 _internal：updater 只整目录替换 _internal / 根目录 exe，
+          # 放在安装根目录（models/）的模型升级时不会被搬过去。
+          out = os.path.join("dist", "虫师", "_internal", "models")
           os.makedirs(out, exist_ok=True)
           with zipfile.ZipFile(archive) as z:
               z.extractall(out)
@@ -159,8 +161,8 @@ jobs:
               os.path.join("dist", "虫师", "虫师.exe"),
               os.path.join("dist", "虫师", "_internal"),
               os.path.join("dist", "虫师", "_internal", "tools", "weditor.exe"),
-              os.path.join("dist", "虫师", "models", "vosk-model-small-cn-0.22",
-                           "am", "final.mdl"),
+              os.path.join("dist", "虫师", "_internal", "models",
+                           "vosk-model-small-cn-0.22", "am", "final.mdl"),
               os.path.join("dist_updater", "updater.exe"),
           ) if not os.path.exists(p)]
           if missing:

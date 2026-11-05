@@ -13,6 +13,7 @@
     4. vosk / miniaudio 缺失时给出可读原因，不抛栈给用户。
 """
 import os
+import shutil
 import sys
 import time
 
@@ -23,34 +24,111 @@ SAMPLE_RATE = 16000
 # 设太低会把静音误判成"有声音但没听清"，给不出正确的排查方向
 MIN_PEAK = 500
 
+MODEL_NAME = "vosk-model-small-cn-0.22"
 
-def resolve_model_dir() -> str:
-    """按优先级找中文模型目录，找不到返回空串。
 
-    1. 环境变量 CHONGSHI_VOSK_MODEL（内网部署时指定共享盘最方便）
-    2. 安装目录 models/...（正式分发包内置，升级后直接可用）
-    3. 用户数据目录 %LOCALAPPDATA%\\虫师\\models\\...（旧版手动放置）
-    4. 项目内 _vosk_lab/...（开发调试）
+def _model_present(path) -> bool:
+    return bool(path) and os.path.isfile(os.path.join(path, "am", "final.mdl"))
+
+
+def _ascii_cache_root() -> str:
+    """Vosk/Kaldi 的 Windows 原生实现不支持非 ASCII 路径。
+
+    安装目录（D:\\虫师）和旧版用户目录（%LOCALAPPDATA%\\虫师）都可能含中文，
+    直接传给 Model() 会报 FileNotFoundError。这里选一个全 ASCII、普通用户
+    可写的位置缓存模型；Public Documents 在任何 Windows 上都是 ASCII 路径。
     """
-    name = "vosk-model-small-cn-0.22"
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    candidates = []
+    public = os.environ.get("PUBLIC") or r"C:\Users\Public"
+    candidates = [
+        os.path.join(public, "Documents", "Chongshi", "models"),
+        os.path.join(os.environ.get("PROGRAMDATA") or r"C:\ProgramData",
+                     "Chongshi", "models"),
+    ]
+    for path in candidates:
+        try:
+            os.makedirs(path, exist_ok=True)
+            return path
+        except Exception:
+            continue
+    local = os.environ.get("LOCALAPPDATA")
+    return os.path.join(local, "Chongshi", "models") if local else ""
+
+
+def _source_candidates():
+    """可能存放模型的目录（未做 ASCII 过滤）。"""
     env = (os.environ.get("CHONGSHI_VOSK_MODEL") or "").strip()
     if env:
-        candidates.append(env)
-    # PyInstaller onedir 下 sys.executable 就是安装目录里的 虫师.exe；
-    # 源码运行不检查这里（开发用 _vosk_lab 或环境变量，别把模型塞进 models 包）。
+        yield env
+    # PyInstaller onedir：_MEIPASS 就是安装目录下的 _internal。模型必须放这里，
+    # 因为 updater 只整目录替换 _internal（根目录只换 exe）。
     if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass:
+            yield os.path.join(meipass, "models", MODEL_NAME)
         app_dir = os.path.dirname(os.path.abspath(sys.executable))
-        candidates.append(os.path.join(app_dir, "models", name))
+        yield os.path.join(app_dir, "models", MODEL_NAME)
     local = os.environ.get("LOCALAPPDATA")
     if local:
-        candidates.append(os.path.join(local, "虫师", "models", name))
-    candidates.append(os.path.join(here, "_vosk_lab", name))
-    for path in candidates:
-        if path and os.path.isfile(os.path.join(path, "am", "final.mdl")):
+        yield os.path.join(local, "虫师", "models", MODEL_NAME)
+        yield os.path.join(local, "Chongshi", "models", MODEL_NAME)
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    yield os.path.join(here, "_vosk_lab", MODEL_NAME)
+
+
+def _copy_model(src: str, dst: str) -> str:
+    """把非 ASCII 路径下的模型复制到 ASCII 缓存（只在首次使用时做一次）。"""
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    tmp = dst + ".copying"
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        shutil.copytree(src, tmp)
+        if os.path.isdir(dst):
+            shutil.rmtree(dst, ignore_errors=True)
+        os.replace(tmp, dst)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return dst
+
+
+def _find_installed_source() -> str:
+    cache_root = _ascii_cache_root()
+    cache = os.path.join(cache_root, MODEL_NAME) if cache_root else ""
+    if _model_present(cache):
+        return cache
+    for path in _source_candidates():
+        if _model_present(path):
             return path
     return ""
+
+
+def model_installed() -> bool:
+    """模型是否已随包/手动放置（只查文件，不触发复制；供界面快速判断）。"""
+    return bool(_find_installed_source())
+
+
+def resolve_model_dir() -> str:
+    """返回可直接交给 vosk 的模型目录，保证路径为 ASCII。
+
+    非 ASCII 来源（安装目录含中文、旧版 %LOCALAPPDATA%\\虫师）会先复制到
+    Public Documents 下的 ASCII 缓存，再返回缓存路径。
+    """
+    source = _find_installed_source()
+    if not source:
+        return ""
+    if source.isascii():
+        return source
+    cache_root = _ascii_cache_root()
+    if not cache_root:
+        return ""
+    target = os.path.join(cache_root, MODEL_NAME)
+    if _model_present(target):
+        return target
+    if not target.isascii():
+        return ""
+    try:
+        return _copy_model(source, target)
+    except Exception:
+        return ""
 
 
 _model_cache = {"dir": "", "model": None}
@@ -82,7 +160,9 @@ class SpeechInputWorker(QThread):
 
     def __init__(self, model_dir="", max_seconds=8.0, device_id=None, parent=None):
         super().__init__(parent)
-        self.model_dir = model_dir or resolve_model_dir()
+        # 不在 GUI 线程里解析/复制模型：首次可能要把 40MB+ 从安装目录拷到
+        # ASCII 缓存，放到 run() 里做，避免点麦克风时界面卡一下。
+        self.model_dir = model_dir or ""
         self.max_seconds = max(1.0, float(max_seconds or 8.0))
         self.device_id = device_id
         self._stop = False
@@ -91,6 +171,8 @@ class SpeechInputWorker(QThread):
         self._stop = True
 
     def run(self):
+        if not self.model_dir:
+            self.model_dir = resolve_model_dir()
         if not self.model_dir:
             self.failed.emit("未安装语音模型，无法识别")
             return
@@ -170,8 +252,3 @@ class SpeechInputWorker(QThread):
             self.failed.emit("没听清，再说一次")
             return
         self.recognized.emit(text)
-
-
-def model_installed() -> bool:
-    """给设置页显示状态用：模型是否就位。"""
-    return bool(resolve_model_dir())

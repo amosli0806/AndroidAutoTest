@@ -2118,6 +2118,10 @@ class VoiceView(QWidget):
             tree_sel_bg, tree_sel_text = "#1e3a5f", "#ffffff"
             # 树节点复选框的边框色：深色底上用亮灰才看得见
             check_border_color = "#b8b8b8"
+            # QToolTip：输入框内嵌 action（麦克风）的悬浮提示会继承输入框的
+            # 文字/背景色，不显式指定时会变成黑底黑字。这里统一成深色主题。
+            tooltip_bg, tooltip_fg, tooltip_border = (
+                "#3c3c3c", "#eeeeee", "#555555")
         else:
             card_bg = "transparent" if has_wallpaper else "#ffffff"
             card_border = ("rgba(208, 208, 208, 0.9)" if has_wallpaper
@@ -2147,6 +2151,9 @@ class VoiceView(QWidget):
             tree_sel_bg, tree_sel_text = "#d0e4f7", "#1a1a1a"
             # 树节点复选框的边框色：浅色底上用深灰保证对比度
             check_border_color = "#5a5a5a"
+            # 与「执行选中」等普通按钮的提示保持一致：白底深灰字
+            tooltip_bg, tooltip_fg, tooltip_border = (
+                "#ffffff", "#333333", "#d0d0d0")
 
         card_qss = f"""
             QGroupBox {{
@@ -2341,6 +2348,15 @@ class VoiceView(QWidget):
             #VoiceView QToolButton#PhrasePlayBtn:disabled,
             #VoiceView QToolButton#PhraseDelBtn:disabled {{
                 background: transparent;
+            }}
+            /* 取消选择器限定：QLineEdit 内嵌的麦克风 action 提示是一个独立的
+               QToolTip 顶层窗口，限定 #VoiceView 时匹配不到。 */
+            QToolTip {{
+                background-color: {tooltip_bg};
+                color: {tooltip_fg};
+                border: 1px solid {tooltip_border};
+                border-radius: 4px;
+                padding: 4px 8px;
             }}
         """)
 
