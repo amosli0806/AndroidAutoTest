@@ -5,7 +5,7 @@
 每个控件通过 objectName 精确定位，避免全局污染
 """
 from enum import Enum
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QObject, QEvent
 from PyQt6.QtGui import QPalette, QColor
 from PyQt6.QtWidgets import QWidget, QApplication
 
@@ -14,6 +14,60 @@ class ThemeMode(Enum):
     LIGHT = "light"
     DARK = "dark"
     SYSTEM = "system"
+
+
+# ---------- QToolTip 的样式（配合 install_tooltip_guard 使用）----------
+# 颜色按当前主题存一份，由 apply_app_palette 更新。
+#
+# 为什么不用 QSS 的 palette(tooltip-base) 求值：QTipLabel 是**悬停控件的子控件**
+# （虽然显示成顶层窗口），会继承祖先页面的样式表。性能页有
+# `#PerfToolCard QLabel { background: transparent }`、语音页也有类似的块，
+# 特异性都比 app 级的 `QToolTip {...}` 高 —— 提示框背景就被刷成透明，
+# 桌面上只剩一行黑字，看着就是一块黑条（2026-11-05 用户反馈）。
+_TOOLTIP_COLORS = {"bg": "#ffffff", "fg": "#000000", "border": "#c0c4cc"}
+
+
+def tooltip_qss() -> str:
+    """当前主题下的 QToolTip 样式表。"""
+    c = _TOOLTIP_COLORS
+    return (
+        "QToolTip {"
+        f" background-color: {c['bg']};"
+        f" color: {c['fg']};"
+        f" border: 1px solid {c['border']};"
+        " border-radius: 4px;"
+        " padding: 4px 8px;"
+        " font-size: 11px;"
+        " }"
+    )
+
+
+class _ToolTipStyleGuard(QObject):
+    """QTipLabel 显示时给它刷一份自己的样式表。
+
+    widget 自身的样式表优先级最高，能压过继承来的祖先 QSS；
+    每次显示都要刷（提示框实例被 Qt 复用，主题可能中途切过）。
+    """
+
+    def eventFilter(self, obj, event):
+        try:
+            # PyQt 把 QTipLabel 伪装成 QLabel（type().__name__ 拿到的是基类名），
+            # 只能用元对象里的真实类名判断
+            if event.type() == QEvent.Type.Show and obj.inherits("QTipLabel"):
+                qss = tooltip_qss()
+                if obj.styleSheet() != qss:
+                    obj.setStyleSheet(qss)
+                    obj.adjustSize()      # 换了 padding/font 要重算尺寸
+        except (RuntimeError, AttributeError):
+            pass                          # 提示框已被销毁 / 不是 QWidget
+        return False
+
+
+def install_tooltip_guard(app):
+    """装到 QApplication 上，返回守卫对象（挂在 app 下，不会被回收）。"""
+    guard = _ToolTipStyleGuard(app)
+    app.installEventFilter(guard)
+    return guard
 
 
 class Theme:
@@ -2369,11 +2423,21 @@ class Theme:
         只影响 QSS 覆盖不到的部分（原生弹窗、日历弹出面板、无样式控件），
         不会清掉全局样式表。由 MainWindow.apply_theme 在切换主题时调用。
         """
+        key = ThemeMode.DARK if theme_mode == ThemeMode.DARK else ThemeMode.LIGHT
+
+        # 提示框颜色跟着主题走：守卫会在 QTipLabel 每次显示时按这份取值重刷。
+        # 放在拿 QApplication 之前：颜色是纯数据，没 app 时也该更新
+        global _TOOLTIP_COLORS
+        _TOOLTIP_COLORS = (
+            {"bg": "#3c3c3c", "fg": "#eeeeee", "border": "#4a4a4a"}
+            if key == ThemeMode.DARK else
+            {"bg": "#ffffff", "fg": "#000000", "border": "#c0c4cc"}
+        )
+
         app = QApplication.instance()
         if app is None:
             return
 
-        key = ThemeMode.DARK if theme_mode == ThemeMode.DARK else ThemeMode.LIGHT
         palette = QPalette()
         for role, color in cls.APP_PALETTE_COLORS[key].items():
             palette.setColor(role, QColor(color))
