@@ -166,9 +166,9 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-04（v1.5.202）</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-05（v1.5.206）</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.5.202</span>
+      <span class="badge">当前版本 v1.5.206</span>
       <span class="badge">9 项待办</span>
       <span class="badge">按改动量分 A~D 四档</span>
     </div>
@@ -200,7 +200,7 @@
       <ul>
         <li>套件级执行报告与通过率　套件链式执行（A→B）</li>
       </ul>
-      <div class="example">💡 <b>打个比方：</b>像「歌单」——用例按「冒烟测试」「回归测试」分组，跑完自动出这份歌单的「成绩单」（通过率），A 歌单放完自动放 B。（歌单内的顺序已经能拖拽调整了，还差「成绩单」和「连着放」。）</div>
+      <div class="example">💡 <b>打个比方：</b>像「歌单」——用例按「冒烟测试」「回归测试」分组，跑完自动出这份歌单的「成绩单」（通过率），A 歌单放完自动放 B。（还差「成绩单」和「连着放」。）</div>
     </div>
 
     <div class="card">
@@ -212,20 +212,19 @@
     <div class="card">
       <h3>3. 知识库增强（检索与关联）<span class="tag plan">📋 规划中</span></h3>
       <p><b>现状</b>：<code>views/knowledge_view.py</code>（1329 行）+ <code>models/knowledge_model.py</code>（747 行）
-        已具备「项目 → 分类 → 笔记」树、富文本编辑器（落库转 Markdown）、标签、全文搜索、图片资源、Markdown 导出，
-        以及右栏的<b>「速查」卡片带</b>（当前项目置顶、点卡片直接跳转）。
+        已具备「项目 → 分类 → 笔记」树、富文本编辑器（落库转 Markdown）、标签、全文搜索、图片资源、Markdown 导出。
         基础功能够用，但<b>提效交互仍然偏少</b>。</p>
       <div class="example">💡 <b>打个比方：</b>现在的知识库像一本装订整齐的笔记本 —— 纸和目录都不缺，
         缺的是书签、索引卡和「上次看到哪儿」。</div>
-      <p><b>三个短板</b>：① 无大纲，长笔记只能靠滚动；搜索也必须切到搜索页（速查卡片带只覆盖了「置顶几条」）；
+      <p><b>三个短板</b>：① 无大纲，长笔记只能靠滚动；搜索也得切到搜索页；
         ② 只有行内代码（<code>toggle_code</code>），没有代码块，而内容里全是 <code>adb</code> 命令；
         ③ 笔记之间完全孤立，没有关联与反向链接，「踩坑」和「环境信息」互相指不到。</p>
       <p><b>六个改造点（按投入产出排序）</b>：</p>
       <ul>
         <li><b>代码块 + 高亮 + 复制 + 一键发到 ADB 工具箱执行</b>（约 0.5 天）：贴合度最高 —— 复制完直接跑，
           省掉切页面粘贴</li>
-        <li><b>速查字段卡</b>（约 0.5 天）：现有「速查」卡片带做的是<b>跳转</b>；再进一步，
-          把包名 / 启动 Activity / 账号做成键值行 + 一键复制，把「翻笔记复制」变成「点一下」</li>
+        <li><b>速查字段卡</b>（约 0.5 天）：把包名 / 启动 Activity / 账号做成键值行 + 一键复制，
+          把「翻笔记复制」变成「点一下」</li>
         <li><b>命令面板 <code>Ctrl+P</code></b>（约 1 天）：跨项目搜标题 / 正文 / 标签，还能直接执行
           「新建笔记」「切换项目」。<b>注意 <code>Ctrl+K</code> 已被「插入链接」占用</b>，别撞键</li>
         <li><b>右侧「大纲 + 被引用」面板</b>（约 1 天）：长笔记的结构感</li>
@@ -283,7 +282,7 @@
 
     <div class="card">
       <h3>7. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
-      <p>剩余<b>场景化联动</b>：场景化执行时按用例自动转储 / 抓包，每用例一份产物、报告按用例分组。其余采集能力已并入，实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
+      <p>剩余<b>场景化联动</b>：场景化执行时按用例自动转储 / 抓包，每用例一份产物、报告按用例分组。实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
     </div>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ D · 改动大 / 影响面广（需专门排期）</h3>
@@ -307,7 +306,7 @@
 
 <div class="grid2">
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无分支与步骤级循环</b> — 没有 if/else，也没有「这段步骤重复 N 次」（执行页的「循环次数」只是整轮重复）。失败重试与显式等待已落地。</div></div>
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>无分支与步骤级循环</b> — 没有 if/else，也没有「这段步骤重复 N 次」（执行页的「循环次数」只是整轮重复）。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>无关键字复用</b> — 「登录」「搜索」等常用组合无法封装复用。</div></div>
@@ -343,7 +342,7 @@
           <tr><td>B</td><td>5. 版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
           <tr><td>C</td><td>6. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
           <tr><td>C</td><td>7. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
-          <tr><td>D</td><td>8. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>变量地基已落地（<code>utils/vars.py</code>，自动化步骤可用 <code>${变量}</code>）；<b>语音模块尚未接入替换</b>，要先补这一层再接唤醒词 / 语速</td></tr>
+          <tr><td>D</td><td>8. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接唤醒词 / 语速</td></tr>
           <tr><td>D</td><td>9. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
         </tbody>
       </table>
@@ -434,7 +433,7 @@
     <div class="example">💡 <b>打个比方：</b>这就像把一间按自家户型装修好的房子搬到另一栋楼 —— 家具（Qt 界面、adb / uiautomator2 那套逻辑）都能直接用，但门框尺寸（打包成 <code>.app</code>）、水电接口（路径规范）、门锁（签名 / 公证）都不一样；至于「自动更新」，它更像埋在墙里的暗线，到新楼只能整条重走。</div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-04 · v1.5.202</footer>
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-05 · v1.5.206</footer>
 </div>
 </body>
 </html>
