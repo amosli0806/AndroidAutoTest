@@ -84,8 +84,9 @@ a = Analysis(
         '_cffi_backend',
         # ---------- 新增：语音输入（本地 vosk 识别） ----------
         # services.speech_input 由 voice_view 函数级导入；vosk 是 cffi 扩展，
-        # 自带 dll，必须显式登记。**模型文件不入包**：42MB 的模型放在
-        # 用户数据目录，由界面按需提示下载（见 services/speech_input.py）。
+        # 自带 dll，必须显式登记。中文模型不进 _internal：CI 在打包后把它放到
+        # 安装目录 models/ 下（见 .github/workflows/release.yml），
+        # 随全量包和增量补丁一起分发，升级后即可直接使用。
         'services.speech_input',
         'vosk',
         # ---------- 新增：检查更新 ----------

@@ -28,18 +28,24 @@ def resolve_model_dir() -> str:
     """按优先级找中文模型目录，找不到返回空串。
 
     1. 环境变量 CHONGSHI_VOSK_MODEL（内网部署时指定共享盘最方便）
-    2. 用户数据目录 %LOCALAPPDATA%\\虫师\\models\\...（正式分发走这里，不进安装包）
-    3. 项目内 _vosk_lab/...（开发调试）
+    2. 安装目录 models/...（正式分发包内置，升级后直接可用）
+    3. 用户数据目录 %LOCALAPPDATA%\\虫师\\models\\...（旧版手动放置）
+    4. 项目内 _vosk_lab/...（开发调试）
     """
     name = "vosk-model-small-cn-0.22"
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     candidates = []
     env = (os.environ.get("CHONGSHI_VOSK_MODEL") or "").strip()
     if env:
         candidates.append(env)
+    # PyInstaller onedir 下 sys.executable 就是安装目录里的 虫师.exe；
+    # 源码运行不检查这里（开发用 _vosk_lab 或环境变量，别把模型塞进 models 包）。
+    if getattr(sys, "frozen", False):
+        app_dir = os.path.dirname(os.path.abspath(sys.executable))
+        candidates.append(os.path.join(app_dir, "models", name))
     local = os.environ.get("LOCALAPPDATA")
     if local:
         candidates.append(os.path.join(local, "虫师", "models", name))
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     candidates.append(os.path.join(here, "_vosk_lab", name))
     for path in candidates:
         if path and os.path.isfile(os.path.join(path, "am", "final.mdl")):
