@@ -900,23 +900,34 @@ class PerfView(QWidget):
         self.record_duration_combo.setToolTip(tip)
         self._set_dot_alert(getattr(self, '_record_dot', None), not ok)
 
-    def record_loop_enabled(self) -> bool:
-        return bool(self.record_enable_check.isChecked())
-
-    def _on_record_toggle(self, checked: bool):
-        """录制循环勾选变化：放开/锁住间隔与时长下拉，再通知控制器启停。
-
-        之前只发了信号、没刷新下拉的可用性，导致勾上「循环间隔」后点间隔
-        下拉没反应（2026-10-29 反馈）。监控中勾选本身是禁用的，这里再兜一层
-        idle 判断，避免运行中被别处调用时把下拉放开。
-        """
-        idle = self._state == self.STATE_IDLE
-        self.record_interval_combo.setEnabled(idle and checked)
-        self.record_duration_combo.setEnabled(idle and checked)
-        self.record_toggle_requested.emit(checked)
+    # ---- 工具卡片的「是否采集」口径 ----
+    # 一律看「指标」面板里对应勾选：勾了就是采集，卡片只剩间隔可调。
+    # 之前是卡片上另有一个「循环间隔」复选框，两个开关互相打架 ——
+    # 指标面板没勾录屏、只要勾了卡片上的循环间隔，照样会录（2026-11-05 用户反馈）。
+    def hprof_loop_enabled(self) -> bool:
+        return bool(self.hprof_visible_check.isChecked())
 
     def smaps_loop_enabled(self) -> bool:
-        return bool(self.smaps_enable_check.isChecked())
+        return bool(self.smaps_visible_check.isChecked())
+
+    def screenshot_loop_enabled(self) -> bool:
+        return bool(self.screenshot_visible_check.isChecked())
+
+    def record_loop_enabled(self) -> bool:
+        return bool(self.record_visible_check.isChecked())
+
+    def _sync_tool_card_controls(self):
+        """工具卡片的间隔/时长下拉：勾选了该指标且空闲时才可改。"""
+        idle = self._state == self.STATE_IDLE
+        self.hprof_interval_combo.setEnabled(
+            idle and self.hprof_visible_check.isChecked())
+        self.smaps_interval_combo.setEnabled(
+            idle and self.smaps_visible_check.isChecked())
+        self.screenshot_interval_combo.setEnabled(
+            idle and self.screenshot_visible_check.isChecked())
+        rec_on = self.record_visible_check.isChecked()
+        self.record_interval_combo.setEnabled(idle and rec_on)
+        self.record_duration_combo.setEnabled(idle and rec_on)
 
     def get_smaps_interval(self) -> float:
         """自动抓取间隔（秒）。统一走 _combo_seconds，别再各写一套解析。"""
@@ -990,20 +1001,11 @@ class PerfView(QWidget):
             if combo is not None:
                 combo.setEnabled(idle)
 
-        # 堆转储设置：监控中锁定（自动循环勾选与间隔不可改）；空闲时按勾选状态开放间隔
-        self.record_enable_check.setEnabled(idle)
-        self.record_interval_combo.setEnabled(idle and self.record_enable_check.isChecked())
-        self.record_duration_combo.setEnabled(idle and self.record_enable_check.isChecked())
-        self.record_once_btn.setEnabled(True)
-        self.smaps_enable_check.setEnabled(idle)
-        self.smaps_interval_combo.setEnabled(idle and self.smaps_enable_check.isChecked())
-        self.smaps_once_btn.setEnabled(True)     # 随时可以手动抓一次
-        self.hprof_enable_check.setEnabled(idle)
-        self.hprof_interval_combo.setEnabled(idle and self.hprof_enable_check.isChecked())
-        # 截图设置：同堆转储口径
-        self.screenshot_enable_check.setEnabled(idle)
-        self.screenshot_interval_combo.setEnabled(
-            idle and self.screenshot_enable_check.isChecked())
+        # 工具卡片：采集开关在「指标」面板（见 hprof_loop_enabled 等），
+        # 卡片上的间隔只在「勾选了该指标 + 空闲」时可改
+        self._sync_tool_card_controls()
+        self.record_once_btn.setEnabled(True)    # 单次动作随时可点
+        self.smaps_once_btn.setEnabled(True)
         self._update_status_bar()
 
     # ------------------------------------------------------------------
@@ -1164,17 +1166,25 @@ class PerfView(QWidget):
             "整机内存（Total / Free / Used / Lost），按设备统计，与「内存」的所选进程口径不同")
         self.record_visible_check = BorderedCheckBox("录屏")
         self.record_visible_check.setToolTip(
-            "显示「录屏」卡片：按间隔自动录一段屏幕视频（间隔必须大于单段时长，否则会重叠）")
+            "勾选后随「开始监控」按间隔自动录一段屏幕视频，同时显示「录屏」卡片\n"
+            "（间隔必须大于单段时长，否则会重叠）")
         self.smaps_visible_check = BorderedCheckBox("内存明细")
         self.smaps_visible_check.setToolTip(
-            "显示「内存明细（smaps）」卡片：把所选进程的 /proc/<pid>/smaps 完整抓回本地，"
+            "勾选后随「开始监控」按间隔自动抓取所选进程的 /proc/<pid>/smaps，"
+            "同时显示「内存明细」卡片\n"
             "可用来看分段内存映射（比 PSS 总量精细得多）\n"
             "⚠ 读取其他应用的 smaps 需要设备 root，或应用是 debug（可调试）包")
         self.hprof_visible_check = BorderedCheckBox("堆转储")
+        self.hprof_visible_check.setToolTip(
+            "勾选后随「开始监控」按间隔自动对所选应用执行堆转储，同时显示「堆转储」卡片\n"
+            "（第一次转储在一个完整间隔后执行）")
         self.packet_visible_check = BorderedCheckBox("抓包")
         self.packet_visible_check.setToolTip(
-            "显示抓包卡片，并在「开始监控」时自动开始抓包（停止监控时一并收尾）")
+            "勾选即采集：显示抓包卡片，并在「开始监控」时自动开始抓包（停止监控时一并收尾）")
         self.screenshot_visible_check = BorderedCheckBox("截图")
+        self.screenshot_visible_check.setToolTip(
+            "勾选后随「开始监控」按间隔自动截取设备屏幕，同时显示「截图」卡片\n"
+            "（第一次截图在一个完整间隔后执行）")
 
         # 卡片显隐联动 + 按钮上的「已选 N」计数
         for w in (self.metric_radios['fps'], self.metric_radios['traffic'],
@@ -1183,6 +1193,11 @@ class PerfView(QWidget):
                   self.hprof_visible_check, self.packet_visible_check,
                   self.screenshot_visible_check):
             w.toggled.connect(self._on_card_visibility_changed)
+        # 勾选 = 是否采集，变化时同步通知控制器（空闲时只做记录，监控中不留残留循环）
+        for chk, sig in ((self.hprof_visible_check, self.hprof_toggle_requested),
+                         (self.screenshot_visible_check, self.screenshot_toggle_requested),
+                         (self.record_visible_check, self.record_toggle_requested)):
+            chk.toggled.connect(sig.emit)
         for w in (self.metric_radios['cpu'], self.metric_radios['mem']):
             w.toggled.connect(lambda *_: self._sync_metrics_btn())
 
@@ -1344,19 +1359,15 @@ class PerfView(QWidget):
             combo = self._probe_interval_combo(key)
             if combo is not None:
                 combo.currentTextChanged.connect(self._save_perf_config)
-        self.record_enable_check.toggled.connect(self._save_perf_config)
         self.record_interval_combo.currentTextChanged.connect(self._save_perf_config)
         self.record_duration_combo.currentTextChanged.connect(self._save_perf_config)
-        self.smaps_enable_check.toggled.connect(self._save_perf_config)
         self.smaps_interval_combo.currentTextChanged.connect(self._save_perf_config)
         for chk in (self.sys_mem_check, self.netdev_check,
                     self.iotop_check, self.record_visible_check,
                     self.smaps_visible_check, self.hprof_visible_check,
                     self.packet_visible_check, self.screenshot_visible_check):
             chk.toggled.connect(self._save_perf_config)
-        self.hprof_enable_check.toggled.connect(self._save_perf_config)
         self.hprof_interval_combo.currentTextChanged.connect(self._save_perf_config)
-        self.screenshot_enable_check.toggled.connect(self._save_perf_config)
         self.screenshot_interval_combo.currentTextChanged.connect(self._save_perf_config)
         self.suite_combo.currentTextChanged.connect(self._save_perf_config)
         self.loop_spin.valueChanged.connect(self._save_perf_config)
@@ -1441,12 +1452,8 @@ class PerfView(QWidget):
         # ---- 堆转储 ----
         (self._hprof_card, hprof_params, hprof_actions,
          self._hprof_dot, self._hprof_title) = _card("#e67e22", "堆转储")
-        self.hprof_enable_check = BorderedCheckBox("循环间隔")
-        self.hprof_enable_check.setToolTip(
-            "开启后，点击「开始监控」即按右侧间隔自动对所选应用执行堆转储\n"
-            "（第一次转储在一个完整间隔后执行）")
-        self.hprof_enable_check.toggled.connect(self._on_hprof_toggle)
-        hprof_params.addWidget(self.hprof_enable_check)
+        # 是否采集由「指标」面板的「堆转储」勾选决定，卡片上只留间隔
+        hprof_params.addWidget(QLabel("循环间隔"))
         self.hprof_interval_combo = _interval_combo(
             ["1 分钟", "5 分钟", "10 分钟", "30 分钟", "60 分钟", "120 分钟"], "5 分钟")
         self.hprof_interval_combo.currentTextChanged.connect(
@@ -1464,15 +1471,8 @@ class PerfView(QWidget):
         self._smaps_card.setToolTip(
             "抓取所选进程的 /proc/<pid>/smaps 到本地\n"
             "⚠ 需要设备 root，或应用是 debug（可调试）包")
-        self.smaps_enable_check = BorderedCheckBox("循环间隔")
-        self.smaps_enable_check.setToolTip(
-            "开启后，点击「开始监控」即按右侧间隔自动抓取所选进程的 smaps\n"
-            "（第一次抓取在一个完整间隔后执行）")
-        self.smaps_enable_check.setEnabled(False)
-        self.smaps_enable_check.toggled.connect(
-            lambda _: self.smaps_interval_combo.setEnabled(
-                self._state == self.STATE_IDLE and self.smaps_enable_check.isChecked()))
-        smaps_params.addWidget(self.smaps_enable_check)
+        # 同堆转储：采集开关在「指标」面板，卡片只留间隔
+        smaps_params.addWidget(QLabel("循环间隔"))
         self.smaps_interval_combo = _interval_combo(
             ["1 分钟", "2 分钟", "5 分钟", "10 分钟", "30 分钟"], "5 分钟")
         self.smaps_interval_combo.currentTextChanged.connect(
@@ -1514,12 +1514,8 @@ class PerfView(QWidget):
         # ---- 截图 ----
         (self._screenshot_card, screenshot_params, screenshot_actions,
          self._screenshot_dot, self._screenshot_title) = _card("#16a085", "截图")
-        self.screenshot_enable_check = BorderedCheckBox("循环间隔")
-        self.screenshot_enable_check.setToolTip(
-            "开启后，点击「开始监控」即按右侧间隔自动截取设备屏幕\n"
-            "（第一次截图在一个完整间隔后执行）")
-        self.screenshot_enable_check.toggled.connect(self._on_screenshot_toggle)
-        screenshot_params.addWidget(self.screenshot_enable_check)
+        # 同堆转储：采集开关在「指标」面板，卡片只留间隔
+        screenshot_params.addWidget(QLabel("循环间隔"))
         self.screenshot_interval_combo = _interval_combo(
             ["30 秒", "1 分钟", "5 分钟", "10 分钟", "30 分钟", "60 分钟"], "5 分钟")
         self.screenshot_interval_combo.currentTextChanged.connect(
@@ -1538,13 +1534,8 @@ class PerfView(QWidget):
         # ---- 录屏 ----
         (self._record_card, record_params, record_actions,
          self._record_dot, self._record_title) = _card("#e84393", "录屏")
-        self.record_enable_check = BorderedCheckBox("循环间隔")
-        self.record_enable_check.setToolTip(
-            "开启后，点击「开始监控」即按间隔自动录一段（单段时长见右侧）\n"
-            "间隔必须大于单段时长，否则会重叠")
-        self.record_enable_check.setEnabled(False)
-        self.record_enable_check.toggled.connect(self._on_record_toggle)
-        record_params.addWidget(self.record_enable_check)
+        # 同堆转储：采集开关在「指标」面板，卡片只留间隔与单段时长
+        record_params.addWidget(QLabel("循环间隔"))
         # 录屏这张卡参数最多（循环 + 间隔 + 录 + 时长 + 提示），两个下拉各窄一点
         self.record_interval_combo = _interval_combo(
             ["1 分钟", "2 分钟", "5 分钟", "10 分钟", "30 分钟"], "10 分钟", width=84)
@@ -1588,16 +1579,6 @@ class PerfView(QWidget):
         """返回性能检测页左上角下拉框选中的应用包名"""
         pkg = self.app_combo.currentText().strip()
         return "" if pkg == "未检测到应用" else pkg
-
-    def _on_hprof_toggle(self, checked: bool):
-        """自动循环勾选状态变化：刷新间隔控件可用性并通知控制器"""
-        self.hprof_interval_combo.setEnabled(checked)
-        self.hprof_toggle_requested.emit(checked)
-
-    def _on_screenshot_toggle(self, checked: bool):
-        """截图自动循环勾选状态变化：刷新间隔控件可用性并通知控制器"""
-        self.screenshot_interval_combo.setEnabled(checked)
-        self.screenshot_toggle_requested.emit(checked)
 
     def set_screenshot_status(self, text: str, error: bool = False):
         """更新截图卡片状态文字（只有失败才写，传空串表示不显示）。
@@ -1700,9 +1681,14 @@ class PerfView(QWidget):
         self.packet_toggle_btn.setToolTip("\n".join(lines))
 
     def _on_card_visibility_changed(self, *_):
-        """显隐开关变化：重新布局卡片 + 刷新「指标 N」上的计数"""
+        """勾选变化：重新布局卡片 + 刷新「指标 N」计数 + 放开/锁住间隔下拉。
+
+        这几个勾选现在同时是「是否采集」（见 hprof_loop_enabled 等），
+        所以间隔下拉的可用性要跟着走，不能等下次 _apply_state。
+        """
         self._relayout_cards()
         self._sync_metrics_btn()
+        self._sync_tool_card_controls()
 
     def _build_metrics_button(self):
         """把 12 个指标勾选收进一个弹层，按钮上只留「指标 N」。
@@ -1739,7 +1725,7 @@ class PerfView(QWidget):
                                self.iotop_check)):
             grid.addWidget(w, 3, i)
 
-        grid.addWidget(_section("现场留证（只影响下方卡片是否显示）"), 4, 0, 1, 5)
+        grid.addWidget(_section("现场留证（勾选即采集，同时显示卡片）"), 4, 0, 1, 5)
         for i, w in enumerate((self.hprof_visible_check,
                                self.screenshot_visible_check,
                                self.record_visible_check,
@@ -2127,17 +2113,13 @@ class PerfView(QWidget):
             'sys_mem_interval': self._probe_interval_text('sys_mem'),
             'show_hprof': self.hprof_visible_check.isChecked(),
             'show_record': self.record_visible_check.isChecked(),
-            'record_loop': self.record_enable_check.isChecked(),
             'record_interval': self.record_interval_combo.currentText(),
             'record_duration': self.record_duration_combo.currentText(),
             'show_smaps': self.smaps_visible_check.isChecked(),
-            'smaps_loop': self.smaps_enable_check.isChecked(),
             'smaps_interval': self.smaps_interval_combo.currentText(),
             'show_packet': self.packet_visible_check.isChecked(),
             'show_screenshot': self.screenshot_visible_check.isChecked(),
-            'hprof_loop': self.hprof_enable_check.isChecked(),
             'hprof_interval': self.hprof_interval_combo.currentText(),
-            'screenshot_loop': self.screenshot_enable_check.isChecked(),
             'screenshot_interval': self.screenshot_interval_combo.currentText(),
             'package': pkg,
             # 多进程目标（主进程不含在内，启动时由 package + 这个列表拼成）
@@ -2202,31 +2184,25 @@ class PerfView(QWidget):
             if combo is not None and text and combo.findText(text) >= 0:
                 combo.setCurrentText(text)
 
-        # 卡片显隐
-        if cfg.get('show_record'):
+        # 卡片勾选（现在同时是「是否采集」）。
+        # 老配置里的 *_loop 是卡片上已移除的「循环间隔」复选框，一并并入勾选：
+        # 否则升级后原本在采集的指标会因为卡片本身没勾上而被静默关掉。
+        if cfg.get('show_record') or cfg.get('record_loop'):
             self.record_visible_check.setChecked(True)
-        if cfg.get('record_loop'):
-            self.record_enable_check.setChecked(True)
         _pick(self.record_interval_combo, cfg.get('record_interval'))
         _pick(self.record_duration_combo, cfg.get('record_duration'))
-        if cfg.get('show_smaps'):
+        if cfg.get('show_smaps') or cfg.get('smaps_loop'):
             self.smaps_visible_check.setChecked(True)
-        if cfg.get('smaps_loop'):
-            self.smaps_enable_check.setChecked(True)
         _pick(self.smaps_interval_combo, cfg.get('smaps_interval'))
-        if cfg.get('show_hprof'):
+        if cfg.get('show_hprof') or cfg.get('hprof_loop'):
             self.hprof_visible_check.setChecked(True)
         if cfg.get('show_packet'):
             self.packet_visible_check.setChecked(True)
-        if cfg.get('show_screenshot'):
+        if cfg.get('show_screenshot') or cfg.get('screenshot_loop'):
             self.screenshot_visible_check.setChecked(True)
 
-        # 堆转储 / 截图的自动循环与间隔
-        if cfg.get('hprof_loop'):
-            self.hprof_enable_check.setChecked(True)
+        # 间隔（采集开关就是上面的勾选，这里只恢复数值）
         _pick(self.hprof_interval_combo, cfg.get('hprof_interval'))
-        if cfg.get('screenshot_loop'):
-            self.screenshot_enable_check.setChecked(True)
         _pick(self.screenshot_interval_combo, cfg.get('screenshot_interval'))
 
         # 场景化参数：套件列表要等 set_suite_model 才填，此刻 combo 是空的，

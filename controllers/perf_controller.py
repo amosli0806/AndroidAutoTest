@@ -555,8 +555,10 @@ class PerfController(QObject):
         # 启动统计定时器
         self._stats_timer.start()
 
-        # 堆转储自动循环：勾选了「自动循环」则随监控一起启动（第一次转储在一个完整间隔后）
-        if self.view.hprof_enable_check.isChecked():
+        # 堆转储自动循环：勾了「指标」面板里的「堆转储」就随监控一起启动
+        # （第一次转储在一个完整间隔后）。2026-11-05 起采集与否只看这个勾选，
+        # 卡片上不再有独立的「循环间隔」复选框。
+        if self.view.hprof_loop_enabled():
             self._start_hprof_loop()
 
         # 内存明细自动循环：同堆转储口径
@@ -564,7 +566,7 @@ class PerfController(QObject):
             self._start_smaps_loop()
 
         # 截图自动循环：同堆转储口径
-        if self.view.screenshot_enable_check.isChecked():
+        if self.view.screenshot_loop_enabled():
             self._start_screenshot_loop()
 
         # 录屏自动循环：同截图口径（间隔必须大于单段时长，见 _start_record_loop）
@@ -1088,9 +1090,6 @@ class PerfController(QObject):
         package = self.view.get_selected_package()
         if not package:
             show_toast(self.view, "请先在左上角选择要监控的应用")
-            self.view.hprof_enable_check.blockSignals(True)
-            self.view.hprof_enable_check.setChecked(False)
-            self.view.hprof_enable_check.blockSignals(False)
             return
         if self._hprof_loop_timer is None:
             self._hprof_loop_timer = QTimer(self)
@@ -1258,9 +1257,6 @@ class PerfController(QObject):
         package = self.view.get_selected_package()
         if not package:
             show_toast(self.view, "请先在左上角选择要监控的应用")
-            self.view.smaps_enable_check.blockSignals(True)
-            self.view.smaps_enable_check.setChecked(False)
-            self.view.smaps_enable_check.blockSignals(False)
             return
         if self._smaps_loop_timer is None:
             self._smaps_loop_timer = QTimer(self)
@@ -1436,10 +1432,9 @@ class PerfController(QObject):
 
     def _start_record_loop(self):
         if not self.view.record_config_ok():
-            show_toast(self.view, "间隔需大于单段时长")
-            self.view.record_enable_check.blockSignals(True)
-            self.view.record_enable_check.setChecked(False)
-            self.view.record_enable_check.blockSignals(False)
+            # 参数不合法只跳过本次循环，不撤勾选：撤了卡片会跟着消失，
+            # 用户就没地方把间隔改回来（2026-11-05 改采集口径时发现）
+            show_toast(self.view, "间隔需大于单段时长，本次不录屏")
             return
         if self._record_loop_timer is None:
             self._record_loop_timer = QTimer(self)
@@ -1616,9 +1611,6 @@ class PerfController(QObject):
     def _start_screenshot_loop(self):
         if not self.view.get_selected_package():
             show_toast(self.view, "请先在左上角选择要监控的应用")
-            self.view.screenshot_enable_check.blockSignals(True)
-            self.view.screenshot_enable_check.setChecked(False)
-            self.view.screenshot_enable_check.blockSignals(False)
             return
         if self._screenshot_loop_timer is None:
             self._screenshot_loop_timer = QTimer(self)
