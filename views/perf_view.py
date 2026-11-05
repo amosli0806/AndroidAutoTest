@@ -2342,17 +2342,6 @@ class PerfView(QWidget):
                     color: {text};
                     background: transparent;
                 }}
-                /* 提示框：和工具卡片里的那套一字不差（白底 / 1px 细边 / 直角）。
-                   不写这条时提示走系统绘制，和卡片里对不上。
-                   必须排在 QLabel 规则之后，同特异性靠先后定胜负。
-                   不加 border-radius：QTipLabel 是不透明窗口，圆角只会把边框
-                   掰弯、底色仍是方块，角上反而缺一块（2026-11-05 实测）。 */
-                #PerfControlPanel QToolTip {{
-                    background-color: {input_bg};
-                    color: {text};
-                    border: 1px solid {panel_border};
-                    padding: 4px 8px;
-                }}
                 #PerfControlPanel QComboBox,
                 #PerfControlPanel QSpinBox {{
                     background-color: {input_bg};
@@ -2683,10 +2672,12 @@ class PerfView(QWidget):
                 tool_bg = "rgba(35, 36, 39, 0.85)" if has_wallpaper else "#232427"
                 tool_border = "#3a3a3a"
                 tool_title = "#ffffff"
+                tip_fg = "#eeeeee"      # 与系统绘制提示的文字色（palette ToolTipText）一致
             else:
                 tool_bg = "rgba(232, 234, 237, 0.85)" if has_wallpaper else "#e8eaed"
                 tool_border = "#d0d0d0"
                 tool_title = "#333333"
+                tip_fg = "#000000"
             tool_card.setStyleSheet(f"""
                 #PerfToolCard {{
                     background-color: {tool_bg};
@@ -2695,19 +2686,19 @@ class PerfView(QWidget):
                 }}
                 #PerfToolCard QLabel {{
                     color: {text};
-                    background: transparent;
                 }}
-                /* 提示框必须显式给底色：QTipLabel 会匹配上面的 QLabel 规则（它也是
-                   QLabel），透明背景让提示直接压在壁纸上，白天模式几乎看不清。
-                   这条紧跟在 QLabel 之后 —— 同特异性靠先后定胜负（2026-11-05 反馈）。
-                   与「多进程」等控制栏提示保持完全一致：白底 / 1px 细边 / 直角。
-                   不加 border-radius：QTipLabel 是不透明窗口，圆角只会把边框掰弯、
-                   底色仍是方块，角上反而缺一块（2026-11-05 实测）。 */
+                /* 提示框对齐「多进程」那种系统绘制效果：白底、无可见边框、直角。
+                   这里必须显式写 background —— 卡片内 QTipLabel 从父级继承到的是
+                   半透明调色板，不写就成了透明底，白天压在壁纸上看不清。
+                   border 用与底色相同的颜色：QStyleSheetStyle 只有见到 border
+                   才会画 box（实测只写 background 不生效），同色等于看不见。
+                   不加 border-radius：不透明窗口上圆角只会把边框掰弯、角上缺一块。 */
                 #PerfToolCard QToolTip {{
                     background-color: {input_bg};
-                    color: {text};
-                    border: 1px solid {panel_border};
-                    padding: 4px 8px;
+                    color: {tip_fg};
+                    border: 1px solid {tip_fg};
+                    padding: 3px;
+                    font-size: 11px;
                 }}
                 #PerfToolCard QComboBox {{
                     background-color: {input_bg};
