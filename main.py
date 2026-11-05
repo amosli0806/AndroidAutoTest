@@ -43,7 +43,7 @@ from utils.toast import show_toast
 from utils.app_paths import migrate_legacy_data_files, get_app_dir
 from utils import log_colors
 from utils.settings import Settings, THEME_MODE_SYSTEM, THEME_MODE_DARK
-from utils.theme import Theme, ThemeMode, install_tooltip_guard
+from utils.theme import Theme, ThemeMode
 import logging
 from models.perf_model import PerfModel
 from views.perf_view import PerfView
@@ -583,20 +583,20 @@ def main():
     app.setPalette(palette)
 
     # ---------- 移除全局样式表，由主题系统控制 ----------
-    # 这里只留与主题无关的间距/字号。QToolTip 的底色与文字色交给
-    # install_tooltip_guard：QTipLabel 是悬停控件的子控件，会继承祖先页面
-    # 的 QSS（性能页/语音页都有 `#xxx QLabel { background: transparent }`
-    # 这类高特异性规则），app 级规则压不住，写 palette(...) 又会被求值成黑色，
-    # 结果就是提示框只剩一行黑字、看着像黑条（2026-11-01、11-05 两次反馈）。
+    # QToolTip 的底色/文字色显式绑定到调色板（palette(tooltip-base/text)），
+    # Theme.apply_app_palette 在切主题时已设置 ToolTipBase / ToolTipText，
+    # 这里引用它即可跟随主题。不写 background/color 时，部分 Qt 6 版本会把
+    # tooltip 渲染成深色块（浅色主题下黑底黑字看不清，2026-11-01 用户反馈）。
     # 不要在切主题时改这份全局样式表：app.setStyleSheet() 会 re-polish 整棵
     # 控件树，实测一次约 4s，是日夜切换卡顿的主因。
     app.setStyleSheet("""
         QToolTip {
             padding: 4px;
             font-size: 11px;
+            background-color: palette(tooltip-base);
+            color: palette(tooltip-text);
         }
     """)
-    install_tooltip_guard(app)
 
     # ---------- 初始化所有模型 ----------
     splash_update("正在准备主界面…", 0.65)
