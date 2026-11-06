@@ -706,6 +706,12 @@ class KnowledgeView(QFrame):
         self.export_btn.clicked.connect(self._on_export)
         row.addWidget(self.export_btn)
         self._icon_buttons.append((self.export_btn, 'fa6s.file-export', 'primary'))
+
+        # 四个按钮等宽：2 字（导入/导出）与 4 字（新建…）混排时右边缘参差不齐。
+        # 96 比「新建项目 + 图标」的自然宽度再多 2px，其余按钮靠文字居中撑开
+        for btn in (self.new_project_btn, self.new_note_btn,
+                    self.import_btn, self.export_btn):
+            btn.setFixedWidth(96)
         return row
 
     def _build_tree_panel(self):
