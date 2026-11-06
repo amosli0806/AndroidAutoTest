@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QPlainTextEdit,
     QPushButton, QScrollArea, QSplitter, QStyle, QStyledItemDelegate,
-    QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem,
+    QTableWidget, QTableWidgetItem, QToolButton, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget)
 
 from models.api_model import (
@@ -302,6 +302,21 @@ class ApiView(QWidget):
                 border-radius: 8px;
             }}
             #ApiPaneTitle {{ color: {fg}; font-size: 14px; font-weight: 600; }}
+            /* 「接口管理 ▾」：外观保持标题样（文字 + 小三角），不要按钮底。
+               ::menu-indicator 置空 —— 文本里已经有 ▾，Qt 默认还会画一个暗色三角。 */
+            QToolButton#ApiMenuBtn {{
+                background: transparent;
+                border: none;
+                color: {fg};
+                font-size: 14px;
+                font-weight: 600;
+                padding: 0px;
+            }}
+            QToolButton#ApiMenuBtn::menu-indicator {{
+                image: none;
+                width: 0px;
+                height: 0px;
+            }}
             #ApiHint {{ color: #888; font-size: 12px; }}
             QLabel {{ color: {fg}; background: transparent; }}
             QTreeWidget, QTableWidget, QPlainTextEdit, QLineEdit, QComboBox {{
@@ -372,6 +387,66 @@ class ApiView(QWidget):
         # 响应体只读但要能选中复制
         self.response_edit.setReadOnly(True)
 
+        self._apply_menu_theme(is_dark)
+
+    def _apply_menu_theme(self, is_dark: bool):
+        """「接口管理 ▾」菜单：与语音页「语音管理 ▾」同一套配色与排版。
+
+        手法照抄 voice_view._apply_voice_menu_theme：
+          - 去掉系统窗口装饰 + 允许透明背景，QSS 的圆角四角才真正生效
+          - item 左 padding 32px 给图标留位，`::icon { left: 10px; }` 让图标居中
+        """
+        if getattr(self, "menu", None) is None:
+            return
+
+        self.menu.setWindowFlags(
+            Qt.WindowType.Popup
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.NoDropShadowWindowHint
+        )
+        self.menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        if is_dark:
+            menu_bg, menu_border, menu_text = "#2b2d30", "#4a4a4a", "#dddddd"
+            menu_hover_bg, menu_hover_text = "#1e3a5f", "#ffffff"
+            icon_color = "#bbbbbb"
+        else:
+            menu_bg, menu_border, menu_text = "#ffffff", "#d0d0d0", "#333333"
+            menu_hover_bg, menu_hover_text = "#e8f0fe", "#1976d2"
+            icon_color = "#555555"
+
+        self.menu.setStyleSheet(f"""
+            QMenu#ApiMenu {{
+                background-color: {menu_bg};
+                border: 1px solid {menu_border};
+                border-radius: 8px;
+                padding: 6px;
+            }}
+            QMenu#ApiMenu::item {{
+                background: transparent;
+                padding: 7px 28px 7px 32px;
+                margin: 1px 2px;
+                border-radius: 5px;
+                color: {menu_text};
+                font-size: 13px;
+            }}
+            QMenu#ApiMenu::item:selected {{
+                background-color: {menu_hover_bg};
+                color: {menu_hover_text};
+            }}
+            QMenu#ApiMenu::icon {{
+                left: 10px;
+            }}
+        """)
+
+        # qta 图标是位图，QSS 改不了颜色，按主题重建。
+        # 键必须与 addAction 的文案一字不差
+        icon_map = {"导入接口": 'fa6s.file-import', "导出接口": 'fa6s.file-export'}
+        for act in self.menu.actions():
+            name = act.text()
+            if name in icon_map:
+                act.setIcon(qta.icon(icon_map[name], color=icon_color))
+
     # ==================================================================
     # 构建
     # ==================================================================
@@ -399,19 +474,23 @@ class ApiView(QWidget):
         layout.setSpacing(8)
 
         title_row = QHBoxLayout()
-        title = QLabel("接口管理")
-        title.setObjectName("ApiPaneTitle")
-        title_row.addWidget(title)
+        # 标题做成下拉：导入/导出收进菜单，左栏只留一个入口（对齐语音页「语音管理 ▾」）。
+        # 「新建接口 / 新建分组」不再占按钮位置 —— 树上的右键菜单里有同名操作，
+        # 左栏本来就是「树 + 右键」的使用方式，顶部再摆两个按钮反而把标题挤没了。
+        self.menu_btn = QToolButton()
+        self.menu_btn.setObjectName("ApiMenuBtn")
+        self.menu_btn.setText("接口管理 ▾")
+        self.menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.menu_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.menu = QMenu(self.menu_btn)
+        self.menu.setObjectName("ApiMenu")
+        self.menu.addAction(
+            qta.icon('fa6s.file-import', color='#555555'), "导入接口", self._on_import)
+        self.menu.addAction(
+            qta.icon('fa6s.file-export', color='#555555'), "导出接口", self._on_export)
+        self.menu_btn.setMenu(self.menu)
+        title_row.addWidget(self.menu_btn)
         title_row.addStretch()
-        self.add_case_btn = QPushButton("新建接口")
-        self.add_case_btn.setObjectName("ApiToolBtn")
-        self.add_case_btn.setToolTip("在当前选中的分组下新建一个接口")
-        self.add_case_btn.clicked.connect(self._on_add_case_from_btn)
-        title_row.addWidget(self.add_case_btn)
-        self.add_group_btn = QPushButton("新建分组")
-        self.add_group_btn.setObjectName("ApiToolBtn")
-        self.add_group_btn.clicked.connect(self._on_add_group)
-        title_row.addWidget(self.add_group_btn)
         layout.addLayout(title_row)
 
         self.tree = QTreeWidget()
@@ -420,19 +499,6 @@ class ApiView(QWidget):
         self.tree.customContextMenuRequested.connect(self._on_tree_menu)
         self.tree.itemClicked.connect(self._on_tree_clicked)
         layout.addWidget(self.tree, 1)
-
-        bottom = QHBoxLayout()
-        self.import_btn = QPushButton("导入")
-        self.import_btn.setObjectName("ApiToolBtn")
-        self.import_btn.clicked.connect(self._on_import)
-        self.export_btn = QPushButton("导出")
-        self.export_btn.setObjectName("ApiToolBtn")
-        self.export_btn.clicked.connect(self._on_export)
-        bottom.addWidget(self.import_btn)
-        bottom.addWidget(self.export_btn)
-        # 按钮按自身宽度靠左排，不要被布局平分拉成两个大块（改成实心蓝后特别显眼）
-        bottom.addStretch()
-        layout.addLayout(bottom)
         return box
 
     # ---------- 中：接口列表 ----------
@@ -954,15 +1020,13 @@ class ApiView(QWidget):
             self._current_case_id = ""
         self.refresh_all()
 
-    def _on_add_case_from_btn(self):
-        """左栏「+ 新建接口」按钮入口：无分组时先引导建分组"""
+    def _on_add_case(self, group_id=""):
+        # 没有任何分组时先拦一下：空 group_id 建出来的接口会挂不上树
+        # （原先是顶部「新建接口」按钮在拦，按钮撤掉后统一收在这里，右键菜单也走这条）
         if not self.model.groups:
             ErrorDialog.show_error(
-                self, "无法新建接口", "请先点击「新建分组」创建一个分组。")
+                self, "无法新建接口", "请先在左侧树里右键新建一个分组。")
             return
-        self._on_add_case()
-
-    def _on_add_case(self, group_id=""):
         if not group_id:
             kind, ident = self._selected_tree_node()
             group_id = ident if kind == "group" else self._current_group_id
