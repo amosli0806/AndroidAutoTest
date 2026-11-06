@@ -3936,7 +3936,12 @@ class MainWindow(QMainWindow):
         setHtml 只解析一次，快很多。force_bottom 用于「刚打开面板」时滚到最新。
         """
         text = getattr(self, "_bottom_log_text", None)
-        if text is None or not entries:
+        if text is None:
+            return
+        if not entries:
+            # 日志为空时必须清空控件：否则从 Crash / ANR / 硬件信息切回虫师日志，
+            # 上一次 setPlainText 写进去的提示文案会残留在日志窗口里。
+            text.clear()
             return
         from utils import log_colors
         sb = text.verticalScrollBar()

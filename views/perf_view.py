@@ -495,12 +495,12 @@ class PerfView(QWidget):
 
     def _update_multi_btn(self):
         n = len(self._multi_processes)
-        self.app_multi_btn.setText(f"多进程（{n}）" if n > 1 else "多进程")
+        self.app_multi_btn.setText("主副进程")
         if n > 1:
             self.app_multi_btn.setToolTip("本次目标进程：\n" + "\n".join(self._multi_processes))
         else:
             self.app_multi_btn.setToolTip(
-                "选择多个目标进程一起监控（主进程 + 子进程，CPU / 内存求和）")
+                "选择主进程和子进程一起监控（CPU / 内存求和）")
 
     def _choose_processes(self):
         processes = list(self._running_processes)
@@ -551,6 +551,12 @@ class PerfView(QWidget):
     # ------------------------------------------------------------------
     # 数据更新（由控制器调用）
     # ------------------------------------------------------------------
+    def set_cpu_y_max(self, y_max: float):
+        """按设备核数设置 CPU 曲线纵轴上限（核数 × 100%）。"""
+        card = self._cards.get('cpu') if getattr(self, '_cards', None) else None
+        if card is not None and hasattr(card, 'set_y_range'):
+            card.set_y_range(0, y_max)
+
     def append_sample(self, sample):
         ts = sample.timestamp
         # 只对本次会话勾选的指标追加数据
@@ -818,7 +824,7 @@ class PerfView(QWidget):
         """
         if self._state == self.STATE_STOPPING:
             self.start_btn.setText("停止中")
-            self.start_btn.setToolTip("正在停止采集，请稍候…")
+            self.start_btn.setToolTip("")
             self.start_btn.setStyleSheet(
                 self._run_btn_qss_stopping or self._run_btn_qss_danger)
             # 不带图标：文案本身已经说清是在收尾，多一个沙漏反而显得忙乱
@@ -831,7 +837,8 @@ class PerfView(QWidget):
         else:
             self.start_btn.setIcon(QIcon())
         self.start_btn.setText("开始" if idle else "停止")
-        self.start_btn.setToolTip("开始采集" if idle else "停止采集")
+        # 开始/停止语义已经很直观，不再挂悬浮提示
+        self.start_btn.setToolTip("")
         qss = self._run_btn_qss_normal if idle else self._run_btn_qss_danger
         if qss:
             self.start_btn.setStyleSheet(qss)
@@ -1062,10 +1069,10 @@ class PerfView(QWidget):
         self.app_combo.addItem("未检测到应用")
         self.app_combo.setToolTip("当前目标应用（包名）")
         self.app_combo.currentTextChanged.connect(self._on_app_text_changed)
-        self.app_multi_btn = QPushButton("多进程")
-        self.app_multi_btn.setMinimumWidth(96)      # 容得下「多进程（3）」，数字变两位也不截断
+        self.app_multi_btn = QPushButton("主副进程")
+        self.app_multi_btn.setMinimumWidth(96)      # 容得下「主副进程」四个字
         self.app_multi_btn.setToolTip(
-            "选择多个目标进程一起监控（主进程 + 子进程，CPU / 内存求和）")
+            "选择主进程和子进程一起监控（CPU / 内存求和）")
         self.app_multi_btn.clicked.connect(self._choose_processes)
         self.app_refresh_btn = QPushButton()
         self.app_refresh_btn.setIcon(qta.icon('fa6s.rotate', color='white'))
@@ -1114,7 +1121,7 @@ class PerfView(QWidget):
         self.control_bar.add_chip(
             "mode", _pair(self.mode_label, self.mode_combo), 80)
         # 时长排在多进程之前被收起：814 宽（1366×768@150%）时它是第二个被
-        # 搬进「更多」的，这样「多进程（3）」这个状态指示能一直留在行内
+        # 搬进「更多」的，这样「主副进程（3）」这个状态指示能一直留在行内
         self.control_bar.add_chip(
             "duration", _pair(self.duration_label, self.duration_spin), 55)
 
@@ -1203,6 +1210,8 @@ class PerfView(QWidget):
 
         self.metrics_btn = self._build_metrics_button()
         self.control_bar.add_chip("metrics", self.metrics_btn, 900)
+        # 指标是每次开始采集前都要确认的入口，放到进程下拉框左侧
+        self.control_bar.move_to_front("metrics")
         self.control_bar.finalize()
 
         root.addWidget(control)
@@ -1742,7 +1751,7 @@ class PerfView(QWidget):
         btn.setToolTip("选择要采集的指标")
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        btn.setFixedHeight(28)
+        btn.setFixedHeight(30)
         btn.setFixedWidth(92)
         btn.clicked.connect(self._show_metrics_menu)
         return btn
@@ -1844,7 +1853,7 @@ class PerfView(QWidget):
         QTimer.singleShot(0, lambda: clear_hover(self.metrics_btn))
 
     def _sync_metrics_btn(self):
-        """刷新「指标 N」的计数与悬停提示（N = 当前勾选的项数）。"""
+        """刷新「指标」按钮的悬停提示（按钮本身不再显示已选数量）。"""
         btn = getattr(self, "metrics_btn", None)
         if btn is None:
             return
@@ -1859,7 +1868,7 @@ class PerfView(QWidget):
                     self.smaps_visible_check):
             if chk.isChecked():
                 names.append(chk.text())
-        btn.setText(f"指标（{len(names)}）")
+        btn.setText("指标")
         btn.setToolTip("已选：" + "、".join(names) if names else "选择要采集的指标")
 
     def _relayout_cards(self):
@@ -2240,25 +2249,13 @@ class PerfView(QWidget):
         if self._state == self.STATE_IDLE:
             self.status_info.setText("就绪 · 未开始采集")
             return
-        # 取当前会话勾选的、所有卡片中采样点最多的那个数
-        total = 0
-        for key in self._active_metrics:
-            card = self._cards.get(key)
-            if card is None:
-                continue
-            curves = getattr(card, '_curves', None)
-            if not curves:
-                continue
-            # 单曲线：取第一个 series 的 x 长度
-            first = next(iter(curves.values()), None)
-            if first is not None:
-                total = max(total, len(first.get('x', [])))
         state_text = {
             self.STATE_RUNNING: "采集中",
             self.STATE_SCENARIO: "场景化执行中",
             self.STATE_STOPPING: "停止中",
         }.get(self._state, "")
-        self.status_info.setText(f"{state_text} · 采样点 {total} · 间隔 {self.interval_combo.currentText()}")
+        # 底部左侧只保留状态本身：采样点数、间隔已经在顶部控制栏，重复展示没必要。
+        self.status_info.setText(state_text)
 
     # ------------------------------------------------------------------
     def apply_theme(self, theme_mode: ThemeMode, has_wallpaper: bool = False):
@@ -2575,6 +2572,18 @@ class PerfView(QWidget):
             QPushButton#PerfCardAction:pressed {{
                 background-color: {'#0d47a1' if not is_dark else '#42a5f5'};
             }}
+            /* 抓包按钮是卡片动作里唯一的可勾选按钮：勾上=正在抓包，
+               用危险色（红）和底部「清空」保持同一套语义。 */
+            QPushButton#PerfCardAction:checked {{
+                background-color: {danger_bg};
+                color: {danger_fg};
+            }}
+            QPushButton#PerfCardAction:checked:hover {{
+                background-color: {'#ef5350' if is_dark else '#c0392b'};
+            }}
+            QPushButton#PerfCardAction:checked:pressed {{
+                background-color: {'#c62828' if is_dark else '#96281b'};
+            }}
             QPushButton#PerfCardAction:disabled {{
                 background-color: {disabled_bg};
                 color: {disabled_fg};
@@ -2686,6 +2695,7 @@ class PerfView(QWidget):
                 }}
                 #PerfToolCard QLabel {{
                     color: {text};
+                    background: transparent;
                 }}
                 /* 提示框对齐「多进程」那种系统绘制效果：白底、无可见边框、直角。
                    这里必须显式写 background —— 卡片内 QTipLabel 从父级继承到的是

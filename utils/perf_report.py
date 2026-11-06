@@ -2052,12 +2052,12 @@ class PerfReportGenerator:
             {scenario_info}
         </table>
 
-        {detail_html}
-
         <h2>📊 关键指标</h2>
         <div class="summary">
             {summary_cards_html}
         </div>
+
+        {detail_html}
 
         {charts_section}
 

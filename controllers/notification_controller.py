@@ -144,7 +144,7 @@ class NotificationController(QObject):
         """性能采集结束"""
         self.service.info(
             SOURCE_PERF,
-            f"性能采集完成 · {sample_count} 个采样点",
+            "性能采集完成",
             actions=[{"label": "查看", "action": "open_page",
                       "payload": {"index": PAGE_PERF}}],
         )

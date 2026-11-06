@@ -523,6 +523,8 @@ class PerfController(QObject):
             session.screen_resolution = _info.get('resolution', '')
             session.screen_density = _info.get('density', '')
             session.android_version = _info.get('android', '') or _compat.version
+            # CPU 曲线纵轴按设备核数自适应：多核累计上限 = 核数 × 100%
+            self.view.set_cpu_y_max(_svc.get_cpu_core_count() * 100)
         except Exception as e:
             logger.debug("采集设备信息失败（不影响采集）: %s", e)
         self.current_session = session
@@ -679,9 +681,9 @@ class PerfController(QObject):
                 n = len(self.current_session.samples)
                 if self._auto_save_on_stop and \
                         self._auto_save_artifacts(self.current_session):
-                    show_toast(self.view, "采集完成，报告与数据已保存到输出目录")
+                    show_toast(self.view, "性能指标采集完成")
                 else:
-                    show_toast(self.view, f"采集完成，共 {n} 个采样点")
+                    show_toast(self.view, "性能指标采集完成")
                 # 消息中心：采集完成留痕（纯新增信号）
                 self.perf_finished.emit(n)
                 # 不再自动弹「性能劣化告警」：基线多起来后对比容易误报，
@@ -1410,8 +1412,13 @@ class PerfController(QObject):
     def _on_smaps_finished(self, status: str, message: str):
         if status == "success":
             self._add_event("smaps", os.path.basename(message))
-            size = os.path.getsize(message) / 1048576.0 if os.path.exists(message) else 0.0
-            show_toast(self.view, f"内存明细已保存（{size:.1f} MB）", duration=3000)
+            # 采集过程中（定时/手动触发）不再弹「已保存」提示：采样本身很频繁，
+            # 事件已经记进时间线，再弹 toast 只会挡在底部按钮上。
+            # 空闲时手动抓取仍给一次反馈。
+            if self.perf_worker is None:
+                size = (os.path.getsize(message) / 1048576.0
+                        if os.path.exists(message) else 0.0)
+                show_toast(self.view, f"内存明细已保存（{size:.1f} MB）", duration=3000)
         else:
             show_toast(self.view, f"内存明细抓取失败：{message}", duration=4000)
 
@@ -2020,8 +2027,8 @@ class PerfController(QObject):
             return
         self._auto_save_on_stop = True
         self._on_stop()
-        # 自动保存成功后 _on_stop 会弹「报告与数据已保存」，这里别再盖掉；
-        # 失败/中断时补一句结果
+        # _on_stop 会先弹「性能指标采集完成」，这里只在失败/中断时补一句结果；
+        # 成功时不要再用结果文案盖掉完成提示。
         if not ok:
             show_toast(self.view, f"语音场景结束：{message or '已中断'}", duration=2600)
 

@@ -92,6 +92,17 @@ class ChipBar(QWidget):
             "prio": priority, "eligible": bool(eligible),
         })
 
+    def move_to_front(self, key):
+        """把已加入的 chip 挪到行首（其余顺序不变）。"""
+        idx = next((i for i, it in enumerate(self._items)
+                    if it["key"] == key), None)
+        if not idx:
+            return
+        item = self._items.pop(idx)
+        self._items.insert(0, item)
+        self._row.removeWidget(item["slot"])
+        self._row.insertWidget(0, item["slot"])
+
     def finalize(self):
         """所有 chip 加完后调用：把「更多」按钮和弹簧放到行尾。"""
         self._row.addWidget(self.more_btn)

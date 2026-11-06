@@ -271,6 +271,12 @@ class MetricCard(QFrame):
                 " background: transparent;"
             )
 
+    def set_y_range(self, y_min, y_max):
+        """外部按设备能力调整纵轴范围（CPU 上限 = 核数 × 100%）。"""
+        self._y_min = float(y_min)
+        self._y_max = float(y_max)
+        self.plot.setYRange(self._y_min, self._y_max)
+
     def clear_data(self):
         for data in self._curves.values():
             data['x'].clear()
@@ -282,6 +288,11 @@ class MetricCard(QFrame):
         # 重置横轴起点
         if self._time_axis is not None:
             self._time_axis.reset_t0()
+            # AxisItem 会把上次的刻度绘制缓存到 self.picture；只把 _t0 置空
+            # 不失效缓存的话，清空后仍会显示旧的时间刻度，直到下一批数据到来。
+            self._time_axis.picture = None
+            self._time_axis.update()
+        self.plot.update()
         # 底部统计标签归零
         self._reset_stats_text()
 

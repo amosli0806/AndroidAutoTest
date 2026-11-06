@@ -64,6 +64,20 @@ class PerfService:
             raise PerfShellError(f"无输出：{what or cmd}")
         return out
 
+    def get_cpu_core_count(self) -> int:
+        """设备 CPU 核数（nproc），失败时保守返回 8。
+
+        应用 CPU 是「多核累计」，合理上限 = 核数 × 100%；界面的 CPU 曲线
+        纵轴要按它设置，不能再写死 800。
+        """
+        if self._cpu_core_count is None:
+            try:
+                out = self._sh("nproc", require_output=False).strip()
+                self._cpu_core_count = max(1, int(out)) if out else 8
+            except Exception:
+                self._cpu_core_count = 8
+        return self._cpu_core_count
+
     # ============================================================
     # 设备信息：会话开始时采集一次，用于报告的「基本信息」
     # ============================================================
@@ -354,14 +368,7 @@ class PerfService:
         }
 
         # 首次采集时探测设备核数（决定合理上限：核数 × 100%）
-        if self._cpu_core_count is None:
-            try:
-                cores_out = self._sh("nproc", require_output=False).strip()
-                self._cpu_core_count = int(cores_out) if cores_out else 8
-            except Exception:
-                self._cpu_core_count = 8  # 保守默认
-
-        max_percent = self._cpu_core_count * 100.0
+        max_percent = self.get_cpu_core_count() * 100.0
         return round(min(percent, max_percent), 2)
 
     # ============================================================
