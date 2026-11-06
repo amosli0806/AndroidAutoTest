@@ -432,6 +432,9 @@ class KnowledgeView(QFrame):
         平台默认的**浅色底**，白图标等于隐形（用户 2026-10-12 反馈「看不清图标」）。
         """
         dark = self._is_dark
+        if role == 'primary':
+            # 顶部四个动作按钮是蓝底（对齐主工具栏「刷新」），图标一律白
+            return '#ffffff'
         if role == 'button':
             return '#e8eaed' if dark else '#3c4043'
         if role == 'menu':
@@ -578,6 +581,33 @@ class KnowledgeView(QFrame):
                 font-family: Consolas, "Microsoft YaHei", monospace;
                 font-size: 13px;
             }}
+            /* 顶部四个动作按钮：对齐主工具栏的「刷新」按钮（蓝底白字 / 4px 圆角 / 26 高）。
+               页面原来没有任何 QPushButton 规则，走平台默认灰按钮，深色主题下是深灰描边，
+               和主界面完全两套观感（2026-11-06 反馈）。颜色写死、不跟主题变 —— 刷新按钮
+               也是这么做的，两处一起变反而会不同步。 */
+            #KbToolBtn {{
+                background-color: #1976d2;
+                color: #ffffff;
+                border: 1px solid #1976d2;
+                border-radius: 4px;
+                padding: 0px 12px;
+                font-weight: 500;
+                min-height: 26px;
+                max-height: 26px;
+            }}
+            #KbToolBtn:hover {{
+                background-color: #1565c0;
+                border-color: #1565c0;
+            }}
+            #KbToolBtn:pressed {{
+                background-color: #0d47a1;
+                border-color: #0d47a1;
+            }}
+            #KbToolBtn:disabled {{
+                background-color: #9fb6cc;
+                border-color: #9fb6cc;
+                color: #f2f2f2;
+            }}
             #KbSearchInput, #KbTagsEdit {{
                 background-color: {edit_bg};
                 color: {text};
@@ -651,27 +681,31 @@ class KnowledgeView(QFrame):
         row.addWidget(self.search_input, 1)
 
         self.new_project_btn = QPushButton("新建项目")
+        self.new_project_btn.setObjectName("KbToolBtn")
         self.new_project_btn.clicked.connect(self._on_new_project)
         row.addWidget(self.new_project_btn)
-        self._icon_buttons.append((self.new_project_btn, 'fa6s.folder-plus', 'button'))
+        self._icon_buttons.append((self.new_project_btn, 'fa6s.folder-plus', 'primary'))
 
         self.new_note_btn = QPushButton("新建条目")
+        self.new_note_btn.setObjectName("KbToolBtn")
         self.new_note_btn.clicked.connect(self._on_new_note)
         row.addWidget(self.new_note_btn)
-        self._icon_buttons.append((self.new_note_btn, 'fa6s.file-circle-plus', 'button'))
+        self._icon_buttons.append((self.new_note_btn, 'fa6s.file-circle-plus', 'primary'))
 
         self.import_btn = QPushButton("导入")
+        self.import_btn.setObjectName("KbToolBtn")
         self.import_btn.setToolTip("把已有的 .md / .txt 文档批量导入"
                                    "（语雀 / 飞书 / Obsidian 导出的目录也能直接选）")
         self.import_btn.clicked.connect(self._on_import)
         row.addWidget(self.import_btn)
-        self._icon_buttons.append((self.import_btn, 'fa6s.file-import', 'button'))
+        self._icon_buttons.append((self.import_btn, 'fa6s.file-import', 'primary'))
 
         self.export_btn = QPushButton("导出")
+        self.export_btn.setObjectName("KbToolBtn")
         self.export_btn.setToolTip("把整个知识库导出为 Markdown 目录（含图片）")
         self.export_btn.clicked.connect(self._on_export)
         row.addWidget(self.export_btn)
-        self._icon_buttons.append((self.export_btn, 'fa6s.file-export', 'button'))
+        self._icon_buttons.append((self.export_btn, 'fa6s.file-export', 'primary'))
         return row
 
     def _build_tree_panel(self):
