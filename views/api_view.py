@@ -334,6 +334,32 @@ class ApiView(QWidget):
             }}
             QPushButton#ApiGhostBtn:hover {{ background: {hover}; }}
             QPushButton#ApiGhostBtn:disabled {{ background: transparent; color: #9a9a9a; }}
+            /* 页面上的动作按钮（新建接口 / 新建分组 / 导入 / 导出 / 设置 / 生成报告）：
+               对齐主工具栏「刷新」与知识库顶部按钮那套（蓝底白字、4px 圆角、26 高）。
+               以前走 ApiGhostBtn 的透明描边，深色主题下是一排深灰框，和虫师其它页面两套观感。 */
+            QPushButton#ApiToolBtn {{
+                background-color: #1976d2;
+                color: #ffffff;
+                border: 1px solid #1976d2;
+                border-radius: 4px;
+                padding: 0px 12px;
+                font-weight: 500;
+                min-height: 26px;
+                max-height: 26px;
+            }}
+            QPushButton#ApiToolBtn:hover {{
+                background-color: #1565c0;
+                border-color: #1565c0;
+            }}
+            QPushButton#ApiToolBtn:pressed {{
+                background-color: #0d47a1;
+                border-color: #0d47a1;
+            }}
+            QPushButton#ApiToolBtn:disabled {{
+                background-color: #9fb6cc;
+                border-color: #9fb6cc;
+                color: #f2f2f2;
+            }}
             QPushButton#ApiPrimaryBtn {{
                 background: #1976d2; color: #fff; border: none;
                 border-radius: 6px; padding: 5px 14px; font-weight: 600;
@@ -377,13 +403,13 @@ class ApiView(QWidget):
         title.setObjectName("ApiPaneTitle")
         title_row.addWidget(title)
         title_row.addStretch()
-        self.add_case_btn = QPushButton("+ 新建接口")
-        self.add_case_btn.setObjectName("ApiGhostBtn")
+        self.add_case_btn = QPushButton("新建接口")
+        self.add_case_btn.setObjectName("ApiToolBtn")
         self.add_case_btn.setToolTip("在当前选中的分组下新建一个接口")
         self.add_case_btn.clicked.connect(self._on_add_case_from_btn)
         title_row.addWidget(self.add_case_btn)
         self.add_group_btn = QPushButton("新建分组")
-        self.add_group_btn.setObjectName("ApiGhostBtn")
+        self.add_group_btn.setObjectName("ApiToolBtn")
         self.add_group_btn.clicked.connect(self._on_add_group)
         title_row.addWidget(self.add_group_btn)
         layout.addLayout(title_row)
@@ -397,13 +423,15 @@ class ApiView(QWidget):
 
         bottom = QHBoxLayout()
         self.import_btn = QPushButton("导入")
-        self.import_btn.setObjectName("ApiGhostBtn")
+        self.import_btn.setObjectName("ApiToolBtn")
         self.import_btn.clicked.connect(self._on_import)
         self.export_btn = QPushButton("导出")
-        self.export_btn.setObjectName("ApiGhostBtn")
+        self.export_btn.setObjectName("ApiToolBtn")
         self.export_btn.clicked.connect(self._on_export)
         bottom.addWidget(self.import_btn)
         bottom.addWidget(self.export_btn)
+        # 按钮按自身宽度靠左排，不要被布局平分拉成两个大块（改成实心蓝后特别显眼）
+        bottom.addStretch()
         layout.addLayout(bottom)
         return box
 
@@ -426,7 +454,7 @@ class ApiView(QWidget):
         self.env_combo.currentIndexChanged.connect(self._on_env_changed)
         env_row.addWidget(self.env_combo, 1)
         self.env_btn = QPushButton("设置")
-        self.env_btn.setObjectName("ApiGhostBtn")
+        self.env_btn.setObjectName("ApiToolBtn")
         self.env_btn.clicked.connect(self._on_edit_envs)
         env_row.addWidget(self.env_btn)
         layout.addLayout(env_row)
@@ -440,7 +468,7 @@ class ApiView(QWidget):
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self.stop_requested.emit)
         self.report_btn = QPushButton("生成报告")
-        self.report_btn.setObjectName("ApiGhostBtn")
+        self.report_btn.setObjectName("ApiToolBtn")
         self.report_btn.setEnabled(False)
         self.report_btn.setToolTip("至少执行过一次接口后才可生成报告")
         self.report_btn.clicked.connect(self.report_requested.emit)
