@@ -162,7 +162,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("SettingsDialog")
-        self.setWindowTitle("设置 - 虫师")
+        self.setWindowTitle("设置")
         self.setModal(True)
         self.resize(820, 560)
         self.setMinimumSize(720, 500)
