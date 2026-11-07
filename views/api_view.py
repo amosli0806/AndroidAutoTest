@@ -515,7 +515,6 @@ class ApiView(QWidget):
         box = QFrame()
         box.setObjectName("ApiMidContainer")
         layout = QVBoxLayout(box)
-
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
 
@@ -577,7 +576,6 @@ class ApiView(QWidget):
         box = QFrame()
         box.setObjectName("ApiRightContainer")
         layout = QVBoxLayout(box)
-
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
 
