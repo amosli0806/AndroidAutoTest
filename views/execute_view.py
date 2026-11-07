@@ -505,13 +505,11 @@ class ExecuteView(QWidget):
         self.toggle_select_btn = QPushButton("全选")
         self.toggle_select_btn.setObjectName("ToolTextBtn")
         self.toggle_select_btn.setFixedHeight(28)
-        self.toggle_select_btn.setToolTip("全选")
         self.toggle_select_btn.clicked.connect(self._on_toggle_select)
 
         self.execute_btn = QPushButton("执行")
         self.execute_btn.setFixedHeight(28)
         self.execute_btn.setObjectName("ExecTextBtn")
-        self.execute_btn.setToolTip("执行")
         self.execute_btn.setEnabled(False)
         self.execute_btn.clicked.connect(self._execute)
 
@@ -803,13 +801,11 @@ class ExecuteView(QWidget):
         self._apply_execute_btn_state(can_execute)
 
         all_checked = (total_checkable > 0 and checked_count == total_checkable)
-        # 全选/取消全选是一个切换按钮：按当前勾选状态切图标与 tooltip
+        # 全选/取消全选是一个切换按钮：按当前勾选状态切文案（按钮自带文案，不再挂悬停提示）
         if all_checked:
             self.toggle_select_btn.setText("取消全选")
-            self.toggle_select_btn.setToolTip("取消全选")
         else:
             self.toggle_select_btn.setText("全选")
-            self.toggle_select_btn.setToolTip("全选")
         self.toggle_select_btn.setEnabled(total_checkable > 0 and not self._executing)
 
         self.loop_spin.setEnabled(not self._executing)
@@ -827,11 +823,9 @@ class ExecuteView(QWidget):
         无勾选禁用时与其他工具按钮一致（浅灰底深图标），不再突兀。"""
         if self._executing:
             self.execute_btn.setText("停止")
-            self.execute_btn.setToolTip("停止")
             self.execute_btn.setStyleSheet(self.STOP_BTN_QSS)
             return
         self.execute_btn.setText("执行")
-        self.execute_btn.setToolTip("执行")
         if self._primary_btn_style:
             self.execute_btn.setStyleSheet(self._primary_btn_style)
 
