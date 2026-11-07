@@ -353,9 +353,9 @@
           </tr>
           <tr>
             <td>截图速度</td>
-            <td>每次坐标点击多 2 张，手机约 0.7 秒</td>
-            <td>2560×1440 可能 1~2 秒 / 张，全坐标用例会明显变慢</td>
-            <td>连续截 5 次取平均；偏慢就把 <code>verify_click_effect</code> 默认关掉</td>
+            <td>每次坐标点击多 2 张，手机实测 0.16~0.19 秒 / 张</td>
+            <td>走的是 UiAutomator 内存位图（takeScreenshot），不落设备文件；但要确认车机上是否同样快</td>
+            <td>连续截 5 次取平均；若明显偏慢就把 <code>verify_click_effect</code> 默认关掉</td>
           </tr>
           <tr>
             <td>多屏 / 副屏</td>
