@@ -253,9 +253,8 @@ class TaskView(QWidget):
                          .replace("#0d47a1", "#a93226"))
         for btn in (self.add_btn, self.delete_btn):
             btn.setStyleSheet(del_btn_style if btn is self.delete_btn else btn_style)
-            if btn is self.add_btn:
-                btn.setIcon(qta.icon('fa6s.plus', color='white'))
-            else:
+            # 「创建」按钮不带图标（文案已说清动作），只有删除按钮需要重刷主题色图标
+            if btn is self.delete_btn:
                 btn.setIcon(qta.icon('fa6s.trash-can', color='white'))
 
         # 宽度必须在设完 QSS 之后再套：QSS 的 padding 参与尺寸计算，先设会被冲掉
@@ -277,9 +276,8 @@ class TaskView(QWidget):
         top_layout.addWidget(title_label)
         top_layout.addStretch()
 
-        self.add_btn = QPushButton("新增")
+        self.add_btn = QPushButton("创建")
         self.add_btn.setObjectName("taskAddBtn")
-        self.add_btn.setIcon(qta.icon('fa6s.plus', color='white'))
         self.add_btn.clicked.connect(self._on_add_task)
 
         self.delete_btn = QPushButton("删除")
