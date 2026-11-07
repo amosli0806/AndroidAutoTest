@@ -271,7 +271,19 @@ class DeviceService:
 
     # ---------- 坐标解析（支持归一化还原）----------
     def _get_current_screen_size(self):
-        """获取当前设备分辨率，带缓存。旋转屏幕/换设备后需清空缓存。"""
+        """获取当前**显示方向**下的分辨率，带缓存。旋转屏幕/换设备后需清空缓存。
+
+        取 `wm size` 的物理尺寸，再按 displayRotation 换算成当前朝向。
+
+        为什么不用 window_size()：它给的是**应用可用区域**，车机/带系统栏或
+        分屏的设备会比物理尺寸小一截（比如 2560x1440 只给 2560x1300），拿它
+        还原归一化坐标会整体按比例偏移。而 `wm size` 是固定的物理值，改动前后
+        行为一致，不会给车机引入新风险。
+
+        为什么必须换算朝向：`wm size` 是**面板原始朝向**。手机横屏游戏下它仍是
+        竖屏的 1084x2412，直接用会让点击整体错位（2026-11-07 实测：战斗按钮的
+        坐标被算成 (94, 2125)，y 超出屏高 1084，点击落到屏外、界面毫无反应）。
+        """
         if getattr(self, '_cached_screen_size', None):
             return self._cached_screen_size
         try:
@@ -279,13 +291,52 @@ class DeviceService:
             if hasattr(out, 'output'):
                 out = out.output
             import re as _re
-            m = _re.search(r'(\d+)x(\d+)', str(out))
+            txt = str(out)
+            # 优先 Override size：车机 / 投屏改过分辨率时只认它
+            m = (_re.search(r'Override size:\s*(\d+)x(\d+)', txt)
+                 or _re.search(r'Physical size:\s*(\d+)x(\d+)', txt)
+                 or _re.search(r'(\d+)x(\d+)', txt))
             if m:
-                self._cached_screen_size = (int(m.group(1)), int(m.group(2)))
+                w, h = int(m.group(1)), int(m.group(2))
+                # 已经和屏幕朝向一致（本身横屏的设备，如车机）就不再交换
+                if self._display_rotation() in (1, 3) and w < h:
+                    w, h = h, w
+                self._cached_screen_size = (w, h)
                 return self._cached_screen_size
         except Exception:
             pass
         return (0, 0)
+
+    def _display_rotation(self) -> int:
+        """当前屏幕旋转角度（0/90/180/270 对应 0/1/2/3）"""
+        try:
+            return int(self.device.info.get('displayRotation', 0))
+        except Exception:
+            return 0
+
+    def _norm_base_size(self, params, cur_w, cur_h, max_norm=1.0):
+        """归一化坐标该乘哪个尺寸：正常情况下用当前朝向尺寸，老数据退回录制尺寸。
+
+        为什么需要这条：录制端（step_controller._record_loop）一直按 `wm size`
+        的**物理尺寸**存 normalizedX/Y，但画面可能是旋转过的 —— 横屏游戏里坐标
+        最大到 2412，基准却只有 1084，norm 会大于 1。这种数据只能用录制时的
+        screenWidth/Height 还原：两端用同一套尺寸才等价，换成当前朝向的尺寸会
+        整体旋转错位（实测 2.2 倍偏差，点哪都不是）。
+
+        录制基准与当前朝向一致时（正常竖屏、以及本身就是横屏的车机）才按当前
+        尺寸换算 —— 这样换设备、换分辨率仍能按比例自适应。
+        """
+        step_w = params.get('screenWidth')
+        step_h = params.get('screenHeight')
+        if not (step_w and step_h and cur_w and cur_h):
+            return cur_w, cur_h
+        # 方向不一致（录制时基准是竖的、当前是横的）= 老数据，按录制基准还原
+        if (step_w >= step_h) != (cur_w >= cur_h):
+            return step_w, step_h
+        # 比例超过 1 说明坐标跑出了自己的基准，同样只能按录制基准还原
+        if max_norm > 1.0001:
+            return step_w, step_h
+        return cur_w, cur_h
 
     def _resolve_coord(self, params):
         """
@@ -302,7 +353,9 @@ class DeviceService:
 
         # 优先：归一化坐标还原
         if norm_x is not None and norm_y is not None and cur_w and cur_h:
-            return int(round(norm_x * cur_w)), int(round(norm_y * cur_h))
+            base_w, base_h = self._norm_base_size(
+                params, cur_w, cur_h, max(norm_x, norm_y))
+            return int(round(norm_x * base_w)), int(round(norm_y * base_h))
 
         # 兼容老步骤：直接解析 "x,y"
         try:
@@ -330,9 +383,12 @@ class DeviceService:
         ney = params.get('normalizedEndY')
 
         if None not in (nsx, nsy, nex, ney) and cur_w and cur_h:
+            base_w, base_h = self._norm_base_size(
+                params, cur_w, cur_h,
+                max(nsx, nsy, nex, ney))
             return (
-                int(round(nsx * cur_w)), int(round(nsy * cur_h)),
-                int(round(nex * cur_w)), int(round(ney * cur_h)),
+                int(round(nsx * base_w)), int(round(nsy * base_h)),
+                int(round(nex * base_w)), int(round(ney * base_h)),
             )
 
         sx = params.get('startX', 500)

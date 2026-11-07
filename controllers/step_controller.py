@@ -83,6 +83,10 @@ class StepController(QObject):
         # 触摸量程缓存（从选定设备里取）
         self._touch_max_x = None
         self._touch_max_y = None
+        # 录制开始时的屏幕旋转角度（0/1/2/3 对应 0/90/180/270 度）。
+        # 触摸面板报的是**物理面板坐标**，不随显示旋转；横屏录制必须靠它做
+        # 坐标映射，否则录下来的点和实际位置对不上（见 _raw_to_screen）。
+        self._screen_rotation = 0
 
         self.steps_ready.connect(self._apply_steps_to_model)
         self.steps_preview.connect(self._on_steps_preview)
@@ -959,7 +963,10 @@ class StepController(QObject):
         self._dump_worker_alive = False
 
     def _record_loop(self):
-        # ---- 获取屏幕分辨率（优先 Override size）----
+        # ---- 获取屏幕分辨率（优先 Override size），并换算到当前显示方向 ----
+        # `wm size` 给的是**面板原始朝向**的尺寸：手机横屏游戏时它仍是竖屏的
+        # 1084x2412，而触摸坐标、截图、input tap 用的都是 2412x1084。
+        # 不换算的话，make_loc_params 里的 x/width 会超过 1，回放整体错位。
         try:
             size_output = self.device_service.device.shell("wm size")
             out_str = size_output
@@ -982,18 +989,33 @@ class StepController(QObject):
         except Exception:
             self._screen_width, self._screen_height = 1080, 1920
 
+        # 取当前旋转角度：录制期间切了屏幕方向也得按新方向算，所以放在这里而不是缓存
+        self._screen_rotation = self._query_display_rotation()
+        if self._screen_rotation in (1, 3) and self._screen_width < self._screen_height:
+            # 只在 panel 本身是竖的时候交换：车机 wm size 本来就是 2560x1440（宽>高），
+            # 即使 rotation 报 1 也不能换，否则反而错。
+            self._screen_width, self._screen_height = (
+                self._screen_height, self._screen_width)
+
         # ---- 诊断日志 ----
         orientation = "横屏" if self._screen_width > self._screen_height else "竖屏"
-        print(f"[录制] 屏幕: {self._screen_width}x{self._screen_height} ({orientation})")
+        print(f"[录制] 屏幕: {self._screen_width}x{self._screen_height} ({orientation}), "
+              f"rotation={self._screen_rotation}")
 
         dev = self._selected_touch_device or {}
         print(f"[录制] 使用触摸设备: {dev.get('path')} ({dev.get('name')})")
         print(f"[录制] 触摸量程: max_x={self._touch_max_x}, max_y={self._touch_max_y}")
 
         # ---- 量程-分辨率一致性校验（车机上很重要）----
+        # 必须拿**面板朝向**的尺寸来比：_screen_width/height 已经换算成显示朝向，
+        # 横屏下和触摸量程是差 90 度的，直接比会出现虚假的「量程比例异常」。
         if self._touch_max_x and self._touch_max_y and self._screen_width and self._screen_height:
-            ratio_x = self._touch_max_x / self._screen_width
-            ratio_y = self._touch_max_y / self._screen_height
+            if self._screen_rotation in (1, 3):
+                panel_w, panel_h = self._screen_height, self._screen_width
+            else:
+                panel_w, panel_h = self._screen_width, self._screen_height
+            ratio_x = self._touch_max_x / panel_w
+            ratio_y = self._touch_max_y / panel_h
             if ratio_x > 0 and ratio_y > 0:
                 drift = abs(ratio_x - ratio_y) / max(ratio_x, ratio_y)
                 if drift > 0.2:
@@ -1283,8 +1305,25 @@ class StepController(QObject):
         idx = items.index(item)
         return devices[idx]
 
+    def _query_display_rotation(self) -> int:
+        """当前屏幕旋转角度（0/1/2/3 对应 0/90/180/270 度）。取不到按 0 处理。"""
+        try:
+            info = self.device_service.device.info
+            return int(info.get('displayRotation', 0))
+        except Exception:
+            return 0
+
     def _raw_to_screen(self, raw_x, raw_y):
-        """把触摸屏原始坐标换算为屏幕坐标。量程未知时原样返回。"""
+        """把触摸面板原始坐标换算成**当前显示方向**的屏幕坐标。量程未知时原样返回。
+
+        触摸面板报的是**物理面板坐标**，不随显示旋转 —— 量程 max_x/max_y 的比值
+        等于面板朝向的宽高比（本机 8671:19295 ≈ 1084:2412，即面板是竖的）。
+        横屏时必须再做一次旋转映射，否则录下来的点整体错位。
+
+        实测（2026-11-07，部落冲突横屏 rotation=1）：点左下角战斗按钮，
+        raw=(925,1477)。按量程映射得显示坐标 (185,968)，落在按钮范围
+        x112~306 / y875~1045 内 —— 与直接按量程线性缩放得到的 (116,185) 完全不同。
+        """
         mx = getattr(self, '_touch_max_x', None)
         my = getattr(self, '_touch_max_y', None)
 
@@ -1292,22 +1331,38 @@ class StepController(QObject):
         if not mx or not my or mx <= 0 or my <= 0:
             return raw_x, raw_y
 
-        # 量程和屏幕分辨率几乎 1:1 时直接返回（车机上常见），避免浮点误差
-        if (mx == self._screen_width - 1 and my == self._screen_height - 1):
+        # 归一化到面板比例（0~1）：与屏幕分辨率无关，所以先归一化再按方向映射
+        nx = raw_x / mx
+        ny = raw_y / my
+
+        sw, sh = self._screen_width, self._screen_height
+        rot = getattr(self, '_screen_rotation', 0)
+
+        # 量程与屏幕几乎 1:1 且不旋转（车机最常见）：直接返回，避免 1px 漂移
+        # 和「越界」误报（mx=2559、sw=2560 时 raw/(2559)*2560 会多出 1px）
+        if rot == 0 and mx == sw - 1 and my == sh - 1:
             return raw_x, raw_y
 
-        sx = int(round(raw_x / mx * self._screen_width))
-        sy = int(round(raw_y / my * self._screen_height))
+        if rot == 1:       # 90 度：横轴来自面板纵轴，纵轴来自反过来的横轴
+            fx, fy = ny, 1.0 - nx
+        elif rot == 3:     # 270 度：与 90 度反向
+            fx, fy = 1.0 - ny, nx
+        elif rot == 2:     # 180 度：两轴都翻
+            fx, fy = 1.0 - nx, 1.0 - ny
+        else:              # 0 度：面板与显示同向（车机、竖屏手机走这里）
+            fx, fy = nx, ny
+
+        sx = int(round(fx * sw))
+        sy = int(round(fy * sh))
 
         # 越界保护：换算后如果超出屏幕像素索引范围，说明量程探测可能错了
         # 注意：像素索引有效范围是 [0, screen_width - 1]，
         # 所以判断要用 >= 而不是 >，否则 sx == screen_width 会漏网
-        if sx < 0 or sx >= self._screen_width or sy < 0 or sy >= self._screen_height:
+        if sx < 0 or sx >= sw or sy < 0 or sy >= sh:
             print(f"[录制] ⚠ 换算越界: raw=({raw_x},{raw_y}) → screen=({sx},{sy}), "
-                  f"量程=({mx},{my}), 分辨率=({self._screen_width},{self._screen_height})")
-            # 越界时钳制到有效范围，而不是保留原始值
-            sx = max(0, min(sx, self._screen_width - 1))
-            sy = max(0, min(sy, self._screen_height - 1))
+                  f"量程=({mx},{my}), 分辨率=({sw},{sh}), rotation={rot}")
+            sx = max(0, min(sx, sw - 1))
+            sy = max(0, min(sy, sh - 1))
 
         return sx, sy
 
