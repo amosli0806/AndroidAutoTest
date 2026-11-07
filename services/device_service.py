@@ -187,8 +187,13 @@ class DeviceService:
             f"💡 请手动在设备设置里选择输入法。")
 
     # ---------- 核心方法：perform ----------
-    def perform(self, step: Step):
-        """执行步骤，失败时抛出用户友好的错误信息"""
+    def perform(self, step: Step, next_step: Optional[Step] = None):
+        """执行步骤，失败时抛出用户友好的错误信息。
+
+        next_step 是**下一步**（可选）。只用来判断要不要加步骤间隔：
+        「点击 → 等待 2 秒」这种写法，原本是 2（固定间隔）+ 2（等待）= 4 秒，
+        同一段时间算了两遍。传了下一步就能跳过这次固定间隔。
+        """
         self.last_click_suspect = None      # 每步重置，避免上一步的结论串到这一步
         self.last_click_hint = ''
         self._quick_locate_info = None
@@ -229,9 +234,12 @@ class DeviceService:
         else:
             raise ValueError(f"不支持的动作类型: {step.type}")
 
-        # 步骤后间隔（wait / voice 自带等待语义，不再叠加默认间隔）
-        if step.type not in ('wait', 'voice', 'wait_for') and self.step_interval > 0:
-            time.sleep(self.step_interval)
+        # 步骤后间隔（wait / voice 自带等待语义，不再叠加默认间隔）。
+        # 下一步本身就是等待类时同样跳过：那一步会等，这里再加一遍等于白等。
+        SELF_WAITING = ('wait', 'voice', 'wait_for')
+        if step.type not in SELF_WAITING and self.step_interval > 0:
+            if next_step is None or next_step.type not in SELF_WAITING:
+                time.sleep(self.step_interval)
 
     def _apply_vars(self, params: dict) -> dict:
         """把参数里的 `${变量}` 换成值，未定义的**原样保留**并记进 last_var_missing。

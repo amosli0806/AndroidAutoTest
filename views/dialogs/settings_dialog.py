@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QPushButton, QFileDialog, QSlider, QLabel,
     QComboBox, QWidget, QStackedWidget, QTreeWidget, QTreeWidgetItem,
     QFrame, QScrollArea, QKeySequenceEdit, QCheckBox, QToolButton,
-    QTableWidget, QTableWidgetItem, QHeaderView, QSpinBox
+    QTableWidget, QTableWidgetItem, QHeaderView, QSpinBox, QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QKeySequence, QIcon, QPixmap, QImageReader
@@ -282,6 +282,12 @@ class SettingsDialog(QDialog):
         device_item.setData(0, Qt.ItemDataRole.UserRole, idx)
         device_root.addChild(device_item)
         self.content_stack.addWidget(self._build_device_page())
+        idx += 1
+
+        interval_item = QTreeWidgetItem(["步骤间隔"])
+        interval_item.setData(0, Qt.ItemDataRole.UserRole, idx)
+        device_root.addChild(interval_item)
+        self.content_stack.addWidget(self._build_step_interval_page())
         idx += 1
 
         # ========== 分类：数据维护 ==========
@@ -1296,6 +1302,57 @@ class SettingsDialog(QDialog):
 
         layout.addStretch()
         return page
+
+    def _build_step_interval_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(16)
+
+        title = QLabel("步骤间隔")
+        title.setObjectName("SettingsPageTitle")
+        layout.addWidget(title)
+
+        subtitle = QLabel("每个操作执行完后，等多久再执行下一步。给界面留出跳转与动画时间；"
+                          "调小跑得更快，车机这类响应慢的设备建议调大。")
+        subtitle.setObjectName("SettingsPageSubtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self.step_interval_spin = QDoubleSpinBox()
+        self.step_interval_spin.setRange(0.0, 5.0)
+        self.step_interval_spin.setSingleStep(0.5)
+        self.step_interval_spin.setDecimals(1)
+        self.step_interval_spin.setSuffix(" 秒")
+        self.step_interval_spin.setMinimumHeight(32)
+        self.step_interval_spin.setValue(Settings.get_step_interval())
+        self.step_interval_spin.valueChanged.connect(self._on_step_interval_changed)
+        form.addRow("步骤间隔:", self.step_interval_spin)
+        layout.addLayout(form)
+
+        hint = QLabel("下一步本身就是「等待 / 显式等待 / 语音播报」时，不再叠加这个间隔 —— "
+                      "那一步自身就会等，叠上去等于同一段时间算两遍。")
+        hint.setObjectName("SettingsPageSubtitle")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        layout.addStretch()
+        return page
+
+    def _on_step_interval_changed(self, value: float):
+        """改完立刻生效，不用重启程序"""
+        Settings.set_step_interval(value)
+        main_win = self.parent()
+        ds = getattr(main_win, 'device_service', None) if main_win else None
+        if ds is not None:
+            try:
+                ds.set_step_interval(value)
+            except Exception:
+                pass
 
     def _on_restore_ime(self):
         main_win = self.parent()

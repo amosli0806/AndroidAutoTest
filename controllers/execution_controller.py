@@ -190,10 +190,13 @@ class ExecutionWorker(QObject):
                     break
                 attempt = 0
                 step_failed = False
+                # 下一步传给 perform：若它是等待类，就跳过本步的固定间隔，
+                # 否则「点击 + 等待 2 秒」会变成 2 + 2 = 4 秒
+                next_step = steps[step_idx] if step_idx < len(steps) else None
                 while True:
                     attempt += 1
                     try:
-                        self.device.perform(step)
+                        self.device.perform(step, next_step=next_step)
                         # 变量替换是"未定义就原样保留"，所以要在这里点出来：
                         # 否则用户只会在失败信息里看到一个没被替换的 ${xxx}，很难定位。
                         missing_vars = getattr(self.device, 'last_var_missing', None)

@@ -682,7 +682,7 @@ def main():
     # ---------- 设备服务 ----------
     device_svc = DeviceService()
     device_svc.set_element_controller(element_controller)
-    device_svc.set_step_interval(2)
+    device_svc.set_step_interval(Settings.get_step_interval())
     step_controller.set_device_service(device_svc)
     # 动作卡的「截屏取图」（图像定位）需要设备；必须放在 device_svc 创建之后
     action_card.set_device_service(device_svc)

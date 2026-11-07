@@ -133,6 +133,31 @@ class Settings:
         settings['output_dir'] = path
         cls.save(settings)
 
+    # ---------- 执行节奏 ----------
+    @classmethod
+    def get_step_interval(cls) -> float:
+        """每个操作执行完后固定的等待间隔（秒），0 = 不等，上限 5 秒。
+
+        默认 2 秒：给界面留出跳转/动画时间，避免「点完立刻点下一个」丢事件。
+        车机这类响应慢的设备可以调大；纯坐标的快速操作场景可以调小。
+        下一步本身是「等待 / 显式等待 / 语音播报」时不会叠加（那一步自己会等），
+        见 device_service.perform。
+        """
+        try:
+            v = float(cls.load().get('step_interval', 2.0))
+        except Exception:
+            return 2.0
+        return max(0.0, min(5.0, v))
+
+    @classmethod
+    def set_step_interval(cls, seconds: float):
+        settings = cls.load()
+        try:
+            settings['step_interval'] = max(0.0, min(5.0, float(seconds)))
+        except (TypeError, ValueError):
+            settings['step_interval'] = 2.0
+        cls.save(settings)
+
     # ---------- 主题模式 ----------
     @classmethod
     def get_theme_mode(cls) -> str:
