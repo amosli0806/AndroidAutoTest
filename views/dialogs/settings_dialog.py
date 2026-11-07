@@ -1304,14 +1304,12 @@ class SettingsDialog(QDialog):
         return page
 
     def _build_step_interval_page(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        # 本页没有页标题：左侧导航已经写着「自动化步骤间隔」，再顶一行大字属于重复。
+        content = QWidget()
+        content.setObjectName("StepIntervalPage")
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(16)
-
-        title = QLabel("自动化步骤间隔")
-        title.setObjectName("SettingsPageTitle")
-        layout.addWidget(title)
+        layout.setSpacing(12)
 
         subtitle = QLabel("每个操作执行完后，等多久再执行下一步。给界面留出跳转与动画时间；"
                           "调小跑得更快，车机这类响应慢的设备建议调大。")
@@ -1320,15 +1318,16 @@ class SettingsDialog(QDialog):
         layout.addWidget(subtitle)
 
         form = QFormLayout()
-        form.setSpacing(12)
+        form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
+        # 与「预期检证」页的数字框完全一致：同样的 QSpinBox 家族、不额外设高度，
+        # 让它按平台默认的行高走，两页的数字框高宽才能对齐。
         self.step_interval_spin = QDoubleSpinBox()
         self.step_interval_spin.setRange(0.0, 5.0)
         self.step_interval_spin.setSingleStep(0.5)
         self.step_interval_spin.setDecimals(1)
         self.step_interval_spin.setSuffix(" 秒")
-        self.step_interval_spin.setMinimumHeight(32)
         self.step_interval_spin.setValue(Settings.get_step_interval())
         self.step_interval_spin.valueChanged.connect(self._on_step_interval_changed)
         form.addRow("步骤间隔:", self.step_interval_spin)
@@ -1341,7 +1340,16 @@ class SettingsDialog(QDialog):
         layout.addWidget(hint)
 
         layout.addStretch()
-        return page
+
+        # 和「预期检证」页一样套滚动区：两页的视口宽度一致，
+        # 数字框的左右边界才能严格对齐。
+        scroll = QScrollArea()
+        scroll.setObjectName("VoiceVerifyScroll")
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        return scroll
 
     def _on_step_interval_changed(self, value: float):
         """改完立刻生效，不用重启程序"""
@@ -2071,8 +2079,11 @@ class SettingsDialog(QDialog):
                 border-color: {input_focus};
             }}
             /* 数字输入框：不写这段时会退回原生 palette 的深色底，
-               和旁边的下拉框/文本框明显不是一个颜色，文字也发灰。 */
-            #SettingsDialog QSpinBox {{
+               和旁边的下拉框/文本框明显不是一个颜色，文字也发灰。
+               QDoubleSpinBox 必须一起写：漏掉时小数框会按原生样式绘制，
+               高度、边框、底色都跟整数框对不上。 */
+            #SettingsDialog QSpinBox,
+            #SettingsDialog QDoubleSpinBox {{
                 background-color: {input_bg};
                 color: {input_text};
                 border: 1px solid {input_border};
@@ -2081,8 +2092,14 @@ class SettingsDialog(QDialog):
                 font-size: 13px;
                 min-height: 22px;
             }}
-            #SettingsDialog QSpinBox:focus {{
+            #SettingsDialog QSpinBox:focus,
+            #SettingsDialog QDoubleSpinBox:focus {{
                 border-color: {input_focus};
+            }}
+            /* 小数框的 sizeHint 天生比整数框高 4px（同样是 min-height:22 + padding 4，
+               它算出来是 36 而不是 32），单独压一下内容区，两页数字框高度才真的对得上。 */
+            #SettingsDialog QDoubleSpinBox {{
+                max-height: 22px;
             }}
             #SettingsDialog QComboBox {{
                 background-color: {input_bg};
@@ -2314,7 +2331,8 @@ class SettingsDialog(QDialog):
             #VoicePage,
             #VoiceVerifyScroll,
             #VoiceVerifyScroll > QWidget#qt_scrollarea_viewport,
-            #VoiceVerifyPage {{
+            #VoiceVerifyPage,
+            #StepIntervalPage {{
                 background-color: {content_bg};
                 border: none;
             }}
