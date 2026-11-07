@@ -36,6 +36,12 @@ class DeviceService:
         # 目标页面没加载完，它都返回成功。不校验就会出现「用例全绿、功能全废」
         # （2026-11-07 实测：坐标算错时 8 个步骤全部报通过，界面一步没动）。
         self.last_click_suspect: Optional[tuple] = None
+        # 疑似未生效时的补充原因（如「命中项 clickable=false」），执行层拼进警告
+        self.last_click_hint: str = ''
+        # 最近一次浅层快查命中的节点属性，供点击后判断「为什么没反应」
+        self._quick_locate_info: Optional[dict] = None
+        # 失败现场的截图路径（元素等待超时时写入），执行层据此收集到报告
+        self.last_screenshot: Optional[str] = None
         # 是否开启点击效果校验：每次坐标点击前后各截一张小图对比，
         # 单步多花约 0.6 秒。对自绘界面（游戏、Unity/Flutter、地图 POI）值得开。
         self.verify_click_effect = True
@@ -184,6 +190,9 @@ class DeviceService:
     def perform(self, step: Step):
         """执行步骤，失败时抛出用户友好的错误信息"""
         self.last_click_suspect = None      # 每步重置，避免上一步的结论串到这一步
+        self.last_click_hint = ''
+        self._quick_locate_info = None
+        self.last_screenshot = None         # 上一步的失败截图不能挂到这一步
         # 设备重连逻辑。
         # 语音播报 / 等待这两类步骤不碰设备，没有连接也要能执行 ——
         # 用途是测试环境版本连不上设备时，仍然可以跑纯语音的「文案用例」。
@@ -267,8 +276,13 @@ class DeviceService:
             base_msg += "。\n可能原因：①当前界面不包含该元素；②定位值已失效或应用版本更新；③页面未加载完成。\n建议：使用「应用可视化」查看实际界面，或改用文本/XPath定位。"
             return base_msg
 
-        # 检查是否为超时异常
-        if 'timeout' in error_str.lower() or 'wait' in error_str.lower():
+        # 检查是否为超时异常。
+        # 不能用全文包含 "wait" 来判：报错里带着现场截图路径（wait_fail_xxx.png），
+        # 文件名本身就会命中，导致「操作超时：等待元素出现超时：…」这种重复前缀。
+        # 中文「超时」已经是完整说法，直接原样返回；底层英文异常才补前缀。
+        if '超时' in error_str:
+            return error_str
+        if 'timeout' in error_str.lower():
             return f"操作超时：{error_str}"
 
         # 如果是断言异常，保留其原始消息（可能包含截图路径）
@@ -533,9 +547,95 @@ class DeviceService:
         detail = f"主定位 {primary_cost:.1f}s"
         if fb_cost:
             detail += f" + 备用定位 {fb_cost:.1f}s"
-        raise ValueError(
-            f"等待元素出现超时：{loc_type} = {loc_value}"
-            f"（{detail}，共 {used:.1f}s / 预算 {total:.0f}s）")
+        msg = (f"等待元素出现超时：{loc_type} = {loc_value}"
+               f"（{detail}，共 {used:.1f}s / 预算 {total:.0f}s）")
+        msg += self._capture_failure_context(loc_type, loc_value)
+        raise ValueError(msg)
+
+    def _similar_nodes(self, xml, loc_type, loc_value, limit=3):
+        """从界面树里挑最接近目标的几个节点，为「是不是文案/ID 改了」提供线索。
+
+        用标准库 difflib 做相似度，不引新依赖；资源ID 只比最后一段，
+        否则 com.xxx:id/ 这个共同前缀会把不同控件的相似度拉到差不多。
+        """
+        attr = {'文本': 'text', '资源ID': 'resource-id',
+                '描述': 'content-desc'}.get(loc_type)
+        if not attr:
+            return []
+        import re as _re
+        import difflib
+        attr_pat = _re.compile(rf'\s{attr}="([^"]*)"')
+        bounds_pat = _re.compile(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"')
+        key_target = (loc_value.rsplit('/', 1)[-1]
+                      if loc_type == '资源ID' else loc_value)
+        seen, scored = set(), []
+        for m in _re.finditer(r'<node[^>]*>', xml):
+            tag = m.group(0)
+            v = attr_pat.search(tag)
+            if not v:
+                continue
+            val = v.group(1)
+            if not val or val in seen:
+                continue
+            key_val = (val.rsplit('/', 1)[-1]
+                       if loc_type == '资源ID' else val)
+            score = difflib.SequenceMatcher(None, key_target, key_val).ratio()
+            if key_target in key_val or key_val in key_target:
+                score = max(score, 0.85)
+            if score < 0.5:
+                continue
+            seen.add(val)
+            b = bounds_pat.search(tag)
+            scored.append((round(score, 2), val, attr,
+                           b.group(0).replace('bounds="', '').rstrip('"') if b else ''))
+        scored.sort(reverse=True)
+        return scored[:limit]
+
+    def _capture_failure_context(self, loc_type, loc_value) -> str:
+        """元素等不到时把现场留下来：截图 + 界面树 + 最接近的几个候选。
+
+        返回拼在报错后面的说明；任何一步失败都不影响原报错抛出 ——
+        现场是加分项，不能因为它出错把主因盖掉。
+        """
+        try:
+            shot_dir = self._screenshot_dir()
+            os.makedirs(shot_dir, exist_ok=True)
+        except Exception:
+            return ''
+
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
+        lines = []
+
+        shot_path = os.path.join(shot_dir, f"wait_fail_{ts}.png")
+        try:
+            self.device.screenshot(shot_path)
+            self.last_screenshot = shot_path    # 执行层据此把图收进报告
+            lines.append(f"截图：{shot_path}")
+        except Exception:
+            pass
+
+        xml = ''
+        try:
+            xml = self.device.dump_hierarchy()
+        except Exception:
+            pass
+        if xml:
+            xml_path = os.path.join(shot_dir, f"wait_fail_{ts}.xml")
+            try:
+                with open(xml_path, 'w', encoding='utf-8') as f:
+                    f.write(xml)
+                lines.append(f"界面树：{xml_path}")
+            except Exception:
+                pass
+            candidates = self._similar_nodes(xml, loc_type, loc_value)
+            if candidates:
+                lines.append("接近的元素（定位值是不是改了？）：")
+                for _score, val, attr, bounds in candidates:
+                    lines.append(f"  · {val}   [{attr}]   {bounds}")
+            else:
+                lines.append("页面上没有文本 / ID 相近的元素，可能整块界面都没加载出来")
+
+        return ("\n" + "\n".join(lines)) if lines else ''
 
     def _capture_screenshot(self) -> str:
         """截图到临时文件（图像匹配用），返回路径；失败抛异常。"""
@@ -579,7 +679,14 @@ class DeviceService:
     QUICK_LOCATE_GAP = 0.3
 
     def _quick_locate(self, params):
-        """浅层 dump 快速定位。命中返回 (x, y)，未命中或不适用的定位方式返回 None。"""
+        """浅层 dump 快速定位。命中返回 (x, y)，未命中或不适用的定位方式返回 None。
+
+        同一段文本常命中多个节点（外层可点的容器 + 内层不可点的文字），所以**优先
+        挑 clickable 且 enabled 的**，点容器才是有效点击。只有不可点的命中时不返回
+        None 而是照样返回坐标 —— 自绘界面（游戏、Flutter）整棵树都是 clickable=false，
+        不返回就彻底用不了；这种情况把属性记进 _quick_locate_info，
+        点击没反应时用来给出更准的原因。
+        """
         loc_type = params.get('locationType')
         loc_value = params.get('locationValue')
         attr = {'文本': 'text', '资源ID': 'resource-id',
@@ -591,12 +698,14 @@ class DeviceService:
         node_pat = _re.compile(r'<node[^>]*>')
         attr_pat = _re.compile(rf'\s{attr}="([^"]*)"')
         bounds_pat = _re.compile(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"')
+        flag_pat = _re.compile(r'\s(clickable|enabled)="(\w+)"')
 
         for attempt in range(self.QUICK_LOCATE_TRIES):
             try:
                 xml = self.device.dump_hierarchy(max_depth=self.QUICK_DUMP_DEPTH)
             except Exception:
                 return None
+            fallback = None          # 第一个不可点的命中，留作兜底
             for node in node_pat.finditer(xml):
                 tag = node.group(0)
                 m = attr_pat.search(tag)
@@ -611,14 +720,30 @@ class DeviceService:
                 if not b:
                     continue
                 x1, y1, x2, y2 = map(int, b.groups())
-                if x2 > x1 and y2 > y1:
-                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                    # 只接受落在屏幕内的命中：存在但被滑出视野的控件中心点会在
-                    # 屏幕外，那种情况交给完整查找去走「等元素出现」更稳妥
-                    sw, sh = self._get_current_screen_size()
-                    if sw and sh and not (0 <= cx < sw and 0 <= cy < sh):
-                        continue
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                # 只接受落在屏幕内的命中：存在但被滑出视野的控件中心点会在
+                # 屏幕外，那种情况交给完整查找去走「等元素出现」更稳妥
+                sw, sh = self._get_current_screen_size()
+                if sw and sh and not (0 <= cx < sw and 0 <= cy < sh):
+                    continue
+
+                flags = dict(flag_pat.findall(tag))
+                clickable = flags.get('clickable') == 'true'
+                enabled = flags.get('enabled', 'true') == 'true'
+                if clickable and enabled:
+                    self._quick_locate_info = {
+                        'clickable': True, 'enabled': True, 'value': val}
                     return cx, cy
+                if fallback is None:
+                    fallback = (cx, cy, clickable, enabled, val)
+
+            if fallback is not None:
+                cx, cy, clickable, enabled, val = fallback
+                self._quick_locate_info = {
+                    'clickable': clickable, 'enabled': enabled, 'value': val}
+                return cx, cy
             if attempt + 1 < self.QUICK_LOCATE_TRIES:
                 time.sleep(self.QUICK_LOCATE_GAP)
         return None
@@ -669,6 +794,19 @@ class DeviceService:
         except Exception:
             return None
 
+    def _click_hint_from_info(self) -> str:
+        """命中节点本身有「不该点」的属性时，给一句具体原因"""
+        info = self._quick_locate_info
+        if not info:
+            return ''
+        val = info.get('value', '')
+        if not info.get('enabled', True):
+            return f'命中的「{val}」是禁用状态（enabled=false）'
+        if not info.get('clickable', True):
+            return (f'命中的「{val}」不可点击（clickable=false）——'
+                    f'可能被弹窗盖住、还在渲染，或只是外层容器上的文字')
+        return ''
+
     def _judge_click_effect(self, before, x, y):
         """点击后界面几乎没变化 → 记「疑似未生效」，交给执行层告警。
 
@@ -677,6 +815,7 @@ class DeviceService:
         不改变界面（聚焦输入框、点在地图空白处只移动视野），误判成失败会更烦。
         """
         self.last_click_suspect = None
+        self.last_click_hint = ''
         try:
             time.sleep(self.CLICK_EFFECT_SETTLE)
             after = self._grab_thumb()
@@ -685,6 +824,7 @@ class DeviceService:
             diff = sum(abs(a - b) for a, b in zip(before, after)) / len(before)
             if diff < self.CLICK_EFFECT_MIN_DIFF:
                 self.last_click_suspect = (x, y, round(diff, 2))
+                self.last_click_hint = self._click_hint_from_info()
         except Exception:
             self.last_click_suspect = None
 

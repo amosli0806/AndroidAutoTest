@@ -206,10 +206,12 @@ class ExecutionWorker(QObject):
                         suspect = getattr(self.device, 'last_click_suspect', None)
                         if suspect:
                             cx, cy, dv = suspect
+                            hint = (getattr(self.device, 'last_click_hint', '') or '').strip()
+                            extra = (f"；{hint}" if hint
+                                     else " —— 建议核对定位值，或用「应用可视化」看下当时界面")
                             self.progress.emit(
-                                f"  ⚠ 步骤 {step_idx} 坐标点击 ({cx},{cy}) 后界面几乎没变化"
-                                f"（差异 {dv}），可能没点中目标 —— 坐标类步骤没有元素可校验，"
-                                f"这里只能按界面变化推断", "warning")
+                                f"  ⚠ 步骤 {step_idx} 点击 ({cx},{cy}) 后界面几乎没变化"
+                                f"（差异 {dv}），可能没点中目标{extra}", "warning")
                         if step.type == 'assert':
                             self.progress.emit(f"  ✅ 断言：{step.name} 通过", "success")
                         break
