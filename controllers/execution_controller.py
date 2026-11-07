@@ -203,6 +203,13 @@ class ExecutionWorker(QObject):
                                 f"  ⚠ 步骤 {step_idx} 有未定义变量：{names}"
                                 f"（已按原样保留，请在「设置 → 变量」里补上）",
                                 "warning")
+                        suspect = getattr(self.device, 'last_click_suspect', None)
+                        if suspect:
+                            cx, cy, dv = suspect
+                            self.progress.emit(
+                                f"  ⚠ 步骤 {step_idx} 坐标点击 ({cx},{cy}) 后界面几乎没变化"
+                                f"（差异 {dv}），可能没点中目标 —— 坐标类步骤没有元素可校验，"
+                                f"这里只能按界面变化推断", "warning")
                         if step.type == 'assert':
                             self.progress.emit(f"  ✅ 断言：{step.name} 通过", "success")
                         break

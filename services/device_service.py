@@ -31,6 +31,14 @@ class DeviceService:
         self.step_interval = 2
         # 上一步里出现过、但变量表里没有的 ${变量} 名（由 perform 填，执行层读它告警）
         self.last_var_missing: List[str] = []
+        # 坐标点击后「界面有没有反应」的判定结果，由 perform 之外（执行层）读取并告警。
+        # 元素定位点不到会抛异常，而坐标点击是 input tap —— 点到屏外、被弹窗盖住、
+        # 目标页面没加载完，它都返回成功。不校验就会出现「用例全绿、功能全废」
+        # （2026-11-07 实测：坐标算错时 8 个步骤全部报通过，界面一步没动）。
+        self.last_click_suspect: Optional[tuple] = None
+        # 是否开启点击效果校验：每次坐标点击前后各截一张小图对比，
+        # 单步多花约 0.6 秒。对自绘界面（游戏、Unity/Flutter、地图 POI）值得开。
+        self.verify_click_effect = True
         if serial:
             self.connect(serial)
 
@@ -175,6 +183,7 @@ class DeviceService:
     # ---------- 核心方法：perform ----------
     def perform(self, step: Step):
         """执行步骤，失败时抛出用户友好的错误信息"""
+        self.last_click_suspect = None      # 每步重置，避免上一步的结论串到这一步
         # 设备重连逻辑。
         # 语音播报 / 等待这两类步骤不碰设备，没有连接也要能执行 ——
         # 用途是测试环境版本连不上设备时，仍然可以跑纯语音的「文案用例」。
@@ -432,30 +441,63 @@ class DeviceService:
     # 避免「页面还没出来就操作」导致的偶发失败。步骤参数里可传 timeout 覆盖。
     DEFAULT_ELEMENT_WAIT_TIMEOUT = 10
 
-    def _wait_for_object(self, obj, params):
+    # 主定位能占用的预算比例，剩下的留给 fallback。
+    # 之前两者各自等满 timeout，填 5 秒实际最坏 10 秒、填 10 秒最坏 20 秒
+    # （2026-11-07 实测：配 5 秒跑了 10.24 秒），配了重试还会翻倍。
+    PRIMARY_WAIT_RATIO = 0.6
+
+    def _step_timeout(self, params) -> float:
+        """这一步允许等待的总秒数（步骤参数 timeout，缺省用默认值）"""
+        timeout = params.get('timeout', self.DEFAULT_ELEMENT_WAIT_TIMEOUT)
+        try:
+            timeout = float(timeout)
+        except (TypeError, ValueError):
+            timeout = self.DEFAULT_ELEMENT_WAIT_TIMEOUT
+        return timeout
+
+    def _wait_for_object(self, obj, params, timeout=None):
         """等元素出现（带超时）。等到返回 True；超时返回 False。
 
         uiautomator2 的 click/input 不会自己等元素，找不到就立刻抛「元素不存在」，
-        所以这里在操作前用 exists(timeout=…) 主动等，给页面渲染留时间。
-        默认超时 10 秒，步骤参数里的 timeout 可覆盖；坐标定位无需等待。
+        所以这里在操作前用 exists() 主动等，给页面渲染留时间。
+        timeout 显式传入时以传入为准（总预算封顶用），否则取步骤参数；
+        坐标定位无需等待。
+
+        **为什么自己轮询而不是 exists(timeout=N)**：u2 的 timeout 是在它内部循环里
+        判的，但单次 UI dump 本身就可能要 10 秒（百度地图这类大页面实测 10~12 秒），
+        一个 dump 开始后没法中断。实测配 5 秒的等待跑了 10.24 秒、配 6 秒跑了 27 秒 ——
+        预算形同虚设。这里改成「单次 dump（exists(timeout=0)）+ 自己判 deadline」，
+        最坏只超支一次 dump 的时间，不会累积。
         """
         if obj is None:
             return True
-        timeout = params.get('timeout', self.DEFAULT_ELEMENT_WAIT_TIMEOUT)
+        if timeout is None:
+            timeout = self._step_timeout(params)
         try:
             timeout = float(timeout)
         except (TypeError, ValueError):
             timeout = self.DEFAULT_ELEMENT_WAIT_TIMEOUT
         if timeout <= 0:
             return True
-        return bool(obj.exists(timeout=timeout))
+
+        deadline = time.monotonic() + timeout
+        while True:
+            if obj.exists(timeout=0):        # 单次 dump，不进入 u2 的内部轮询
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.2)
 
     def _resolve_ui_object(self, params):
         """取元素对象：主定位等元素出现，失败时自动退到 fallback 定位（双保险）。
 
         录制/反查时会同时保留资源ID和文本：资源ID 可能因 App 升级失效，
         文本可能因状态变化失效 —— 一个失配就退回另一个，降低步骤偶发失败率。
-        返回可用的 ui object；都失败时抛 ValueError。
+
+        **两步共享同一份超时预算**：用户填的 timeout 就是「这一步最多等多久」，
+        主定位最多拿走 PRIMARY_WAIT_RATIO，余下的给 fallback。都失败时抛
+        ValueError，并在报错里写清各自等了多久 —— 否则只看到一句「超时」，
+        根本不知道该调大超时还是该修定位值。
         """
         loc_type = params.get('locationType')
         loc_value = params.get('locationValue')
@@ -463,18 +505,37 @@ class DeviceService:
         if obj is None:
             return None                     # 坐标定位：无需元素对象
 
-        if self._wait_for_object(obj, params):
-            return obj
+        total = self._step_timeout(params)
+        if total <= 0:
+            return obj                      # 配置了 0 = 明确不等
 
-        # 主定位超时，尝试 fallback
+        deadline = time.monotonic() + total
+        start = deadline - total
+        primary_budget = total * self.PRIMARY_WAIT_RATIO
+        if self._wait_for_object(obj, params, timeout=primary_budget):
+            return obj
+        primary_cost = primary_budget
+
+        # 主定位超时，用剩下的预算尝试 fallback
         fb_type = params.get('fallbackType')
         fb_value = params.get('fallbackValue')
+        fb_cost = 0.0
         if fb_type and fb_value:
-            fb_obj = self._get_ui_object(fb_type, fb_value, None)
-            if fb_obj is not None and self._wait_for_object(fb_obj, params):
-                return fb_obj
+            remain = deadline - time.monotonic()
+            if remain > 0.3:
+                fb_obj = self._get_ui_object(fb_type, fb_value, None)
+                if fb_obj is not None and self._wait_for_object(
+                        fb_obj, params, timeout=remain):
+                    return fb_obj
+                fb_cost = remain
 
-        raise ValueError(f"等待元素出现超时：{loc_type} = {loc_value}")
+        used = time.monotonic() - start
+        detail = f"主定位 {primary_cost:.1f}s"
+        if fb_cost:
+            detail += f" + 备用定位 {fb_cost:.1f}s"
+        raise ValueError(
+            f"等待元素出现超时：{loc_type} = {loc_value}"
+            f"（{detail}，共 {used:.1f}s / 预算 {total:.0f}s）")
 
     def _capture_screenshot(self) -> str:
         """截图到临时文件（图像匹配用），返回路径；失败抛异常。"""
@@ -506,6 +567,62 @@ class DeviceService:
                 pass
         return x, y
 
+    # ---- 浅层快查（文本 / 资源ID / 描述定位）----
+    # 百度地图这类大页面，一次完整 dump 要 8~12 秒，而 uiautomator2 的 selector
+    # 查询（exists / count）每次都要重跑一遍全量 dump；页面切换动画期间还可能连续
+    # 查两三次才命中，一步就要近 30 秒（2026-11-07 实测）。
+    # 限深度 dump 只要 5 秒（16 层足够覆盖底部 tab、按钮这类常用控件），
+    # 本地解析 XML 取 bounds 中心直接点。命中即用，未命中回退到完整查找，
+    # 只是加速，不改变最终结果。
+    QUICK_DUMP_DEPTH = 16
+    QUICK_LOCATE_TRIES = 2
+    QUICK_LOCATE_GAP = 0.3
+
+    def _quick_locate(self, params):
+        """浅层 dump 快速定位。命中返回 (x, y)，未命中或不适用的定位方式返回 None。"""
+        loc_type = params.get('locationType')
+        loc_value = params.get('locationValue')
+        attr = {'文本': 'text', '资源ID': 'resource-id',
+                '描述': 'content-desc'}.get(loc_type)
+        if not loc_value or attr is None:
+            return None
+
+        import re as _re
+        node_pat = _re.compile(r'<node[^>]*>')
+        attr_pat = _re.compile(rf'\s{attr}="([^"]*)"')
+        bounds_pat = _re.compile(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"')
+
+        for attempt in range(self.QUICK_LOCATE_TRIES):
+            try:
+                xml = self.device.dump_hierarchy(max_depth=self.QUICK_DUMP_DEPTH)
+            except Exception:
+                return None
+            for node in node_pat.finditer(xml):
+                tag = node.group(0)
+                m = attr_pat.search(tag)
+                if not m:
+                    continue
+                val = m.group(1)
+                # 文本要一字不差；资源ID 允许只写尾部（用户常填 new_user_text）
+                hit = (val == loc_value) if loc_type == '文本' else (loc_value in val)
+                if not hit:
+                    continue
+                b = bounds_pat.search(tag)
+                if not b:
+                    continue
+                x1, y1, x2, y2 = map(int, b.groups())
+                if x2 > x1 and y2 > y1:
+                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                    # 只接受落在屏幕内的命中：存在但被滑出视野的控件中心点会在
+                    # 屏幕外，那种情况交给完整查找去走「等元素出现」更稳妥
+                    sw, sh = self._get_current_screen_size()
+                    if sw and sh and not (0 <= cx < sw and 0 <= cy < sh):
+                        continue
+                    return cx, cy
+            if attempt + 1 < self.QUICK_LOCATE_TRIES:
+                time.sleep(self.QUICK_LOCATE_GAP)
+        return None
+
     def _resolve_click_target(self, params):
         """返回点击目标：True 表示坐标 (x, y)，False 表示 uiautomator2 对象。
         图像定位走截图匹配 → 坐标，这样点击族动作就不用各自判断。"""
@@ -516,14 +633,71 @@ class DeviceService:
         if loc_type == '图像':
             x, y = self._image_center(params)
             return True, x, y
+        # 文本/资源ID/描述：先走浅层快查，命中就直接按坐标点（省掉全量 dump）
+        quick = self._quick_locate(params)
+        if quick is not None:
+            return True, quick[0], quick[1]
         return False, self._resolve_ui_object(params), None
+
+    # ---- 坐标点击的「有没有反应」校验 ----
+    CLICK_EFFECT_SETTLE = 0.7       # 点击后等界面反应的时间（秒）
+    CLICK_EFFECT_MIN_DIFF = 1.5     # 48x48 灰度平均差低于它 = 疑似没反应
+
+    def _assert_in_screen(self, x, y):
+        """坐标越界直接报错。
+
+        原来什么都不判：算错的坐标（比如横屏没换算时的 y=2125）照样 submit 给
+        `input tap`，系统静默丢弃，步骤却报成功 —— 这是「假通过」最隐蔽的一种。
+        """
+        sw, sh = self._get_current_screen_size()
+        if not sw or not sh:
+            return
+        if not (0 <= x < sw and 0 <= y < sh):
+            raise ValueError(
+                f"点击坐标越界：({x},{y}) 超出屏幕范围 {sw}x{sh}。"
+                f"常见原因是录制分辨率与执行分辨率不一致，或坐标未按屏幕朝向换算。")
+
+    def _grab_thumb(self, size=48):
+        """截一张小灰度图用于前后对比。失败返回 None（不打断执行）。"""
+        try:
+            from PIL import Image
+            shot = self.device.screenshot()
+            if isinstance(shot, (bytes, bytearray)):
+                import io
+                shot = Image.open(io.BytesIO(shot))
+            return shot.convert('L').resize((size, size)).tobytes()
+        except Exception:
+            return None
+
+    def _judge_click_effect(self, before, x, y):
+        """点击后界面几乎没变化 → 记「疑似未生效」，交给执行层告警。
+
+        阈值按 48x48 灰度平均绝对差定：正常跳转/弹窗在 10 以上，静态页面的
+        轻微动画（时钟、波形）一般 < 1.5。只提示不判失败 —— 有些点击本来就
+        不改变界面（聚焦输入框、点在地图空白处只移动视野），误判成失败会更烦。
+        """
+        self.last_click_suspect = None
+        try:
+            time.sleep(self.CLICK_EFFECT_SETTLE)
+            after = self._grab_thumb()
+            if not after or len(after) != len(before):
+                return
+            diff = sum(abs(a - b) for a, b in zip(before, after)) / len(before)
+            if diff < self.CLICK_EFFECT_MIN_DIFF:
+                self.last_click_suspect = (x, y, round(diff, 2))
+        except Exception:
+            self.last_click_suspect = None
 
     def _perform_click(self, params):
         is_coord, target, y = self._resolve_click_target(params)
-        if is_coord:
-            self.device.click(target, y)
-        else:
+        if not is_coord:
             target.click()
+            return
+        self._assert_in_screen(target, y)
+        before = self._grab_thumb() if self.verify_click_effect else None
+        self.device.click(target, y)
+        if before is not None:
+            self._judge_click_effect(before, target, y)
 
     def _perform_double_click(self, params):
         is_coord, target, y = self._resolve_click_target(params)
@@ -567,18 +741,23 @@ class DeviceService:
         wait_type = params.get('wait_type', '元素出现')
         loc_type = params.get('locationType')
         loc_value = params.get('locationValue')
-        timeout = params.get('timeout', 10)
-        if not isinstance(timeout, (int, float)) or timeout <= 0:
-            timeout = 10
+        timeout = self._step_timeout(params)
+        if timeout <= 0:
+            timeout = self.DEFAULT_ELEMENT_WAIT_TIMEOUT
         if loc_type == '坐标':
             raise ValueError("显式等待不支持坐标定位，请用资源ID、文本、描述或XPath")
+
+        start = time.time()
 
         if loc_type == '图像':
             # 图像显式等待只支持「元素出现 / 元素消失」（图像没有"可点击"概念）
             if wait_type not in ('元素出现', '元素消失'):
                 raise ValueError("图像定位只支持「元素出现 / 元素消失」显式等待")
-            deadline = time.time() + timeout
-            while time.time() < deadline:
+            deadline = start + timeout
+            while True:
+                remain = deadline - time.time()
+                if remain <= 0:
+                    break
                 try:
                     self._image_center(params)
                     found = True
@@ -588,29 +767,48 @@ class DeviceService:
                     return
                 if wait_type == '元素消失' and not found:
                     return
-                time.sleep(1.0)   # 截图较慢，图像轮询间隔放宽到 1s
-            raise RuntimeError(f"等待超时（{wait_type}，图像='{loc_value}'，{timeout} 秒）")
+                # 截图较慢，轮询间隔 1s；但不能睡过 deadline，否则超时后还多等
+                gap = min(1.0, max(0.0, deadline - time.time()))
+                if gap <= 0:
+                    break
+                time.sleep(gap)
+            raise RuntimeError(
+                f"等待超时（{wait_type}，图像='{loc_value}'，"
+                f"预算 {timeout:g} 秒，实际 {time.time() - start:.1f} 秒）")
 
         obj = self._get_ui_object(loc_type, loc_value)
         if obj is None:
             raise ValueError(f"不支持的定位方式: {loc_type}")
 
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        deadline = start + timeout
+        while True:
+            remain = deadline - time.time()
+            if remain <= 0:
+                break
             try:
                 if wait_type == '元素出现':
-                    ok = obj.exists(timeout=0.5)
+                    ok = obj.exists(timeout=min(0.5, remain))
                 elif wait_type == '元素消失':
-                    ok = not obj.exists(timeout=0.5)
+                    ok = not obj.exists(timeout=min(0.5, remain))
                 else:  # 元素可点击
+                    # 只看 clickable 太宽：按钮还在但已置灰（enabled=False）、或被滑出
+                    # 可视区（visible=False）时，clickable 仍可能是 True，等待会提前通过，
+                    # 随后点了个「名义上能点、实际点不动」的控件，比超时更难查。
                     info = obj.info
-                    ok = bool(info and info.get('clickable'))
+                    ok = bool(info and info.get('clickable')
+                              and info.get('enabled', True)
+                              and info.get('visible', True))
             except Exception:
                 ok = False
             if ok:
                 return
-            time.sleep(0.5)
-        raise RuntimeError(f"等待超时（{wait_type}，{loc_type}='{loc_value}'，{timeout} 秒）")
+            gap = min(0.5, max(0.0, deadline - time.time()))
+            if gap <= 0:
+                break
+            time.sleep(gap)
+        raise RuntimeError(
+            f"等待超时（{wait_type}，{loc_type}='{loc_value}'，"
+            f"预算 {timeout:g} 秒，实际 {time.time() - start:.1f} 秒）")
 
     def _perform_voice(self, params):
         """语音播报：把文案用电脑扬声器读出来，车机麦克风拾取后交给它的语音助手。
