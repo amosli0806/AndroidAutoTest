@@ -301,15 +301,17 @@ class ApiView(QWidget):
                 border: 1px solid {border};
                 border-radius: 8px;
             }}
-            #ApiPaneTitle {{ color: {fg}; font-size: 14px; font-weight: 600; }}
+            /* 面板标题字号对齐语音页「语音管理 ▾」：16px + bold（原先 14px/600，
+               和语音页放一起明显偏小，2026-11-07 反馈） */
+            #ApiPaneTitle {{ color: {fg}; font-size: 16px; font-weight: bold; }}
             /* 「接口管理 ▾」：外观保持标题样（文字 + 小三角），不要按钮底。
                ::menu-indicator 置空 —— 文本里已经有 ▾，Qt 默认还会画一个暗色三角。 */
             QToolButton#ApiMenuBtn {{
                 background: transparent;
                 border: none;
                 color: {fg};
-                font-size: 14px;
-                font-weight: 600;
+                font-size: 16px;
+                font-weight: bold;
                 padding: 0px;
             }}
             QToolButton#ApiMenuBtn::menu-indicator {{
