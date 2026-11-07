@@ -284,7 +284,7 @@ class SettingsDialog(QDialog):
         self.content_stack.addWidget(self._build_device_page())
         idx += 1
 
-        interval_item = QTreeWidgetItem(["步骤间隔"])
+        interval_item = QTreeWidgetItem(["自动化步骤间隔"])
         interval_item.setData(0, Qt.ItemDataRole.UserRole, idx)
         device_root.addChild(interval_item)
         self.content_stack.addWidget(self._build_step_interval_page())
@@ -1309,7 +1309,7 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(16)
 
-        title = QLabel("步骤间隔")
+        title = QLabel("自动化步骤间隔")
         title.setObjectName("SettingsPageTitle")
         layout.addWidget(title)
 
