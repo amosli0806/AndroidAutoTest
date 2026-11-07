@@ -302,8 +302,14 @@ class ApiView(QWidget):
                 border-radius: 8px;
             }}
             /* 面板标题字号对齐语音页「语音管理 ▾」：16px + bold（原先 14px/600，
-               和语音页放一起明显偏小，2026-11-07 反馈） */
-            #ApiPaneTitle {{ color: {fg}; font-size: 16px; font-weight: bold; }}
+               和语音页放一起明显偏小，2026-11-07 反馈）。
+               padding 同理：「接口管理 ▾」是 QToolButton，自带一段水平内边距，
+               纯 QLabel 的「接口列表 / 请求」不加会明显偏左，补 2px 后三者文字起点
+               实测都在距边框 15~16px、距上边框 11px（语音页是 15 / 11）。 */
+            #ApiPaneTitle {{
+                color: {fg}; font-size: 16px; font-weight: bold;
+                padding-left: 2px; padding-top: 1px;
+            }}
             /* 「接口管理 ▾」：外观保持标题样（文字 + 小三角），不要按钮底。
                ::menu-indicator 置空 —— 文本里已经有 ▾，Qt 默认还会画一个暗色三角。 */
             QToolButton#ApiMenuBtn {{
@@ -472,7 +478,8 @@ class ApiView(QWidget):
         box = QFrame()
         box.setObjectName("ApiLeftContainer")
         layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 10, 10, 10)
+        # 标题文字到面板边框的距离对齐语音页（QGroupBox padding 6，实测 左15/上11）
+        layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
 
         title_row = QHBoxLayout()
@@ -508,7 +515,8 @@ class ApiView(QWidget):
         box = QFrame()
         box.setObjectName("ApiMidContainer")
         layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 10, 10, 10)
+
+        layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
 
         title = QLabel("接口列表")
@@ -569,7 +577,8 @@ class ApiView(QWidget):
         box = QFrame()
         box.setObjectName("ApiRightContainer")
         layout = QVBoxLayout(box)
-        layout.setContentsMargins(10, 10, 10, 10)
+
+        layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(8)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
