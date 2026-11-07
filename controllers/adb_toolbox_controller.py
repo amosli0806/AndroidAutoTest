@@ -283,7 +283,7 @@ class AdbToolboxController(QObject):
             self.command_manager.add_command(cmd)
             self.view.refresh_commands()
             self.log_emitted.emit(
-                f"<span style='color:{log_colors.log_color(log_colors.SUCCESS)};'>✅ 已新增指令：{cmd.name}</span>"
+                f"<span style='color:{log_colors.log_color(log_colors.SUCCESS)};'>✅ 已创建指令：{cmd.name}</span>"
             )
 
     def _on_edit_command(self, cmd):

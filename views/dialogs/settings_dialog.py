@@ -37,7 +37,7 @@ _SHORTCUT_LABELS = {
     "delete_suite": "删除套件",
     "generate_report": "生成测试报告",
     "adb_search": "指令搜索",
-    "adb_add_command": "新增指令",
+    "adb_add_command": "创建指令",
     "adb_edit_command": "编辑指令",
     "adb_delete_command": "删除指令",
     "adb_import_commands": "导入指令",

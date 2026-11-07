@@ -386,7 +386,7 @@ class HelpView(QFrame):
                 ])}
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 通过「菜单 → 新增指令」可保存自己的常用命令，支持定时执行、循环等。
+                    💡 通过「菜单 → 创建指令」可保存自己的常用命令，支持定时执行、循环等。
                 </div>
 
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">

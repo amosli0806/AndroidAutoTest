@@ -38,14 +38,14 @@ class BorderedCheckBox(QCheckBox):
             pass
 
 class CustomCommandDialog(QDialog):
-    """自定义指令对话框：新增或编辑"""
+    """自定义指令对话框：创建或编辑"""
 
     def __init__(self, parent=None, command: Command = None):
         super().__init__(parent)
         self.command = command
         self._theme_mode = ThemeMode.LIGHT
 
-        self.setWindowTitle("新增指令" if not command else "编辑指令")
+        self.setWindowTitle("创建指令" if not command else "编辑指令")
         self.setModal(True)
         self.resize(530, 520)
         self.setup_ui()
