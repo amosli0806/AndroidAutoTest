@@ -166,10 +166,11 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-05（v1.5.206）</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-07（v1.5.21）</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.5.206</span>
+      <span class="badge">当前版本 v1.5.21</span>
       <span class="badge">9 项待办</span>
+      <span class="badge">5 项待实机确认</span>
       <span class="badge">按改动量分 A~D 四档</span>
     </div>
   </header>
@@ -329,6 +330,50 @@
 
     </div>
 
+    <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 待实机确认（车机端）</h3>
+    <p class="small" style="margin-top:0">2026-11-07 在手机上完成了三项执行层改造（坐标朝向、等待预算、假通过校验），
+      但<b>车机端 2560×1440 没有实机验证</b>。下面这些取值都是按手机实测推算的，
+      需要在车机上跑一遍再定 —— 在那之前，车机上的效果只能算「理论上不会更差」，不是实测结论。</p>
+
+    <div class="card">
+      <table>
+        <thead><tr><th>待确认项</th><th>当前取值 / 假设</th><th>不确定的影响</th><th>怎么确认</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>浅层快查的深度</td>
+            <td><code>QUICK_DUMP_DEPTH = 16</code></td>
+            <td>车机控件若深于 16 层，会先白花一次浅层 dump（约 5 秒）再回退全量，<b>反而更慢</b></td>
+            <td>在车机地图页按 8 / 12 / 16 / 20 / 50 逐档 dump，看目标控件第几层命中、各档耗时</td>
+          </tr>
+          <tr>
+            <td>dump 速度</td>
+            <td>手机百度地图 10~12 秒 / 次</td>
+            <td>车机若本来就 1~2 秒 / 次，等待优化的实际提升会小很多</td>
+            <td>同一页面连续 dump 3 次取平均</td>
+          </tr>
+          <tr>
+            <td>截图速度</td>
+            <td>每次坐标点击多 2 张，手机约 0.7 秒</td>
+            <td>2560×1440 可能 1~2 秒 / 张，全坐标用例会明显变慢</td>
+            <td>连续截 5 次取平均；偏慢就把 <code>verify_click_effect</code> 默认关掉</td>
+          </tr>
+          <tr>
+            <td>多屏 / 副屏</td>
+            <td><code>wm size</code> 只报主屏</td>
+            <td>点在副屏上的坐标完全不适用，当前无解</td>
+            <td>看 <code>dumpsys display</code> 有几个 display；确认用例是否只在主屏跑</td>
+          </tr>
+          <tr>
+            <td>车机地图可定位性</td>
+            <td>手机百度地图 271~357 个可访问节点；部落冲突仅 7 个空 View</td>
+            <td>决定该用元素定位还是坐标定位 —— 前者慢但有失败兜底，后者快但只能靠界面变化推断</td>
+            <td>dump 一次看节点数，以及 text / resource-id 的丰富程度</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="tip">💡 确认完可能要调三个常量：<code>QUICK_DUMP_DEPTH</code>（浅层快查深度）、<code>verify_click_effect</code>（是否校验点击效果）、<code>CLICK_EFFECT_MIN_DIFF</code>（判定「没反应」的阈值）。三者都在 <code>services/device_service.py</code>。</div>
+
     <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 优先级速查表</h3>
     <p class="small" style="margin-top:0">按档位排列：<b>A = 改动最小、最建议先动</b>；⭐ 只表示建议顺序，与档位一致。</p>
     <div class="card">
@@ -433,7 +478,7 @@
     <div class="example">💡 <b>打个比方：</b>这就像把一间按自家户型装修好的房子搬到另一栋楼 —— 家具（Qt 界面、adb / uiautomator2 那套逻辑）都能直接用，但门框尺寸（打包成 <code>.app</code>）、水电接口（路径规范）、门锁（签名 / 公证）都不一样；至于「自动更新」，它更像埋在墙里的暗线，到新楼只能整条重走。</div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-05 · v1.5.206</footer>
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-07 · v1.5.21</footer>
 </div>
 </body>
 </html>
