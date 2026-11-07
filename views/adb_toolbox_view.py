@@ -341,7 +341,7 @@ class AdbToolboxView(QWidget):
         act_display.triggered.connect(self.display_commands_requested.emit)
         menu.addAction(act_display)
 
-        act_add = QAction("增加指令", self)
+        act_add = QAction("创建指令", self)
         act_add.setIcon(qta.icon('fa6s.plus', color='#555555'))
         act_add.triggered.connect(self.add_command_requested.emit)
         menu.addAction(act_add)
@@ -929,7 +929,7 @@ class AdbToolboxView(QWidget):
             "导出指令": 'fa6s.file-export',
             "导入指令": 'fa6s.file-import',
             "展示指令": 'fa6s.eye',
-            "增加指令": 'fa6s.plus',
+            "创建指令": 'fa6s.plus',
             "编辑指令": 'fa6s.pen',
             "删除指令": 'fa6s.trash-can',
         }

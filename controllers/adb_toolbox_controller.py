@@ -268,7 +268,7 @@ class AdbToolboxController(QObject):
             )
 
     def _on_add_command(self):
-        """增加指令"""
+        """创建指令"""
         from views.adb_dialogs.custom_command_dialog import CustomCommandDialog
 
         dlg = CustomCommandDialog(self.view)
