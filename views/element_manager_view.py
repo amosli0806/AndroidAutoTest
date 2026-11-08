@@ -645,14 +645,14 @@ class ElementManagerView(QWidget):
 
 
 class ElementEditDialog(QDialog):
-    """美观的新增/编辑元素对话框"""
+    """美观的创建/编辑元素对话框"""
 
     def __init__(self, parent=None, element: Element = None, device_service=None):
         super().__init__(parent)
         self.setObjectName("ElementEditDialog")
         self.element = element
         self.device_service = device_service
-        self.setWindowTitle("编辑元素" if element else "新增元素")
+        self.setWindowTitle("编辑元素" if element else "创建元素")
         self.setModal(True)
         self.setFixedSize(480, 420)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)

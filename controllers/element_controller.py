@@ -41,7 +41,7 @@ class ElementController:
     # ---------- 增删改 ----------
     def add_element(self, name: str, app: str, module: str,
                    loc_type: str, loc_value: str, remark: str = "") -> Element:
-        """新增元素"""
+        """创建元素"""
         elem = Element(
             id=self.element_model._generate_id(),
             name=name,

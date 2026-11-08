@@ -57,7 +57,7 @@ _SHORTCUT_LABELS = {
     "perf_toggle_monitor": "开始/停止监控",
     "perf_export_csv": "导出 CSV",
     "perf_save_baseline": "保存基线",
-    "elem_add": "新增元素",
+    "elem_add": "创建元素",
     "elem_edit": "编辑元素",
     "elem_delete": "删除元素",
     "elem_verify": "验证元素",
