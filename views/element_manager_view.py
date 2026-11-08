@@ -182,7 +182,7 @@ class ElementManagerView(QWidget):
         self.scrape_btn.clicked.connect(self._on_scrape)
         toolbar_layout.addWidget(self.scrape_btn)
 
-        self.add_btn = QPushButton("新增")
+        self.add_btn = QPushButton("创建")
         self.add_btn.setIcon(qta.icon('fa6s.plus', color='white'))
         self.add_btn.clicked.connect(self._on_add)
         # 按钮样式由主题控制
@@ -226,7 +226,7 @@ class ElementManagerView(QWidget):
         # 弹层出现前同步可用性（导出要有选中行才亮）
         self._more_menu.aboutToShow.connect(self._sync_more_actions)
 
-        # 工具栏按钮统一高度：带图标的「新增」比不带图标的「编辑/删除/更多」
+        # 工具栏按钮统一高度：带图标的「创建」比不带图标的「编辑/删除/更多」
         # 天然高 1px（图标把 sizeHint 撑高），并排看着不齐（2026-10-30 反馈）
         for _btn in (self.scrape_btn, self.add_btn, self.edit_btn,
                      self.delete_btn, self.more_btn):
@@ -280,7 +280,8 @@ class ElementManagerView(QWidget):
 
         table_layout.addWidget(self.table, 0, 0)
 
-        self.placeholder_empty = QLabel("暂未添加元素，点击「新增」创建")
+        # 文案跟着工具栏按钮走：按钮叫「创建」，提示里就别再说「新增」
+        self.placeholder_empty = QLabel("暂未添加元素，点击「创建」添加一条")
         self.placeholder_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.placeholder_empty.setStyleSheet("color: #999; font-size: 20px;")
         self.placeholder_empty.hide()
