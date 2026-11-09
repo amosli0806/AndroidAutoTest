@@ -652,10 +652,13 @@ class ActionCard(QGroupBox):
         small_icon_color = "#bbbbbb" if theme_mode == ThemeMode.DARK else "#555555"
         icon_of = {
             "ElementSelectBtn": "fa6s.folder-open",
-            "ImageCaptureBtn": "fa6s.camera",
             "DelayEstimateBtn": "fa6s.calculator",
         }
         for btn in self.findChildren(QToolButton):
+            if btn.objectName() == "LocatorPickBtn":
+                # 相机 / 准星由当前定位方式决定，交给统一的同步方法
+                self._sync_locator_btn(btn, theme_mode)
+                continue
             icon_name = icon_of.get(btn.objectName())
             if icon_name:
                 btn.setIcon(qta.icon(icon_name, color=small_icon_color))
@@ -667,7 +670,7 @@ class ActionCard(QGroupBox):
         self.device_service = service
 
     def setup_ui(self):
-        self._capture_btns = {}      # 定位方式=图像 时显示的「截屏取图」按钮
+        self._locator_btns = {}      # 定位值旁的辅助按钮（相机 / 准星，按定位方式切换）
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(6, 6, 6, 6)
@@ -704,16 +707,78 @@ class ActionCard(QGroupBox):
                     row_layout.addLayout(self._create_field_row(f))
                 form_layout.addLayout(row_layout)
         main_layout.addLayout(form_layout)
-        self._wire_image_capture()
+        self._wire_locator_buttons()
 
-    def _wire_image_capture(self):
-        """定位方式=图像 时，才显示定位值旁的「截屏取图」按钮。"""
-        combo = self.fields.get('locationType')
-        btn = self._capture_btns.get('locationValue')
-        if combo is None or btn is None:
+    def _wire_locator_buttons(self):
+        """把定位辅助按钮接到各自的下拉上：切换定位方式时换图标与行为。
+
+        图像 → 相机（截屏取图）；资源 ID / 文本 / 描述 / XPath / 坐标 → 准星（画面拾取）。
+        """
+        for _key, btn in self._locator_btns.items():
+            combo = self.fields.get(btn.property('type_key'))
+            if not isinstance(combo, QComboBox):
+                btn.setVisible(False)
+                continue
+            combo.currentTextChanged.connect(
+                lambda _text, b=btn: self._sync_locator_btn(b))
+            self._sync_locator_btn(btn)
+
+    def _sync_locator_btn(self, btn, theme_mode=None):
+        """按当前定位方式刷新按钮的图标 / 提示（主题切换时也走这里）。"""
+        combo = self.fields.get(btn.property('type_key'))
+        loc_type = combo.currentText() if isinstance(combo, QComboBox) else ''
+        btn.setProperty('loc_type', loc_type)
+        color = "#bbbbbb" if (theme_mode or self._theme_mode) == ThemeMode.DARK else "#555555"
+        if loc_type == "图像":
+            btn.setIcon(qta.icon('fa6s.camera', color=color))
+            btn.setToolTip("截屏取图：框选一块区域，存成图像模板")
+        else:
+            btn.setIcon(qta.icon('fa6s.crosshairs', color=color))
+            btn.setToolTip("从设备画面拾取元素：点一下控件，自动填定位方式与定位值")
+
+    def _on_locator_btn_clicked(self):
+        """同一个按钮两种身份：图像=截屏取图，其余=画面拾取。"""
+        btn = self.sender()
+        if btn is None:
             return
-        combo.currentTextChanged.connect(lambda text: btn.setVisible(text == '图像'))
-        btn.setVisible(combo.currentText() == '图像')
+        if btn.property('loc_type') == "图像":
+            self._on_capture_image()
+        else:
+            self._on_pick_element()
+
+    def _on_pick_element(self):
+        """打开拾取面板：在设备画面上点控件 → 回填定位方式与定位值。"""
+        btn = self.sender()
+        value_widget = btn.property('value_widget') if btn else None
+        if value_widget is None:
+            return
+
+        device_service = getattr(self, 'device_service', None)
+        if not device_service or not getattr(device_service, 'device', None):
+            WarningDialog.show_warning(self, "无法拾取", "请先在顶部工具栏连接设备")
+            return
+
+        from views.dialogs.element_pick_dialog import ElementPickDialog
+        try:
+            dlg = ElementPickDialog(device_service, self)
+        except Exception as e:
+            WarningDialog.show_warning(self, "打不开拾取面板", str(e))
+            return
+        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.result:
+            return
+
+        res = dlg.result
+        combo = self.fields.get(btn.property('type_key'))
+        if isinstance(combo, QComboBox):
+            combo.setCurrentText(res['loc_type'])
+        value_widget.setText(res['loc_value'])
+        # 拾取来的值不再是元素库那条记录，解除绑定，免得下次提交被元素库的旧值覆盖
+        value_widget.setProperty('element_id', None)
+        # 资源 ID 重复时把实例序号留着，点「+」时写进 params（回放才不会点错行）
+        info = res.get('info') or {}
+        inst = int(info.get('instance') or 0) if res['loc_type'] == "资源ID" else 0
+        value_widget.setProperty('pick_instance', inst)
+        self._sync_locator_btn(btn)
 
     def _on_capture_image(self):
         """直接截屏取图：不用先跑去元素库建图像元素，这里框一块就能当定位值。"""
@@ -768,18 +833,25 @@ class ActionCard(QGroupBox):
                 select_btn.setProperty('value_widget', widget)
                 select_btn.clicked.connect(self._on_select_element)
                 container_layout.addWidget(select_btn)
-                # 图像定位：定位值旁直接给个「截屏取图」，不必先去元素库建元素
-                if field['key'] == 'locationValue':
-                    cap_btn = QToolButton()
-                    cap_btn.setObjectName("ImageCaptureBtn")
-                    cap_btn.setIcon(qta.icon('fa6s.camera', color='#555555'))
-                    cap_btn.setFixedSize(24, 24)
-                    cap_btn.setStyleSheet("border: none; background: transparent;")
-                    cap_btn.setProperty('value_widget', widget)
-                    cap_btn.clicked.connect(self._on_capture_image)
-                    cap_btn.setVisible(False)
-                    container_layout.addWidget(cap_btn)
-                    self._capture_btns['locationValue'] = cap_btn
+                # 定位辅助按钮：**一个位置按定位方式换身份**
+                #   图像   → 相机（截屏框选，产生模板图）
+                #   其他   → 准星（画面拾取，产生资源 ID/文本/描述/坐标）
+                # 两类动作语义互斥（图像定位不需要控件语义，其余不需要模板图），
+                # 所以只放一个按钮：位置固定，也不会把定位值输入框挤窄。
+                loc_btn = QToolButton()
+                loc_btn.setObjectName("LocatorPickBtn")
+                loc_btn.setIcon(qta.icon('fa6s.crosshairs', color='#555555'))
+                loc_btn.setFixedSize(24, 24)
+                loc_btn.setStyleSheet("border: none; background: transparent;")
+                loc_btn.setProperty('value_widget', widget)
+                loc_btn.setProperty('type_key', {
+                    'locationValue': 'locationType',
+                    'fromValue': 'fromLocationType',
+                    'toValue': 'toLocationType',
+                }[field['key']])
+                loc_btn.clicked.connect(self._on_locator_btn_clicked)
+                container_layout.addWidget(loc_btn)
+                self._locator_btns[field['key']] = loc_btn
                 widget = container
         elif field['type'] == 'spin':
             # decimals 有值就用小数框（如「播后等待」1 位小数，与语音播报页一致）
@@ -953,6 +1025,12 @@ class ActionCard(QGroupBox):
                 value = ''
 
             params[key] = value
+
+            # 拾取来的实例序号：资源 ID 在页面上重复时，回放才知道点第几个
+            if key == 'locationValue' and isinstance(value_widget, QLineEdit):
+                inst = value_widget.property('pick_instance')
+                if inst:
+                    params['instance'] = int(inst)
 
             # 处理 element_id 的关联与解除
             if key in ('locationValue', 'fromValue', 'toValue'):
