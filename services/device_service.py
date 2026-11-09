@@ -300,6 +300,62 @@ class DeviceService:
         # 默认返回
         return f"步骤执行失败（{step_name}）：{error_str}"
 
+    # ---------- 层级导出（录制反查 / 元素拾取共用）----------
+    def dump_ui_xml(self) -> Optional[str]:
+        """导出当前界面完整层级 XML；失败返回 None。
+
+        优先 uiautomator2 的 `dump_hierarchy()`（一次 RPC，最快），失败再回退
+        `adb shell uiautomator dump`：先试 `--compressed`（绕过 idle 检测，
+        界面一直有动画/游戏时普通 dump 会卡在 "could not get idle state"）。
+
+        注意：调用方要自己控制频率。车机上单次完整 dump 实测 8~12 秒，
+        拾取面板是「打开时 dump 一次、之后本地命中」，不要每点一次都调。
+        """
+        device = getattr(self, 'device', None)
+        if device is None:
+            return None
+
+        try:
+            if hasattr(device, 'dump_hierarchy'):
+                xml_str = device.dump_hierarchy()
+            elif hasattr(device, 'dump'):
+                xml_str = device.dump()
+            else:
+                xml_str = None
+            if xml_str:
+                return xml_str
+        except Exception:
+            pass
+
+        # 回退：adb shell uiautomator dump → pull 回本地读
+        import tempfile
+        try:
+            stamp = int(time.time() * 1000)
+            remote = f"/sdcard/ui_dump_{stamp}.xml"
+            local = os.path.join(tempfile.gettempdir(), f"ui_dump_{stamp}.xml")
+            for extra in (['--compressed'], []):
+                cmd = [get_adb_path(), 'shell', 'uiautomator', 'dump'] + extra + [remote]
+                r = subprocess.run(cmd, capture_output=True, timeout=8, check=False)
+                out = (r.stdout or b'') + (r.stderr or b'')
+                if b'could not get idle state' in out or b'ERROR' in out:
+                    continue
+                subprocess.run([get_adb_path(), 'pull', remote, local],
+                               capture_output=True, timeout=5, check=False)
+                if os.path.exists(local):
+                    with open(local, 'r', encoding='utf-8', errors='ignore') as f:
+                        xml_str = f.read()
+                    try:
+                        os.remove(local)
+                    except Exception:
+                        pass
+                    subprocess.run([get_adb_path(), 'shell', 'rm', remote],
+                                   capture_output=True, timeout=2, check=False)
+                    if xml_str:
+                        return xml_str
+        except Exception:
+            pass
+        return None
+
     # ---------- 坐标解析（支持归一化还原）----------
     def _get_current_screen_size(self):
         """获取当前**显示方向**下的分辨率，带缓存。旋转屏幕/换设备后需清空缓存。

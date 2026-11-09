@@ -940,7 +940,14 @@ Windows 上「父进程退出，子进程还在」是常见问题，本项目排
 | **启动耗时测试** | `PerfService.measure_cold_launch / measure_warm_launch`、`PerfModel` 的 launch 记录、`LaunchTestDialog` 全部就绪，但**没有任何入口实例化它**，也没有调用 `add_launch_record` |
 | **元素拾取器（方案已评估）** | 见下 |
 
-### 8.2 元素拾取器（评估结论，未开工）
+### 8.2 元素拾取器（第一轮进行中）
+
+进度（2026-11-09）：
+
+- ✅ 共用能力：`utils/ui_tree.py`（命中规则，录制反查与拾取共用）+ `DeviceService.dump_ui_xml()`（层级导出，含 adb 回退）
+- ✅ 拾取面板：`views/dialogs/element_pick_dialog.py`（截图 → 点击命中 → 高亮 → 定位预览 → 刷新）
+- ⬜ 接进动作卡片：定位值旁的上下文按钮（图像=截屏取图 / 其余=画面拾取）
+- ⬜ 第二轮：元素库对话框同样接拾取 + 「同时存入元素库」
 
 痛点：定位元素还得「投屏 → weditor 点控件 → 复制 selector → 回到卡片粘贴」。
 

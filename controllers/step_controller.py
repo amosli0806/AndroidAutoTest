@@ -4,8 +4,6 @@ import subprocess
 import threading
 import time
 import re
-import xml.etree.ElementTree as ET
-import tempfile
 import os
 import sys
 from PyQt6.QtGui import QColor
@@ -23,6 +21,7 @@ from utils.adb_path import get_adb_path
 from utils.android_packages import is_system_ui_package
 from utils.theme import ThemeMode
 from utils.step_params import PARAM_LABELS, label_of
+from utils.ui_tree import find_node_at, parse_xml
 from views.dialogs.batch_edit_dialog import BatchEditStepsDialog
 import qtawesome as qta
 
@@ -2340,220 +2339,18 @@ class StepController(QObject):
 
     # ---------- 增强的 _get_element_at 方法 ----------
     def _get_element_at(self, x, y):
+        """按坐标反查控件（录制用）：dump 一次层级，再用共用规则命中。
+
+        dump 与命中判定都不在本类里：前者在 DeviceService.dump_ui_xml（含 adb 回退），
+        后者在 utils.ui_tree.find_node_at（元素拾取器共用同一份规则）。
+        """
         try:
-            device = self.device_service.device
-            if device is None:
+            root = parse_xml(self.device_service.dump_ui_xml())
+            if root is None:
+                print("[反查] dump 为空或 XML 无法解析")
                 return None
-
-            xml_str = None
-            # uiautomator2 标准 API 是 dump_hierarchy()，不是 dump()。
-            # 兼容不同版本：优先 dump_hierarchy，回退到 dump。
-            try:
-                if hasattr(device, 'dump_hierarchy'):
-                    xml_str = device.dump_hierarchy()
-                elif hasattr(device, 'dump'):
-                    xml_str = device.dump()
-                else:
-                    print("[反查] 当前 uiautomator2 版本无 dump 方法")
-                    xml_str = None
-            except Exception as e:
-                print(f"[反查] uiautomator2 dump 失败: {e}")
-                xml_str = None
-
-            # ★ 调试：dump 是否拿到了内容
-            if xml_str:
-                print(f"[反查] dump 长度: {len(xml_str)} 字符")
-            else:
-                print(f"[反查] dump 为空，尝试备用方案")
-
-            if xml_str is None:
-                try:
-                    temp_file = os.path.join(tempfile.gettempdir(), f"ui_dump_{int(time.time())}.xml")
-                    local_file = os.path.join(tempfile.gettempdir(), f"ui_dump_local_{int(time.time())}.xml")
-
-                    # 先试 --compressed（绕过 idle 检测），失败再试普通模式
-                    for extra_args in (['--compressed'], []):
-                        cmd = [get_adb_path(), 'shell', 'uiautomator', 'dump'] + extra_args + [temp_file]
-                        r = subprocess.run(cmd, capture_output=True, timeout=8, check=False)
-                        out = (r.stdout or b'') + (r.stderr or b'')
-                        if b'could not get idle state' in out or b'ERROR' in out:
-                            print(f"[反查] 备用 dump 失败（{'--compressed' if extra_args else '普通'}）: "
-                                  f"{out.decode('utf-8', errors='ignore').strip()}")
-                            continue
-                        # 拉取
-                        subprocess.run([get_adb_path(), 'pull', temp_file, local_file],
-                                       capture_output=True, timeout=5, check=False)
-                        if os.path.exists(local_file):
-                            with open(local_file, 'r', encoding='utf-8') as f:
-                                xml_str = f.read()
-                            os.remove(local_file)
-                            subprocess.run([get_adb_path(), 'shell', 'rm', temp_file],
-                                           capture_output=True, timeout=2, check=False)
-                            break
-                except Exception as e:
-                    print(f"[反查] 备用 dump 异常: {e}")
-                    return None
-
-            if not xml_str:
-                return None
-
-            root = ET.fromstring(xml_str)
-            return self._find_element_in_xml(root, x, y)
+            return find_node_at(root, x, y)
         except Exception as e:
             print(f"获取元素信息失败: {e}")
             return None
 
-    def _find_element_in_xml(self, node, x, y):
-        """
-        找到包含坐标 (x, y) 的、最有语义信息的最深层节点。
-
-        策略：
-        1. 递归收集所有 bounds 覆盖该坐标的节点
-        2. 候选排序：**可点击优先 → 有文案 → 面积最小**
-           - 可点击优先：用户点的多半是可点击控件。原来看「面积最小的有属性节点」，
-             实测约 30% 会录到分隔线 / 文本 / 图标这类不可点击的子元素
-             （如点整块状态栏组，录成里面 2px 宽的分隔线）
-           - 有文案次之：text / content-desc 比裸 resource-id 更能说明「这是什么」
-           - 同档内面积最小 = 更靠近用户实际点击的那个控件
-        3. 如果所有命中节点都没属性，同样按上面的档位兜底
-           （说明 App 是自绘 UI，这时反查失败是合理的）
-        """
-        candidates = []  # [(area, info, has_attr, window_root), ...]
-        self._collect_matching_nodes(node, x, y, candidates)
-
-        if not candidates:
-            return None
-
-        def sort_key(c):
-            """(档位, 面积)：0=可点击, 1=有文案, 2=仅资源ID/无文案"""
-            area, info, _, _ = c
-            if info.get('clickable'):
-                tier = 0
-            elif info.get('text') or info.get('description'):
-                tier = 1
-            else:
-                tier = 2
-            return (tier, area)
-
-        # 优先：有属性的节点，按「可点击 → 有文案 → 面积最小」排
-        with_attr = [c for c in candidates if c[2]]
-        if with_attr:
-            with_attr.sort(key=sort_key)
-            area, info, _, window_root = with_attr[0]
-            # 若选中了带 resourceId 的节点，统计**同一窗口内**同 rid 的节点数并
-            # 计算序号，解决「列表项共用同一 rid」导致回放点错行的问题。
-            if info.get('resourceId'):
-                count, instance = self._compute_instance(
-                    window_root, info['resourceId'], info.get('bounds'))
-                info['resourceIdCount'] = count
-                info['instance'] = instance
-            else:
-                info['resourceIdCount'] = 1
-                info['instance'] = 0
-            print(f"[反查] ({x},{y}) 命中 {len(candidates)} 个节点，"
-                  f"其中 {len(with_attr)} 个有属性，按「可点击→有文案→面积最小」选中：")
-            print(f"          area={area}px², clickable={info.get('clickable')}, "
-                  f"class={info['className']!r}, "
-                  f"rid={info['resourceId']!r}, "
-                  f"text={info['text']!r}, "
-                  f"desc={info['description']!r}, "
-                  f"pkg={info.get('package')!r}, "
-                  f"ridCount={info['resourceIdCount']}, instance={info['instance']}")
-            return info
-
-        # 兜底：全都没属性，同样按档位排（自绘控件，反查注定失败）
-        candidates.sort(key=sort_key)
-        area, info, _, _ = candidates[0]
-        print(f"[反查] ({x},{y}) 命中 {len(candidates)} 个节点，"
-              f"但都没有可用属性，按档位兜底选：")
-        print(f"          area={area}px², clickable={info.get('clickable')}, "
-              f"class={info['className']!r}")
-        return info
-
-    def _compute_instance(self, window_root, target_rid, target_bounds):
-        """统计**同一窗口内** resourceId == target_rid 的节点数，并计算
-        target_bounds 对应节点在这些同类节点中的序号（按 top、left 排序）。
-
-        返回 (count, instance)。instance 从 0 起；target_bounds 为空时返回 (count, 0)。
-
-        注意统计范围是 window_root（一个窗口），不是整棵层级树：不同窗口
-        可能用同一个 resource-id（实测 `android:id/content` 同时出现在桌面和
-        地图两个包里），跨窗口统计会把序号算歪、回放点错行。
-        """
-        siblings = []   # [(top, left, bounds)]
-        def walk(node):
-            rid = (node.get('resource-id') or '').strip()
-            if rid == target_rid:
-                b = node.get('bounds')
-                if b:
-                    m = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', b)
-                    if m:
-                        left = int(m.group(1)); top = int(m.group(2))
-                        right = int(m.group(3)); bottom = int(m.group(4))
-                        siblings.append((top, left, (left, top, right, bottom)))
-            for child in node:
-                walk(child)
-        walk(window_root)
-
-        count = len(siblings)
-        if count == 0 or target_bounds is None:
-            return count, 0
-
-        siblings.sort(key=lambda t: (t[0], t[1]))   # 按 top 再 left 排序
-        instance = 0
-        for idx, (_, _, b) in enumerate(siblings):
-            if b == target_bounds:
-                instance = idx
-                break
-        return count, instance
-
-    def _collect_matching_nodes(self, node, x, y, candidates, window=None):
-        """递归收集所有 bounds 覆盖坐标 (x, y) 的节点。
-        candidates 每个元素: (area, info_dict, has_attr_bool, window_root)
-
-        window_root 是该节点所属窗口的根 —— `<hierarchy>` 的直接子节点。
-        记下它是为了把「同类元素序号」的统计限定在同一窗口内（见
-        _compute_instance）。
-        """
-        import re
-        if window is None and node.tag == 'hierarchy':
-            # <hierarchy> 的直接子节点就是各个窗口，逐个带上窗口身份再递归
-            for child in node:
-                self._collect_matching_nodes(child, x, y, candidates,
-                                             window=child)
-            return
-        if window is None:
-            window = node          # 调用方直接传了单个窗口节点
-
-        bounds = node.get('bounds')
-        if bounds:
-            match = re.search(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', bounds)
-            if match:
-                left = int(match.group(1))
-                top = int(match.group(2))
-                right = int(match.group(3))
-                bottom = int(match.group(4))
-                if left <= x <= right and top <= y <= bottom:
-                    area = max(0, (right - left)) * max(0, (bottom - top))
-                    rid = (node.get('resource-id') or '').strip()
-                    text = (node.get('text') or '').strip()
-                    desc = (node.get('content-desc') or '').strip()
-                    has_attr = bool(rid or text or desc)
-                    info = {
-                        'resourceId': rid,
-                        'text': text,
-                        'description': desc,
-                        'className': node.get('class'),
-                        # 来源包名：录制预览里据此标出「这条步骤落在系统 UI 上」
-                        'package': node.get('package') or '',
-                        # 可点击标记：候选排序用（用户点的多半是可点击控件，
-                        # 不该录到分隔线/文本/图标这类不可点击的子元素）
-                        'clickable': node.get('clickable') == 'true',
-                        # 保留 bounds，供后续计算「同类元素序号」(instance) 用
-                        'bounds': (left, top, right, bottom),
-                    }
-                    candidates.append((area, info, has_attr, window))
-
-        for child in node:
-            self._collect_matching_nodes(child, x, y, candidates,
-                                         window=window)
