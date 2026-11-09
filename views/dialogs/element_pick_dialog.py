@@ -15,7 +15,7 @@
 命中规则不在这里，在 utils/ui_tree.py —— 与录制反查共用同一份。
 """
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                             QPushButton, QFrame)
+                             QPushButton, QFrame, QApplication)
 from PyQt6.QtCore import Qt, QTimer, QRect
 from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen
 
@@ -97,6 +97,7 @@ class ElementPickDialog(QDialog):
         self._scale = 1.0
         self._root = None            # 层级 XML 根
         self._hit = None             # 当前命中节点 info
+        self._loading = False        # 正在截图 + dump（防连点重入）
         self._pick_x = self._pick_y = 0
 
         self._setup_ui()
@@ -141,8 +142,8 @@ class ElementPickDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
+        # 不挂悬停提示（2026-11-09 用户要求）：按钮文案已经说明动作
         self.refresh_btn = QPushButton("刷新画面")
-        self.refresh_btn.setToolTip("换页面或界面变了以后点这里：重新截图并重新读取层级")
         self.refresh_btn.clicked.connect(self._reload)
         btn_row.addWidget(self.refresh_btn)
 
@@ -165,15 +166,39 @@ class ElementPickDialog(QDialog):
 
     # ------------------------------------------------------------------
     def _reload(self):
-        """截图 + dump（各一次）。失败只禁用交互，不关窗口。"""
+        """重新截图 + 读取层级（各一次）。
+
+        两点必须注意：
+        1. 截图和 dump 都是**同步阻塞**的（车机能到十几秒），期间事件循环不转，
+           所以要在阻塞前先重绘一次，让「刷新画面」的置灰真正显示出来，否则用户
+           完全看不到反馈，只会继续点。
+        2. 光靠置灰挡不住连点 —— 点击事件会排在消息循环里，等这轮结束依次触发。
+           所以再加 _loading 重入保护，第二次进来直接返回。
+        """
+        if self._loading:
+            return
+        self._loading = True
+        self.refresh_btn.setEnabled(False)
+        self.ok_btn.setEnabled(False)
+        self._set_hint("正在读取设备画面…")
+        self.refresh_btn.repaint()
+        QApplication.processEvents()          # 先让置灰画出来，再去干阻塞的活
+        try:
+            self._load_screen_and_hierarchy()
+        except Exception as e:                # 兜底：任何异常都不能让按钮永久灰掉
+            self._set_hint(f"读取画面失败：{e}", error=True)
+        finally:
+            self._loading = False
+            self.refresh_btn.setEnabled(True)
+            self.ok_btn.setEnabled(bool(self._hit))
+
+    def _load_screen_and_hierarchy(self):
+        """真正的加载：截图 → 缩放显示 → dump 层级 → 校验尺寸。"""
         if self.device_service is None or getattr(self.device_service, 'device', None) is None:
             self._set_hint("设备未连接，无法拾取", error=True)
             self.pic.setEnabled(False)
             return
 
-        self.refresh_btn.setEnabled(False)
-        self.ok_btn.setEnabled(False)
-        self._set_hint("正在读取设备画面…")
         self.pic.update()
 
         # 截图
@@ -186,7 +211,6 @@ class ElementPickDialog(QDialog):
         except Exception as e:
             self._full = None
             self._set_hint(f"截图失败：{e}", error=True)
-            self.refresh_btn.setEnabled(True)
             return
 
         scaled = self._full.scaled(
@@ -211,7 +235,6 @@ class ElementPickDialog(QDialog):
         self.loc_label.setText("定位方式：—")
         self.value_label.setText("定位值：—")
         self.detail_label.setText("点画面上任意控件即可拾取")
-        self.refresh_btn.setEnabled(True)
 
         if self._root is None:
             self._set_hint("无法读取界面层级（可能界面一直在动，或应用是自绘 UI）——"
