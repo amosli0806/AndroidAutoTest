@@ -729,12 +729,13 @@ class ActionCard(QGroupBox):
         loc_type = combo.currentText() if isinstance(combo, QComboBox) else ''
         btn.setProperty('loc_type', loc_type)
         color = "#bbbbbb" if (theme_mode or self._theme_mode) == ThemeMode.DARK else "#555555"
+        # 按钮不挂悬停提示：图标本身已经说明动作（准星=画面拾取，相机=截屏取图），
+        # 再弹一段文字反而挡视线（2026-11-09 用户要求去掉）
+        btn.setToolTip("")
         if loc_type == "图像":
             btn.setIcon(qta.icon('fa6s.camera', color=color))
-            btn.setToolTip("截屏取图：框选一块区域，存成图像模板")
         else:
             btn.setIcon(qta.icon('fa6s.crosshairs', color=color))
-            btn.setToolTip("从设备画面拾取元素：点一下控件，自动填定位方式与定位值")
 
     def _on_locator_btn_clicked(self):
         """同一个按钮两种身份：图像=截屏取图，其余=画面拾取。"""
