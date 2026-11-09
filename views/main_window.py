@@ -119,6 +119,27 @@ class RoundedDockWidget(QDockWidget):
             print(f"[RoundedDockWidget] mask 应用失败: {e}")
 
 
+def _should_hide_to_tray(minimize: bool, tray_controller) -> bool:
+    """关闭窗口时是否真的藏到托盘。
+
+    除了开关和托盘可用，还要求托盘图标**当前可见**：explorer 重启、图标注册失败
+    或图标被系统移除时，`available` 仍可能是 True，但托盘里什么都没有。这时再
+    hide() 就会变成一个既没窗口、也没图标的进程 —— 用户只能靠任务管理器结束，
+    再启动还会撞上单实例提示。
+    """
+    if not minimize or tray_controller is None:
+        return False
+    if not getattr(tray_controller, "available", False):
+        return False
+    tray = getattr(tray_controller, "tray", None)
+    if tray is None:
+        return False
+    try:
+        return bool(tray.isVisible())
+    except Exception:
+        return False
+
+
 class MainWindow(QMainWindow):
     refresh_devices_signal = pyqtSignal()
     # 菜单里点了「检查更新」（含启动时的自动检查由 main.py 触发）。
@@ -3133,7 +3154,7 @@ class MainWindow(QMainWindow):
         except Exception:
             minimize = False
         tc = self._tray_controller
-        if minimize and tc is not None and getattr(tc, 'available', False):
+        if _should_hide_to_tray(minimize, tc):
             event.ignore()
             self.hide()
             tc.notify_minimized()

@@ -1381,6 +1381,77 @@ def main():
 # 互斥体句柄必须活到进程结束，所以存在模块级全局里（句柄一关锁就没了）。
 _SINGLE_INSTANCE_MUTEX = None
 
+# 单实例诊断日志：发布版不写 app_debug.log，这个文件落在 %TEMP%，出问题时让用户发回来。
+_SINGLE_INSTANCE_LOG = os.path.join(
+    os.environ.get("TEMP") or os.environ.get("TMP") or os.path.expanduser("~"),
+    "chongshi_single_instance.log")
+
+
+def _list_chongshi_processes():
+    """当前会话里所有「虫师.exe」的 pid:名称（诊断互斥体被谁占着）。"""
+    if sys.platform != "win32":
+        return []
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        k32.Process32FirstW.argtypes = [wintypes.HANDLE,
+                                        ctypes.POINTER(PROCESSENTRY32W)]
+        k32.Process32NextW.argtypes = [wintypes.HANDLE,
+                                       ctypes.POINTER(PROCESSENTRY32W)]
+        snap = k32.CreateToolhelp32Snapshot(0x2, 0)      # TH32CS_SNAPPROCESS
+        if not snap or snap == ctypes.c_void_p(-1).value:
+            return []
+        out = []
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        try:
+            ok = k32.Process32FirstW(snap, ctypes.byref(entry))
+            while ok:
+                if entry.szExeFile.lower() in ("虫师.exe", "虫师"):
+                    out.append(f"{entry.th32ProcessID}:{entry.szExeFile}")
+                ok = k32.Process32NextW(snap, ctypes.byref(entry))
+        finally:
+            k32.CloseHandle(snap)
+        return out
+    except Exception:
+        return []
+
+
+def _log_single_instance(message: str):
+    """把单实例判定结果追加到 %TEMP%\\chongshi_single_instance.log（失败静默）。"""
+    try:
+        from datetime import datetime
+        path = _SINGLE_INSTANCE_LOG
+        try:
+            if os.path.getsize(path) > 512 * 1024:
+                os.replace(path, path + ".1")
+        except OSError:
+            pass
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} pid={os.getpid()} "
+                    f"exe={os.path.basename(sys.executable)} {message} "
+                    f"chongshi_procs={_list_chongshi_processes()}\n")
+    except Exception:
+        pass
+
 
 def _find_existing_chongshi_window() -> bool:
     """检测是否已有「虫师」主窗口（含没有单实例锁的旧版本）。
@@ -1416,18 +1487,28 @@ def _find_existing_chongshi_window() -> bool:
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             if pid.value != own_pid:
-                found.append(hwnd)
+                found.append((hwnd, pid.value, title))
                 return False
             return True
 
         user32.EnumWindows(WNDENUMPROC(_cb), 0)
+        if found:
+            _hwnd, _pid, _title = found[0]
+            _log_single_instance(f"window_found pid={_pid} title={_title!r}")
         return bool(found)
     except Exception:
         return False
 
 
-def _acquire_single_instance() -> bool:
+def _acquire_single_instance(
+        retry_seconds: float = 3.0,
+        mutex_name: str = "Local\\ChongshiSingleInstance") -> bool:
     """拿到单实例锁返回 True；已有实例在跑返回 False。
+
+    退出时窗口和托盘图标会先消失，但 ADB / 线程收尾还要几秒，互斥体在这段时间里
+    仍然被占着。用户看到界面没了就立刻再点一次快捷方式，就会误判「已在运行」。
+    所以拿到 ERROR_ALREADY_EXISTS 后先重试一段时间（默认 3 秒，与 ADB 池收尾
+    上限一致），旧进程退干净就能正常启动，不用弹框。
 
     非 Windows、或任何异常一律放行 —— 这个检查只是体验优化，绝不能反过来
     挡住用户启动。
@@ -1443,16 +1524,27 @@ def _acquire_single_instance() -> bool:
         kernel32.CreateMutexW.restype = wintypes.HANDLE
         kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL,
                                           wintypes.LPCWSTR]
-        # Local\ 前缀：每个登录会话一把锁，多用户 / 远程桌面下互不干扰
-        handle = kernel32.CreateMutexW(None, False, "Local\\ChongshiSingleInstance")
-        err = ctypes.get_last_error()
-        if not handle:
-            return True
-        if err == ERROR_ALREADY_EXISTS:
+        deadline = time.monotonic() + max(0.0, float(retry_seconds))
+        first = True
+        while True:
+            # Local\ 前缀：每个登录会话一把锁，多用户 / 远程桌面下互不干扰
+            handle = kernel32.CreateMutexW(None, False, mutex_name)
+            err = ctypes.get_last_error()
+            if not handle:
+                _log_single_instance("mutex=create_failed")
+                return True
+            if err != ERROR_ALREADY_EXISTS:
+                _SINGLE_INSTANCE_MUTEX = handle    # 保引用，别让句柄被回收
+                _log_single_instance("mutex=acquired")
+                return True
             kernel32.CloseHandle(handle)
-            return False
-        _SINGLE_INSTANCE_MUTEX = handle        # 保引用，别让句柄被回收
-        return True
+            if first:
+                _log_single_instance(f"mutex=busy retry {retry_seconds:g}s")
+                first = False
+            if time.monotonic() >= deadline:
+                _log_single_instance("mutex=busy timeout")
+                return False
+            time.sleep(0.2)
     except Exception:
         return True
 
@@ -1464,7 +1556,8 @@ def _warn_already_running():
         ctypes.windll.user32.MessageBoxW(
             None,
             "虫师已在运行。\n\n"
-            "请从系统托盘打开，或退出后再启动。",
+            "请先看系统托盘；如果托盘里也没有，\n"
+            "请在任务管理器结束「虫师.exe」后重新启动。",
             "虫师", 0x40)          # MB_ICONINFORMATION
     except Exception:
         pass
@@ -1472,9 +1565,20 @@ def _warn_already_running():
 
 if __name__ == "__main__":
     # ---------- 单实例检查排在最前面：第二个实例直接退出，不加载任何重活 ----------
-    if not _acquire_single_instance() or _find_existing_chongshi_window():
+    # 互斥体先重试几秒：退出收尾期间窗口/托盘已消失、锁还没释放，立刻重启会误判。
+    if not _acquire_single_instance():
+        _log_single_instance("blocked_by_mutex")
         _warn_already_running()
         sys.exit(0)
+    if _find_existing_chongshi_window():
+        # 可能是上一个进程正在销毁的窗口（进程退出瞬间仍可被 EnumWindows 看到），
+        # 等一拍再确认一次，避免把「正在关闭」误判成「已经在运行」。
+        time.sleep(0.4)
+        if _find_existing_chongshi_window():
+            _log_single_instance("blocked_by_window")
+            _warn_already_running()
+            sys.exit(0)
+        _log_single_instance("window_vanished_continue")
 
     # ---------- 先弹启动封面，再让后面那些重活开始 ----------
     # 说明：main.py 顶层的 import（PyQt6、uiautomator2、views.* …）在进入这个块
