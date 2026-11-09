@@ -7,7 +7,7 @@
 
 两个关键约束（都在 2026-11 的调研里踩过）：
 1. **dump 只做一次**：车机单次完整 dump 实测 8~12 秒，所以打开面板时 dump 一次并缓存，
-   之后点击全部在本地 XML 里命中；换页面了点「刷新画面」重新截图 + dump。
+   之后点击全部在本地 XML 里命中；换页面了点「刷新」重新截图 + dump。
 2. **不做坐标换算**：点击的是截图，截图是当前显示方向的尺寸，uiautomator 的 bounds
    也是显示方向，两者同一套坐标系（录制那边需要换算是 getevent 给的是物理面板坐标，
    这里不涉及）。但会校验一次截图与层级根节点尺寸，差太多说明画面对不上，直接提示。
@@ -140,22 +140,20 @@ class ElementPickDialog(QDialog):
         pv.addWidget(self.detail_label)
         self.root_layout.addWidget(self.preview)
 
+        # 只有两个按钮，都靠右、等宽、同一套主按钮样式（宽度在 _apply_theme 里按字体定）。
+        # 不设「取消」：点右上角 × 或按 Esc 就是取消（QDialog 默认行为），少一个按钮更清爽。
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
+        btn_row.addStretch()
+
         # 不挂悬停提示（2026-11-09 用户要求）：按钮文案已经说明动作
-        self.refresh_btn = QPushButton("刷新画面")
+        self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.setObjectName("refreshBtn")
         self.refresh_btn.clicked.connect(self._reload)
         btn_row.addWidget(self.refresh_btn)
 
-        btn_row.addStretch()
-        self.cancel_btn = QPushButton("取消")
-        self.cancel_btn.setMinimumWidth(88)
-        self.cancel_btn.clicked.connect(self.reject)
-        btn_row.addWidget(self.cancel_btn)
-
-        self.ok_btn = QPushButton("使用此定位")
+        self.ok_btn = QPushButton("确定")
         self.ok_btn.setObjectName("okBtn")
-        self.ok_btn.setMinimumWidth(120)
         self.ok_btn.setEnabled(False)
         self.ok_btn.setDefault(True)
         self.ok_btn.clicked.connect(self._confirm)
@@ -170,7 +168,7 @@ class ElementPickDialog(QDialog):
 
         两点必须注意：
         1. 截图和 dump 都是**同步阻塞**的（车机能到十几秒），期间事件循环不转，
-           所以要在阻塞前先重绘一次，让「刷新画面」的置灰真正显示出来，否则用户
+           所以要在阻塞前先重绘一次，让「刷新」的置灰真正显示出来，否则用户
            完全看不到反馈，只会继续点。
         2. 光靠置灰挡不住连点 —— 点击事件会排在消息循环里，等这轮结束依次触发。
            所以再加 _loading 重入保护，第二次进来直接返回。
@@ -238,7 +236,7 @@ class ElementPickDialog(QDialog):
 
         if self._root is None:
             self._set_hint("无法读取界面层级（可能界面一直在动，或应用是自绘 UI）——"
-                           "可以重试「刷新画面」，或改用「截屏取图」/ 手动填写", error=True)
+                           "可以重试「刷新」，或改用「截屏取图」/ 手动填写", error=True)
             return
 
         # 截图画布与层级根节点的尺寸对不上时，命中会整体偏移，先提示出来
@@ -261,7 +259,7 @@ class ElementPickDialog(QDialog):
         dw, dh = abs((b[2] - b[0]) - sw), abs((b[3] - b[1]) - sh)
         if dw > sw * 0.05 or dh > sh * 0.05:
             return (f"画面尺寸 {sw}×{sh} 与界面层级 {b[2] - b[0]}×{b[3] - b[1]} 不一致，"
-                    f"命中可能偏移 —— 建议重试「刷新画面」")
+                    f"命中可能偏移 —— 建议重试「刷新」")
         return None
 
     def _on_click(self, x, y):
@@ -293,7 +291,7 @@ class ElementPickDialog(QDialog):
             detail = (f"该控件没有可用的资源 ID / 文本 / 描述，已按坐标定位（{x},{y}）；"
                       f"同分辨率回放才稳，换设备可能点偏")
         self.detail_label.setText(detail)
-        self._set_hint(f"已命中，点「使用此定位」填入卡片（{loc_type}）")
+        self._set_hint(f"已命中，点「确定」填入卡片（{loc_type}）")
 
     def _confirm(self):
         if not self._hit:
@@ -353,15 +351,31 @@ class ElementPickDialog(QDialog):
                 color: {sub};
                 border-color: {card_border};
             }}
-            QDialog#ElementPickDialog QPushButton#okBtn {{
+            /* 「刷新」和「确定」是同一套主按钮样式：两个都是主动作，看起来要一样 */
+            QDialog#ElementPickDialog QPushButton#okBtn,
+            QDialog#ElementPickDialog QPushButton#refreshBtn {{
                 background-color: {primary};
                 color: #ffffff;
                 border: 1px solid {primary};
             }}
-            QDialog#ElementPickDialog QPushButton#okBtn:hover {{ background-color: {primary_hover}; }}
-            QDialog#ElementPickDialog QPushButton#okBtn:disabled {{
+            QDialog#ElementPickDialog QPushButton#okBtn:hover,
+            QDialog#ElementPickDialog QPushButton#refreshBtn:hover {{
+                background-color: {primary_hover};
+            }}
+            QDialog#ElementPickDialog QPushButton#okBtn:disabled,
+            QDialog#ElementPickDialog QPushButton#refreshBtn:disabled {{
                 background-color: {card_border};
                 border-color: {card_border};
                 color: {sub};
             }}
         """)
+
+        # 两个按钮等宽、都靠右：QSS 里的字号此刻才生效，所以按实际字宽定，
+        # 不写死像素（高 DPI 下写死会把字裁掉）。
+        self.refresh_btn.ensurePolished()
+        self.ok_btn.ensurePolished()
+        fm = self.ok_btn.fontMetrics()
+        btn_w = max(fm.horizontalAdvance(self.refresh_btn.text()),
+                    fm.horizontalAdvance(self.ok_btn.text())) + 46
+        self.refresh_btn.setFixedWidth(btn_w)
+        self.ok_btn.setFixedWidth(btn_w)
