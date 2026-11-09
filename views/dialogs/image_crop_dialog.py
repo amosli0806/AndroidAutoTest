@@ -122,20 +122,46 @@ class ImageCropDialog(QDialog):
         self.crop_label.on_region = self._on_region
         layout.addWidget(self.crop_label, 0, Qt.AlignmentFlag.AlignCenter)
 
+        # 只留「确定」：点右上角 × 或按 Esc 就是取消（QDialog 默认行为）。
+        # 按钮与拾取面板保持同一套主按钮观感（蓝底白字 + 悬浮 + 按压 + 置灰）。
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
-        cancel = QPushButton("取消")
-        cancel.setMinimumWidth(88)
-        cancel.clicked.connect(self.reject)
+        btn_row.addStretch()
         self.ok_btn = QPushButton("确定")
         self.ok_btn.setObjectName("okBtn")
-        self.ok_btn.setMinimumWidth(110)
         self.ok_btn.setEnabled(False)
+        self.ok_btn.setDefault(True)
         self.ok_btn.clicked.connect(self._confirm)
-        btn_row.addStretch()
-        btn_row.addWidget(cancel)
         btn_row.addWidget(self.ok_btn)
         layout.addLayout(btn_row)
+
+        self.setStyleSheet("""
+            QPushButton#okBtn {
+                background-color: #1976d2;
+                color: #ffffff;
+                border: 1px solid #1976d2;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 13px;
+            }
+            QPushButton#okBtn:hover {
+                background-color: #1565c0;
+                border-color: #1565c0;
+            }
+            QPushButton#okBtn:pressed {
+                background-color: #0d47a1;
+                border-color: #0d47a1;
+            }
+            QPushButton#okBtn:disabled {
+                background-color: #d0d0d0;
+                border-color: #d0d0d0;
+                color: #9a9a9a;
+            }
+        """)
+        # 宽度适中：按 QSS 生效后的实际字宽算，不写死像素（高 DPI 下会裁字）
+        self.ok_btn.ensurePolished()
+        self.ok_btn.setFixedWidth(
+            max(88, self.ok_btn.fontMetrics().horizontalAdvance("确定") + 48))
 
         self.resize(scaled.width() + 30, scaled.height() + 116)
 
