@@ -947,7 +947,8 @@ Windows 上「父进程退出，子进程还在」是常见问题，本项目排
 - ✅ 共用能力：`utils/ui_tree.py`（命中规则，录制反查与拾取共用）+ `DeviceService.dump_ui_xml()`（层级导出，含 adb 回退）
 - ✅ 拾取面板：`views/dialogs/element_pick_dialog.py`（截图 → 点击命中 → 高亮 → 定位预览 → 刷新）
 - ✅ 接进动作卡片：定位值旁一个上下文按钮（图像=截屏取图 / 其余=画面拾取），回填时带上 instance 序号
-- ⬜ 真机验收（命中率、横屏、车机 dump 耗时）
+- ✅ 手机真机验收通过（抖音页面命中 `btn_immersefullscreen` / `treasure_loading_view`）
+- ⬜ 车机端验收（横屏、多屏、拾取时的 dump 耗时）
 - ⬜ 第二轮：元素库对话框同样接拾取 + 「同时存入元素库」
 
 痛点：定位元素还得「投屏 → weditor 点控件 → 复制 selector → 回到卡片粘贴」。
