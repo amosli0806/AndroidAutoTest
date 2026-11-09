@@ -1458,7 +1458,11 @@ def _find_existing_chongshi_window() -> bool:
 
     为什么还需要这一步：老版本可能没有互斥体保护；此时新实例会正常启动，
     启动封面就叠在旧实例的主窗口上，看起来像「启动画面和主界面同时出现」。
-    只要能看到一个标题为「虫师」/「虫师 - …」的可见顶层窗口，就按已有实例处理。
+
+    只认**进程本身也是虫师**的窗口：资源管理器打开安装目录时，窗口标题是
+    「虫师 - 文件资源管理器」，光看标题会把 Explorer 误判成虫师（2026-11-09
+    实测：用户双击 exe 时资源管理器正停在安装目录，反复弹「已在运行」）。
+    所以先排除 Explorer 的窗口类，再校验窗口所属进程的 exe 名。
     任何异常一律返回 False（不能反过来挡住启动）。
     """
     if sys.platform != "win32":
@@ -1468,10 +1472,48 @@ def _find_existing_chongshi_window() -> bool:
         from ctypes import wintypes
 
         user32 = ctypes.windll.user32
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL,
+                                         wintypes.DWORD]
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD)]
+        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR,
+                                        ctypes.c_int]
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        # 资源管理器的文件窗口类：即使 exe 查不到也先靠它排掉
+        EXPLORER_CLASSES = {"CabinetWClass", "ExploreWClass"}
+        # 只认当前程序的 exe（打包=虫师.exe，开发=python.exe）和打包名
+        own_exe = os.path.basename(sys.executable).lower()
+        accepted_exes = {own_exe, "虫师.exe"}
+
         found = []
         WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND,
                                          wintypes.LPARAM)
         own_pid = os.getpid()
+
+        def _class_name(hwnd):
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, buf, 256)
+            return buf.value or ""
+
+        def _owner_exe(pid_value):
+            handle = kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION, False, pid_value)
+            if not handle:
+                return ""
+            try:
+                size = wintypes.DWORD(1024)
+                buf = ctypes.create_unicode_buffer(size.value)
+                if kernel32.QueryFullProcessImageNameW(
+                        handle, 0, buf, ctypes.byref(size)):
+                    return os.path.basename(buf.value).lower()
+                return ""
+            finally:
+                kernel32.CloseHandle(handle)
 
         def _cb(hwnd, _lparam):
             if not user32.IsWindowVisible(hwnd):
@@ -1486,15 +1528,26 @@ def _find_existing_chongshi_window() -> bool:
                 return True
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            if pid.value != own_pid:
-                found.append((hwnd, pid.value, title))
-                return False
-            return True
+            if pid.value == own_pid:
+                return True
+
+            cls = _class_name(hwnd)
+            exe = _owner_exe(pid.value)
+            # Explorer 打开安装目录时标题就是「虫师 - 文件资源管理器」，
+            # 不能把它当成虫师实例；查不到进程时也保守跳过（宁可放行）。
+            if cls in EXPLORER_CLASSES or not exe or exe not in accepted_exes:
+                _log_single_instance(
+                    f"window_ignored pid={pid.value} exe={exe or '?'} "
+                    f"class={cls} title={title!r}")
+                return True
+            found.append((hwnd, pid.value, title, exe))
+            return False
 
         user32.EnumWindows(WNDENUMPROC(_cb), 0)
         if found:
-            _hwnd, _pid, _title = found[0]
-            _log_single_instance(f"window_found pid={_pid} title={_title!r}")
+            _hwnd, _pid, _title, _exe = found[0]
+            _log_single_instance(
+                f"window_found pid={_pid} exe={_exe} title={_title!r}")
         return bool(found)
     except Exception:
         return False
