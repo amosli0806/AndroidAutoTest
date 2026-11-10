@@ -674,6 +674,9 @@ def main():
     action_card.set_element_controller(element_controller)
     step_list.set_element_controller(element_controller)
     element_manager.element_changed.connect(step_list.on_element_changed)
+    # 动作卡片拾取时「同时存入元素库」→ 元素库页面按当前筛选重读一遍，
+    # 不然切过去看到的是旧数据，得手动搜一下才刷新（2026-11-10 反馈）
+    action_card.element_library_changed.connect(element_manager.filter_table)
 
     main_window.set_project_controller(project_controller)
     main_window.set_step_controller(step_controller)

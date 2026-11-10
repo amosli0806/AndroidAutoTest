@@ -53,6 +53,8 @@ def _get_spinbox_arrow_url(color: str, direction: str) -> str:
 
 class ActionCardView(QScrollArea):
     add_step_signal = pyqtSignal(str, dict, str)
+    # 拾取时勾了「同时存入元素库」→ 通知元素库页面重新读数据（否则要手动搜一下才刷新）
+    element_library_changed = pyqtSignal()
 
     # 卡片区每行放几张（原来写死在 _build_cards 里的 max_cols）
     CARD_COLUMNS = 2
@@ -424,6 +426,7 @@ class ActionCardView(QScrollArea):
         for cfg in configs_sorted:
             card = ActionCard(cfg)
             card.add_step.connect(self._on_add_step)
+            card.element_library_changed.connect(self.element_library_changed)
             card.setMaximumWidth(340)
             card.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             self.layout.addWidget(card, row, col)
@@ -454,6 +457,7 @@ class ActionCardView(QScrollArea):
 
 class ActionCard(QGroupBox):
     add_step = pyqtSignal(str, dict, str)
+    element_library_changed = pyqtSignal()   # 存进元素库后通知外面刷新
 
     # 颜色映射用于左侧色条，与主题无关
     COLOR_MAP = {
@@ -791,6 +795,8 @@ class ActionCard(QGroupBox):
         if lib:
             # 文案只说结论，不抖「应用 / 模块 / 名称」——用户刚在面板里填过，不用再念一遍
             show_toast(message="已存入元素库")
+            # 元素库页面是「按需重读」的，不通知它就得手动搜一下才看得到新元素
+            self.element_library_changed.emit()
         elif res.get('library_error'):
             # 提示只给结论；具体原因写日志，研发排查时看 app_debug.log
             logger.warning("存入元素库失败：%s", res["library_error"])
