@@ -1,4 +1,5 @@
 # views/action_card_view.py
+import logging
 import os
 import tempfile
 
@@ -18,6 +19,8 @@ from models.voice_model import get_wake_word
 from views.element_selector_dialog import ElementSelectorDialog
 from utils.toast import show_toast
 from utils.theme import Theme, ThemeMode
+
+logger = logging.getLogger(__name__)
 from utils.wheel_guard import WheelScrollGuard
 
 
@@ -789,7 +792,9 @@ class ActionCard(QGroupBox):
             # 文案只说结论，不抖「应用 / 模块 / 名称」——用户刚在面板里填过，不用再念一遍
             show_toast(message="已存入元素库")
         elif res.get('library_error'):
-            show_toast(message=f"存入元素库失败：{res['library_error']}")
+            # 提示只给结论；具体原因写日志，研发排查时看 app_debug.log
+            logger.warning("存入元素库失败：%s", res["library_error"])
+            show_toast(message="存入元素库失败")
 
     def _on_capture_image(self):
         """直接截屏取图：不用先跑去元素库建图像元素，这里框一块就能当定位值。"""
