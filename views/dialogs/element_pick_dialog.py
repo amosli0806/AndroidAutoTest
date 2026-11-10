@@ -14,13 +14,14 @@
 
 命中规则不在这里，在 utils/ui_tree.py —— 与录制反查共用同一份。
 """
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                             QPushButton, QFrame, QApplication)
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+                             QPushButton, QFrame, QApplication, QCheckBox)
 from PyQt6.QtCore import Qt, QTimer, QRect
 from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen
 
 from utils.settings import Settings, THEME_MODE_DARK
-from utils.ui_tree import find_node_at, parse_xml, locator_for, describe_node
+from utils.ui_tree import (find_node_at, parse_xml, locator_for, describe_node,
+                           suggest_element_name)
 
 
 class _PickLabel(QLabel):
@@ -86,12 +87,15 @@ class ElementPickDialog(QDialog):
 
     MAX_W, MAX_H = 860, 640
 
-    def __init__(self, device_service, parent=None):
+    def __init__(self, device_service, parent=None, element_model=None):
+        """element_model 传了才显示「同时存入元素库」——从动作卡片拾取时传，
+        在元素库自己的「创建/编辑」对话框里不传（那里本来就在建元素）。"""
         super().__init__(parent)
         self.setObjectName("ElementPickDialog")
         self.setWindowTitle("从画面拾取元素")
         self.setModal(True)
         self.device_service = device_service
+        self.element_model = element_model
         self.result = None
         self._full = None            # 原图 QPixmap
         self._scale = 1.0
@@ -139,6 +143,31 @@ class ElementPickDialog(QDialog):
         pv.addWidget(self.value_label)
         pv.addWidget(self.detail_label)
         self.root_layout.addWidget(self.preview)
+
+        # 「同时存入元素库」：仅从动作卡片拾取时出现。勾选后展开三行，默认值都能自动补，
+        # 用户直接点「确定」就既填了卡片、又存进了元素库。
+        self.save_to_lib = None
+        self.lib_app = self.lib_module = self.lib_name = None
+        if self.element_model is not None:
+            self.save_to_lib = QCheckBox("同时存入元素库")
+            self.save_to_lib.toggled.connect(self._toggle_lib_fields)
+            self.root_layout.addWidget(self.save_to_lib)
+
+            self.lib_box = QFrame()
+            self.lib_box.setObjectName("PickLibBox")
+            lib_layout = QHBoxLayout(self.lib_box)
+            lib_layout.setContentsMargins(10, 6, 10, 6)
+            lib_layout.setSpacing(6)
+            self.lib_app = QLineEdit()
+            self.lib_app.setPlaceholderText("所属应用")
+            self.lib_module = QLineEdit()
+            self.lib_module.setPlaceholderText("所属模块")
+            self.lib_name = QLineEdit()
+            self.lib_name.setPlaceholderText("元素名称")
+            for w in (self.lib_app, self.lib_module, self.lib_name):
+                lib_layout.addWidget(w, 1)
+            self.lib_box.setVisible(False)
+            self.root_layout.addWidget(self.lib_box)
 
         # 只有两个按钮，都靠右、等宽、同一套主按钮样式（宽度在 _apply_theme 里按字体定）。
         # 不设「取消」：点右上角 × 或按 Esc 就是取消（QDialog 默认行为），少一个按钮更清爽。
@@ -286,12 +315,36 @@ class ElementPickDialog(QDialog):
         self.ok_btn.setEnabled(bool(loc_value))
 
         # describe_node 里已经包含「同 ID 共 N 个（第 K 个）」，这里不再重复拼
+        # 勾了「存入元素库」但名称还空着时，按控件猜一个（用户可改）
+        if self.lib_name is not None and not self.lib_name.text().strip():
+            self.lib_name.setText(self._guess_name(info))
+
         detail = describe_node(info)
         if loc_type == "坐标":
             detail = (f"该控件没有可用的资源 ID / 文本 / 描述，已按坐标定位（{x},{y}）；"
                       f"同分辨率回放才稳，换设备可能点偏")
         self.detail_label.setText(detail)
         self._set_hint(f"已命中，点「确定」填入卡片（{loc_type}）")
+
+    def _toggle_lib_fields(self, checked):
+        """勾选「同时存入元素库」才展开三个输入框，不勾时保持紧凑。
+
+        勾上就把能自动填的直接填好（应用=当前包名、模块=默认、名称=控件名），
+        免得用户面对三个空框不知道要不要填 —— 不改也能直接点「确定」。
+        """
+        self.lib_box.setVisible(bool(checked))
+        if not checked or not self._hit:
+            return
+        if not self.lib_app.text().strip():
+            self.lib_app.setText(self._hit.get("package") or "")
+        if not self.lib_module.text().strip():
+            self.lib_module.setText("默认")
+        if not self.lib_name.text().strip():
+            self.lib_name.setText(suggest_element_name(self._hit))
+
+    def _guess_name(self, info) -> str:
+        """按控件猜一个元素名（规则在 ui_tree，元素库对话框也用同一份）。"""
+        return suggest_element_name(info)
 
     def _confirm(self):
         if not self._hit:
@@ -304,6 +357,23 @@ class ElementPickDialog(QDialog):
             "y": self._pick_y,
             "info": self._hit,
         }
+
+        if (self.save_to_lib is not None and self.save_to_lib.isChecked()
+                and self.element_model is not None):
+            info = self._hit
+            app = self.lib_app.text().strip() or (info.get("package") or "未分类")
+            module = self.lib_module.text().strip() or "默认"
+            name = self.lib_name.text().strip() or self._guess_name(info)
+            try:
+                # 与「抓取界面」导入同一套合并规则：应用 + 模块 + 名称 命中就覆盖定位值，
+                # 保留原 id（步骤是通过 element_id 引用元素的，重建 id 会让引用失效）
+                stats = self.element_model.upsert_elements(
+                    [(app, module, name, loc_type, loc_value, "")])
+                self.result["library"] = {
+                    "app": app, "module": module, "name": name, **stats}
+            except Exception as e:
+                self.result["library_error"] = str(e)
+
         self.accept()
 
     # ------------------------------------------------------------------
@@ -333,6 +403,21 @@ class ElementPickDialog(QDialog):
             QDialog#ElementPickDialog QLabel#PickDetail {{ color: {sub}; font-size: 12px; }}
             QDialog#ElementPickDialog QLabel#PickValue {{ font-weight: 600; }}
             QDialog#ElementPickDialog QLabel[isError="1"] {{ color: #e74c3c; }}
+            QDialog#ElementPickDialog QFrame#PickLibBox {{
+                background-color: {card_bg};
+                border: 1px solid {card_border};
+                border-radius: 8px;
+            }}
+            QDialog#ElementPickDialog QCheckBox {{ color: {fg}; }}
+            QDialog#ElementPickDialog QLineEdit {{
+                background-color: {bg};
+                color: {fg};
+                border: 1px solid {card_border};
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 12px;
+            }}
+            QDialog#ElementPickDialog QLineEdit:focus {{ border-color: {primary}; }}
             QDialog#ElementPickDialog QFrame#PickPreview {{
                 background-color: {card_bg};
                 border: 1px solid {card_border};

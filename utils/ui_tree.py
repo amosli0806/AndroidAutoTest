@@ -193,6 +193,25 @@ def locator_for(info: dict, x: Optional[int] = None,
     return "坐标", f"{int(x)},{int(y)}"
 
 
+def suggest_element_name(info: Optional[dict]) -> str:
+    """给命中控件猜一个元素名：资源 ID 末段 > 文本 > 描述 > 「元素」。
+
+    拾取后存进元素库、或元素库对话框拾取后填名称时用，省得手打。
+    """
+    if not info:
+        return "元素"
+    rid = (info.get("resourceId") or "").strip()
+    if rid:
+        return rid.rsplit("/", 1)[-1]
+    text = (info.get("text") or "").strip()
+    if text:
+        return text[:20]
+    desc = (info.get("description") or "").strip()
+    if desc:
+        return desc[:20]
+    return "元素"
+
+
 def describe_node(info: Optional[dict]) -> str:
     """一句话说明命中的是哪个控件，给拾取面板的预览条 / 日志用。"""
     if not info:

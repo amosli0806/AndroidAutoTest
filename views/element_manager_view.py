@@ -1,6 +1,6 @@
 # views/element_manager_view.py
 import qtawesome as qta
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QToolButton,
                              QTableWidgetItem, QPushButton, QLineEdit, QComboBox,
                              QHeaderView, QAbstractItemView, QMessageBox,
                              QFileDialog, QDialog, QFormLayout, QDialogButtonBox,
@@ -15,6 +15,7 @@ from utils.dialogs import ConfirmDeleteDialog, ErrorDialog, WarningDialog
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 from views.dialogs.image_crop_dialog import ImageCropDialog
+from utils.ui_tree import suggest_element_name
 
 
 class ElementManagerView(QWidget):
@@ -725,16 +726,20 @@ class ElementEditDialog(QDialog):
         self.loc_value_edit = QLineEdit()
         self.loc_value_edit.setPlaceholderText("例如：com.example.app:id/btn")
 
-        # 定位方式=图像 时，定位值旁边给个「截屏取图」入口
-        self.capture_btn = QPushButton("截屏取图")
-        self.capture_btn.setObjectName("browseBtn")
-        self.capture_btn.setFixedSize(100, 30)
-        self.capture_btn.setVisible(False)
-        self.capture_btn.clicked.connect(self._on_capture_image)
+        # 定位值旁的辅助按钮，与动作卡片里那个是同一套交互：
+        #   图像   → 相机（截屏框选，产生模板图）
+        #   其余   → 准星（从设备画面拾取，产生资源 ID / 文本 / 描述 / 坐标）
+        self.loc_btn = QToolButton()
+        self.loc_btn.setObjectName("ElementLocBtn")
+        self.loc_btn.setFixedSize(26, 26)
+        self.loc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.loc_btn.setStyleSheet("border: none; background: transparent;")
+        self.loc_btn.setToolTip("")
+        self.loc_btn.clicked.connect(self._on_loc_btn_clicked)
         loc_row = QHBoxLayout()
         loc_row.setSpacing(8)
         loc_row.addWidget(self.loc_value_edit, 1)
-        loc_row.addWidget(self.capture_btn)
+        loc_row.addWidget(self.loc_btn)
 
         self.remark_edit = QLineEdit()
         self.remark_edit.setPlaceholderText("可选备注信息")
@@ -785,7 +790,40 @@ class ElementEditDialog(QDialog):
         self.remark_edit.setText(element.remark)
 
     def _on_loc_type_changed(self, text):
-        self.capture_btn.setVisible(text == "图像")
+        """图像 → 相机，其余 → 准星（图标颜色跟主题走）。"""
+        color = "#bbbbbb" if Settings.get_theme_mode() == THEME_MODE_DARK else "#555555"
+        icon = "fa6s.camera" if text == "图像" else "fa6s.crosshairs"
+        self.loc_btn.setIcon(qta.icon(icon, color=color))
+
+    def _on_loc_btn_clicked(self):
+        if self.loc_type_combo.currentText() == "图像":
+            self._on_capture_image()
+        else:
+            self._on_pick_element()
+
+    def _on_pick_element(self):
+        """从设备画面拾取：点控件 → 回填定位方式与定位值（名称空着就顺手补一个）。"""
+        if not self.device_service or not getattr(self.device_service, "device", None):
+            WarningDialog.show_warning(self, "无法拾取", "请先在顶部工具栏连接设备")
+            return
+
+        from views.dialogs.element_pick_dialog import ElementPickDialog
+        try:
+            # 不传 element_model：这里本来就在建元素，不需要「同时存入元素库」
+            dlg = ElementPickDialog(self.device_service, self)
+        except Exception as e:
+            WarningDialog.show_warning(self, "打不开拾取面板", str(e))
+            return
+        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.result:
+            return
+
+        res = dlg.result
+        idx = self.loc_type_combo.findText(res["loc_type"])
+        if idx >= 0:
+            self.loc_type_combo.setCurrentIndex(idx)
+        self.loc_value_edit.setText(res["loc_value"])
+        if not self.name_edit.text().strip():
+            self.name_edit.setText(suggest_element_name(res.get("info") or {}))
 
     def _on_capture_image(self):
         if not self.device_service or not self.device_service.device:

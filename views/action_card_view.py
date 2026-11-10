@@ -760,8 +760,11 @@ class ActionCard(QGroupBox):
             return
 
         from views.dialogs.element_pick_dialog import ElementPickDialog
+        # 传 element_model：面板里会多出「同时存入元素库」（从卡片拾取才有意义）
+        element_model = getattr(getattr(self, "element_controller", None),
+                                "element_model", None)
         try:
-            dlg = ElementPickDialog(device_service, self)
+            dlg = ElementPickDialog(device_service, self, element_model=element_model)
         except Exception as e:
             WarningDialog.show_warning(self, "打不开拾取面板", str(e))
             return
@@ -780,6 +783,13 @@ class ActionCard(QGroupBox):
         inst = int(info.get('instance') or 0) if res['loc_type'] == "资源ID" else 0
         value_widget.setProperty('pick_instance', inst)
         self._sync_locator_btn(btn)
+
+        lib = res.get('library')
+        if lib:
+            action = "已存入元素库" if lib.get('created') else "已更新元素库里的同名元素"
+            show_toast(message=f"{action}：{lib['app']} / {lib['module']} / {lib['name']}")
+        elif res.get('library_error'):
+            show_toast(message=f"存入元素库失败：{res['library_error']}")
 
     def _on_capture_image(self):
         """直接截屏取图：不用先跑去元素库建图像元素，这里框一块就能当定位值。"""
