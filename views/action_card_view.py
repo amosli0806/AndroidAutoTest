@@ -786,8 +786,8 @@ class ActionCard(QGroupBox):
 
         lib = res.get('library')
         if lib:
-            action = "已存入元素库" if lib.get('created') else "已更新元素库里的同名元素"
-            show_toast(message=f"{action}：{lib['app']} / {lib['module']} / {lib['name']}")
+            # 文案只说结论，不抖「应用 / 模块 / 名称」——用户刚在面板里填过，不用再念一遍
+            show_toast(message="已存入元素库")
         elif res.get('library_error'):
             show_toast(message=f"存入元素库失败：{res['library_error']}")
 
