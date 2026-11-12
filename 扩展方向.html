@@ -328,58 +328,8 @@
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>数据与参考图按绝对路径绑定</b> — 数据驱动绑定的 CSV / Excel、图像定位的参考图存的都是绝对路径，换机器或挪动工程目录后要重新绑定。</div></div>
       </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag stub">🕳️</span><div><b>启动耗时测试没入口</b> — 测量（<code>measure_cold_launch</code> / <code>measure_warm_launch</code>）、模型（<code>launch_data.json</code> 读写）、对话框（<code>LaunchTestDialog</code>）三层都在，2026-10-11 精简性能页时把按钮删了，一直没接回去；历史数据里还有 12 条旧记录。</div></div>
-      </div>
 
     </div>
-
-    <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 实机确认结果（车机端，2026-11-09）</h3>
-    <p class="small" style="margin-top:0">已在车机（Honda 3QK，2560×1440，density 160，单屏）上跑通
-      「点击搜索目的地 → 输入「万达广场」→ 点 2.7 公里 → 点导航」流程，进入导航态（可见「退出」「5.8 公里 9 分」「10:00 到达」「随后 195 米」「全览」）。5 项全部实测如下。</p>
-
-    <div class="card">
-      <table>
-        <thead><tr><th>确认项</th><th>实机结果</th><th>结论 / 建议</th></tr></thead>
-        <tbody>
-          <tr>
-            <td>浅层快查的深度</td>
-            <td><code>QUICK_DUMP_DEPTH=16</code>：搜索框、2.7 公里按钮、导航按钮均能命中；
-              搜索结果标题在第 18 层，16 层未命中（回退全量约 0.3 秒）；改 20 后全部命中（0.36~0.39 秒/次）。</td>
-            <td>本案全用 <b>resource-id</b> 定位，保持 16 即可；若常用文本点搜索结果标题，可改 20。</td>
-          </tr>
-          <tr>
-            <td>dump 速度</td>
-            <td>主地图 0.29~0.36 秒/次（147 节点）；搜索页 0.30~0.56 秒/次；远快于手机 10~12 秒。</td>
-            <td>等待优化在车机上收益变小，但没有副作用，保留即可。</td>
-          </tr>
-          <tr>
-            <td>截图速度</td>
-            <td>连续 5 次 0.20~0.66 秒，平均 0.37 秒；页面跳转前后 48×48 灰度差 21~42；
-              地图空白点击差 7.4（高于 1.5 阈值）。</td>
-            <td>保持 <code>verify_click_effect=True</code>、<code>CLICK_EFFECT_MIN_DIFF=1.5</code>：
-              不会误报；但动态地图上的空点击也识别不出（差 7.4 &gt; 1.5），属于可接受的漏报。</td>
-          </tr>
-          <tr>
-            <td>多屏 / 副屏</td>
-            <td><code>dumpsys display</code> 只有 displayId 0；<code>wm size</code> 报 2560×1440，density 160。</td>
-            <td>单主屏，坐标点击无需副屏换算；确认用例只在主屏跑即可。</td>
-          </tr>
-          <tr>
-            <td>车机地图可定位性</td>
-            <td>主地图 147 节点 / 109 resource-id / 17 text / 47 clickable；搜索页 124 节点；
-              控件 resource-id 丰富；地图画布 <code>bd_map_view</code> 无可访问子节点。</td>
-            <td>控件走元素定位（优先 resource-id）；画布内 POI / 地图点击走坐标。元素定位可用。</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="tip">💡 <b>实测可用的自动化步骤（resource-id）</b>：
-      <code>cl_search_box_layout</code> → <code>et_lion_search_input_via</code>（输入「万达广场」）→
-      <code>ll_right_second</code>（2.7 公里）→ <code>tv_start_navi</code>（导航）。<br>
-      导航按钮文本带倒计时（「导航 9s」），<b>不要用文本定位</b>，用 <code>tv_start_navi</code>。
-      三个常量（<code>QUICK_DUMP_DEPTH</code> / <code>verify_click_effect</code> /
-      <code>CLICK_EFFECT_MIN_DIFF</code>）按上表暂无需调整。</div>
 
     <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 优先级速查表</h3>
     <p class="small" style="margin-top:0">按档位排列：<b>A = 改动最小、最建议先动</b>；⭐ 只表示建议顺序，与档位一致。</p>

@@ -427,18 +427,6 @@ class PerfThreshold:
 
 
 @dataclass
-class LaunchResult:
-    """应用启动耗时结果"""
-    package: str
-    cold_start_ms: int = 0            # 冷启动耗时
-    warm_start_ms: int = 0            # 热启动耗时
-    timestamp: str = ""
-
-    def to_dict(self):
-        return asdict(self)
-
-
-@dataclass
 class PerfBaseline:
     """性能基线"""
     name: str
@@ -457,15 +445,11 @@ class PerfModel:
     """性能数据的持久化管理"""
     DATA_FILE = data_path("perf_data.json")
     BASELINE_FILE = data_path("perf_baselines.json")
-    LAUNCH_FILE = data_path("launch_data.json")
 
     def __init__(self):
         self.sessions: List[PerfSession] = []
         self.baselines: List[PerfBaseline] = []
         self.threshold: PerfThreshold = PerfThreshold()
-        # 启动耗时：records 按时间累积，baselines 以包名为键存冷/热启动基线
-        self.launch_records: List[LaunchResult] = []
-        self.launch_baselines: dict = {}
         self.load()
 
     # ---------- 加载保存 ----------
@@ -490,19 +474,6 @@ class PerfModel:
                 self.baselines = []
 
         self._migrate_baseline_breakdown()
-
-        if os.path.exists(self.LAUNCH_FILE):
-            try:
-                with open(self.LAUNCH_FILE, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self.launch_records = [
-                        LaunchResult(**r) for r in data.get('records', [])
-                    ]
-                    self.launch_baselines = data.get('baselines', {}) or {}
-            except Exception as e:
-                print(f"[PerfModel] 启动耗时数据加载失败: {e}")
-                self.launch_records = []
-                self.launch_baselines = {}
 
     def save(self):
         try:
@@ -539,45 +510,6 @@ class PerfModel:
                 json.dump([b.to_dict() for b in self.baselines], f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"[PerfModel] 基线保存失败: {e}")
-
-    # ---------- 启动耗时 ----------
-    def save_launch(self):
-        try:
-            with open(self.LAUNCH_FILE, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'records': [r.to_dict() for r in self.launch_records],
-                    'baselines': self.launch_baselines,
-                }, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"[PerfModel] 启动耗时数据保存失败: {e}")
-
-    def add_launch_record(self, package: str, cold_ms: int, warm_ms: int) -> LaunchResult:
-        rec = LaunchResult(
-            package=package,
-            cold_start_ms=cold_ms,
-            warm_start_ms=warm_ms,
-            timestamp=datetime.now().isoformat(),
-        )
-        self.launch_records.append(rec)
-        # 只保留最近 200 条，避免文件无限增长
-        if len(self.launch_records) > 200:
-            self.launch_records = self.launch_records[-200:]
-        self.save_launch()
-        return rec
-
-    def get_launch_history(self, package: str) -> List[LaunchResult]:
-        return [r for r in self.launch_records if r.package == package]
-
-    def set_launch_baseline(self, package: str, cold_ms: int, warm_ms: int):
-        self.launch_baselines[package] = {
-            'cold_ms': cold_ms,
-            'warm_ms': warm_ms,
-            'set_at': datetime.now().isoformat(),
-        }
-        self.save_launch()
-
-    def get_launch_baseline(self, package: str) -> Optional[dict]:
-        return self.launch_baselines.get(package)
 
     # ---------- 会话 ----------
     def add_session(self, session: PerfSession):

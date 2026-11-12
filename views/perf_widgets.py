@@ -354,7 +354,7 @@ class MetricCard(QFrame):
                 self._legend.setPen(pg.mkPen('#d0d0d0'))
 
 class StatCard(QFrame):
-    """纯数字展示卡片（用于卡顿统计、启动耗时等）"""
+    """纯数字展示卡片（用于卡顿统计等）"""
 
     def __init__(self, title, items=None, parent=None):
         super().__init__(parent)
