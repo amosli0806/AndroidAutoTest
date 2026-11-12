@@ -377,6 +377,8 @@ class PerfView(QWidget):
         self._theme_mode = ThemeMode.LIGHT
         self._has_wallpaper = False
         self._state = self.STATE_IDLE
+        # 采集倒计时（秒）；None = 不显示。用于「采集中 · 剩余 mm:ss」
+        self._remaining_seconds = None
         # 「停止中」计时：deadline 是"最早可以回空闲"的时刻；pending 表示
         # 控制器那边的收尾工作已经做完了，只等最短停留时间到点
         self._stop_deadline = 0.0
@@ -475,6 +477,16 @@ class PerfView(QWidget):
                 self.app_combo.setEditText(current)
         self.app_combo.blockSignals(False)
         self._running_processes = list(packages or [])
+        # 清理配置里残留、但当前设备上已不存在的附加进程：
+        # 对话框只列运行中的进程，残留值用户既看不见也取消不掉，会一路带进会话和报告。
+        if not load_failed and packages and self._multi_processes:
+            pkg = self.app_combo.currentText().strip()
+            kept = [p for p in self._multi_processes
+                    if p == pkg or p in self._running_processes]
+            if kept != self._multi_processes:
+                self._multi_processes = kept
+                self._update_multi_btn()
+                self._save_perf_config()
         self._check_state()
 
     # ------------------------------------------------------------------
@@ -1247,12 +1259,20 @@ class PerfView(QWidget):
         b_layout.setContentsMargins(10, 6, 10, 6)
         b_layout.setSpacing(5)
 
-        # 左侧：状态信息（占用剩余空间）
+        # 左侧：状态信息 + 倒计时（倒计时单独一个标签，避免每秒刷新把告警文案冲掉）
         self.status_info = QLabel("就绪 · 未开始采集")
         self.status_info.setStyleSheet(
             "font-size: 12px; color: #999999; background: transparent;"
         )
-        b_layout.addWidget(self.status_info, 1)
+        b_layout.addWidget(self.status_info, 0)
+
+        self.countdown_label = QLabel("")
+        self.countdown_label.setStyleSheet(
+            "font-size: 12px; color: #999999; background: transparent;"
+        )
+        self.countdown_label.setVisible(False)
+        b_layout.addWidget(self.countdown_label, 0)
+        b_layout.addStretch(1)
 
         # 右侧：操作按钮组
         # 组 1：开始 / 停止（二合一）—— 空闲蓝底「开始」，采集中红底「停止」，
@@ -2243,11 +2263,36 @@ class PerfView(QWidget):
             self._multi_processes = ([pkg] if pkg else []) + extra
             self._update_multi_btn()
 
+    def set_remaining(self, seconds):
+        """更新采集倒计时（秒）；传 None 表示不显示。"""
+        self._remaining_seconds = None if seconds is None else max(0, int(seconds))
+        self._sync_countdown_label()
+
+    def _sync_countdown_label(self):
+        """采集中才显示倒计时；场景化/停止中/空闲一律隐藏。"""
+        if self._state == self.STATE_RUNNING and self._remaining_seconds is not None:
+            self.countdown_label.setText(
+                f"· 剩余 {self._format_remaining(self._remaining_seconds)}")
+            self.countdown_label.setVisible(True)
+        else:
+            self.countdown_label.setVisible(False)
+
+    @staticmethod
+    def _format_remaining(seconds: int) -> str:
+        """秒 → mm:ss（不足 1 小时）或 h:mm:ss。"""
+        seconds = max(0, int(seconds))
+        hours, rem = divmod(seconds, 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours:
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:02d}:{secs:02d}"
+
     def _update_status_bar(self):
         # 空闲态：状态栏归位。显式写回（而不是直接 return）是为了清掉
         # 掉线提示「⚠ 设备连接中断 · 采集已暂停」这类临时文案。
         if self._state == self.STATE_IDLE:
             self.status_info.setText("就绪 · 未开始采集")
+            self._sync_countdown_label()
             return
         state_text = {
             self.STATE_RUNNING: "采集中",
@@ -2256,6 +2301,7 @@ class PerfView(QWidget):
         }.get(self._state, "")
         # 底部左侧只保留状态本身：采样点数、间隔已经在顶部控制栏，重复展示没必要。
         self.status_info.setText(state_text)
+        self._sync_countdown_label()
 
     # ------------------------------------------------------------------
     def apply_theme(self, theme_mode: ThemeMode, has_wallpaper: bool = False):

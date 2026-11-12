@@ -15,7 +15,8 @@
 命中规则不在这里，在 utils/ui_tree.py —— 与录制反查共用同一份。
 """
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-                             QPushButton, QFrame, QApplication, QCheckBox)
+                             QPushButton, QFrame, QApplication, QCheckBox,
+                             QWidget, QProgressBar)
 from PyQt6.QtCore import Qt, QTimer, QRect
 from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen
 
@@ -189,16 +190,54 @@ class ElementPickDialog(QDialog):
         btn_row.addWidget(self.ok_btn)
         self.root_layout.addLayout(btn_row)
 
-        self.resize(self.MAX_W + 30, self.MAX_H + 210)
+        # 加载遮罩：截图 + dump 期间盖住空内容，只显示居中的加载提示；
+        # 加载完成后一次性换成完整画面，避免「先弹一个大空窗、再突然缩小」两段式跳动。
+        self.loading_overlay = QWidget(self)
+        self.loading_overlay.setObjectName("PickLoadingOverlay")
+        self.loading_overlay.setAttribute(
+            Qt.WidgetAttribute.WA_StyledBackground, True)
+        overlay_layout = QVBoxLayout(self.loading_overlay)
+        overlay_layout.setContentsMargins(24, 24, 24, 24)
+        overlay_layout.addStretch(1)
+        self.loading_label = QLabel("正在读取设备画面…")
+        self.loading_label.setObjectName("PickLoadingLabel")
+        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        overlay_layout.addWidget(self.loading_label)
+        self.loading_bar = QProgressBar()
+        self.loading_bar.setObjectName("PickLoadingBar")
+        self.loading_bar.setRange(0, 0)          # 不确定进度：走忙碌动画
+        self.loading_bar.setTextVisible(False)
+        self.loading_bar.setFixedSize(180, 6)
+        overlay_layout.addWidget(self.loading_bar, 0,
+                                 Qt.AlignmentFlag.AlignHCenter)
+        overlay_layout.addStretch(1)
+        # 初始就是个紧凑的加载窗；拿到截图后再按图片比例调整一次大小
+        self.resize(420, 260)
+        self.loading_overlay.setGeometry(self.rect())
+        self.loading_overlay.show()
+        self.loading_overlay.raise_()
 
     # ------------------------------------------------------------------
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        overlay = getattr(self, "loading_overlay", None)
+        if overlay is not None:
+            overlay.setGeometry(self.rect())
+
+    def _show_loading(self):
+        self.loading_overlay.setGeometry(self.rect())
+        self.loading_overlay.show()
+        self.loading_overlay.raise_()
+
+    def _hide_loading(self):
+        self.loading_overlay.hide()
+
     def _reload(self):
         """重新截图 + 读取层级（各一次）。
 
         两点必须注意：
         1. 截图和 dump 都是**同步阻塞**的（车机能到十几秒），期间事件循环不转，
-           所以要在阻塞前先重绘一次，让「刷新」的置灰真正显示出来，否则用户
-           完全看不到反馈，只会继续点。
+           所以要在阻塞前先重绘一次，让加载遮罩真正显示出来。
         2. 光靠置灰挡不住连点 —— 点击事件会排在消息循环里，等这轮结束依次触发。
            所以再加 _loading 重入保护，第二次进来直接返回。
         """
@@ -208,16 +247,50 @@ class ElementPickDialog(QDialog):
         self.refresh_btn.setEnabled(False)
         self.ok_btn.setEnabled(False)
         self._set_hint("正在读取设备画面…")
+        self._show_loading()
         self.refresh_btn.repaint()
-        QApplication.processEvents()          # 先让置灰画出来，再去干阻塞的活
+        QApplication.processEvents()          # 先让加载遮罩画出来，再去干阻塞的活
         try:
             self._load_screen_and_hierarchy()
         except Exception as e:                # 兜底：任何异常都不能让按钮永久灰掉
             self._set_hint(f"读取画面失败：{e}", error=True)
         finally:
             self._loading = False
+            self._hide_loading()              # 内容已就绪/已给出错误，整窗一次性呈现
             self.refresh_btn.setEnabled(True)
             self.ok_btn.setEnabled(bool(self._hit))
+
+    def _available_rect(self):
+        """当前屏幕的可用区域（已扣掉任务栏）。"""
+        screen = self.screen() or QApplication.primaryScreen()
+        return screen.availableGeometry() if screen else QRect(0, 0, 1280, 720)
+
+    def _frame_overhead(self):
+        """窗口边框/标题栏额外占的宽高（用于把整个窗口框算进屏幕范围）。"""
+        fg = self.frameGeometry()
+        return (max(0, fg.width() - self.width()),
+                max(0, fg.height() - self.height()))
+
+    def _fit_image_size(self):
+        """把图片限制在屏幕可用区域内，给下方预览/按钮留出约 250px。"""
+        avail = self._available_rect()
+        dw, dh = self._frame_overhead()
+        return (max(320, min(self.MAX_W, avail.width() - dw - 60)),
+                max(180, min(self.MAX_H, avail.height() - dh - 250)))
+
+    def _fit_window(self, scaled):
+        """按图片大小调整窗口，并重新居中 —— 不能只 resize，否则会向右下角长。"""
+        avail = self._available_rect()
+        dw, dh = self._frame_overhead()
+        final_w = min(max(560, scaled.width() + 40),
+                      max(420, avail.width() - dw - 20))
+        final_h = min(scaled.height() + 230,
+                      max(260, avail.height() - dh - 20))
+        self.resize(final_w, final_h)
+        w, h = self.width(), self.height()
+        x = avail.x() + max(0, (avail.width() - w - dw) // 2)
+        y = avail.y() + max(0, (avail.height() - h - dh) // 2)
+        self.move(x, y)
 
     def _load_screen_and_hierarchy(self):
         """真正的加载：截图 → 缩放显示 → dump 层级 → 校验尺寸。"""
@@ -241,18 +314,13 @@ class ElementPickDialog(QDialog):
             return
 
         scaled = self._full.scaled(
-            self.MAX_W, self.MAX_H,
+            *self._fit_image_size(),
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation)
         self._scale = self._full.width() / max(1, scaled.width())
-        self.pic.set_scale(self._scale)
-        self.pic.setPixmap(scaled)
-        self.pic.setFixedSize(scaled.size())
-        self.pic.set_hit(None)
-        # 竖屏截图缩放后很窄，窗口跟着收窄，不留左右大片空白
-        self.resize(max(560, scaled.width() + 40), scaled.height() + 230)
 
-        # 层级（一次）
+        # 层级（一次）。图片先不挂到界面：等 dump 也完成后再一起呈现，
+        # 避免加载过程中窗口被图片撑大、出现第二次尺寸跳动。
         try:
             self._root = parse_xml(self.device_service.dump_ui_xml())
         except Exception:
@@ -262,6 +330,15 @@ class ElementPickDialog(QDialog):
         self.loc_label.setText("定位方式：—")
         self.value_label.setText("定位值：—")
         self.detail_label.setText("点画面上任意控件即可拾取")
+
+        # 图片和窗口尺寸一次性就位（dump 失败也保留截图，便于对照）
+        self.pic.set_scale(self._scale)
+        self.pic.setPixmap(scaled)
+        self.pic.setFixedSize(scaled.size())
+        self.pic.set_hit(None)
+        # 按图片比例调整一次窗口，并重新居中：只 resize 会保持左上角不动，
+        # 小窗变大窗时会一路往右下长，最后超出屏幕。
+        self._fit_window(scaled)
 
         if self._root is None:
             self._set_hint("无法读取界面层级（可能界面一直在动，或应用是自绘 UI）——"
@@ -399,6 +476,17 @@ class ElementPickDialog(QDialog):
 
         self.setStyleSheet(f"""
             QDialog#ElementPickDialog {{ background-color: {bg}; }}
+            QDialog#ElementPickDialog QWidget#PickLoadingOverlay {{ background-color: {bg}; }}
+            QDialog#ElementPickDialog QLabel#PickLoadingLabel {{ color: {fg}; font-size: 14px; }}
+            QDialog#ElementPickDialog QProgressBar#PickLoadingBar {{
+                background-color: {card_bg};
+                border: none;
+                border-radius: 3px;
+            }}
+            QDialog#ElementPickDialog QProgressBar#PickLoadingBar::chunk {{
+                background-color: {primary};
+                border-radius: 3px;
+            }}
             QDialog#ElementPickDialog QLabel {{ color: {fg}; background: transparent; }}
             QDialog#ElementPickDialog QLabel#PickDetail {{ color: {sub}; font-size: 12px; }}
             QDialog#ElementPickDialog QLabel#PickValue {{ font-weight: 600; }}

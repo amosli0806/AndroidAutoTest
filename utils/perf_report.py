@@ -759,6 +759,11 @@ class PerfReportGenerator:
             for _n in (_s.cpu_by_process or {}):
                 if _n and _n not in _cpu_proc_names:
                     _cpu_proc_names.append(_n)
+        # 只保留真正有 CPU 数据的进程：配置里残留/启动后已退出的进程
+        # 不应该把图表误判成「多进程」，也不该出现在图例里。
+        _cpu_proc_names = [
+            _n for _n in _cpu_proc_names
+            if any(_n in (s.cpu_by_process or {}) for s in samples)]
         _cpu_multi = len(_cpu_proc_names) > 1
         _cpu_palette = ['#e67e22', '#16a085', '#8e44ad', '#c0392b',
                         '#2c3e50', '#d35400', '#7f8c8d', '#27ae60']
@@ -1537,8 +1542,21 @@ class PerfReportGenerator:
             charts_js = charts_js + "\n\n" + CHART_JS_FPS_DISPLAY
 
         # ---- 测试详情汇总表（对齐百度报告的「一、性能测试详情」）----
-        # 目标进程（主进程在第一个）：多进程时详情表按进程逐行给出均值/峰值/最低
-        _procs = list(getattr(session, "app_processes", None) or []) or [session.app_package]
+        # 目标进程（主进程在第一个）：多进程时详情表按进程逐行给出均值/峰值/最低。
+        # 只保留真正采到数据的进程 —— 配置残留/已退出的进程不应在报告里占位。
+        _all_procs = (list(getattr(session, "app_processes", None) or [])
+                      or [session.app_package])
+
+        def _proc_has_data(name):
+            for _s in samples:
+                if float((_s.cpu_by_process or {}).get(name, 0) or 0) > 0:
+                    return True
+                _m = (_s.mem_by_process or {}).get(name) or {}
+                if float(_m.get("pss", 0) or 0) > 0:
+                    return True
+            return False
+
+        _procs = [p for p in _all_procs if _proc_has_data(p)] or [session.app_package]
         _proc_row = ""
         if len(_procs) > 1:
             _proc_row = ('<tr><td class="label">目标进程</td><td>'
@@ -1581,7 +1599,15 @@ class PerfReportGenerator:
             _s = stats.get('mem') or {}
             # 多进程：先把所有参数排成「合计块」，再按进程各排一块
             # （主进程的全部参数 → 子进程的全部参数），便于整块对比
-            _mem_procs = [p for p in (getattr(session, "app_processes", None) or []) if p]
+            _mem_procs = []
+            for _p in _all_procs:
+                for _sm in samples:
+                    _item = (_sm.mem_by_process or {}).get(_p) or {}
+                    if float(_item.get("pss", 0) or 0) > 0:
+                        _mem_procs.append(_p)
+                        break
+            if not _mem_procs:
+                _mem_procs = [session.app_package]
             _mem_getters = []          # [(参数名, 取某进程该值的函数)]
 
             def _proc_mem(x, pn, field, cat=None):
@@ -1628,15 +1654,20 @@ class PerfReportGenerator:
             # 合计行全部列完后，按进程整块展开（每个进程把自己那套参数连续排完）
             if len(_mem_procs) > 1:
                 for _pn in _mem_procs:
-                    _detail_rows.append((_pn,))
+                    _proc_rows = []
                     for _label, _getter in _mem_getters:
                         _vals = [v for v in (_getter(x, _pn) for x in samples) if v > 0]
                         if not _vals:
                             continue
-                        _detail_rows.append((
+                        _proc_rows.append((
                             _label,
                             f"{sum(_vals) / len(_vals):.1f}", f"{max(_vals):.1f}",
                             f"{min(_vals):.1f}", "单进程"))
+                    # 一行数据都没有就不插进程标题：否则会出现只有名字的空小节
+                    if not _proc_rows:
+                        continue
+                    _detail_rows.append((_pn,))
+                    _detail_rows.extend(_proc_rows)
         if 'fps' in metrics:
             _s = stats.get('fps') or {}
             _detail_rows.append((

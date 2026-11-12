@@ -276,6 +276,8 @@ class PerfController(QObject):
 
         self.current_session = None
         self.perf_worker = None
+        # 采集倒计时截止时间（time.time() 口径）；None = 不限时长/未在采集
+        self._perf_deadline = None
         self.scenario_worker = None
         self.voice_worker = None      # 语音场景的播报线程
         # 本次收尾是否要「自动落盘报告与数据」：只有采集自然结束
@@ -290,6 +292,8 @@ class PerfController(QObject):
         self._hprof_proc = None       # 在途 dumpheap 的本地 adb 进程
         self._hprof_remote = ""       # 设备端临时 hprof（退出/取消时清理）
         self._hprof_cancel = False
+        # 本次转储是否由用户手动触发：自动循环/内存超阈值不弹完成提示
+        self._hprof_manual = False
         # 内存明细（smaps）自动循环 / 抓取状态
         self._smaps_loop_timer = None
         self._smaps_dumping = False
@@ -447,6 +451,31 @@ class PerfController(QObject):
     # ------------------------------------------------------------------
     # 开始/暂停/继续/停止
     # ------------------------------------------------------------------
+    def _filter_running_extra_processes(self, processes):
+        """丢掉配置里残留、但设备上已经不存在的附加进程。
+
+        多进程对话框只列「正在运行」的进程，残留值用户看不见也取消不了，
+        会一路带进会话；报告按 app_processes 展开时就会出现没有数据的幽灵小节。
+        查询失败时保留（无法判断，不误删用户的选择）。
+        """
+        if len(processes) <= 1:
+            return processes
+        try:
+            compat = AndroidCompat(self.device_service.device)
+        except Exception:
+            return processes
+        kept = [processes[0]]
+        for p in processes[1:]:
+            try:
+                ok_p, running_p = compat.is_package_running_checked(p)
+            except Exception:
+                ok_p, running_p = False, True
+            if ok_p and not running_p:
+                logger.info("[Perf] 忽略未运行的附加进程：%s", p)
+                continue
+            kept.append(p)
+        return kept
+
     def _on_start(self, payload: dict):
         package = payload['package']
         # 目标进程列表（主进程在第一个）：没勾多进程时就是单个进程
@@ -502,6 +531,8 @@ class PerfController(QObject):
         except Exception:
             pass
 
+        processes = self._filter_running_extra_processes(processes)
+
         # 创建会话
         session = PerfSession(
             id=self.model.gen_session_id(),
@@ -554,8 +585,14 @@ class PerfController(QObject):
         self.perf_worker.finished_all.connect(self._on_worker_finished)
         self.perf_worker.start()
 
+        # 采集中倒计时：与 PerfWorker 内部 deadline 同口径（墙钟）
+        _duration = payload.get('duration_minutes')
+        self._perf_deadline = (time.time() + float(_duration) * 60
+                               if _duration else None)
+
         # 启动统计定时器
         self._stats_timer.start()
+        self._refresh_stats()      # 立即刷新一次，倒计时不用等第一个 1 秒
 
         # 堆转储自动循环：勾了「指标」面板里的「堆转储」就随监控一起启动
         # （第一次转储在一个完整间隔后）。2026-11-05 起采集与否只看这个勾选，
@@ -640,6 +677,12 @@ class PerfController(QObject):
         if self.current_session is None and self.perf_worker is None \
                 and self.scenario_worker is None and self.voice_worker is None:
             return
+        # 先清倒计时：点停止后底部立刻回到「停止中」，不再显示剩余时间
+        self._perf_deadline = None
+        try:
+            self.view.set_remaining(None)
+        except Exception:
+            pass
         # 停止采集
         if self.perf_worker:
             self.perf_worker.stop()
@@ -976,6 +1019,12 @@ class PerfController(QObject):
             return
         stats = self.current_session.get_stats()
         self.view.update_stats(stats)
+        # 采集中同步倒计时；停止收尾时清掉
+        if final or self._perf_deadline is None:
+            self.view.set_remaining(None)
+        else:
+            self.view.set_remaining(
+                max(0, int(round(self._perf_deadline - time.time()))))
 
     def _on_link_lost(self):
         """设备连接中断：采集已暂停，等主窗口重连后线程自动继续。"""
@@ -1086,7 +1135,7 @@ class PerfController(QObject):
 
     def _on_hprof_once(self):
         """手动触发一次堆转储（与循环互不干扰）"""
-        self._dump_hprof_now()
+        self._dump_hprof_now(manual=True)
 
     def _start_hprof_loop(self):
         package = self.view.get_selected_package()
@@ -1114,8 +1163,12 @@ class PerfController(QObject):
             except Exception:
                 pass
 
-    def _dump_hprof_now(self):
-        """对当前所选应用执行一次堆转储（后台线程，防重入）"""
+    def _dump_hprof_now(self, manual: bool = False):
+        """对当前所选应用执行一次堆转储（后台线程，防重入）。
+
+        manual 只影响完成提示：自动循环 / 内存超阈值触发的转储在采集过程中很密，
+        弹「堆转储完成」会一直挡在底部按钮上；用户手动点「立即转储」才给反馈。
+        """
         if self._hprof_dumping:
             return
         package = self.view.get_selected_package()
@@ -1127,6 +1180,7 @@ class PerfController(QObject):
             return
         self._hprof_dumping = True
         self._hprof_cancel = False
+        self._hprof_manual = bool(manual)
 
         import subprocess, sys as _sys
         from utils.adb_path import get_adb_path
@@ -1240,7 +1294,9 @@ class PerfController(QObject):
         """堆转储结果回投到主线程：只弹 toast 结论，不写日志、不展示异常信息"""
         if status == "success":
             self._add_event("heap", os.path.basename(message))
-            show_toast(self.view, "堆转储完成")
+            # 自动循环 / 内存超阈值触发的转储不弹提示；手动「立即转储」仍给一次反馈
+            if getattr(self, "_hprof_manual", False):
+                show_toast(self.view, "堆转储完成")
         else:
             show_toast(self.view, "堆转储失败", duration=4000)
 

@@ -21,30 +21,8 @@ from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 from utils.dialogs import ConfirmDeleteDialog
 from models.perf_model import MEM_CATEGORIES, scope_conflict_note
-from PyQt6.QtWidgets import QStyleOptionButton, QStyle
-from PyQt6.QtGui import QPainter, QPen, QColor, QBrush
+from utils.widget_helpers import BorderedCheckBox
 
-
-class BorderedCheckBox(QCheckBox):
-    """复选框：保留 Fusion 默认绘制（勾选时有 √），额外叠加明显的边框。"""
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        try:
-            opt = QStyleOptionButton()
-            self.initStyleOption(opt)
-            rect = self.style().subElementRect(
-                QStyle.SubElement.SE_CheckBoxIndicator, opt, self
-            )
-            if rect.isValid() and rect.width() > 0:
-                painter = QPainter(self)
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                painter.setPen(QPen(QColor(120, 120, 120), 1))
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawRect(rect.adjusted(0, 0, -1, -1))
-                painter.end()
-        except Exception:
-            pass
 
 # ============================================================
 # 阈值配置对话框
@@ -61,8 +39,8 @@ class PerfThresholdDialog(QDialog):
         self.setObjectName("PerfThresholdDialog")
         self.setWindowTitle("阈值设置")
         self.setModal(True)
-        # 高度 +34：多了「超阈值自动转储」一行
-        self.setFixedSize(460, 406 if reference else 374)
+        # 高度 +40：自动转储开关从表单底部挪到顶部，并补一行说明
+        self.setFixedSize(460, 446 if reference else 414)
         self.threshold = threshold
         self._reference = reference or {}
 
@@ -99,10 +77,29 @@ class PerfThresholdDialog(QDialog):
             hint.setStyleSheet("font-size: 12px; color: #1976d2;")
             root.addWidget(hint)
 
-        # 启用开关
+        # 两个开关放在一起：自动转储是阈值告警的子能力，原来放在表单底部，
+        # 又是个普通复选框，用户根本感知不到它默认是开启的。
         self.enable_check = BorderedCheckBox("启用阈值告警")
         self.enable_check.setChecked(True)
         root.addWidget(self.enable_check)
+
+        self.auto_hprof_check = BorderedCheckBox(
+            "启用自动堆转储（内存超阈值时，每会话一次）")
+        self.auto_hprof_check.setToolTip(
+            "默认开启。内存首次越过阈值会立刻执行一次堆转储，抓住「涨上去那一刻」；\n"
+            "每会话只触发一次，堆转储需 10~30 秒、产物几十 MB，不需要可取消勾选")
+        root.addWidget(self.auto_hprof_check)
+
+        self.auto_hprof_hint = QLabel(
+            "默认开启；内存首次越过阈值会立即抓一次堆，约 10~30 秒、产物几十 MB")
+        self.auto_hprof_hint.setWordWrap(True)
+        self.auto_hprof_hint.setIndent(24)
+        self.auto_hprof_hint.setStyleSheet("font-size: 12px; color: #999;")
+        root.addWidget(self.auto_hprof_hint)
+
+        # 阈值告警关闭时，自动转储不会触发；跟着置灰，避免用户误以为它还在工作
+        self.enable_check.toggled.connect(self.auto_hprof_check.setEnabled)
+        self.enable_check.toggled.connect(self.auto_hprof_hint.setEnabled)
 
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
@@ -132,13 +129,6 @@ class PerfThresholdDialog(QDialog):
         form.addRow("FPS 低于:", self.fps_spin)
 
         root.addLayout(form)
-
-        # 三期：超阈值自动转储（堆转储要十几秒、几十 MB，默认关）
-        self.auto_hprof_check = QCheckBox("内存超阈值时自动转储堆（每会话一次）")
-        self.auto_hprof_check.setToolTip(
-            "默认开启。内存首次越过阈值会立刻执行一次堆转储，抓住「涨上去那一刻」；\n"
-            "每会话只触发一次，堆转储需 10~30 秒、产物几十 MB，不需要可取消勾选")
-        root.addWidget(self.auto_hprof_check)
 
         root.addStretch()
 
@@ -173,6 +163,9 @@ class PerfThresholdDialog(QDialog):
         self.mem_spin.setValue(th.mem_max)
         self.fps_spin.setValue(int(th.fps_min))
         self.auto_hprof_check.setChecked(bool(getattr(th, 'auto_hprof_on_alert', False)))
+        # 阈值告警关闭时自动转储不会触发：跟着置灰（勾选状态保留，重新开启时生效）
+        self.auto_hprof_check.setEnabled(th.enabled)
+        self.auto_hprof_hint.setEnabled(th.enabled)
 
     def _on_reset(self):
         from models.perf_model import PerfThreshold
@@ -182,6 +175,8 @@ class PerfThresholdDialog(QDialog):
         self.mem_spin.setValue(default.mem_max)
         self.fps_spin.setValue(int(default.fps_min))
         self.auto_hprof_check.setChecked(default.auto_hprof_on_alert)
+        self.auto_hprof_check.setEnabled(default.enabled)
+        self.auto_hprof_hint.setEnabled(default.enabled)
 
     def _on_ok(self):
         th = self.threshold

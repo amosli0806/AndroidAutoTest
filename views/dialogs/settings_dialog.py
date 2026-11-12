@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLineEdit, QPushButton, QFileDialog, QSlider, QLabel,
     QComboBox, QWidget, QStackedWidget, QTreeWidget, QTreeWidgetItem,
-    QFrame, QScrollArea, QKeySequenceEdit, QCheckBox, QToolButton,
+    QFrame, QScrollArea, QKeySequenceEdit, QToolButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QSpinBox, QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal, QSize
@@ -16,6 +16,7 @@ from PyQt6.QtGui import QKeySequence, QIcon, QPixmap, QImageReader
 from models.var_model import VarModel, name_error
 from utils import tree_state
 from utils import vars as var_utils
+from utils.widget_helpers import BorderedCheckBox
 
 
 # 快捷键 key -> 中文名映射
@@ -649,7 +650,7 @@ class SettingsDialog(QDialog):
         form.setSpacing(12)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.ai_enable_check = QCheckBox("启用 AI 辅助")
+        self.ai_enable_check = BorderedCheckBox("启用 AI 辅助")
         form.addRow("", self.ai_enable_check)
 
         self.ai_base_edit = QLineEdit()
@@ -817,7 +818,7 @@ class SettingsDialog(QDialog):
         wake_form.setLabelAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.wake_enabled_check = QCheckBox("唤醒词播完后确认，失败自动重播")
+        self.wake_enabled_check = BorderedCheckBox("唤醒词播完后确认，失败自动重播")
         wake_form.addRow("开关:", self.wake_enabled_check)
 
         self.wake_retries_spin = QSpinBox()
@@ -866,7 +867,7 @@ class SettingsDialog(QDialog):
         form.setLabelAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.verify_enabled_check = QCheckBox("启用预期结果验证")
+        self.verify_enabled_check = BorderedCheckBox("启用预期结果验证")
         form.addRow("开关:", self.verify_enabled_check)
 
         self.verify_tag_edit = QLineEdit()
@@ -1634,11 +1635,11 @@ class SettingsDialog(QDialog):
         tray_form.setSpacing(12)
         tray_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.notify_tray_check = QCheckBox("设备断连、任务完成时提醒")
+        self.notify_tray_check = BorderedCheckBox("设备断连、任务完成时提醒")
         self.notify_tray_check.setChecked(True)
         tray_form.addRow("托盘通知:", self.notify_tray_check)
 
-        self.notify_tray_minimize_check = QCheckBox("关闭窗口时最小化，不退出程序")
+        self.notify_tray_minimize_check = BorderedCheckBox("关闭窗口时最小化，不退出程序")
         self.notify_tray_minimize_check.setChecked(True)
         tray_form.addRow("最小化到托盘:", self.notify_tray_minimize_check)
 

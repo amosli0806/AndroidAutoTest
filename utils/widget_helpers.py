@@ -7,7 +7,36 @@
 可以盖过各对话框自己写的 QComboBox QAbstractItemView 规则，做到全应用一致。
 """
 from PyQt6.QtCore import QEvent, QObject, Qt
-from PyQt6.QtWidgets import QApplication, QComboBox, QListView, QStyledItemDelegate
+from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QListView,
+                             QStyle, QStyleOptionButton, QStyledItemDelegate)
+
+
+class BorderedCheckBox(QCheckBox):
+    """复选框：保留 Fusion 默认绘制（勾选时有 √），额外叠加明显的边框。
+
+    设置页、阈值页等深色界面上，默认指示器边框很淡，用户不容易看出
+    「这里是个开关」。只加边框、不改尺寸/布局，和普通 QCheckBox 可以混用。
+    """
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        try:
+            opt = QStyleOptionButton()
+            self.initStyleOption(opt)
+            rect = self.style().subElementRect(
+                QStyle.SubElement.SE_CheckBoxIndicator, opt, self
+            )
+            if rect.isValid() and rect.width() > 0:
+                painter = QPainter(self)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setPen(QPen(QColor(120, 120, 120), 1))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRect(rect.adjusted(0, 0, -1, -1))
+                painter.end()
+        except Exception:
+            pass
+
 
 # 当前生效的下拉面板样式
 _popup_qss = ""
