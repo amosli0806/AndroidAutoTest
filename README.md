@@ -220,7 +220,8 @@ pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_up
 
 定位值右侧有一个**按定位方式自适应的辅助按钮**：定位方式=图像时是相机（截屏框选，生成模板图），
 其余五种是准星（打开拾取面板，在设备画面上点控件，自动回填定位方式与定位值，同 ID 多节点带 `instance`）。
-两类动作语义互斥，所以只占一个位置，不会把输入框挤窄。实现见 `views/dialogs/element_pick_dialog.py`。
+两类动作语义互斥，所以只占一个位置，不会把输入框挤窄。实现见 `views/dialogs/element_pick_dialog.py`；
+手机（抖音页面）与车机（Honda 3QK）双端均已实测通过。
 
 #### 4.1.4 定位方式与回退链
 
