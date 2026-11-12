@@ -3088,6 +3088,12 @@ class MainWindow(QMainWindow):
         if clear_btn is not None:
             clear_btn.setVisible(kind == "log")
 
+        # 执行日志自带「全部类型 / 搜索 / AI 分析」那一行，再挂一行标题是多余的，
+        # 整行连间距一起收起，观感与虫师日志一致（它需要标题是因为正文是纯文本）。
+        title_row = getattr(self, "_bottom_log_title_row", None)
+        if title_row is not None:
+            title_row.setVisible(kind != "execute_log")
+
         # 内容容器切页：0 = 文本区（log / crash / anr / device_info），
         # 1 = 消息中心，2 = 执行日志（自带筛选/搜索/通过率统计，塞不进纯文本区）
         is_message = (kind == "message")
@@ -3846,10 +3852,11 @@ class MainWindow(QMainWindow):
         # 日志面板
         if self._logs_view_ref is not None:
             self._logs_view_ref.setStyleSheet(f"""
+                /* 日志面板现在住在底部面板里，不再画卡片边框 ——
+                   多一圈圆角边框会和底部面板本身的边界叠成双层 */
                 #LogsView {{
-                    background-color: {panel_bg};
-                    border: 1px solid {panel_border};
-                    border-radius: 12px;
+                    background-color: transparent;
+                    border: none;
                 }}
                 #LogsView QTextEdit {{
                     padding: 4px;

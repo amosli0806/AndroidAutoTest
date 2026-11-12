@@ -842,7 +842,11 @@ def main():
     bl_clear_btn.clicked.connect(main_window.clear_bottom_log)
     bl_title_row.addWidget(bl_clear_btn)
 
-    bl_layout.addLayout(bl_title_row)
+    # 标题行包一层 widget：执行日志自带筛选/搜索/统计栏，不需要再挂一行标题，
+    # 整行（含与内容区之间的间距）都要能一起隐藏
+    bl_title_row_widget = _QW()
+    bl_title_row_widget.setLayout(bl_title_row)
+    bl_layout.addWidget(bl_title_row_widget)
 
     bottom_log_text = _QTE()
     bottom_log_text.setObjectName("BottomLogText")
@@ -872,6 +876,7 @@ def main():
     # 保存引用供后续使用
     main_window._bottom_log_text = bottom_log_text
     main_window._bottom_log_title = bl_title
+    main_window._bottom_log_title_row = bl_title_row_widget
     main_window._bottom_log_clear_btn = bl_clear_btn
     main_window.set_bottom_log_placeholder(bottom_log_widget)
     main_window.set_bottom_panel_stack(bottom_stack, notification_view)
