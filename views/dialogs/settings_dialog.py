@@ -996,8 +996,9 @@ class SettingsDialog(QDialog):
         prof = VoiceModel().get_car_profile(name)
         if not prof:
             return
+        # 不再弹「已载入「XX」，点应用后生效」：下拉框里已经是选中的车企，
+        # 选项本身就是反馈；而且这句提示会盖住页面底部的字段（2026-11-12 去掉）
         self._fill_car_profile_fields(prof)
-        show_toast(self, f"已载入「{name}」，点「应用」或「确定」后生效", duration=2500)
 
     def _on_save_car_profile(self):
         """把当前界面的随车配置另存为一个车企。"""
