@@ -2913,6 +2913,14 @@ class MainWindow(QMainWindow):
         if self.visual_action is not None:
             self.visual_action.setVisible(not enabled)
 
+        # 执行日志按钮同理：迷你模式只留 ADB 指令管理区，用例执行用不上它。
+        # 面板若正开着要一并收起 —— 否则按钮藏了、日志还占着下半屏，关不掉。
+        exec_log_action = getattr(self, "execute_log_action", None)
+        if exec_log_action is not None:
+            exec_log_action.setVisible(not enabled)
+        if enabled and self._bottom_panel_kind == "execute_log":
+            self._hide_bottom_panel()
+
         # 左上 8 个功能导航（迷你模式隐藏）。
         # 中间的弹性占位**两种模式都必须保留**：它没有视觉，只负责把下面那组
         # 底部按钮压到底。迷你模式下若把它一并隐藏，Qt 不再给它分配空间，
