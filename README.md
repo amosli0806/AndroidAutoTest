@@ -117,8 +117,10 @@ pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_up
 | **欢迎页** | 快速开始指引 | `views/main_window.py`（index 6） |
 
 顶部工具栏：设备下拉 + 刷新 + 无线联调 + 投屏 + 安装 APK + 推送文件 + MD5 + 齿轮菜单（设置/检查更新/关于）。
-右侧工具栏：消息中心（铃铛，带未读角标）、帮助中心、个人知识库。
-左侧导航底部还有 5 个开关：硬件信息 / Crash 日志 / ANR 日志 / 日志面板（`Ctrl+L`）/ 迷你模式。
+左侧导航 7 个功能页：ADB 工具箱 / 自动化编辑 / 自动化执行 / 应用元素库 / 接口自动化 / 性能检测 / 语音播报；
+底部还有 5 个开关：硬件信息 / Crash 日志 / ANR 日志 / 日志面板（`Ctrl+L`）/ 迷你模式。
+
+右侧工具栏：消息中心（铃铛，带未读角标）、**应用可视化**（开关 weditor 浮窗）、帮助中心、个人知识库。
 
 底部面板 5 种互斥内容：虫师日志 / 硬件信息 / Crash 日志 / ANR 日志 / 消息中心，
 占主分割器 30%（`BOTTOM_PANEL_RATIO`），虫师日志不限行数。
@@ -128,7 +130,7 @@ pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_up
 
 ### 界面截图
 
-主界面 —— 左侧 8 个功能页，右侧工具栏是帮助中心与知识库：
+主界面 —— 左侧 7 个功能页，右侧工具栏依次是消息、应用可视化、帮助中心、个人知识库：
 
 ![虫师主界面](docs/screenshots/01-welcome.png)
 

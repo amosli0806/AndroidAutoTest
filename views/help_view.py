@@ -504,7 +504,7 @@ class HelpView(QFrame):
                 </p>
                 {self._get_steps_html([
                     {'image': 'weditor_1_connect.png', 'desc': '设备连接并开启调试模式'},
-                    {'image': 'weditor_2_launch.png', 'desc': '在"应用可视化" Tab 点击"启动 weditor"'},
+                    {'image': 'weditor_2_launch.png', 'desc': '点右侧工具栏的「应用可视化」按钮，在浮窗里点「启动 weditor」'},
                     {'image': 'weditor_3_view_ui.png', 'desc': '界面嵌入显示设备截图和 UI 树'},
                     {'image': 'weditor_4_select_element.png', 'desc': '点击 UI 树节点，右侧高亮控件并显示属性'},
                     {'image': 'weditor_5_copy_selector.png', 'desc': '复制资源ID或 XPath 到动作卡片中快速生成步骤'},

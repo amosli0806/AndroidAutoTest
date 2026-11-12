@@ -187,6 +187,7 @@ class MainWindow(QMainWindow):
         self._bottom_panel_contents = {}         # cache：Crash / ANR 拉取结果
         self._bottom_panel_actions = {}  # kind -> QAction
         self.help_action = None
+        self.visual_action = None
         self.device_status_label = None
         self.nav_actions = []
         self.nav_icons = []
@@ -1124,7 +1125,7 @@ class MainWindow(QMainWindow):
                 background: #1565c0;
             }
         """
-        # 窗口被手动压矮时，13 个图标放不下会把「日志 / 迷你模式」挤进省略菜单，
+        # 窗口被手动压矮时，12 个图标放不下会把「日志 / 迷你模式」挤进省略菜单，
         # 而那个省略箭头只剩 12px 高、贴着窗口底边几乎看不见。高度不够时自动切成
         # 紧凑密度（见 _sync_left_toolbar_density），保证最后一个图标仍能完整显示。
         self._left_toolbar_compact = False
@@ -1139,7 +1140,8 @@ class MainWindow(QMainWindow):
         nav_items = [
             ("ADB工具箱", 'fa6s.screwdriver-wrench', 0),
             ("自动化编辑", 'fa6s.pen-to-square', 1),
-            ("应用可视化", 'fa6s.eye', 2),
+            # 「应用可视化」不在左栏：它是开关 weditor 浮窗、不占整页，
+            # 放在右栏（消息与帮助中心之间）更符合「辅助工具」的定位
             ("自动化执行", 'fa6s.play', 3),
             ("应用元素库", 'fa6s.list', 4),
             ("接口自动化", 'fa6s.plug', 7),
@@ -1254,6 +1256,14 @@ class MainWindow(QMainWindow):
         # 复用底部面板那套互斥机制：一次只显示一种内容
         self._bottom_panel_actions["message"] = self.msg_action
 
+        # 应用可视化：开/关 weditor 浮窗，不占整页（所以不进 _right_toolbar_pages 那张表）。
+        # 放在消息与帮助中心之间 —— 与「点一下占一页」的入口区分开，靠位置说明它是开关。
+        self.visual_action = QAction(
+            qta.icon('fa6s.eye', color=self._toolbar_icon_color()), "应用可视化", self)
+        self.visual_action.setCheckable(True)
+        self.visual_action.setToolTip("应用可视化：内嵌 weditor，查看画面与 UI 层级")
+        self.visual_action.toggled.connect(self._on_visualize_action_toggled)
+        self.right_toolbar.addAction(self.visual_action)
         self.help_action = QAction(qta.icon('fa6s.circle-question', color=self._toolbar_icon_color()), "帮助中心", self)
         self.help_action.setCheckable(True)
         # 与左侧功能按钮一致：再次点击已选中的按钮 -> 取消选中并回到欢迎页
@@ -1554,12 +1564,29 @@ class MainWindow(QMainWindow):
         self.visualize_dock.visibilityChanged.connect(self._on_visualize_dock_visibility)
 
     def _on_visualize_dock_visibility(self, visible):
-        """dock 显示/隐藏时，同步左侧按钮的选中与图标状态"""
-        if len(self.nav_actions) > 2:
-            action = self.nav_actions[2]
-            action.setChecked(visible)
-            color = 'white' if visible else self._toolbar_icon_color()
-            action.setIcon(qta.icon(self.nav_icons[2], color=color))
+        """dock 显示/隐藏时，同步右侧「应用可视化」按钮的选中与图标状态。
+
+        用户点浮窗自己的 × 关掉时也要同步回按钮，所以这里以浮窗实际可见性为准；
+        blockSignals 防止和 toggled 互相触发。
+        """
+        action = getattr(self, "visual_action", None)
+        if action is None:
+            return
+        action.blockSignals(True)
+        action.setChecked(visible)
+        action.blockSignals(False)
+        color = 'white' if visible else self._toolbar_icon_color()
+        action.setIcon(qta.icon('fa6s.eye', color=color))
+
+    def _on_visualize_action_toggled(self, checked):
+        """右侧「应用可视化」按钮：开 / 关 weditor 浮窗。"""
+        if self.visualize_dock is None:
+            # 浮窗还没建好（启动早期），回滚按钮状态，避免显示成已选中
+            self.visual_action.blockSignals(True)
+            self.visual_action.setChecked(False)
+            self.visual_action.blockSignals(False)
+            return
+        self.toggle_visualize_dock(checked)
 
     def _visualize_dock_size(self, avail=None):
         """可视化浮窗尺寸：设计值 1180×760，按屏幕可用区收缩且**绝不超过屏幕**。
@@ -2615,9 +2642,6 @@ class MainWindow(QMainWindow):
         # ADB 工具箱是"指令搜索"、在自动化编辑是"步骤搜索"），必须跟着页走
         self._update_shortcut_enabled()
         for i, action in enumerate(self.nav_actions):
-            if i == 2:
-                # 可视化按钮的状态由 dock 的可见性控制，跳过
-                continue
             if self.nav_indices[i] == index:
                 action.setIcon(qta.icon(self.nav_icons[i], color='white'))
             else:
@@ -2625,8 +2649,6 @@ class MainWindow(QMainWindow):
         toolbar_pages = self._right_toolbar_pages()
         if index in toolbar_pages:
             for i, action in enumerate(self.nav_actions):
-                if i == 2:
-                    continue
                 action.setChecked(False)
                 # 关键：图标颜色也同步改回灰色，否则会停留在白色
                 action.setIcon(qta.icon(self.nav_icons[i], color=self._toolbar_icon_color()))
@@ -2635,16 +2657,12 @@ class MainWindow(QMainWindow):
                 f"当前功能: {toolbar_pages[index][2]}", 2000)
         elif index == self.WELCOME_PAGE_INDEX:
             for i, action in enumerate(self.nav_actions):
-                if i == 2:
-                    continue
                 action.setChecked(False)
                 action.setIcon(qta.icon(self.nav_icons[i], color=self._toolbar_icon_color()))
             self._sync_right_toolbar_pages(None)
             self._show_status_message("欢迎", 2000)
         else:
             for i, action in enumerate(self.nav_actions):
-                if i == 2:
-                    continue
                 action.setChecked(self.nav_indices[i] == index)
             self._sync_right_toolbar_pages(None)
             # index 是 stacked_widget 的下标，nav_actions 是左侧工具栏的顺序，
@@ -2880,6 +2898,9 @@ class MainWindow(QMainWindow):
         # 底部状态栏保留（用户要求迷你模式下也展示）
         for _idx, (action, _icon, _name) in self._right_toolbar_pages().items():
             action.setVisible(not enabled)
+        # 应用可视化也隐藏：迷你模式窗口只有 500 宽，1180 宽的浮窗没地方放
+        if self.visual_action is not None:
+            self.visual_action.setVisible(not enabled)
 
         # 左上 8 个功能导航（迷你模式隐藏）。
         # 中间的弹性占位**两种模式都必须保留**：它没有视觉，只负责把下面那组
@@ -3300,6 +3321,12 @@ class MainWindow(QMainWindow):
             on = (idx == current)
             action.setChecked(on)
             action.setIcon(qta.icon(icon, color='white' if on else color))
+
+        # 应用可视化是浮窗开关，不属于「整页入口」，单独刷一次
+        if self.visual_action is not None:
+            on = (self.visualize_dock is not None and self.visualize_dock.isVisible())
+            self.visual_action.setIcon(qta.icon('fa6s.eye',
+                                             color='white' if on else color))
 
     def _render_update_icon(self, icon_name: str, available: bool, color: str = None):
         """生成带红点角标的图标；无更新时就是普通图标。color 缺省时跟随主题。"""
