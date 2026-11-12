@@ -1187,6 +1187,16 @@ class MainWindow(QMainWindow):
         self.anr_action = _bottom_panel_action(
             'fa6s.hourglass-half', "anr", "ANR 日志", "adb_anr")
 
+        # 自动化执行日志：与「虫师日志」并列，都是底部面板的开关。
+        # 原来它固定占执行页下半部分，收起后执行页可以整块显示用例树与执行区。
+        self.execute_log_action = QAction(
+            qta.icon('fa6s.list-check', color=self._toolbar_icon_color()), "执行日志", self)
+        self.execute_log_action.setCheckable(True)
+        self.execute_log_action.setToolTip("显示/隐藏自动化执行日志面板")
+        self.execute_log_action.triggered.connect(
+            lambda checked: self._on_bottom_panel_action("execute_log", checked))
+        self.left_toolbar.addAction(self.execute_log_action)
+
         self.log_action = QAction(qta.icon('fa6s.terminal', color=self._toolbar_icon_color()), "日志", self)
         self.log_action.setCheckable(True)
         self.log_action.setToolTip("显示/隐藏虫师日志面板 (Ctrl+L)")
@@ -1204,6 +1214,7 @@ class MainWindow(QMainWindow):
         # 底部面板几个开关共用一块区域，互斥显示
         self._bottom_panel_actions = {
             "log": self.log_action,
+            "execute_log": self.execute_log_action,
             "device_info": self.device_action,
             "crash": self.crash_action,
             "anr": self.anr_action,
@@ -2968,6 +2979,7 @@ class MainWindow(QMainWindow):
         "device_info": "📱 硬件信息",
         "crash": "💥 Crash 日志",
         "anr": "⏳ ANR 日志",
+        "execute_log": "📋 执行日志",
         "message": "🔔 消息",
     }
     BOTTOM_PANEL_ICONS = {
@@ -2975,6 +2987,7 @@ class MainWindow(QMainWindow):
         "device_info": 'fa6s.microchip',
         "crash": 'fa6s.bug',
         "anr": 'fa6s.hourglass-half',
+        "execute_log": 'fa6s.list-check',
         "message": 'fa6s.bell',
     }
     # 各模式的占位文案（内容拉取完成前的提示）
@@ -3018,9 +3031,9 @@ class MainWindow(QMainWindow):
         if kind == "log":
             self.show_bottom_panel("log")
             return
-        if kind == "message":
+        if kind in ("message", "execute_log"):
             # 不需要拉取内容，也不该走 ADB 快捷动作分发
-            self.show_bottom_panel("message")
+            self.show_bottom_panel(kind)
             return
         self.show_bottom_panel(kind, content=self.BOTTOM_PANEL_PENDING.get(kind, "正在获取…"))
         self._dispatch_quick_action(kind)
@@ -3030,6 +3043,16 @@ class MainWindow(QMainWindow):
             self.bottom_placeholder.setVisible(False)
         self.main_splitter.setSizes([1, 0])
         self._sync_bottom_panel_actions(None)
+
+    def open_execute_log_if_hidden(self):
+        """执行开始时调用：底部面板若**完全收起**，就自动展开「执行日志」。
+
+        只在收起时抢：用户正开着虫师日志 / 硬件信息 / 消息时不打断。
+        不加这一步的话，点了「执行」什么日志都看不到，很容易以为没跑起来。
+        """
+        if self.bottom_placeholder is not None and self.bottom_placeholder.isVisible():
+            return
+        self.show_bottom_panel("execute_log")
 
     def _sync_bottom_panel_actions(self, active_kind):
         for kind, action in self._bottom_panel_actions.items():
@@ -3065,13 +3088,18 @@ class MainWindow(QMainWindow):
         if clear_btn is not None:
             clear_btn.setVisible(kind == "log")
 
-        # 内容容器切页：0 = 文本区（log / crash / anr / device_info），1 = 消息中心
+        # 内容容器切页：0 = 文本区（log / crash / anr / device_info），
+        # 1 = 消息中心，2 = 执行日志（自带筛选/搜索/通过率统计，塞不进纯文本区）
         is_message = (kind == "message")
+        is_exec_log = (kind == "execute_log")
         if self._bottom_stack is not None:
-            self._bottom_stack.setCurrentIndex(1 if is_message else 0)
+            if is_exec_log:
+                self._bottom_stack.setCurrentIndex(2)
+            else:
+                self._bottom_stack.setCurrentIndex(1 if is_message else 0)
 
         text = getattr(self, "_bottom_log_text", None)
-        if text is not None and not is_message:
+        if text is not None and not is_message and not is_exec_log:
             doc = text.document()
             # 一律不限行数（0 = 不限）。虫师日志要能回看整轮执行 —— 多条用例连跑时，
             # 中途的行不能被吞掉；Crash / ANR 动辄上千行，截断更会看不到关键堆栈。
@@ -3141,6 +3169,12 @@ class MainWindow(QMainWindow):
         if notification_view is not None:
             self._notification_view = notification_view
             self.register_sub_view(notification_view)
+
+        # 执行日志 = index 2。logs_view 在装配执行页时就建好了，那时底部面板还没建，
+        # 所以在这里补挂上去；它自带筛选 / 搜索 / 通过率统计，不能用纯文本区承载。
+        exec_logs = getattr(self, "_logs_view_ref", None)
+        if exec_logs is not None and stack.indexOf(exec_logs) < 0:
+            stack.addWidget(exec_logs)
 
     def set_notification_service(self, service):
         """注入消息总线：仅用于驱动铃铛未读角标"""
@@ -3767,18 +3801,10 @@ class MainWindow(QMainWindow):
         top_splitter.setStretchFactor(1, 1)
         top_splitter.setSizes([800, 400])
 
-        # 下半：整宽日志
-        page_splitter = QSplitter(Qt.Orientation.Vertical)
-        page_splitter.setStyleSheet(splitter_qss)
-        page_splitter.setHandleWidth(4)
-        page_splitter.setChildrenCollapsible(False)
-        page_splitter.addWidget(top_splitter)
-        page_splitter.addWidget(logs_view)
-        page_splitter.setStretchFactor(0, 3)
-        page_splitter.setStretchFactor(1, 1)
-        page_splitter.setSizes([560, 300])   # 约 65:35：日志区默认能看到 8~9 行
-
-        layout.addWidget(page_splitter)
+        # 日志**不再**占执行页下半：它已移到主窗口底部面板（左栏「执行日志」开关控制），
+        # 执行页因此能把整块高度让给用例树与执行区。logs_view 在这一刻还没有父控件，
+        # 等 set_bottom_panel_stack() 时被挂进底部面板（index 2）。
+        layout.addWidget(top_splitter)
         old = self.stacked_widget.widget(3)
         self.stacked_widget.removeWidget(old)
         old.deleteLater()

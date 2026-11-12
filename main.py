@@ -724,6 +724,9 @@ def main():
 
     # 2. 自动化执行（传入日志视图）
     main_window.set_execute_view_with_logs(execute_view, logs_view)
+    # 点「执行」时如果底部面板收着，自动展开执行日志面板（否则看不到任何进度）
+    execute_view.execute_selected.connect(
+        lambda _ids: main_window.open_execute_log_if_hidden())
 
     # 3. 应用元素库
     main_window.set_element_manager_view(element_manager)
