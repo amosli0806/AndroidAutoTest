@@ -125,8 +125,9 @@ pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_up
 底部面板 6 种互斥内容：虫师日志 / **执行日志** / 硬件信息 / Crash 日志 / ANR 日志 / 消息中心，
 占主分割器 30%（`BOTTOM_PANEL_RATIO`），虫师日志不限行数。左栏底部各有开关，再点一次收起。
 
-**迷你模式**：设计尺寸 500×620（`views/main_window.py:2642`），只保留 ADB 指令管理区，
-适合边看设备边敲命令。
+**迷你模式**：设计尺寸 500×620（`views/main_window.py`），只保留 ADB 指令管理区，
+适合边看设备边敲命令。顶栏保留「设备下拉 + 刷新 + 无线联调 + 投屏 + 安装 APK + 推送文件」，
+左栏只留底部 5 个开关（执行日志按钮在此模式下隐藏）。
 
 ### 界面截图
 

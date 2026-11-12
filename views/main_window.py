@@ -886,7 +886,7 @@ class MainWindow(QMainWindow):
             return btn
 
         # 分割线右侧：无线 / 投屏，左对齐
-        # 注意：投屏不受迷你模式隐藏影响（迷你模式下仍要能一键投屏），
+        # 注意：这两个都不受迷你模式隐藏影响（迷你模式下照样要能联调、能投屏），
         # 所以不加入 _toolbar_hide_actions，改为单独记引用由 set_mini_mode 控制。
         for icon_name, action_key, shortcut_key, tip in [
             ('fa6s.wifi', "wireless", "adb_wireless", "无线联调"),
@@ -894,10 +894,7 @@ class MainWindow(QMainWindow):
         ]:
             _btn = _quick_icon_btn(icon_name, action_key, shortcut_key, tip)
             _act = toolbar.addWidget(_btn)
-            if action_key == "scrcpy":
-                self._mini_keep_actions.append(_act)
-            else:
-                self._toolbar_hide_actions.append(_act)
+            self._mini_keep_actions.append(_act)
 
         # 弹性占位：把后面的「安装 / 推送 / MD5 / 菜单」顶到右边缘。
         # 它本身不可见，但**两种模式都必须保留** —— 迷你模式下若把它隐藏，
@@ -2890,7 +2887,7 @@ class MainWindow(QMainWindow):
     def set_mini_mode(self, enabled: bool):
         """切换迷你窗口模式：全屏（最大化）↔ 只显示 ADB 指令管理区 + 左下按钮。
 
-        进入：顶部工具栏只留「设备下拉框 + 刷新 + 投屏 / 安装 APK / 推送文件」，
+        进入：顶部工具栏只留「设备下拉框 + 刷新 + 无线联调 / 投屏 / 安装 APK / 推送文件」，
         隐藏左上功能导航，右侧工具栏只留「消息」（隐藏帮助中心），底部状态栏保留；
         主区域只留 ADB 工具箱的「指令管理」区（右侧搜索/弱网/Monkey 隐藏）；
         窗口缩成紧凑尺寸。退出：恢复全部，回到欢迎页并重新最大化。
@@ -2902,7 +2899,7 @@ class MainWindow(QMainWindow):
         # 顶部工具栏保留，只隐藏「设备下拉框 + 刷新」以外的元素
         for a in getattr(self, "_toolbar_hide_actions", []):
             a.setVisible(not enabled)
-        # 例外：投屏 / 安装 APK / 推送文件在两种模式下都显示（迷你模式也能一键操作）
+        # 例外：无线联调 / 投屏 / 安装 APK / 推送文件在两种模式下都显示（迷你模式也能一键操作）
         for a in getattr(self, "_mini_keep_actions", []):
             a.setVisible(True)
         # 右侧工具栏保留，只隐藏「帮助中心 / 个人知识库」（迷你模式留消息按钮）；
