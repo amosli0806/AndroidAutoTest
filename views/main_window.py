@@ -17,7 +17,8 @@ from PyQt6.QtGui import (
     QAction, QColor, QIcon, QPainter, QPixmap, QPainterPath, QRegion,
     QShortcut, QKeySequence,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QThread, QObject, QUrl, QSize, QPoint, QEvent, QRectF, QTimer
+from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QObject, QUrl, QSize, QPoint, QEvent,
+                        QRectF, QTimer)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from models.project_model import TreeNode, new_node_id
@@ -2855,6 +2856,57 @@ class MainWindow(QMainWindow):
         if getattr(self, "_mini_mode", False) and (
                 self.isMaximized() or self.isFullScreen()):
             QTimer.singleShot(0, self._apply_mini_geometry)
+            return
+        # 从最大化还原：Windows 会照「普通几何」摆窗口，而启动时为了让
+        # showMaximized 不闪，普通几何被设成了整块可用区 —— 还原后标题栏正好
+        # 落到屏幕上方（双击标题栏就能触发，之后拖都拖不回来）。这里补一次校正。
+        if not self.isMaximized() and not self.isFullScreen():
+            QTimer.singleShot(0, self._clamp_restored_geometry)
+
+    def _clamp_restored_geometry(self):
+        """把「从最大化还原」后的窗口收进屏幕可用区。
+
+        为什么需要这一步：启动时为了让 showMaximized() 不闪一帧普通尺寸，
+        普通几何被预设成了整块可用区（见 main.py 启动段）。Windows 还原时照这个
+        几何摆普通窗口，标题栏就落到屏幕上方 —— 用户双击标题栏能复现，
+        而且这时已经点不到标题栏，窗口拖不回来。
+
+        两种情形会校正：① 几何越出可用区；② 几何正好等于「满屏预设值」（还原出来
+        标题栏必然在屏外）。用户自己摆好的正常位置不动。
+        """
+        if getattr(self, "_mini_mode", False):
+            return
+        if self.isMaximized() or self.isFullScreen():
+            return
+        from utils.dpi import avail_rect
+        avail = avail_rect(self)
+        if avail is None:
+            return
+
+        geo = self.geometry()
+        margin = 8                       # 与屏幕边缘留点缝，别贴着边界
+        # 几何等于可用区 = 启动时那个预设值，还原出来就是「满屏但标题栏在屏外」。
+        # 这种情况给一个舒适的尺寸，否则收进来看着跟没还原一样。
+        preset_full = (abs(geo.width() - avail.width()) <= 4
+                       and abs(geo.height() - avail.height()) <= 4)
+
+        frame = self.frameGeometry()
+        inside = (frame.left() >= avail.left() and frame.top() >= avail.top()
+                  and frame.right() <= avail.right()
+                  and frame.bottom() <= avail.bottom())
+        # 没越界、也不是那个满屏预设值 → 用户自己摆的位置，别动
+        if inside and not preset_full:
+            return
+        if preset_full:
+            w = int(avail.width() * 0.86)
+            h = int(avail.height() * 0.86)
+        else:
+            w, h = geo.width(), geo.height()
+        w = min(w, avail.width() - 2 * margin)
+        h = min(h, avail.height() - 2 * margin)
+        x = min(max(geo.left(), avail.left() + margin), avail.right() - w - margin)
+        y = min(max(geo.top(), avail.top() + margin), avail.bottom() - h - margin)
+        self.setGeometry(x, y, w, h)
 
     def _apply_mini_geometry(self):
         """把迷你窗口锁在屏幕可用区内并居中。
