@@ -169,7 +169,7 @@
     <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-09（v1.5.23）</div>
     <div class="badges">
       <span class="badge">当前版本 v1.5.23</span>
-      <span class="badge">10 项规划 · 1 项第一轮已完成</span>
+      <span class="badge">9 项规划</span>
       <span class="badge">车机 / 手机均已实机验证</span>
       <span class="badge">按改动量分 A~D 四档</span>
     </div>
@@ -271,38 +271,10 @@
       <div class="example">💡 <b>打个比方：</b>像文档的「修订记录 / 历史版本」——用例改乱了，一键回到昨天的版本，还能看看到底改了哪几行。</div>
     </div>
 
-    <div class="card">
-      <h3>6. 元素拾取器（两轮）<span class="tag done">✅ 两轮已完成</span></h3>
-      <p>现在定位元素还得「开 weditor → 点控件 → 复制 selector → 回虫师粘贴」。第一轮在<b>动作卡片定位值旁</b>加一个「按定位方式自适应」的按钮，点开是模态拾取面板：截一张当前画面，在图上点任意位置，自动命中控件并按 <b>资源 ID &gt; 文本 &gt; 描述 &gt; 坐标</b> 回填定位方式与定位值。</p>
-      <p><b>按钮只占一个位置</b>：定位方式=图像时是相机（截屏取图），其余五种是准星（画面拾取）—— 这两类动作语义互斥，不会出现三个按钮并排把输入框挤窄。</p>
-      <ul>
-        <li>面板：模态 620 宽；只显示截图 + 底部「当前命中」预览条，<b>不做层级树</b>（weditor 已有，车机大层级渲染慢）</li>
-        <li>命中规则：取包含该点的最深节点 → 不可点则向上找最近的可点祖先（最多 3 层）→ 仍无则给坐标并提示「该控件不可点击，已按坐标定位」</li>
-        <li>同 ID 多节点：自动填 <code>instance</code> 序号，并提示「发现 N 个相同 ID，已定位第 K 个」</li>
-        <li>性能：<b>开面板时 dump 一次并缓存</b> + 手动「刷新」按钮；绝不每点一次 dump（车机单次完整 dump 实测 8~12 秒）</li>
-        <li>横竖屏：复用「坐标归一化与朝向」那套 <code>wm size</code> + <code>displayRotation</code> 映射，不另写一份</li>
-        <li>降级：未连设备时点按钮直接提示「请先在顶部工具栏连接设备」（<b>没做置灰</b>：置灰要接设备在线信号，否则会出现「连上了按钮还是灰的」）；dump 失败给出提示，允许退回「截屏取图」或手填</li>
-      </ul>
-      <p><b>进度（2026-11-09）</b>：✅ 共用命中规则（<code>utils/ui_tree.py</code>）与层级导出（<code>DeviceService.dump_ui_xml</code>）·
-      ✅ 拾取面板（<code>views/dialogs/element_pick_dialog.py</code>：截图点击命中、高亮、定位预览、刷新防连点）·
-      ✅ 接进动作卡片（定位值旁一个按钮，图像=相机 / 其余=准星；回填含 instance）·
-      ✅ 手机真机试通（抖音页命中 <code>btn_immersefullscreen</code>、<code>treasure_loading_view</code>）·
-      ✅ 顺带统一了「截屏取图」对话框的按钮（去掉取消、确定改主按钮）·
-      ✅ 第二轮：元素库对话框接入拾取 + 卡片拾取时可「同时存入元素库」·
-      ⬜ 车机端拾取实测（见下方清单）</p>
-      <p><b>第二轮 · 拾取后存元素库（已完成）</b>：元素库的「创建/编辑元素」对话框换成了同一套「上下文按钮 + 拾取面板」（图像=相机、其余=准星），拾取后自动回填定位方式 / 定位值，名称空着就按控件名补一个。从动作卡片拾取时，面板底部多出「同时存入元素库」勾选，勾上即展开三行——<b>应用默认当前包名、模块默认「默认」、名称按控件名预填</b>，不改也能直接确定。入库走 <code>ElementModel.upsert_elements</code>，合并键是「<b>应用 + 模块 + 名称</b>」（与「抓取界面」导入同一套规则：命中就覆盖定位值并保留原 id，否则新增），所以同一个控件重复拾取不会堆重复项。</p>
-      <div class="example">💡 <b>打个比方：</b>现在的做法像「拿另一台相机拍下门牌号，再手抄到本子上」；第一轮变成<b>在本子上点一下那扇门</b>，门牌号自动写进去。第二轮再顺手一步：「把这户也登记进通讯录」。</div>
-      <ul>
-        <li>风险：自绘界面（游戏 / Flutter）层级里全是 <code>clickable=false</code>，只能给坐标 —— 预览条会明确写出来，避免误以为拾取失败</li>
-        <li>风险：重叠图层（弹窗遮罩）可能命中错，规则是取「最深可点节点」，需真机抽验几处</li>
-      </ul>
-    </div>
-
-
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ C · 改动较大、需先设计（要先出方案再动手）</h3>
 
     <div class="card">
-      <h3>7. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
+      <h3>6. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>前后置脚本（Python 钩子，处理签名 / 加解密 / 数据提取）</li>
         <li>链路场景编排（接口串联，上一步响应作为下一步入参）</li>
@@ -311,14 +283,14 @@
     </div>
 
     <div class="card">
-      <h3>8. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <h3>7. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
       <p>剩余<b>场景化联动</b>：场景化执行时按用例自动转储 / 抓包，每用例一份产物、报告按用例分组。实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
     </div>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ D · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
-      <h3>9. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
+      <h3>8. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把唤醒词、语速等提升为可参数化变量，用例内可覆盖</li>
       </ul>
@@ -326,7 +298,7 @@
     </div>
 
     <div class="card">
-      <h3>10. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
+      <h3>9. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
       <div class="example">💡 <b>打个比方：</b>像手机「快捷指令 / 宏」——把「打开 App → 输账号 → 输密码 → 点登录」这 5 步打包成一个「登录」关键字，以后任何用例点一下就好，不用重复拖 5 个步骤。</div>
     </div>
@@ -409,47 +381,6 @@
       三个常量（<code>QUICK_DUMP_DEPTH</code> / <code>verify_click_effect</code> /
       <code>CLICK_EFFECT_MIN_DIFF</code>）按上表暂无需调整。</div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 实机确认结果（手机端 · 元素拾取器，2026-11-09）</h3>
-    <p class="small" style="margin-top:0">用一个抖音（<code>com.duowan.kiwi</code>）页面把拾取链路走了一遍。</p>
-
-    <div class="card">
-      <ul>
-        <li><b>推荐流里的「全屏观看」</b> → 命中 <code>com.duowan.kiwi:id/btn_immersefullscreen</code>，
-          面板回填「定位方式：资源ID / 定位值：上述 ID」，点「确定」后卡片里两项都填好，可直接执行。</li>
-        <li><b>推荐流封面</b> → 命中 <code>com.duowan.kiwi:id/treasure_loading_view</code>（FrameLayout 144×144）——
-          说明「可点优先 → 有文案 → 面积最小」的排序在真实列表里选中的是对的元素，不会挑到里面的图标。</li>
-        <li><b>速度</b>：打开面板时截图 + dump 各一次，手机端合计约 1~3 秒；之后点画面是本地命中，
-          不再 dump（换页面才需要点「刷新」）。</li>
-        <li><b>刷新</b>：刷新中按钮置灰、且同一次加载会被重入保护挡住，连点不会排队再跑一遍。</li>
-      </ul>
-    </div>
-    <div class="tip">💡 结论：第一轮在<b>手机真机可用</b>。<b>车机端拾取还没实测</b>（车机 dump 只要 0.3 秒左右，
-      但要确认横屏与多屏场景）；第二轮的「拾取后存元素库」也还没开始。</div>
-
-    <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 待实测清单（车机端 · 元素拾取器）</h3>
-    <p class="small" style="margin-top:0">手机端已经验过，<b>车机端还没试</b>。连上车机后按这张表走一遍，结果填进来即可。</p>
-
-    <div class="card">
-      <table>
-        <thead><tr><th>确认项</th><th>怎么测</th><th>预期 / 关注点</th></tr></thead>
-        <tbody>
-          <tr><td>能否打开面板</td><td>选中用例里任意带定位字段的卡片 → 点定位值右侧的准星</td>
-            <td>1~3 秒出画面；车机 dump 只要 0.3 秒左右，应该比手机更快</td></tr>
-          <tr><td>命中是否准</td><td>在地图页点搜索框、点按钮、点列表项</td>
-            <td>应优先命中 resource-id；地图画布（<code>bd_map_view</code>）内没有可访问子节点，只能给坐标</td></tr>
-          <tr><td>横屏 / 朝向</td><td>保持车机当前横屏，点画面四角与中心</td>
-            <td>点位与蓝框对齐、不整体偏移（截图与 dump 都是显示方向，理论上不需要额外换算）</td></tr>
-          <tr><td>多屏 / 副驾屏</td><td>若有副屏，<code>dumpsys display</code> 看 displayId</td>
-            <td>目前只按主屏（displayId 0）处理，副屏上的控件可能命不中</td></tr>
-          <tr><td>拾取后能否直接跑</td><td>拾取一个按钮 → 确定 → 执行该用例</td>
-            <td>卡片里的定位方式 / 值与面板显示一致，执行时能点中</td></tr>
-          <tr><td>同时存入元素库</td><td>勾选后确定，去元素库看</td>
-            <td>新增一条（应用=包名 / 模块=默认 / 名称=控件名）；重复拾取同一控件应是「更新」而不是新增</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="tip">💡 测完把结果发我，我照现有格式补一张「车机端实测结果」表进来。</div>
-
     <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 优先级速查表</h3>
     <p class="small" style="margin-top:0">按档位排列：<b>A = 改动最小、最建议先动</b>；⭐ 只表示建议顺序，与档位一致。</p>
     <div class="card">
@@ -461,11 +392,10 @@
           <tr><td>A</td><td>3. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
           <tr><td>B</td><td>4. 语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
           <tr><td>B</td><td>5. 版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
-          <tr><td>B</td><td>6. 元素拾取器</td><td class="stars">⭐⭐⭐</td><td><b>第一轮已完成</b>（共用命中规则 + 拾取面板 + 接进卡片，手机真机试通）；剩第二轮：元素库对话框接拾取 + 拾取后入库</td></tr>
-          <tr><td>C</td><td>7. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
-          <tr><td>C</td><td>8. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
-          <tr><td>D</td><td>9. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接唤醒词 / 语速</td></tr>
-          <tr><td>D</td><td>10. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
+          <tr><td>C</td><td>6. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
+          <tr><td>C</td><td>7. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
+          <tr><td>D</td><td>8. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接唤醒词 / 语速</td></tr>
+          <tr><td>D</td><td>9. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
         </tbody>
       </table>
     </div>
