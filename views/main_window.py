@@ -771,8 +771,9 @@ class MainWindow(QMainWindow):
         # ---------- 顶部工具栏 ----------
         toolbar = QToolBar("主工具栏", self)
         self.toolbar = toolbar
-        toolbar.setMovable(False)
-        toolbar.setFloatable(False)
+        # 顶栏同样钉死：它虽然本来就不能换边，但**右键会弹出工具栏面板菜单**，
+        # 里面能一键把左/右导航栏勾掉（实测确认过），比拖动更难恢复。
+        self._lock_toolbar_in_place(toolbar)
         toolbar.setFixedHeight(40)
         toolbar.setStyleSheet("""
             QToolBar {
@@ -1129,6 +1130,7 @@ class MainWindow(QMainWindow):
         self._left_toolbar_normal_need = 0
         self._toolbar_sync_scheduled = False
         self.left_toolbar.setStyleSheet(self._left_toolbar_qss_base)
+        self._lock_toolbar_in_place(self.left_toolbar)
         self.addToolBar(Qt.LeftToolBarArea, self.left_toolbar)
 
         # ========== 新增：为左侧工具栏安装事件过滤器 ==========
@@ -1247,6 +1249,7 @@ class MainWindow(QMainWindow):
                 background: #1565c0;
             }
         """)
+        self._lock_toolbar_in_place(self.right_toolbar)
         self.addToolBar(Qt.RightToolBarArea, self.right_toolbar)
 
         # ========== 新增：为右侧工具栏安装事件过滤器 ==========
@@ -2883,6 +2886,21 @@ class MainWindow(QMainWindow):
 
     def _on_mini_mode_toggled(self, checked):
         self.set_mini_mode(checked)
+
+    @staticmethod
+    def _lock_toolbar_in_place(toolbar):
+        """把工具栏钉死在自己的停靠区：不能拖动换边，也不能拖出来变成浮动窗口。
+
+        QToolBar 默认 movable/floatable，鼠标按住图标之间的空白就能把它拖到窗口四边，
+        甚至拖成独立小窗口（还会留下一个空条）。左右两栏是这个应用的导航骨架，
+        位置被拖动后页面全乱，所以直接关掉这两个能力。
+
+        顺带屏蔽工具栏的右键菜单：那个菜单会列出「显示/隐藏工具栏」，
+        点一下能把左栏整条藏掉，比拖动更狠，且没有任何恢复入口（只能重启）。
+        """
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
 
     def set_mini_mode(self, enabled: bool):
         """切换迷你窗口模式：全屏（最大化）↔ 只显示 ADB 指令管理区 + 左下按钮。
