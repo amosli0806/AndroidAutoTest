@@ -122,6 +122,9 @@ pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_up
 
 右侧工具栏：消息中心（铃铛，带未读角标）、**应用可视化**（开关 weditor 浮窗）、帮助中心、个人知识库。
 
+左右两栏都用 `_lock_toolbar_in_place()` 固定：不能拖动换边、不能拖成浮动窗口，
+右键也不会弹出「显示/隐藏工具栏」菜单（那个菜单一旦把左栏勾掉就没有恢复入口）。
+
 底部面板 6 种互斥内容：虫师日志 / **执行日志** / 硬件信息 / Crash 日志 / ANR 日志 / 消息中心，
 占主分割器 30%（`BOTTOM_PANEL_RATIO`），虫师日志不限行数。左栏底部各有开关，再点一次收起。
 
