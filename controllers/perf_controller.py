@@ -665,10 +665,8 @@ class PerfController(QObject):
             self.scenario_worker.start()
 
             self.view.set_state(self.view.STATE_SCENARIO)
-            if self.logs_view:
-                self.logs_view.add_log(
-                    f"[性能+场景] 开始执行套件 '{suite_name}' 并采集性能数据", "info"
-                )
+            self.log_emitted.emit(
+                f"[性能+场景] 开始执行套件 '{suite_name}' 并采集性能数据")
         else:
             self.view.set_state(self.view.STATE_RUNNING)
 
@@ -1010,8 +1008,8 @@ class PerfController(QObject):
             self.view.add_alert_log(f"⚙ 内存超阈值（{value:.0f}MB），自动执行堆转储")
         except Exception:
             pass
-        if self.logs_view:
-            self.logs_view.add_log("[性能] 内存超阈值，自动堆转储", "info")
+        # 性能事件统一只进虫师日志：执行日志面板放的是用例执行过程，混进去会淹没步骤
+        self.log_emitted.emit("[性能] 内存超阈值，自动执行堆转储")
         self._dump_hprof_now()
 
     def _refresh_stats(self, final=False):
@@ -1034,9 +1032,7 @@ class PerfController(QObject):
             f"<span style='color:{log_colors.log_color(log_colors.WARNING)};'>"
             f"[性能] ⚠ 设备连接中断，采集已暂停，等待重连…</span>"
         )
-        if self.logs_view:
-            self.logs_view.add_log(
-                "[性能] 设备连接中断，采集已暂停，等待重连…", "warning")
+
         try:
             self.view.add_alert_log("⚠ 设备连接中断 · 采集已暂停")
         except Exception:
@@ -1051,8 +1047,7 @@ class PerfController(QObject):
             f"<span style='color:{log_colors.log_color(log_colors.SUCCESS)};'>"
             f"[性能] ✅ 设备已重连，采集已恢复</span>"
         )
-        if self.logs_view:
-            self.logs_view.add_log("[性能] 设备已重连，采集已恢复", "success")
+
 
     def _on_worker_error(self, msg):
         logger.warning(f"[PerfController] 采集错误: {msg}")
@@ -1065,8 +1060,7 @@ class PerfController(QObject):
             f"<span style='color:{log_colors.log_color(log_colors.ERROR)};'>"
             f"[性能] 采集异常：{msg}</span>"
         )
-        if self.logs_view:
-            self.logs_view.add_log(f"[性能] 采集异常：{msg}", "warning")
+
 
     def _auto_save_artifacts(self, session) -> bool:
         """采集自然结束后，把报告与数据自动写到「输出目录 / 设备号」。
@@ -1086,9 +1080,7 @@ class PerfController(QObject):
                 session.app_package, session.metrics)
             PerfReportGenerator.generate(session, html, baseline=baseline)
             self._write_session_csv(session, csv_path)
-            if self.logs_view:
-                self.logs_view.add_log(
-                    f"[性能] 报告与数据已保存：{html}、{csv_path}", "info")
+            self.log_emitted.emit(f"[性能] 报告与数据已保存：{html}、{csv_path}")
             return True
         except Exception as e:                       # noqa: BLE001 - 自动保存失败不致命
             logger.exception("自动保存报告/数据失败")
@@ -1105,11 +1097,8 @@ class PerfController(QObject):
         if self.perf_worker is None:
             return
         minutes = self.view.duration_spin.value()
-        if self.logs_view:
-            self.logs_view.add_log(
-                f"[性能] 已达到预设监控时长（{minutes} 分钟），自动停止采集",
-                "info",
-            )
+        self.log_emitted.emit(
+            f"[性能] 已达到预设监控时长（{minutes} 分钟），自动停止采集")
         show_toast(self.view, f"已达到监控时长（{minutes} 分钟），自动停止")
         self._auto_save_on_stop = True
         self._on_stop()
@@ -1789,8 +1778,7 @@ class PerfController(QObject):
             self.view.set_screenshot_status("")
         else:
             self.view.set_screenshot_status("最近：截图失败")
-            if self.logs_view:
-                self.logs_view.add_log(f"[性能] 截图失败：{message}", "error")
+            self.log_emitted.emit(f"[性能] 截图失败：{message}")
             show_toast(self.view, "截图失败", duration=4000)
 
     def _on_packet_toggle(self, capturing: bool):
@@ -1969,8 +1957,7 @@ class PerfController(QObject):
             self._add_event("capture", os.path.basename(result) + seg_note)
             self.view.set_packet_capturing(False)
             self.view.set_packet_status(f"完成：{os.path.basename(result)}{seg_note}{note}")
-            if self.logs_view:
-                self.logs_view.add_log(f"[抓包] 完成：{result}{note}", "success")
+            self.log_emitted.emit(f"[抓包] 完成：{result}{note}")
             if limit_txt:
                 show_toast(self.view, f"抓包{limit_txt}，已自动停止并保存", duration=4000)
         else:
@@ -1992,6 +1979,12 @@ class PerfController(QObject):
 
     # ------------------------------------------------------------------
     def _on_scenario_progress(self, message, log_type):
+        """场景化执行时把**用例步骤进度**转发到执行日志。
+
+        这里是有意保留的唯一一处「性能模块 → 执行日志」：内容是套件里跑到第几条用例、
+        哪一步失败，属于执行过程；性能事件本身（连接中断、堆转储、报告保存…）一律只进
+        虫师日志，否则会把步骤刷掉（2026-11-12 反馈）。
+        """
         if self.logs_view:
             self.logs_view.add_log(message, log_type)
 
@@ -2072,10 +2065,9 @@ class PerfController(QObject):
         self.voice_worker.start()
 
         self.view.set_state(self.view.STATE_SCENARIO)
-        if self.logs_view:
-            self.logs_view.add_log(
-                f"[性能+语音] 开始播报套件 '{name}'（{len(items)} 条 / {loop_count} 轮）"
-                f"并采集性能数据", "info")
+        self.log_emitted.emit(
+            f"[性能+语音] 开始播报套件 '{name}'（{len(items)} 条 / {loop_count} 轮）"
+            f"并采集性能数据")
 
     def _on_voice_scenario_finished(self, ok: bool, message: str):
         """播报结束：停采集、出报告。失败/被打断也照常收尾（数据已经采到了）。"""
