@@ -978,8 +978,11 @@ CI（`.github/workflows/release.yml`）默认把 Release 造成**预发布**，�
 - QToolTip 在页面 QSS 下会继承成黑底黑字，要单独给控件写 `QToolTip` 规则且必须带 `border`
 - 图标一律用 qtawesome 的 `color` / `color_disabled` 参数，**绝不用 `QIcon.addPixmap`**
   （QIconEngine 无 clone，detach 时会让进程崩）
-- 深色标题栏（`DwmSetWindowAttribute`）要在切主题后补设三次（220/700/1600ms），
-  DWM 会在重绘后把属性冲掉
+- 深色标题栏（`DwmSetWindowAttribute`）要在切主题后**补设 5 次**（220/700/1600/2600/4000ms），
+  DWM 会在重绘后把属性冲掉；复杂页面 re-polish 能到 2~3 秒，1.6 秒之后仍会被刷回去。
+  补设**必须按「触发时刻的主题」取色**（`set_dark_title_bar(..., dark_getter=...)`）：
+  否则快速来回切主题时，先排上的旧定时器会把颜色写反 —— 这就是「偶现切暗夜顶部还是白的」
+  的另一半原因（`utils/win_dark_title.py`）
 
 ### 6.6 子进程治理
 

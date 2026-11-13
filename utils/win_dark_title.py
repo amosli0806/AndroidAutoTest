@@ -3,7 +3,7 @@
 import sys
 
 
-def set_dark_title_bar(window, dark: bool, delayed: bool = True):
+def set_dark_title_bar(window, dark: bool, delayed: bool = True, dark_getter=None):
     """设置 Windows 原生标题栏为深色或浅色。
     仅在 Windows 平台生效，其他平台静默忽略。
 
@@ -15,6 +15,12 @@ def set_dark_title_bar(window, dark: bool, delayed: bool = True):
     重绘会持续 1~2 秒；DWM 在重绘/非客户区重建后按系统主题重画标题栏，
     把刚设的属性冲掉。实测主窗口「亮 → 暗」只设一次：属性先变 1，0.25 秒后
     又回到 0，标题栏停在浅色 —— 这正是用户看到的现象。
+
+    **补设为什么要读「当前主题」而不是捕获值**（2026-11-13 修「偶现」）：
+    补设是排在未来几秒执行的定时器。若期间用户又切了一次主题（或快速来回切），
+    先排上的旧定时器会把**旧主题**再写一遍，最后生效的反而是旧值 ——
+    界面已经变了、标题栏还停在另一个颜色上。传 dark_getter 后每次补设都按
+    触发时刻的真实主题决定写 0 还是 1，旧定时器不会再把状态写反。
     """
     if sys.platform != "win32":
         return
@@ -27,10 +33,24 @@ def set_dark_title_bar(window, dark: bool, delayed: bool = True):
         # 一次 220ms 在空壳窗口上够用，但真实使用场景下界面复杂、重绘更久，
         # 中途的补设照样会被冲掉（用户报「切暗夜后顶部还是白的」，本地空窗口
         # 复现不出）。三个时间点覆盖重绘结束前后，多打两次 DWM 调用无副作用。
-        for delay in (220, 700, 1600):
-            QTimer.singleShot(delay, lambda d=dark: _apply_dark_title_bar(window, d))
+        # 2026-11-13：时间点 3 → 5。复杂页面 re-polish + 重画壁纸能到 2~3 秒，
+        # 1.6 秒之后仍会被 DWM 按系统主题刷回去（用户报「偶现切暗夜顶部还是白的」）。
+        for delay in (220, 700, 1600, 2600, 4000):
+            QTimer.singleShot(delay,
+                              lambda d=dark: _apply_dark_title_bar(
+                                  window, _resolve_dark(dark_getter, d)))
     except Exception:
         pass
+
+
+def _resolve_dark(dark_getter, fallback: bool) -> bool:
+    """补设时优先读调用方给的「当前主题」，读不到再退回捕获值。"""
+    if dark_getter is None:
+        return fallback
+    try:
+        return bool(dark_getter())
+    except Exception:
+        return fallback
 
 
 def _apply_dark_title_bar(window, dark: bool):

@@ -278,7 +278,13 @@ class MainWindow(QMainWindow):
             self.apply_theme()
 
     def _on_system_color_scheme_changed(self, *args):
-        """系统颜色方案变化时，若用户选择'跟随系统'则重新应用主题"""
+        """系统颜色方案变化：跟随系统时重应用主题，另外任何时候都补一次标题栏。
+
+        为什么标题栏要无条件补：用户显式选了「暗夜」而系统是浅色时，
+        系统一切换明暗，DWM 会按**系统**配色重画非客户区，标题栏就跟界面
+        对不上了（用户报的「偶现切暗夜顶部还是白的」）。
+        """
+        self._refresh_title_bar_dark(delayed=False)
         try:
             raw = Settings.get_raw_theme_mode()
         except Exception:
@@ -2253,8 +2259,9 @@ class MainWindow(QMainWindow):
             self._refresh_menu_icons()
             # 工具栏图标颜色是烘焙在位图里的，主题切换后要重画
             self._refresh_toolbar_icons()
-            # Windows 原生标题栏跟随深色
-            set_dark_title_bar(self, True)
+            # Windows 原生标题栏跟随深色（传 getter：补设时按当时的真实主题写，
+            # 避免快速切换时旧定时器把颜色写反）
+            set_dark_title_bar(self, True, dark_getter=self._theme_is_dark)
             if self._perf_view is not None:
                 try:
                     self._perf_view.apply_theme(mode if theme_mode == THEME_MODE_DARK else ThemeMode.LIGHT,
@@ -2538,8 +2545,8 @@ class MainWindow(QMainWindow):
         self._refresh_menu_icons()
         # 工具栏图标颜色是烘焙在位图里的，主题切换后要重画
         self._refresh_toolbar_icons()
-        # Windows 原生标题栏跟随浅色
-        set_dark_title_bar(self, False)
+        # Windows 原生标题栏跟随浅色（同上，补设按当时主题）
+        set_dark_title_bar(self, False, dark_getter=self._theme_is_dark)
         if self._perf_view is not None:
             try:
                 self._perf_view.apply_theme(mode if theme_mode == THEME_MODE_DARK else ThemeMode.LIGHT, has_wallpaper)
@@ -2829,15 +2836,26 @@ class MainWindow(QMainWindow):
             return
         try:
             set_dark_title_bar(self, Settings.get_theme_mode() == THEME_MODE_DARK,
-                               delayed=delayed)
+                               delayed=delayed, dark_getter=self._theme_is_dark)
         except Exception as e:
             print(f"[apply_theme] 标题栏深浅重设失败: {e}")
+
+    @staticmethod
+    def _theme_is_dark() -> bool:
+        """当前是否是暗夜主题（给标题栏补设用，取的是「此刻」的配置）。"""
+        return Settings.get_theme_mode() == THEME_MODE_DARK
 
     def _run_titlebar_refresh(self):
         self._titlebar_refresh_pending = False
         self._refresh_title_bar_dark(delayed=False)
 
     def event(self, e):
+        # 系统主题变化 / 窗口重新显示：非客户区都可能被系统按系统主题重画，
+        # 补一刀（延迟补设按当时主题取色，见 utils/win_dark_title）。
+        # 注：PyQt6 没有 QEvent.Type.ThemeChange，系统明暗切换走
+        # QStyleHints.colorSchemeChanged（见 __init__ 里的连接）。
+        if e.type() == QEvent.Type.Show:
+            self._refresh_title_bar_dark(delayed=False)
         if e.type() == QEvent.Type.WindowActivate:
             # 从别的窗口切回来：非客户区可能已被系统按主题重画过。
             # 延后到事件循环末尾再设，绝不在激活事件里同步改窗口框架。
@@ -3506,6 +3524,11 @@ class MainWindow(QMainWindow):
             vv = getattr(self, "_voice_view", None)
             if vv is not None:
                 vv.reload_voice_settings()
+
+        # 设置关掉后补一次标题栏：模态期间主窗口是禁用状态，DWM 可能已按系统
+        # 主题把非客户区重画回浅色（用户在设置里切主题后尤其明显）。
+        # 放在 finally 语义的位置（不管确定还是取消都刷）。
+        self._refresh_title_bar_dark(delayed=False)
 
     # ---------- 设置各种视图 ----------
     # 「步骤列表」「动作卡片」的标题是 QLabel，「项目管理」的标题是 QToolButton，

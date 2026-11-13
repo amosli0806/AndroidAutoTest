@@ -1864,7 +1864,10 @@ class SettingsDialog(QDialog):
         # 对话框「显示时」生效，而这里是对话框开着的时候切主题（点「应用」）
         try:
             from utils.win_dark_title import set_dark_title_bar
-            set_dark_title_bar(self, is_dark)
+            # 补设按「当时」的主题取色：设置页里可能连着切好几次主题，
+            # 旧定时器不该把最后状态写反
+            set_dark_title_bar(self, is_dark,
+                               dark_getter=lambda: Settings.get_theme_mode() == THEME_MODE_DARK)
         except Exception as e:
             print(f"[SettingsDialog] 标题栏主题适配失败: {e}")
 
