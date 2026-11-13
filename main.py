@@ -546,7 +546,11 @@ def main():
             _orig_show(self, event)
             try:
                 is_dark = (Settings.get_theme_mode() == THEME_MODE_DARK)
-                set_dark_title_bar(self, is_dark)
+                # 传 getter：补设按「触发那一刻」的真实主题取色，避免对话框开着
+                # 切主题时旧定时器把颜色写反（与主窗口同一套约定）
+                set_dark_title_bar(
+                    self, is_dark, reason="dialogShow",
+                    dark_getter=lambda: Settings.get_theme_mode() == THEME_MODE_DARK)
             except Exception as e:
                 print(f"[dark_title] 对话框标题栏适配失败: {e}")
 
