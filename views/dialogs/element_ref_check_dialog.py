@@ -29,17 +29,24 @@ class ElementRefCheckDialog(QDialog):
         self.setObjectName("ElementRefCheckDialog")
         self.setWindowTitle("检查元素引用")
         self.setModal(True)
-        self.resize(860, 520)
-        self.setMinimumSize(720, 420)
 
         self.rows = list(rows)
         self.element_controller = element_controller
         self.device_service = device_service
         self._fixed = set()          # 已修复的 step_id
 
+        # 尺寸要在 self.rows 就位之后再算（行少时窗口收矮，别留大片空白）
+        self.resize(860, self._preferred_height())
+        self.setMinimumSize(720, 260)
+
         self._setup_ui()
         self._apply_theme()
         self._refresh_summary()
+
+    def _preferred_height(self):
+        """按行数定窗口高度：行少时别留一大片空白（否则表格看着像一块白板）。"""
+        rows = max(1, min(len(self.rows), 10))
+        return max(300, min(560, 210 + 34 * rows))
 
     # ---------- 界面 ----------
     def _setup_ui(self):
@@ -62,7 +69,7 @@ class ElementRefCheckDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.table.setShowGrid(False)
+        self.table.setShowGrid(True)      # 要看得见行列分隔，否则只像一块空白区域
         self.table.setWordWrap(False)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
@@ -213,14 +220,18 @@ class ElementRefCheckDialog(QDialog):
             bg, fg, sub = "#2d2d2d", "#eeeeee", "#a0a0a0"
             card_bg, card_border = "#3c3c3c", "#555555"
             btn_bg, btn_fg, btn_border = "#4a4a4a", "#eeeeee", "#5a5a5a"
-            row_alt = "#343434"
-            table_border = "#6a6a6a"
+            row_alt = "#3a3a3a"
+            table_border = "#8a8a8a"
+            grid = "#4a4a4a"
+            table_bg = "#333333"
         else:
             bg, fg, sub = "#ffffff", "#1a1a1a", "#888888"
             card_bg, card_border = "#f8f9fa", "#e0e0e0"
             btn_bg, btn_fg, btn_border = "#f0f0f0", "#333333", "#d0d0d0"
-            row_alt = "#fafafa"
-            table_border = "#c3c3c3"
+            row_alt = "#f4f5f7"
+            table_border = "#8e8e8e"
+            grid = "#d0d0d0"
+            table_bg = "#fbfbfc"
         primary, primary_hover = "#1976d2", "#1565c0"
 
         self.setStyleSheet(f"""
@@ -232,19 +243,18 @@ class ElementRefCheckDialog(QDialog):
             /* 边框要看得见：原来的 #e0e0e0 + 8px 圆角在白底上几乎是一条虚线，
                用户反馈「看不到表格边框」，这里加深颜色并去掉圆角 */
             QDialog#ElementRefCheckDialog QTableWidget {{
-                background-color: {bg};
+                background-color: {table_bg};
                 alternate-background-color: {row_alt};
                 color: {fg};
                 border: 1px solid {table_border};
                 border-radius: 0px;
-                gridline-color: transparent;
+                gridline-color: {grid};
                 font-size: 12px;
             }}
             QDialog#ElementRefCheckDialog QHeaderView::section {{
                 background-color: {card_bg};
                 color: {sub};
-                border: none;
-                border-bottom: 1px solid {card_border};
+                border: 1px solid {grid};
                 padding: 6px 4px;
                 font-size: 12px;
             }}
