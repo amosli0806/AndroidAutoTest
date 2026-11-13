@@ -496,7 +496,8 @@ class StepController(QObject):
                     select_btn.setIcon(qta.icon('fa6s.folder-open', color=_sel_icon_color))
                     select_btn.setFixedSize(24, 24)
                     select_btn.setStyleSheet("border: none; background: transparent;")
-                    select_btn.setToolTip("从元素库选择")
+                    # 不挂悬停提示：文件夹图标本身已说明动作（与动作卡片的元素库按钮一致）
+                    select_btn.setToolTip("")
                     loc_type_key = key.replace('Value', 'Type')
                     loc_type_widget = loc_type_widgets.get(loc_type_key)
                     select_btn.setProperty('loc_type_widget', loc_type_widget)

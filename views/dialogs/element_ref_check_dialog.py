@@ -82,12 +82,9 @@ class ElementRefCheckDialog(QDialog):
         self.detach_all_btn.setObjectName("detachAllBtn")
         self.detach_all_btn.clicked.connect(self._on_detach_all)
         btn_row.addWidget(self.detach_all_btn)
+        # 不放「关闭」：右上角 × 与 Esc 都能关（QDialog 默认行为），
+        # 底部只留一个「全部解除引用」就够。
         btn_row.addStretch()
-        self.close_btn = QPushButton("关闭")
-        self.close_btn.setObjectName("okBtn")
-        self.close_btn.setDefault(True)
-        self.close_btn.clicked.connect(self.accept)
-        btn_row.addWidget(self.close_btn)
         root.addLayout(btn_row)
 
         self._fill_table()
@@ -217,11 +214,13 @@ class ElementRefCheckDialog(QDialog):
             card_bg, card_border = "#3c3c3c", "#555555"
             btn_bg, btn_fg, btn_border = "#4a4a4a", "#eeeeee", "#5a5a5a"
             row_alt = "#343434"
+            table_border = "#6a6a6a"
         else:
             bg, fg, sub = "#ffffff", "#1a1a1a", "#888888"
             card_bg, card_border = "#f8f9fa", "#e0e0e0"
             btn_bg, btn_fg, btn_border = "#f0f0f0", "#333333", "#d0d0d0"
             row_alt = "#fafafa"
+            table_border = "#c3c3c3"
         primary, primary_hover = "#1976d2", "#1565c0"
 
         self.setStyleSheet(f"""
@@ -230,12 +229,14 @@ class ElementRefCheckDialog(QDialog):
             QDialog#ElementRefCheckDialog QLabel#RefTitle {{ font-size: 15px; font-weight: 600; }}
             QDialog#ElementRefCheckDialog QLabel#RefSummary {{ color: {sub}; font-size: 12px; }}
             QDialog#ElementRefCheckDialog QLabel#RefDone {{ color: #27ae60; font-size: 12px; }}
+            /* 边框要看得见：原来的 #e0e0e0 + 8px 圆角在白底上几乎是一条虚线，
+               用户反馈「看不到表格边框」，这里加深颜色并去掉圆角 */
             QDialog#ElementRefCheckDialog QTableWidget {{
                 background-color: {bg};
                 alternate-background-color: {row_alt};
                 color: {fg};
-                border: 1px solid {card_border};
-                border-radius: 8px;
+                border: 1px solid {table_border};
+                border-radius: 0px;
                 gridline-color: transparent;
                 font-size: 12px;
             }}
