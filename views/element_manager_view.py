@@ -15,20 +15,25 @@ from utils.dialogs import ConfirmDeleteDialog, ErrorDialog, WarningDialog
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 from views.dialogs.image_crop_dialog import ImageCropDialog
-from utils.ui_tree import suggest_element_name
+from utils.ui_tree import suggest_element_name, parse_xml, locator_exists
 
 
 class ElementManagerView(QWidget):
     element_changed = pyqtSignal()
     verify_element_signal = pyqtSignal(str)
+    check_refs_requested = pyqtSignal()      # 顶部「检查引用」按钮
     _scrape_result = pyqtSignal(list, str, str)  # (elements, error, current_app)
+    _verify_result = pyqtSignal(dict, str)       # (状态表, 错误)：批量校验回投 GUI
 
     def __init__(self, element_model: ElementModel, parent=None):
         super().__init__(parent)
         self.setObjectName("ElementManagerView")
         self.element_model = element_model
         self.device_service = None  # 由 main.py 注入，抓取界面用
+        # 批量校验结果：key = 元素 id|定位方式|定位值（定位值一改，旧结果自动失效）
+        self._verify_status = {}
         self._scrape_result.connect(self._on_scrape_result)
+        self._verify_result.connect(self._on_verify_result)
         self.setup_ui()
         self.load_data()
         # 应用主题（由主窗口调用，但这里确保初始化时也应用）
@@ -217,6 +222,14 @@ class ElementManagerView(QWidget):
         self.export_btn.setVisible(False)
 
         # 与自动化执行页同一个 helper：文案带「▾」，点开在按钮下方弹出
+        # 引用检查：扫出「步骤引用了已删除元素」的死引用。只读两个 JSON，不用连设备。
+        # 这类步骤执行时会直接报「元素ID 已失效」，所以值得有个汇总入口。
+        self.ref_check_btn = QPushButton("检查引用")
+        self.ref_check_btn.setToolTip(
+            "找出引用了已删除元素的步骤：可以逐条重新拾取定位，或直接解除引用")
+        self.ref_check_btn.clicked.connect(self.check_refs_requested.emit)
+        toolbar_layout.addWidget(self.ref_check_btn)
+
         from utils.more_button import make_more_button
         self.more_btn, self._more_menu = make_more_button(
             self, "导入元素 / 导出元素")
@@ -230,7 +243,7 @@ class ElementManagerView(QWidget):
         # 工具栏按钮统一高度：带图标的「创建」比不带图标的「编辑/删除/更多」
         # 天然高 1px（图标把 sizeHint 撑高），并排看着不齐（2026-10-30 反馈）
         for _btn in (self.scrape_btn, self.add_btn, self.edit_btn,
-                     self.delete_btn, self.more_btn):
+                     self.delete_btn, self.ref_check_btn, self.more_btn):
             _btn.setFixedHeight(28)
 
         toolbar_layout.addStretch()
@@ -248,8 +261,8 @@ class ElementManagerView(QWidget):
         table_layout.setContentsMargins(0, 0, 0, 0)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["所属应用", "所属模块", "名称", "定位方式", "定位值"])
+        self.table.setColumnCount(6)      # 最后一列是「状态」：批量校验结果
+        self.table.setHorizontalHeaderLabels(["所属应用", "所属模块", "名称", "定位方式", "定位值", "状态"])
 
         header_font = QFont()
         header_font.setBold(True)
@@ -261,6 +274,8 @@ class ElementManagerView(QWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(5, 88)
 
         self.table.setColumnWidth(0, 100)
         self.table.setColumnWidth(1, 100)
@@ -357,6 +372,17 @@ class ElementManagerView(QWidget):
             item4.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(row, 4, item4)
 
+            status = self._verify_status.get(self._status_key(elem), "")
+            item5 = QTableWidgetItem(status or "—")
+            item5.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if status.startswith("✅"):
+                item5.setForeground(QColor("#27ae60"))
+            elif status.startswith("❌"):
+                item5.setForeground(QColor("#e74c3c"))
+            else:
+                item5.setForeground(QColor("#9a9a9a"))
+            self.table.setItem(row, 5, item5)
+
         self.table.clearSelection()
         self._on_selection_changed()
 
@@ -396,11 +422,110 @@ class ElementManagerView(QWidget):
             verify_action = QAction("验证元素")
             verify_action.triggered.connect(lambda: self.verify_element_signal.emit(selected_ids[0]))
             menu.addAction(verify_action)
+            repick_action = QAction("重新拾取定位")
+            repick_action.triggered.connect(
+                lambda: self._on_repick(selected_ids[0]))
+            menu.addAction(repick_action)
+            menu.addSeparator()
+        else:
+            # 多选：一次读屏把所有选中元素都判完（每个元素单独 exists 会 dump N 次）
+            batch_action = QAction(f"验证选中的 {len(selected_ids)} 个（一次读屏）")
+            batch_action.triggered.connect(
+                lambda: self._verify_selected(selected_ids))
+            menu.addAction(batch_action)
             menu.addSeparator()
         delete_action = QAction(f"删除选中的 {len(selected_ids)} 个元素")
         delete_action.triggered.connect(lambda: self._batch_delete_elements(selected_ids))
         menu.addAction(delete_action)
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    # ------------------------------------------------------------------
+    # 元素校验：状态列 / 批量一次读屏 / 重新拾取
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _status_key(elem):
+        """状态缓存键：定位值一改，旧结果自然失效（不用手动清缓存）。"""
+        return f"{elem.id}|{elem.loc_type}|{elem.loc_value}"
+
+    def _on_repick(self, elem_id):
+        """在设备画面上重新点一次该控件，只更新定位方式与值。
+
+        id / 名称 / 应用 / 模块都不动 —— 步骤里的 element_id 引用依然有效，
+        执行时 resolve_element() 会取到新的定位。
+        """
+        elem = self.element_model.get_element_by_id(elem_id)
+        if elem is None:
+            return
+        if not self.device_service or not getattr(self.device_service, "device", None):
+            WarningDialog.show_warning(self, "无法拾取", "请先在顶部工具栏连接设备")
+            return
+
+        from views.dialogs.element_pick_dialog import ElementPickDialog
+        try:
+            dlg = ElementPickDialog(self.device_service, self)
+        except Exception as e:
+            WarningDialog.show_warning(self, "打不开拾取面板", str(e))
+            return
+        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.result:
+            return
+
+        res = dlg.result
+        if self.element_model.update_element(elem_id, loc_type=res["loc_type"],
+                                             loc_value=res["loc_value"]):
+            self._verify_status.pop(self._status_key(elem), None)
+            self.filter_table()
+            self.element_changed.emit()
+            show_toast(parent=self, message="定位已更新")
+
+    def _verify_selected(self, elem_ids):
+        """一次读屏校验多个元素（本地匹配），结果写回「状态」列。
+
+        为什么不用逐个 exists()：u2 的 exists 每次都要 dump，车机单次 8~12 秒，
+        20 个元素就是好几分钟；这里一次 dump + ui_tree 本地匹配，仍是 1 次开销。
+        """
+        if not self.device_service or not getattr(self.device_service, "device", None):
+            show_toast(parent=self, message="未检测到设备")
+            return
+        elems = [e for e in (self.element_model.get_element_by_id(i) for i in elem_ids) if e]
+        if not elems:
+            return
+        show_toast(parent=self, message=f"正在读取当前界面（{len(elems)} 个元素）…", duration=2000)
+
+        import threading
+
+        def worker():
+            try:
+                root = parse_xml(self.device_service.dump_ui_xml())
+                if root is None:
+                    self._verify_result.emit({}, "读不到界面层级")
+                    return
+                result = {}
+                for e in elems:
+                    ok = locator_exists(root, e.loc_type, e.loc_value)
+                    if ok is True:
+                        result[self._status_key(e)] = "✅ 存在"
+                    elif ok is False:
+                        result[self._status_key(e)] = "❌ 不存在"
+                    else:
+                        result[self._status_key(e)] = "— 未校验"
+                self._verify_result.emit(result, "")
+            except Exception as ex:
+                self._verify_result.emit({}, str(ex))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_verify_result(self, result, error):
+        if error:
+            show_toast(parent=self, message=f"校验失败：{error}", duration=2500)
+            return
+        self._verify_status.update(result)
+        self.filter_table()
+        vals = list(result.values())
+        ok = vals.count("✅ 存在")
+        no = vals.count("❌ 不存在")
+        skip = vals.count("— 未校验")
+        show_toast(parent=self, message=f"校验完成：{ok} 存在 / {no} 不存在 / {skip} 未校验",
+                   duration=2500)
 
     def _batch_delete_elements(self, elem_ids):
         if not elem_ids:
@@ -417,7 +542,7 @@ class ElementManagerView(QWidget):
                 self,
                 title="确认批量删除",
                 message=f"确定删除以下 {len(names)} 个元素吗？",
-                detail="如果这些元素被步骤引用，引用将被清除。"
+                detail="删除后，引用它们的步骤会显示「已失效」，可用顶部「检查引用」统一修复。"
         ):
             return
 
@@ -483,7 +608,7 @@ class ElementManagerView(QWidget):
                 self,
                 title="确认删除",
                 message=f"确定要删除元素 '{elem.name}' 吗？",
-                detail="如果该元素被步骤引用，引用将被清除。"
+                detail="删除后，引用它的步骤会显示「已失效」，可用顶部「检查引用」统一修复。"
         ):
             return
 

@@ -212,6 +212,36 @@ def suggest_element_name(info: Optional[dict]) -> str:
     return "元素"
 
 
+def locator_exists(root, loc_type: str, value: str) -> Optional[bool]:
+    """在已解析的层级里判断一个定位值是否还在（批量校验元素用）。
+
+    为什么不用 uiautomator2 的 exists()：它每次调用都要 dump 一次，车机单次
+    8~12 秒，校验 20 个元素就是好几分钟。这里复用「一次 dump + 本地匹配」，
+    20 个元素仍然只有一次 dump 的开销。
+
+    返回 True / False；无法在本地判定时返回 None（调用方显示「未校验」）：
+        XPath —— ElementTree 只支持很窄的语法，交给调用方另判
+        坐标 / 图像 —— 本来就没有语义可查
+    """
+    if root is None:
+        return None
+    v = (value or "").strip()
+    if not v:
+        return None
+    try:
+        nodes = list(root.iter("node"))
+    except Exception:
+        return None
+
+    if loc_type == "资源ID":
+        return any((n.get("resource-id") or "").strip() == v for n in nodes)
+    if loc_type == "文本":
+        return any((n.get("text") or "").strip() == v for n in nodes)
+    if loc_type == "描述":
+        return any((n.get("content-desc") or "").strip() == v for n in nodes)
+    return None
+
+
 def describe_node(info: Optional[dict]) -> str:
     """一句话说明命中的是哪个控件，给拾取面板的预览条 / 日志用。"""
     if not info:

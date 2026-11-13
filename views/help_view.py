@@ -560,7 +560,7 @@ class HelpView(QFrame):
                     统一管理 UI 控件的定位信息，便于在步骤中复用，避免重复输入。
                 </p>
                 {self._get_steps_html([
-                    {'image': 'element_1_view.png', 'desc': '表格显示所有元素（应用、模块、名称、定位方式、定位值）'},
+                    {'image': 'element_1_view.png', 'desc': '表格显示所有元素（应用、模块、名称、定位方式、定位值、状态）'},
                     {'image': 'element_2_search_filter.png', 'desc': '通过搜索框和应用下拉框快速筛选'},
                     {'image': 'element_3_add.png', 'desc': '点击"新增"，填写信息保存'},
                     {'image': 'element_4_edit.png', 'desc': '选中元素点击"编辑"修改'},
@@ -576,7 +576,10 @@ class HelpView(QFrame):
                     • 缺名称、模块或定位值的行会跳过并逐行提示
                 </div>
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 验证元素需要设备连接，且仅支持资源ID、文本、描述、XPath。
+                    💡 校验元素需要连接设备：支持资源ID、文本、描述；XPath 与坐标会标成「未校验」。<br>
+                    • 多选几行 → 右键「验证选中的 N 个」，一次读屏全部判完，结果显示在「状态」列<br>
+                    • 元素定位变了：右键「重新拾取定位」，在画面上点一下即可更新<br>
+                    • 顶部「检查引用」能找出「步骤引用了已删除元素」的情况，可逐条重新拾取或解除引用
                 </div>
                 """
             },

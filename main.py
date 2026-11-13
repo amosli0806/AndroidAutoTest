@@ -666,7 +666,7 @@ def main():
     # ---------- 控制器 ----------
     step_controller = StepController(step_model, step_list, action_card)
     project_controller = ProjectController(project_model, project_tree, step_controller, execute_view, main_window)
-    element_controller = ElementController(element_model, step_model)
+    element_controller = ElementController(element_model, step_model, project_model)
 
     project_controller.set_suite_model(suite_model)
 
@@ -1125,6 +1125,22 @@ def main():
             worker.start()
 
     element_manager.verify_element_signal.connect(verify_element)
+
+    def check_element_refs():
+        """元素库「检查引用」：列出步骤里指向已删除元素的死引用，逐条修。
+
+        只读 steps_data / elements_data，不需要设备；修完刷新表格。
+        """
+        rows = element_controller.find_broken_references()
+        if not rows:
+            show_toast(main_window, "没有发现失效的元素引用", duration=2000)
+            return
+        from views.dialogs.element_ref_check_dialog import ElementRefCheckDialog
+        dlg = ElementRefCheckDialog(rows, element_controller, device_svc, main_window)
+        dlg.exec()
+        element_manager.filter_table()
+
+    element_manager.check_refs_requested.connect(check_element_refs)
 
     # ---------- 应用主题（确保所有视图已注册） ----------
     # 等待主窗口所有视图设置完成后，应用当前主题

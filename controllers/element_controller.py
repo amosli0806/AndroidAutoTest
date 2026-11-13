@@ -16,9 +16,12 @@ class ElementController:
     5. 导入导出
     """
 
-    def __init__(self, element_model: ElementModel, step_model: StepModel):
+    def __init__(self, element_model: ElementModel, step_model: StepModel,
+                 project_model=None):
         self.element_model = element_model
         self.step_model = step_model
+        # 只为「检查引用」时把 case_id 翻译成用例名；不传也能跑（显示 id）
+        self.project_model = project_model
 
     def apply_theme(self, theme_mode: ThemeMode):
         """应用主题到控制器（占位方法，保持接口一致性）"""
@@ -114,6 +117,67 @@ class ElementController:
             else:
                 return False  # 有引用且不允许自动清理
         return self.delete_element(elem_id)
+
+    # ---------- 引用健康检查（批量） ----------
+    def find_broken_references(self) -> List[dict]:
+        """扫描所有用例步骤，列出 element_id 指向「已不存在的元素」的引用。
+
+        执行期 resolve_element() 找不到元素是**直接抛错**（不是静默回退），
+        所以这些步骤一跑就失败。这里一次性列全，供「检查引用」对话框批量修。
+        返回：[{case_id, case_name, step_id, step_name, seq, element_id,
+                loc_type, loc_value}, ...]
+        """
+        valid_ids = {e.id for e in self.element_model.get_elements()}
+        case_names = {}
+        if self.project_model is not None:
+            try:
+                case_names = {c.id: c.name for c in self.project_model.get_all_cases()}
+            except Exception:
+                case_names = {}
+
+        rows = []
+        for case_id, step_ids in self.step_model.case_steps.items():
+            for seq, step_id in enumerate(step_ids, 1):
+                step = self.step_model._steps.get(step_id)
+                if step is None:
+                    continue
+                params = step.params or {}
+                elem_id = params.get("element_id")
+                if not elem_id or elem_id in valid_ids:
+                    continue
+                rows.append({
+                    "case_id": case_id,
+                    "case_name": case_names.get(case_id) or case_id,
+                    "step_id": step_id,
+                    "step_name": step.name or "",
+                    "seq": seq,
+                    "element_id": elem_id,
+                    "loc_type": params.get("locationType", ""),
+                    "loc_value": params.get("locationValue", ""),
+                })
+        rows.sort(key=lambda r: (r["case_name"], r["seq"]))
+        return rows
+
+    def detach_step_element(self, step_id) -> bool:
+        """解除单个步骤的元素引用（保留步骤里已有的定位方式与值）。"""
+        step = self.step_model._steps.get(step_id)
+        if step is None or "element_id" not in (step.params or {}):
+            return False
+        step.params.pop("element_id", None)
+        self.step_model.save()
+        return True
+
+    def set_step_locator(self, step_id, loc_type: str, loc_value: str) -> bool:
+        """把刚拾取到的定位写回步骤，并解除那条失效引用。"""
+        step = self.step_model._steps.get(step_id)
+        if step is None:
+            return False
+        step.params = dict(step.params or {})
+        step.params["locationType"] = loc_type
+        step.params["locationValue"] = loc_value
+        step.params.pop("element_id", None)
+        self.step_model.save()
+        return True
 
     # ---------- 执行时解析 ----------
     def resolve_element(self, step_params: dict) -> dict:
