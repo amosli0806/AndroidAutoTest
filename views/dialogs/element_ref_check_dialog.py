@@ -69,6 +69,8 @@ class ElementRefCheckDialog(QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        # 整张表只读，不接收焦点：否则当前单元格会画一个蓝色焦点框，像被选中了
+        self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.table.setShowGrid(True)      # 要看得见行列分隔，否则只像一块空白区域
         self.table.setWordWrap(False)
         header = self.table.horizontalHeader()
@@ -114,7 +116,6 @@ class ElementRefCheckDialog(QDialog):
             items = [row.get("case_name", ""), name, row.get("element_id", ""), loc_text]
             for col, text in enumerate(items):
                 item = QTableWidgetItem(str(text))
-                item.setToolTip(str(text))
                 self.table.setItem(r, col, item)
 
             self.table.setCellWidget(r, 4, self._make_ops(row))
@@ -251,12 +252,19 @@ class ElementRefCheckDialog(QDialog):
                 gridline-color: {grid};
                 font-size: 12px;
             }}
+            /* 表头只画右、下两条线：上/左/右的外框由 QTableWidget 的 border 负责，
+               两边都画会叠成 2px，看起来比表格边框粗 */
             QDialog#ElementRefCheckDialog QHeaderView::section {{
                 background-color: {card_bg};
                 color: {sub};
-                border: 1px solid {grid};
+                border: none;
+                border-right: 1px solid {grid};
+                border-bottom: 1px solid {grid};
                 padding: 6px 4px;
                 font-size: 12px;
+            }}
+            QDialog#ElementRefCheckDialog QHeaderView::section:last {{
+                border-right: none;
             }}
             QDialog#ElementRefCheckDialog QTableWidget::item {{ padding: 4px; }}
             QDialog#ElementRefCheckDialog QPushButton {{
