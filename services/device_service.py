@@ -712,13 +712,38 @@ class DeviceService:
             raise ValueError(f"截图失败：{e}")
         return path
 
+    @staticmethod
+    def _resolve_image_template(value) -> str:
+        """图像定位值 → 可读的模板图路径。
+
+        允许两种写法：
+            完整路径 —— 「截屏取图」和应用可视化框选给出的都是这种；
+            仅文件名 —— 旧版应用可视化存进元素库时只写了 basename，
+                       到 data/element_images/ 下找回来，找不到原样返回
+                       由调用方报「参考图不存在」。
+        """
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if os.path.isfile(text):
+            return text
+        try:
+            from utils.app_paths import get_data_dir
+            candidate = os.path.join(get_data_dir(), "element_images",
+                                     os.path.basename(text))
+            if os.path.isfile(candidate):
+                return candidate
+        except Exception:
+            pass
+        return text
+
     def _image_center(self, params):
         """图像定位：截图 → 模板匹配 → 中心坐标。找不到抛异常。"""
         from utils.image_match import match, ImageNotFoundError
-        template = params.get('locationValue', '')
+        template = self._resolve_image_template(params.get('locationValue', ''))
         threshold = params.get('imageThreshold', 0.8)
         if not template or not os.path.isfile(template):
-            raise ValueError(f"参考图不存在：{template}")
+            raise ValueError(f"参考图不存在：{params.get('locationValue', '')}")
         shot = self._capture_screenshot()
         try:
             x, y, _ = match(shot, template, threshold=threshold)

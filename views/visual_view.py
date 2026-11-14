@@ -443,15 +443,19 @@ class _LocatorRow(QFrame):
         layout.addWidget(self.tail_label)
 
     def set_row(self, value: str, ok: bool, note: str = "",
-                recommended: bool = False, clickable: bool = None):
-        self.value = value or ""
+                recommended: bool = False, clickable: bool = None,
+                display: str = None):
+        self.value = value or ""          # 真正拿去用/复制的值（可能是很长的路径）
         self.available = bool(ok)
         # 图像行比较特殊：没有值也能点（点了进入框选），所以「可点」与「有值」分开
         self.clickable = bool(ok if clickable is None else clickable)
         self.setProperty("available", "1" if self.available else "0")
         self.setProperty("clickable", "1" if self.clickable else "0")
         self.setProperty("recommended", "1" if recommended else "0")
-        if ok and len(self.value) > 48:
+        if display is not None:
+            # 显示用短名（图像模板只显示文件名），但 self.value 仍是完整路径
+            shown = display
+        elif ok and len(self.value) > 48:
             # 两行也放不下时中间省略，首尾都留着便于辨认（点一下复制的是全量）
             shown = f"{self.value[:20]}…{self.value[-24:]}"
         elif ok:
@@ -1035,8 +1039,9 @@ class VisualView(QWidget):
         if row is None:
             return
         if self._image_path:
-            row.set_row(os.path.basename(self._image_path), True, "重选",
-                        clickable=True)
+            # value 用完整路径（复制/入库/回填都要能直接执行），显示只放文件名
+            row.set_row(self._image_path, True, "重选", clickable=True,
+                        display=os.path.basename(self._image_path))
         else:
             row.set_row("", False, "框选", clickable=True)
         row.set_selected(self._active_type == "图像")
