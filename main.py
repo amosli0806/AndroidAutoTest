@@ -762,7 +762,12 @@ def main():
 
     visual_controller = VisualController(device_svc)
     visual_view = VisualView(visual_controller)
+    # 存入元素库要写 ElementModel；存完让元素库页立刻刷新（否则要手动搜一下）
+    visual_view.set_element_model(element_model)
+    visual_view.element_saved.connect(element_manager.filter_table)
     main_window.set_visualize_page(visual_view)
+    # 动作卡片右键「在应用可视化中打开」→ 切页并挂回填目标
+    action_card.visual_pick_requested.connect(main_window.open_visual_for_card)
 
     # 4.1 weditor 浮窗（传入 None，由主窗口创建默认启动按钮）
     main_window.set_visualize_view(None)

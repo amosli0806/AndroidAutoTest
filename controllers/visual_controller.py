@@ -138,5 +138,5 @@ class VisualController(QObject):
             {"type": "坐标", "value": f"{cx},{cy}", "ok": True,
              "note": "", "recommended": False},
             {"type": "图像", "value": "", "ok": False,
-             "note": "二期支持", "recommended": False},
+             "note": "框选", "recommended": False},
         ]

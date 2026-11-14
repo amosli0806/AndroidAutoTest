@@ -3847,6 +3847,22 @@ class MainWindow(QMainWindow):
         self._visual_view_ref = visual_view
         self.apply_theme()
 
+    def open_visual_for_card(self, label=""):
+        """动作卡片右键「在应用可视化中打开」：切页并挂上回填目标。
+
+        回填回调由卡片自己提供（它知道该写回哪个输入框），页面只负责把
+        「当前选中的定位方式 + 值」交回去。
+        """
+        view = getattr(self, "_visual_view_ref", None)
+        if view is None:
+            return
+        callback = None
+        card = getattr(self, "action_card", None)
+        if card is not None and hasattr(card, "take_visual_target"):
+            callback = card.take_visual_target()
+        view.set_return_target(label, callback)
+        self.switch_view(2)
+
     def set_visualize_view(self, widget):
         if self._visualize_container is None:
             container = QWidget()

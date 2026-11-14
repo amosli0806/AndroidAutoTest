@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QScrollArea, QWidget, QGridLayout, QGroupBox,
                              QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
                              QLineEdit, QSpinBox, QDoubleSpinBox, QPushButton,
                              QSizePolicy, QMessageBox, QToolButton, QDialog,
-                             QWIDGETSIZE_MAX)
+                             QMenu, QWIDGETSIZE_MAX)
 from PyQt6.QtCore import pyqtSignal, Qt, QPoint, QSize
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPolygon
 
@@ -55,6 +55,8 @@ class ActionCardView(QScrollArea):
     add_step_signal = pyqtSignal(str, dict, str)
     # 拾取时勾了「同时存入元素库」→ 通知元素库页面重新读数据（否则要手动搜一下才刷新）
     element_library_changed = pyqtSignal()
+    # 卡片上请求「在应用可视化中打开」：参数是卡片名，供页面按钮显示「填入「点击」」
+    visual_pick_requested = pyqtSignal(str)
 
     # 卡片区每行放几张（原来写死在 _build_cards 里的 max_cols）
     CARD_COLUMNS = 2
@@ -427,6 +429,7 @@ class ActionCardView(QScrollArea):
             card = ActionCard(cfg)
             card.add_step.connect(self._on_add_step)
             card.element_library_changed.connect(self.element_library_changed)
+            card.visual_pick_requested.connect(self.visual_pick_requested)
             card.setMaximumWidth(340)
             card.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             self.layout.addWidget(card, row, col)
@@ -458,6 +461,7 @@ class ActionCardView(QScrollArea):
 class ActionCard(QGroupBox):
     add_step = pyqtSignal(str, dict, str)
     element_library_changed = pyqtSignal()   # 存进元素库后通知外面刷新
+    visual_pick_requested = pyqtSignal(str)  # 去「应用可视化」页取定位
 
     # 颜色映射用于左侧色条，与主题无关
     COLOR_MAP = {
@@ -495,6 +499,7 @@ class ActionCard(QGroupBox):
         self.config = config
         self.fields = {}
         self.element_controller = None
+        self._visual_target = None   # 在应用可视化页取的定位要填回哪个字段
         self.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
         # 标题样式（加粗、字号）
@@ -754,6 +759,41 @@ class ActionCard(QGroupBox):
         else:
             self._on_pick_element()
 
+    def _on_locator_context_menu(self, btn, pos):
+        """定位辅助按钮的右键菜单：左键仍是原有的拾取，右键多一个整页入口。"""
+        menu = QMenu(self)
+        menu.addAction("在画面中拾取", btn.click)
+        menu.addAction("在应用可视化中打开",
+                       lambda: self._open_in_visual(btn))
+        menu.exec(btn.mapToGlobal(pos))
+
+    def _open_in_visual(self, btn):
+        """记住这张卡片的回填目标，请主窗口切到「应用可视化」页。"""
+        self._visual_target = (btn, btn.property('value_widget'),
+                               btn.property('type_key'))
+        self.visual_pick_requested.emit(self.title() or "")
+
+    def take_visual_target(self):
+        """取出并清空回填目标，返回 (loc_type, loc_value) -> None 的回调。"""
+        target = self._visual_target
+        self._visual_target = None
+        if target is None:
+            return None
+        btn, value_widget, type_key = target
+
+        def _apply(loc_type, loc_value):
+            combo = self.fields.get(type_key)
+            if isinstance(combo, QComboBox):
+                combo.setCurrentText(loc_type)
+            if value_widget is None:
+                return
+            value_widget.setText(loc_value)
+            # 与拾取面板回填同一约定：值不再来自元素库，解除绑定
+            value_widget.setProperty('element_id', None)
+            self._sync_locator_btn(btn)
+
+        return _apply
+
     def _on_pick_element(self):
         """打开拾取面板：在设备画面上点控件 → 回填定位方式与定位值。"""
         btn = self.sender()
@@ -872,6 +912,11 @@ class ActionCard(QGroupBox):
                     'toValue': 'toLocationType',
                 }[field['key']])
                 loc_btn.clicked.connect(self._on_locator_btn_clicked)
+                # 右键多一个入口：去「应用可视化」整页里取（空间大、能反复对照）
+                loc_btn.setContextMenuPolicy(
+                    Qt.ContextMenuPolicy.CustomContextMenu)
+                loc_btn.customContextMenuRequested.connect(
+                    lambda pos, b=loc_btn: self._on_locator_context_menu(b, pos))
                 container_layout.addWidget(loc_btn)
                 self._locator_btns[field['key']] = loc_btn
                 widget = container

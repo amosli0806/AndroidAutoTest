@@ -8,19 +8,21 @@
 命中规则、XPath 生成都在 utils/ui_tree.py，和录制反查、拾取面板共用一份，
 不在这里另写一套。
 """
+import os
 import time
 from datetime import datetime
 
 from PyQt6.QtCore import QPoint, QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap
-from PyQt6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
-                             QProgressBar, QPushButton, QSizePolicy, QSplitter,
-                             QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QApplication, QComboBox, QFrame, QHBoxLayout,
+                             QLabel, QLineEdit, QProgressBar, QPushButton,
+                             QSizePolicy, QSplitter, QVBoxLayout, QWidget)
 
+from utils.app_paths import get_data_dir
 from utils.settings import Settings, THEME_MODE_DARK
 from utils.theme import ThemeMode
 from utils.toast import show_toast
-from utils.ui_tree import describe_node
+from utils.ui_tree import describe_node, suggest_element_name
 
 # 画面四周留白：让截图不贴边，便于判断边界
 CANVAS_PAD = 12
@@ -37,6 +39,8 @@ class _ScreenCanvas(QWidget):
     clicked = pyqtSignal(int, int)     # 设备原图坐标
     zoom_changed = pyqtSignal(float)   # 当前缩放比
     chain_step = pyqtSignal(int)       # ↑↓ 切换嵌套节点：-1 / +1
+    region_selected = pyqtSignal(object)   # 框选完成：QRect（设备原图坐标）
+    crop_cancelled = pyqtSignal()          # 框选被取消（Esc / 切页）
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -60,6 +64,9 @@ class _ScreenCanvas(QWidget):
         self._moved = False
         self._is_dark = False
         self._has_wallpaper = False
+        self._crop_mode = False          # 图像定位的框选模式
+        self._crop_origin = QPoint()
+        self._crop_rect = None           # 显示坐标
 
     # ------------------------------------------------------------------
     def set_pixmap(self, pixmap):
@@ -90,6 +97,35 @@ class _ScreenCanvas(QWidget):
         self._is_dark = bool(is_dark)
         self._has_wallpaper = bool(has_wallpaper)
         self.update()
+
+    # ------------------------------------------------------------------ 框选
+    def set_crop_mode(self, on: bool):
+        """进入/退出框选模式（图像定位用）。"""
+        self._crop_mode = bool(on)
+        self._crop_rect = None
+        self.setCursor(Qt.CursorShape.CrossCursor if on
+                       else Qt.CursorShape.ArrowCursor)
+        self.update()
+
+    @property
+    def crop_mode(self) -> bool:
+        return self._crop_mode
+
+    def _to_image_rect(self, rect: QRect) -> QRect:
+        """显示坐标的矩形 → 设备原图坐标（并夹到图片范围内）。"""
+        if not self.has_image or rect is None:
+            return QRect()
+        s = self._scale
+        x = int((rect.left() - self._offset.x()) / s)
+        y = int((rect.top() - self._offset.y()) / s)
+        w = int(rect.width() / s)
+        h = int(rect.height() / s)
+        pw, ph = self._pixmap.width(), self._pixmap.height()
+        x = max(0, min(pw - 1, x))
+        y = max(0, min(ph - 1, y))
+        w = max(1, min(pw - x, w))
+        h = max(1, min(ph - y, h))
+        return QRect(x, y, w, h)
 
     @property
     def scale(self) -> float:
@@ -179,8 +215,44 @@ class _ScreenCanvas(QWidget):
         border = QColor("#4a4a4a") if self._is_dark else QColor("#d0d3d8")
         painter.setPen(QPen(border, 1))
         painter.drawRect(target.adjusted(-1, -1, 0, 0))
-        self._paint_hit(painter)
+        if self._crop_rect is not None:
+            self._paint_crop(painter)
+        else:
+            self._paint_hit(painter)
         painter.end()
+
+    def _paint_crop(self, painter):
+        """框选中：框外压暗 + 白色虚线框 + 原图像素尺寸。"""
+        rect = self._crop_rect
+        if rect is None or rect.isNull():
+            return
+        mask = QColor(0, 0, 0, 110)
+        painter.fillRect(QRect(0, 0, self.width(), rect.top()), mask)
+        painter.fillRect(QRect(0, rect.bottom() + 1, self.width(),
+                               self.height() - rect.bottom() - 1), mask)
+        painter.fillRect(QRect(0, rect.top(), rect.left(), rect.height()), mask)
+        painter.fillRect(QRect(rect.right() + 1, rect.top(),
+                               self.width() - rect.right() - 1,
+                               rect.height()), mask)
+        painter.setPen(QPen(QColor("#ffffff"), 1, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(rect)
+
+        img_rect = self._to_image_rect(rect)
+        text = f"{img_rect.width()} × {img_rect.height()}"
+        font = QFont(self.font())
+        font.setPointSize(9)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+        tw = metrics.horizontalAdvance(text) + 12
+        th = metrics.height() + 4
+        ty = rect.bottom() + 6
+        if ty + th > self.height() - 2:
+            ty = rect.top() - th - 6
+        painter.fillRect(QRect(rect.left(), ty, tw, th), QColor(0, 0, 0, 170))
+        painter.setPen(QColor("#ffffff"))
+        painter.drawText(QRect(rect.left(), ty, tw, th),
+                         Qt.AlignmentFlag.AlignCenter, text)
 
     def _paint_hint(self, painter):
         fg = QColor("#8a8a8a") if self._is_dark else QColor("#999999")
@@ -245,7 +317,13 @@ class _ScreenCanvas(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.has_image:
             self.setFocus(Qt.FocusReason.MouseFocusReason)
-            self._drag_from = event.position().toPoint()
+            pos = event.position().toPoint()
+            if self._crop_mode:
+                self._crop_origin = pos
+                self._crop_rect = QRect(pos, QSize(1, 1))
+                self.update()
+                return
+            self._drag_from = pos
             self._drag_offset = QPoint(self._offset)
             self._dragging = True
             self._moved = False
@@ -253,6 +331,11 @@ class _ScreenCanvas(QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self._crop_mode and self._crop_rect is not None:
+            self._crop_rect = QRect(self._crop_origin,
+                                    event.position().toPoint()).normalized()
+            self.update()
+            return
         if self._dragging:
             pos = event.position().toPoint()
             delta = pos - self._drag_from
@@ -265,6 +348,16 @@ class _ScreenCanvas(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._crop_mode:
+            rect = self._crop_rect
+            self._crop_rect = None
+            if rect is not None and rect.width() >= 5 and rect.height() >= 5:
+                self.set_crop_mode(False)
+                self.region_selected.emit(self._to_image_rect(rect))
+            else:
+                # 太小：留在框选模式让用户重新拖（提示由宿主窗口给）
+                self.update()
+            return
         if event.button() == Qt.MouseButton.LeftButton and self._dragging:
             self._dragging = False
             self.setCursor(Qt.CursorShape.CrossCursor)
@@ -295,6 +388,10 @@ class _ScreenCanvas(QWidget):
 
     def keyPressEvent(self, event):
         key = event.key()
+        if key == Qt.Key.Key_Escape and self._crop_mode:
+            self.set_crop_mode(False)
+            self.crop_cancelled.emit()
+            return
         if key == Qt.Key.Key_Up:
             self.chain_step.emit(-1)
             return
@@ -315,6 +412,7 @@ class _LocatorRow(QFrame):
         self.type_name = type_name
         self.value = ""
         self.available = False
+        self.clickable = False
         self.setProperty("available", "0")
 
         layout = QHBoxLayout(self)
@@ -345,22 +443,44 @@ class _LocatorRow(QFrame):
         layout.addWidget(self.tail_label)
 
     def set_row(self, value: str, ok: bool, note: str = "",
-                recommended: bool = False):
+                recommended: bool = False, clickable: bool = None):
         self.value = value or ""
         self.available = bool(ok)
-        self.setProperty("available", "1" if ok else "0")
+        # 图像行比较特殊：没有值也能点（点了进入框选），所以「可点」与「有值」分开
+        self.clickable = bool(ok if clickable is None else clickable)
+        self.setProperty("available", "1" if self.available else "0")
+        self.setProperty("clickable", "1" if self.clickable else "0")
         self.setProperty("recommended", "1" if recommended else "0")
         if ok and len(self.value) > 48:
             # 两行也放不下时中间省略，首尾都留着便于辨认（点一下复制的是全量）
             shown = f"{self.value[:20]}…{self.value[-24:]}"
+        elif ok:
+            shown = self.value
+        elif self.clickable:
+            # 可点但还没有值（图像行的「框选」）：值位留空，动作写在右侧 tail 上
+            shown = ""
         else:
-            shown = self.value if ok else ""
-        shown = shown or note or "无"
+            shown = note or "无"
         self.value_label.setText(shown)
         self.value_label.setToolTip(self.value if ok else "")
-        self.tail_label.setText(note if (ok and note) else ("复制" if ok else ""))
-        self.setCursor(Qt.CursorShape.PointingHandCursor if ok
+        if ok and note:
+            tail = note
+        elif self.clickable and note:
+            tail = note
+        elif ok:
+            tail = "复制"
+        else:
+            tail = ""
+        self.tail_label.setText(tail)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if self.clickable
                        else Qt.CursorShape.ArrowCursor)
+        for w in (self, self.name_label, self.value_label, self.tail_label):
+            w.style().unpolish(w)
+            w.style().polish(w)
+        self.update()
+
+    def set_selected(self, selected: bool):
+        self.setProperty("selected", "1" if selected else "0")
         for w in (self, self.name_label, self.value_label, self.tail_label):
             w.style().unpolish(w)
             w.style().polish(w)
@@ -369,18 +489,21 @@ class _LocatorRow(QFrame):
     def flash_copied(self):
         self.tail_label.setText("已复制")
         QTimer.singleShot(1200, lambda: self.tail_label.setText(
-            "复制" if self.available else ""))
+            "复制" if self.available else ("框选" if self.clickable else "")))
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self.available and self.value:
+        if event.button() == Qt.MouseButton.LeftButton and self.clickable:
             self.activated.emit(self.type_name, self.value)
-            self.flash_copied()
+            if self.available and self.value:
+                self.flash_copied()
             return
         super().mousePressEvent(event)
 
 
 class VisualView(QWidget):
     """应用可视化整页。数据全在 VisualController，这里只负责展示与交互。"""
+
+    element_saved = pyqtSignal()      # 存入元素库成功，元素库页据此刷新
 
     def __init__(self, controller=None, parent=None):
         super().__init__(parent)
@@ -395,6 +518,11 @@ class VisualView(QWidget):
         self._loaded_once = False
         self._last_device_key = None
         self._rows = {}
+        self._image_path = ""       # 已框选的图像模板路径（图像定位用）
+        self._active_type = ""       # 当前选中的定位方式（用于「填入卡片」）
+        self.element_model = None   # 由 main.py 注入，「存入元素库」用
+        self._return_label = ""
+        self._return_callback = None
         self._is_dark = False
 
         self._setup_ui()
@@ -482,6 +610,8 @@ class VisualView(QWidget):
         self.canvas.clicked.connect(self._on_canvas_clicked)
         self.canvas.zoom_changed.connect(self._on_zoom_changed)
         self.canvas.chain_step.connect(self._step_chain)
+        self.canvas.region_selected.connect(self._on_region_selected)
+        self.canvas.crop_cancelled.connect(self._on_crop_cancelled)
         self.splitter.addWidget(self.canvas)
 
         side = QFrame()
@@ -528,7 +658,7 @@ class VisualView(QWidget):
 
         for type_name in ("资源ID", "文本", "描述", "XPath", "坐标", "图像"):
             row = _LocatorRow(type_name)
-            row.activated.connect(self._on_copy_value)
+            row.activated.connect(self._on_row_action)
             self._rows[type_name] = row
             side_layout.addWidget(row)
 
@@ -542,14 +672,60 @@ class VisualView(QWidget):
 
         # ---------- 底部状态 ----------
         status = QHBoxLayout()
-        status.setSpacing(12)
+        status.setSpacing(8)
         self.hint_label = QLabel("")
         self.hint_label.setObjectName("VisualHint")
         self.count_label = QLabel("")
         self.count_label.setObjectName("VisualCount")
         status.addWidget(self.hint_label, 1)
         status.addWidget(self.count_label)
+
+        # 「填入动作卡片」：只有从卡片跳过来时才出现（见 set_return_target）
+        self.apply_btn = QPushButton("填入")
+        self.apply_btn.setObjectName("VisualApplyBtn")
+        self.apply_btn.setVisible(False)
+        self.apply_btn.clicked.connect(self._on_apply_to_card)
+        status.addWidget(self.apply_btn)
+
+        self.save_elem_btn = QPushButton("存入元素库")
+        self.save_elem_btn.setObjectName("VisualSaveElemBtn")
+        self.save_elem_btn.clicked.connect(self._toggle_save_bar)
+        status.addWidget(self.save_elem_btn)
         root.addLayout(status)
+
+        # ---------- 存入元素库的内联表单（默认收起） ----------
+        self.save_bar = QFrame()
+        self.save_bar.setObjectName("VisualSaveBar")
+        save_layout = QHBoxLayout(self.save_bar)
+        save_layout.setContentsMargins(10, 6, 10, 6)
+        save_layout.setSpacing(6)
+
+        self.save_app = QLineEdit()
+        self.save_app.setPlaceholderText("所属应用")
+        self.save_module = QLineEdit()
+        self.save_module.setPlaceholderText("所属模块")
+        self.save_name = QLineEdit()
+        self.save_name.setPlaceholderText("元素名称")
+        for w in (self.save_app, self.save_module, self.save_name):
+            w.setMinimumWidth(0)
+            save_layout.addWidget(w, 1)
+
+        self.save_loc = QComboBox()
+        self.save_loc.addItems(["资源ID", "文本", "描述", "XPath", "坐标", "图像"])
+        self.save_loc.setFixedWidth(96)
+        save_layout.addWidget(self.save_loc)
+
+        self.save_confirm = QPushButton("保存")
+        self.save_confirm.setObjectName("VisualSaveConfirmBtn")
+        self.save_confirm.clicked.connect(self._on_save_element)
+        save_layout.addWidget(self.save_confirm)
+
+        self.save_cancel = QPushButton("取消")
+        self.save_cancel.clicked.connect(lambda: self.save_bar.setVisible(False))
+        save_layout.addWidget(self.save_cancel)
+
+        self.save_bar.setVisible(False)
+        root.addWidget(self.save_bar)
 
         self.canvas.clear("点击「刷新」读取当前设备画面",
                           "首次进入不会自动读取，避免车机长时间等待")
@@ -585,6 +761,8 @@ class VisualView(QWidget):
         self._info = None
         self._chain = []
         self._loaded_once = False
+        self._image_path = ""          # 旧设备的图像模板不能留给新设备
+        self.canvas.set_crop_mode(False)
         self._clear_node_panel()
         ready = bool(self.controller is not None and self.controller.device_ready())
         name = self._current_device_name() if ready else ""
@@ -753,11 +931,19 @@ class VisualView(QWidget):
             f"[{b[0]},{b[1]}][{b[2]},{b[3]}]" if b else "—")
 
         rows = self.controller.locator_rows(info) if self.controller else []
+        self._active_type = ""
         for item in rows:
             row = self._rows.get(item["type"])
-            if row is not None:
-                row.set_row(item["value"], item["ok"], item.get("note", ""),
-                            item.get("recommended", False))
+            if row is None:
+                continue
+            if item["type"] == "图像":
+                # 图像是屏幕区域，与当前节点无关：保持已框选的结果不动
+                self._sync_image_row()
+                continue
+            row.set_row(item["value"], item["ok"], item.get("note", ""),
+                        item.get("recommended", False))
+            row.set_selected(False)
+        self._sync_apply_button()
 
         total = len(self._chain)
         if total > 1:
@@ -771,15 +957,183 @@ class VisualView(QWidget):
         self.node_class.setText("—")
         self.node_text.setText("—")
         self.node_bounds.setText("—")
-        for row in self._rows.values():
+        self._active_type = ""
+        for name, row in self._rows.items():
+            if name == "图像":
+                continue
             row.set_row("", False, "")
+            row.set_selected(False)
+        self._sync_image_row()
+        self._sync_apply_button()
 
-    def _on_copy_value(self, type_name, value):
+    def _on_row_action(self, type_name, value):
+        """点右侧定位行：图像 → 进入框选；其余 → 复制到剪贴板并设为当前项。"""
+        if type_name == "图像":
+            self._start_crop()
+            return
+        if not value:
+            return
         try:
             QApplication.clipboard().setText(value)
         except Exception:
-            return
+            pass
+        self._set_active_row(type_name)
         self.hint_label.setText(f"已复制{type_name}：{value}")
+
+    def _set_active_row(self, type_name):
+        if self._active_type == type_name:
+            self._sync_apply_button()
+            return
+        self._active_type = type_name
+        for name, row in self._rows.items():
+            row.set_selected(name == type_name)
+        self._sync_apply_button()
+
+    def _sync_apply_button(self):
+        if not self._return_callback:
+            return
+        row = self._rows.get(self._active_type)
+        self.apply_btn.setEnabled(bool(row is not None and row.value))
+
+    # ---------------------------- 图像框选 ----------------------------
+    def _start_crop(self):
+        if not self.canvas.has_image:
+            show_toast(parent=self, message="先点「刷新」读取画面")
+            return
+        self.canvas.set_crop_mode(True)
+        self.hint_label.setText("在画面上拖出要识别的区域（特征越多越稳），Esc 取消")
+
+    def _on_region_selected(self, rect):
+        if self._pixmap is None or rect is None or rect.isNull():
+            return
+        crop = self._pixmap.copy(rect)
+        if crop.isNull() or crop.width() < 5 or crop.height() < 5:
+            show_toast(parent=self, message="框选区域太小")
+            return
+        try:
+            out_dir = os.path.join(get_data_dir(), "element_images")
+            os.makedirs(out_dir, exist_ok=True)
+            name = f"elem_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]}.png"
+            path = os.path.join(out_dir, name)
+            if not crop.save(path, "PNG"):
+                raise RuntimeError("保存失败")
+        except Exception as e:
+            show_toast(parent=self, message="图像保存失败")
+            self.hint_label.setText(f"图像保存失败：{e}")
+            return
+        self._image_path = path
+        self._sync_image_row()
+        self._set_active_row("图像")
+        self.hint_label.setText(
+            f"已截取 {crop.width()}×{crop.height()} 的图像模板，可选「图像」定位")
+
+    def _on_crop_cancelled(self):
+        self.hint_label.setText("已取消框选")
+
+    def _sync_image_row(self):
+        row = self._rows.get("图像")
+        if row is None:
+            return
+        if self._image_path:
+            row.set_row(os.path.basename(self._image_path), True, "重选",
+                        clickable=True)
+        else:
+            row.set_row("", False, "框选", clickable=True)
+        row.set_selected(self._active_type == "图像")
+
+    # ---------------------------- 存入元素库 ----------------------------
+    def set_element_model(self, element_model):
+        self.element_model = element_model
+
+    def _toggle_save_bar(self):
+        if self.save_bar.isVisible():
+            self.save_bar.setVisible(False)
+            return
+        if not self._info and not self._image_path:
+            show_toast(parent=self, message="先在画面上点一个控件")
+            return
+        self._fill_save_defaults()
+        self.save_bar.setVisible(True)
+        self.save_name.setFocus()
+
+    def _fill_save_defaults(self):
+        info = self._info or {}
+        if not self.save_app.text().strip():
+            self.save_app.setText(info.get("package") or "")
+        if not self.save_module.text().strip():
+            self.save_module.setText("默认")
+        if not self.save_name.text().strip():
+            self.save_name.setText(suggest_element_name(info) if info else "元素")
+        loc_type, _value = self._current_locator()
+        idx = self.save_loc.findText(loc_type)
+        if idx >= 0:
+            self.save_loc.setCurrentIndex(idx)
+
+    def _current_locator(self):
+        """当前要用的定位：优先用户点过的那一行，其次按推荐顺序找第一个有值的。"""
+        if self._active_type:
+            row = self._rows.get(self._active_type)
+            if row is not None and row.value:
+                return self._active_type, row.value
+        for name in ("资源ID", "文本", "描述", "XPath", "坐标"):
+            row = self._rows.get(name)
+            if row is not None and row.value:
+                return name, row.value
+        return "坐标", ""
+
+    def _on_save_element(self):
+        if self.element_model is None:
+            show_toast(parent=self, message="元素库未就绪")
+            return
+        loc_type = self.save_loc.currentText()
+        row = self._rows.get(loc_type)
+        value = row.value if row is not None else ""
+        if not value:
+            show_toast(parent=self, message="该定位方式还没有值")
+            return
+        info = self._info or {}
+        app = self.save_app.text().strip() or (info.get("package") or "未分类")
+        module = self.save_module.text().strip() or "默认"
+        name = self.save_name.text().strip() or (
+            suggest_element_name(info) if info else "元素")
+        try:
+            self.element_model.upsert_elements(
+                [(app, module, name, loc_type, value, "")])
+        except Exception:
+            show_toast(parent=self, message="存入元素库失败")
+            return
+        self.save_bar.setVisible(False)
+        self.save_name.clear()
+        show_toast(parent=self, message="已存入元素库")
+        self.element_saved.emit()
+
+    # ---------------------------- 填入动作卡片 ----------------------------
+    def set_return_target(self, label, callback):
+        """从动作卡片跳过来时设置回填目标（label 用于按钮文案）。"""
+        self._return_label = label or ""
+        self._return_callback = callback
+        self.apply_btn.setText(f"填入「{label}」" if label else "填入")
+        self.apply_btn.setVisible(bool(callback))
+        self._sync_apply_button()
+
+    def clear_return_target(self):
+        self._return_label = ""
+        self._return_callback = None
+        self.apply_btn.setVisible(False)
+
+    def _on_apply_to_card(self):
+        if not self._return_callback:
+            return
+        loc_type, value = self._current_locator()
+        if not value:
+            show_toast(parent=self, message="先在画面上点一个控件")
+            return
+        try:
+            self._return_callback(loc_type, value)
+        except Exception:
+            show_toast(parent=self, message="填入失败")
+            return
+        show_toast(parent=self, message=f"已填入{loc_type}")
 
     def _on_zoom_changed(self, scale):
         self.zoom_label.setText(f"{int(round(scale * 100))}%")
@@ -837,6 +1191,8 @@ class VisualView(QWidget):
             primary, primary_hover = "#1976d2", "#1565c0"
             err_bg = "rgba(74, 59, 29, 0.88)" if has_wallpaper else "#4a3b1d"
             err_fg = "#f0c36d"
+            sel_bg = "rgba(25, 118, 210, 0.22)"
+            field_bg = "rgba(30, 32, 36, 0.9)" if has_wallpaper else "#202226"
         else:
             page_bg = "rgba(255, 255, 255, 0.5)" if has_wallpaper else "transparent"
             card_bg = "rgba(247, 248, 250, 0.78)" if has_wallpaper else "#f7f8fa"
@@ -847,6 +1203,8 @@ class VisualView(QWidget):
             primary, primary_hover = "#1976d2", "#1565c0"
             err_bg = "rgba(253, 243, 216, 0.9)" if has_wallpaper else "#fdf3d8"
             err_fg = "#8a6414"
+            sel_bg = "rgba(25, 118, 210, 0.10)"
+            field_bg = "rgba(255, 255, 255, 0.92)" if has_wallpaper else "#ffffff"
 
         self.setStyleSheet(f"""
             QWidget#VisualView {{
@@ -874,6 +1232,10 @@ class VisualView(QWidget):
             QFrame#VisualDivider {{ background-color: {border}; border: none; }}
             QFrame#VisualLocRow {{ background: transparent; border-radius: 5px; }}
             QFrame#VisualLocRow[available="1"]:hover {{ background-color: {hover}; }}
+            QFrame#VisualLocRow[selected="1"] {{
+                background-color: {sel_bg};
+                border: 1px solid {primary};
+            }}
             QLabel#VisualLocName {{ color: {sub}; font-size: 12px; }}
             QFrame#VisualLocRow[available="1"] QLabel#VisualLocName {{ color: {fg}; }}
             QFrame#VisualLocRow[recommended="1"] QLabel#VisualLocName {{
@@ -913,6 +1275,42 @@ class VisualView(QWidget):
             QProgressBar#VisualProgress::chunk {{
                 background-color: {primary};
                 border-radius: 2px;
+            }}
+            QFrame#VisualSaveBar {{
+                background-color: {card_bg};
+                border: 1px solid {border};
+                border-radius: 6px;
+            }}
+            QLineEdit, QComboBox {{
+                background-color: {field_bg};
+                color: {fg};
+                border: 1px solid {border};
+                border-radius: 5px;
+                padding: 4px 8px;
+                font-size: 12px;
+            }}
+            QLineEdit:focus, QComboBox:focus {{ border-color: {primary}; }}
+            QComboBox QAbstractItemView {{
+                background-color: {card_bg};
+                color: {fg};
+                border: 1px solid {border};
+                selection-background-color: {primary};
+                selection-color: #ffffff;
+                outline: none;
+            }}
+            QPushButton#VisualApplyBtn, QPushButton#VisualSaveConfirmBtn {{
+                background-color: {primary};
+                color: #ffffff;
+                border: 1px solid {primary};
+            }}
+            QPushButton#VisualApplyBtn:hover,
+            QPushButton#VisualSaveConfirmBtn:hover {{
+                background-color: {primary_hover};
+            }}
+            QPushButton#VisualApplyBtn:disabled {{
+                background-color: {border};
+                border-color: {border};
+                color: {sub};
             }}
             QSplitter::handle {{ background-color: transparent; }}
         """)
