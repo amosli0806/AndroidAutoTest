@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
 
 from utils.settings import Settings, THEME_MODE_DARK
 from utils.theme import ThemeMode
+from utils.toast import show_toast
 from utils.ui_tree import describe_node
 
 # 画面四周留白：让截图不贴边，便于判断边界
@@ -58,6 +59,7 @@ class _ScreenCanvas(QWidget):
         self._dragging = False
         self._moved = False
         self._is_dark = False
+        self._has_wallpaper = False
 
     # ------------------------------------------------------------------
     def set_pixmap(self, pixmap):
@@ -84,8 +86,9 @@ class _ScreenCanvas(QWidget):
         self._hit_label = label
         self.update()
 
-    def set_theme(self, is_dark: bool):
+    def set_theme(self, is_dark: bool, has_wallpaper: bool = False):
         self._is_dark = bool(is_dark)
+        self._has_wallpaper = bool(has_wallpaper)
         self.update()
 
     @property
@@ -158,7 +161,12 @@ class _ScreenCanvas(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        bg = QColor("#1e1f22") if self._is_dark else QColor("#f2f3f5")
+        if self._has_wallpaper:
+            # 壁纸模式：半透明底，既压住花哨背景又不完全挡掉
+            bg = (QColor(22, 23, 26, 150) if self._is_dark
+                  else QColor(244, 246, 248, 150))
+        else:
+            bg = QColor("#1e1f22") if self._is_dark else QColor("#f2f3f5")
         painter.fillRect(self.rect(), bg)
 
         if not self.has_image:
@@ -625,7 +633,8 @@ class VisualView(QWidget):
             self._last_device_key = key
             self.on_device_changed()
         if not self.controller.device_ready():
-            self._show_error("未检测到设备，请先在顶部工具栏连接设备")
+            # 没设备不值得占一条横幅（横幅留给"读取失败"这类需要停留在页面上的错误）
+            show_toast(parent=self, message="未检测到设备")
             return
         if self.controller.loading:
             return
@@ -691,7 +700,11 @@ class VisualView(QWidget):
 
     def _on_load_failed(self, message):
         self._finish_loading_ui()
-        self._show_error(message)
+        if "未检测到设备" in (message or ""):
+            # 与手动刷新一致：设备类提示走 toast，不占横幅
+            show_toast(parent=self, message="未检测到设备")
+        else:
+            self._show_error(message)
         self.hint_label.setText("读取失败，可重试")
         if not self.canvas.has_image:
             self.canvas.clear("读取失败", "点「刷新」重试")
@@ -796,27 +809,51 @@ class VisualView(QWidget):
             self.canvas.clear("点击「刷新」读取当前设备画面",
                               "首次进入不会自动读取，避免车机长时间等待")
 
-    def apply_theme(self, theme_mode: ThemeMode = None):
+    def apply_theme(self, theme_mode: ThemeMode = None, has_wallpaper: bool = None):
+        """theme_mode / has_wallpaper 由主窗口统一传入（见 _apply_view_theme）。
+
+        页面自身永远透明：无壁纸时底色由外层圆角容器提供，有壁纸时直接透出壁纸。
+        画面区、侧栏这类"必须看清内容"的区域在壁纸下用半透明 —— 既不全挡住壁纸，
+        也不至于让截图糊在花哨背景上看不清。
+        """
         if theme_mode is None:
             theme_mode = (ThemeMode.DARK
                           if Settings.get_theme_mode() == THEME_MODE_DARK
                           else ThemeMode.LIGHT)
+        has_wallpaper = bool(has_wallpaper)
         is_dark = theme_mode == ThemeMode.DARK
         self._is_dark = is_dark
+        self._has_wallpaper = has_wallpaper
 
         if is_dark:
-            page_bg, card_bg, border = "#1e1f22", "#2b2d30", "#3a3d42"
-            fg, sub, hover = "#e6e6e6", "#9aa0a6", "#34373d"
+            # 壁纸模式：整页铺一层薄罩（0.42），壁纸明显透出，同时保证顶栏/底部
+            # 那些直接落在页面上的文字仍然看得清；无壁纸时交给外层容器铺色
+            page_bg = "rgba(26, 27, 30, 0.42)" if has_wallpaper else "transparent"
+            card_bg = "rgba(43, 45, 48, 0.76)" if has_wallpaper else "#2b2d30"
+            border = "rgba(96, 100, 106, 0.85)" if has_wallpaper else "#3a3d42"
+            fg = "#e6e6e6"
+            sub = "#c3c9cf" if has_wallpaper else "#9aa0a6"
+            hover = "rgba(255, 255, 255, 0.08)"
             primary, primary_hover = "#1976d2", "#1565c0"
-            err_bg, err_fg = "#4a3b1d", "#f0c36d"
+            err_bg = "rgba(74, 59, 29, 0.88)" if has_wallpaper else "#4a3b1d"
+            err_fg = "#f0c36d"
         else:
-            page_bg, card_bg, border = "#ffffff", "#f7f8fa", "#e2e4e8"
-            fg, sub, hover = "#1f2328", "#6b7280", "#eef1f5"
+            page_bg = "rgba(255, 255, 255, 0.5)" if has_wallpaper else "transparent"
+            card_bg = "rgba(247, 248, 250, 0.78)" if has_wallpaper else "#f7f8fa"
+            border = "rgba(202, 206, 212, 0.9)" if has_wallpaper else "#e2e4e8"
+            fg = "#1f2328"
+            sub = "#3f4650" if has_wallpaper else "#6b7280"
+            hover = "rgba(0, 0, 0, 0.05)"
             primary, primary_hover = "#1976d2", "#1565c0"
-            err_bg, err_fg = "#fdf3d8", "#8a6414"
+            err_bg = "rgba(253, 243, 216, 0.9)" if has_wallpaper else "#fdf3d8"
+            err_fg = "#8a6414"
 
         self.setStyleSheet(f"""
-            QWidget#VisualView {{ background-color: {page_bg}; }}
+            QWidget#VisualView {{
+                background-color: {page_bg};
+                /* 与外层圆角容器贴合：比容器的 8px 少 1，配合 1px 内边距 */
+                border-radius: 7px;
+            }}
             QLabel {{ color: {fg}; background: transparent; }}
             QLabel#VisualZoomLabel, QLabel#VisualDeviceLabel,
             QLabel#VisualTimeLabel, QLabel#VisualCaption,
@@ -879,4 +916,4 @@ class VisualView(QWidget):
             }}
             QSplitter::handle {{ background-color: transparent; }}
         """)
-        self.canvas.set_theme(is_dark)
+        self.canvas.set_theme(is_dark, self._has_wallpaper)

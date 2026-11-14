@@ -206,6 +206,7 @@ class MainWindow(QMainWindow):
         self.mini_mode_action = None
         self._nav_spacer_action = None
         self._element_container = None
+        self._visual_container = None
         self._logs_view_ref = None
         self._execute_view_ref = None
         self._execute_page_container = None
@@ -2232,6 +2233,24 @@ class MainWindow(QMainWindow):
                             border-radius: 8px;
                         }
                     """)
+            # 应用可视化整页容器（圆角与元素库一致；有壁纸时透出壁纸）
+            if self._visual_container is not None:
+                if has_wallpaper:
+                    self._visual_container.setStyleSheet("""
+                        #VisualContainer {
+                            background: transparent;
+                            border: 1px solid rgba(85, 85, 85, 0.9);
+                            border-radius: 8px;
+                        }
+                    """)
+                else:
+                    self._visual_container.setStyleSheet("""
+                        #VisualContainer {
+                            background: #191a1c;
+                            border: 1px solid #555;
+                            border-radius: 8px;
+                        }
+                    """)
             # 步骤搜索框夜间样式
             if getattr(self, 'step_search_input', None) is not None:
                 self.step_search_input.setStyleSheet("""
@@ -2503,6 +2522,24 @@ class MainWindow(QMainWindow):
             else:
                 self._element_container.setStyleSheet("""
                     #ElementManagerContainer {
+                        background: #ffffff;
+                        border: 1px solid #d0d0d0;
+                        border-radius: 8px;
+                    }
+                """)
+        # 应用可视化整页容器（与元素库同一套圆角处理）
+        if self._visual_container is not None:
+            if has_wallpaper:
+                self._visual_container.setStyleSheet("""
+                    #VisualContainer {
+                        background: transparent;
+                        border: 1px solid rgba(208, 208, 208, 0.9);
+                        border-radius: 8px;
+                    }
+                """)
+            else:
+                self._visual_container.setStyleSheet("""
+                    #VisualContainer {
                         background: #ffffff;
                         border: 1px solid #d0d0d0;
                         border-radius: 8px;
@@ -3782,11 +3819,30 @@ class MainWindow(QMainWindow):
         本页是自研的取定位页面，两者互不影响（稳定后再决定是否下线 weditor）。
         """
         # 不覆盖 objectName：VisualView 自己设了 "VisualView"，页面 QSS 靠它作用域
+        #
+        # 外层圆角容器：与元素库页同一套做法（圆角 8px + 1px 内边距）。
+        # 没有这层的话，VisualView 会以直角铺满整个页签，和别的页面不一致。
+        container = QWidget()
+        container.setObjectName("VisualContainer")
+        container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        container.setStyleSheet("""
+            #VisualContainer {
+                background: #ffffff;
+                border: 1px solid #d0d0d0;
+                border-radius: 8px;
+            }
+        """)
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(1, 1, 1, 1)
+        container_layout.setSpacing(0)
+        container_layout.addWidget(visual_view)
+
         old = self.stacked_widget.widget(2)
         if old is not None:
             self.stacked_widget.removeWidget(old)
             old.deleteLater()
-        self.stacked_widget.insertWidget(2, visual_view)
+        self.stacked_widget.insertWidget(2, container)
+        self._visual_container = container
         self.register_sub_view(visual_view)
         self._visual_view_ref = visual_view
         self.apply_theme()
