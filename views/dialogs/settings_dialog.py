@@ -1867,8 +1867,7 @@ class SettingsDialog(QDialog):
             # 补设按「当时」的主题取色：设置页里可能连着切好几次主题，
             # 旧定时器不该把最后状态写反
             set_dark_title_bar(self, is_dark,
-                               dark_getter=lambda: Settings.get_theme_mode() == THEME_MODE_DARK,
-                               reason="settingsDialog")
+                               dark_getter=lambda: Settings.get_theme_mode() == THEME_MODE_DARK)
         except Exception as e:
             print(f"[SettingsDialog] 标题栏主题适配失败: {e}")
 
