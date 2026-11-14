@@ -497,6 +497,23 @@ class HelpView(QFrame):
             },
 
             "👁️ 应用可视化": {
+                "取定位值（整页）": f"""
+                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">👁️ 应用可视化 · 取定位值</h2>
+                <p style="font-size: 15px;">
+                    左栏点「应用可视化」进入整页 → 点「刷新」读取当前画面与界面层级 →
+                    在画面上点要定位的控件，右侧会列出六种定位方式，
+                    <b>点任意一行即可复制该定位值</b>，粘到动作卡片里就能用。
+                </p>
+                <ul style="font-size: 14px;">
+                    <li>同一位置常有多个嵌套控件，用 <b>↑ ↓</b> 在外层/内层之间切换；</li>
+                    <li>滚轮缩放、按住拖动平移、双击回到「适配」；</li>
+                    <li>车机会话一次要 8~12 秒，期间显示已用时间，界面不会卡住；</li>
+                    <li>首次进入不会自动读取，点「刷新」才会取画面。</li>
+                </ul>
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    💡 右侧工具栏的眼睛按钮仍然打开 weditor 浮窗，两者并存。
+                </div>
+                """,
                 "使用 weditor": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">👁️ 应用可视化 (weditor)</h2>
                 <p style="font-size: 15px;">

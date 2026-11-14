@@ -274,3 +274,111 @@ def describe_node(info: Optional[dict]) -> str:
         parts.append(f"同 ID 共 {dup} 个（第 {int(info.get('instance') or 0) + 1} 个）")
 
     return " · ".join(parts) if parts else "命中控件"
+
+
+# ---------------------------------------------------------------- 应用可视化页面
+def _with_instance(info: dict, window_root) -> dict:
+    """给候选节点补上「同 ID 共几个 / 第几个」，与 choose_best 同一套规则。"""
+    info = dict(info)
+    if info.get("resourceId"):
+        count, instance = compute_instance(
+            window_root, info["resourceId"], info.get("bounds"))
+        info["resourceIdCount"] = count
+        info["instance"] = instance
+    else:
+        info["resourceIdCount"] = 1
+        info["instance"] = 0
+    return info
+
+
+def hit_chain(root, x: int, y: int) -> List[dict]:
+    """按坐标命中的所有候选，**推荐的那个排第一**，其余由内到外。
+
+    与 find_node_at 的区别：那个只给一个结论；这里给整条候选链，供
+    「应用可视化」页面用 ↑↓ 在「按钮 → 按钮所在的布局 → 整个列表」之间
+    上下切换。排序沿用同一套规则（可点击 > 有文案 > 仅 ID，同档面积小的
+    优先），所以链首与 find_node_at 的结果一致。
+    """
+    if root is None:
+        return []
+    try:
+        candidates = collect_candidates(root, int(x), int(y))
+    except Exception:
+        return []
+    if not candidates:
+        return []
+    with_attr = [c for c in candidates if c[2]]
+    pool = with_attr if with_attr else list(candidates)
+    pool.sort(key=_sort_key)
+    chain, seen = [], set()
+    for _area, info, _has, window_root in pool:
+        key = (tuple(info.get("bounds") or ()), info.get("resourceId"),
+               info.get("text"), info.get("className"))
+        if key in seen:
+            continue
+        seen.add(key)
+        chain.append(_with_instance(info, window_root))
+    return chain
+
+
+def _xpath_attr(attr: str, value: str) -> str:
+    """生成 `//*[@attr="value"]`；值里两种引号都出现时返回空串（页面显示「无」）。"""
+    if '"' not in value:
+        return f'//*[@{attr}="{value}"]'
+    if "'" not in value:
+        return f"//*[@{attr}='{value}']"
+    return ""
+
+
+def _node_path(node, info) -> str:
+    """按「同 tag 兄弟序号」拼出节点路径，如 android.widget.FrameLayout[1]/…"""
+    if node is None:
+        return ""
+    target_bounds = tuple(info.get("bounds") or ())
+    target_class = info.get("className") or ""
+    if not target_bounds:
+        return ""
+
+    def walk(parent, prefix):
+        counts = {}
+        for child in parent:
+            tag = child.tag if isinstance(child.tag, str) else "node"
+            counts[tag] = counts.get(tag, 0) + 1
+            path = f"{prefix}/{tag}[{counts[tag]}]"
+            if (tuple(parse_bounds(child.get("bounds")) or ()) == target_bounds
+                    and (child.get("class") or "") == target_class):
+                return path
+            found = walk(child, path)
+            if found:
+                return found
+        return ""
+
+    return walk(node, "").lstrip("/")
+
+
+def xpath_for(root, info: Optional[dict]) -> str:
+    """由命中节点生成 u2 可用的 XPath（优先级同 locator_for）。
+
+    优先属性式（短、可读、跨版本稳）：resource-id → text → content-desc；
+    三样都空（自绘界面）才退化成「类名 + 同级序号」的路径式。
+    返回空串表示生成不了 —— 页面里这一行显示「无」。
+    """
+    if not info:
+        return ""
+    rid = (info.get("resourceId") or "").strip()
+    if rid:
+        expr = _xpath_attr("resource-id", rid)
+        if expr:
+            return expr
+    text = (info.get("text") or "").strip()
+    if text and len(text) <= TEXT_LOCATOR_MAX:
+        expr = _xpath_attr("text", text)
+        if expr:
+            return expr
+    desc = (info.get("description") or "").strip()
+    if desc:
+        expr = _xpath_attr("content-desc", desc)
+        if expr:
+            return expr
+    path = _node_path(root, info)
+    return f"//{path}" if path else ""

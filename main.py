@@ -755,7 +755,16 @@ def main():
         "elem_verify": _elem_verify,
     }
 
-    # 4. 应用可视化（传入 None，由主窗口创建默认启动按钮）
+    # 4. 应用可视化（整页，index 2）：自研页面，点画面取定位值。
+    #    右栏那个眼睛按钮仍然开关 weditor 浮窗，两者并存（稳定后再决定是否下线）。
+    from controllers.visual_controller import VisualController
+    from views.visual_view import VisualView
+
+    visual_controller = VisualController(device_svc)
+    visual_view = VisualView(visual_controller)
+    main_window.set_visualize_page(visual_view)
+
+    # 4.1 weditor 浮窗（传入 None，由主窗口创建默认启动按钮）
     main_window.set_visualize_view(None)
 
     # 5. 帮助中心

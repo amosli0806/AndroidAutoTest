@@ -1146,10 +1146,12 @@ class MainWindow(QMainWindow):
         nav_items = [
             ("ADB工具箱", 'fa6s.screwdriver-wrench', 0),
             ("自动化编辑", 'fa6s.pen-to-square', 1),
-            # 「应用可视化」不在左栏：它是开关 weditor 浮窗、不占整页，
-            # 放在右栏（消息与帮助中心之间）更符合「辅助工具」的定位
+            # 「应用可视化」是整页（index 2），排在「应用元素库」之后 ——
+            # 两者都在处理元素定位，相邻更好找。右栏那个眼睛按钮仍然开关
+            # weditor 浮窗，与本页并存（2026-11-14 用户定的方案）。
             ("自动化执行", 'fa6s.play', 3),
             ("应用元素库", 'fa6s.list', 4),
+            ("应用可视化", 'fa6s.eye', 2),
             ("接口自动化", 'fa6s.plug', 7),
             ("性能检测", 'fa6s.gauge-high', 8),
             ("语音播报", 'fa6s.microphone', 9),
@@ -2624,27 +2626,16 @@ class MainWindow(QMainWindow):
 
         再次点击已选中的按钮时取消选中，主区域回到欢迎页 —— 与"虫师日志"
         按钮那种可开关的行为保持一致。
-        应用可视化(index=2)是开关 Dock，不适用这个规则。
+
+        注：「应用可视化」自 2026-11-14 起是整页（index 2），走的是和其它页
+        完全相同的规则；原来那段"开关 Dock"的特殊分支已经去掉。
         """
-        if index == 2:
-            self.switch_view(index)
-            # 应用可视化是开关 Dock、不切页，所以不报"当前功能"；但要把上一条清掉，
-            # 否则刚点过语音播报再点它，状态栏会残留"当前功能: 语音播报"（最长 2 秒），
-            # 看着就像点错了页面。
-            self._clear_status_message()
-            return
         if checked:
             self.switch_view(index)
         else:
             self.switch_view(self.WELCOME_PAGE_INDEX)
 
     def switch_view(self, index):
-        # 应用可视化：不再切页，改为开关 Dock
-        if index == 2:
-            if self.visualize_dock is not None:
-                self.toggle_visualize_dock(not self.visualize_dock.isVisible())
-            return
-
         page = self.stacked_widget.widget(index)
         # 隐藏页在切主题时被延后了，切过去之前先按最新主题刷一遍
         if page is not None:
@@ -3782,6 +3773,22 @@ class MainWindow(QMainWindow):
             self.record_btn.clicked.connect(self.step_controller.toggle_recording)
             self._update_record_button_state()
 
+        self.apply_theme()
+
+    def set_visualize_page(self, visual_view):
+        """挂载「应用可视化」整页到 index 2（替换占位页）。
+
+        与右栏按钮打开的 weditor 浮窗**并存**：浮窗是第三方 Web 页面，
+        本页是自研的取定位页面，两者互不影响（稳定后再决定是否下线 weditor）。
+        """
+        # 不覆盖 objectName：VisualView 自己设了 "VisualView"，页面 QSS 靠它作用域
+        old = self.stacked_widget.widget(2)
+        if old is not None:
+            self.stacked_widget.removeWidget(old)
+            old.deleteLater()
+        self.stacked_widget.insertWidget(2, visual_view)
+        self.register_sub_view(visual_view)
+        self._visual_view_ref = visual_view
         self.apply_theme()
 
     def set_visualize_view(self, widget):
