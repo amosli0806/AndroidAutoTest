@@ -1137,6 +1137,8 @@ class VoiceView(QWidget):
 
         new_groups = created = overwritten = 0
         warnings = []
+        # 本次导入涉及到的用例：只给它们估算「播后等待」，不碰用户手调过的其它用例
+        affected = []
         for sheet_name, rows in sheets:
             group_name = (sheet_name or "").strip() or "导入分组"
             group = next((g for g in self.model.groups if g.name == group_name),
@@ -1153,10 +1155,16 @@ class VoiceView(QWidget):
                 if existing is not None:
                     self.model.set_case_steps(existing.id, steps)
                     overwritten += 1
+                    affected.append(existing)
                 else:
                     case = self.model.add_case(case_name, group.id)
                     self.model.set_case_steps(case.id, steps)
                     created += 1
+                    affected.append(case)
+
+        # 表格里没有「播后等待」列，导入时统一是默认值 —— 这里顺手按文案长度
+        # 估一遍，省掉导入后再手动点一次「批量重算」
+        filled, _empty = self._fill_post_delays(affected)
 
         self._reload_tree()
         self._reload_steps()
@@ -1167,6 +1175,8 @@ class VoiceView(QWidget):
             parts.append(f"覆盖 {overwritten} 个同名用例")
         if created:
             parts.append(f"新建 {created} 个用例")
+        if filled:
+            parts.append(f"估算 {filled} 条播后等待")
         self.status_label.setText(
             "导入完成：" + ("、".join(parts) if parts else "没有可导入的内容"))
         if warnings:
@@ -1275,31 +1285,14 @@ class VoiceView(QWidget):
         文案为空的步骤跳过不动，避免把没填文案的行改成无意义的默认值。
         检测步骤没有等待时长，不参与。
 
-        为什么是全部用例：表格导入时「播后等待」不在表里、统一给的是默认值，
-        导完想一次性补齐 —— 一个个用例点太慢。
-
-        性能要点：必须**全部算完只落盘一次**。若沿用 model.update_step()，
-        它每改一步就 save() 一次（整份 JSON 重写，实测 20ms/次）；当前数据规模
-        2000 多条播报，全量要跑 40 秒。这里直接改 step.delay、最后 save() 一次，
-        实测 24ms（估算本身只占 0.7ms，可以忽略）。
+        什么时候用：表格导入现在会自动估算（见 _on_import_all），这里主要用于
+        **批量改过文案之后**手动重算一次；改动只落在导入涉及的用例上时不会自动生效。
         """
         if not self.model.cases:
             self.status_label.setText("还没有语音用例")
             return
-        from services.voice_service import estimate_post_delay
-        changed = skipped = 0
-        for case in self.model.cases:
-            for step in case.steps:
-                if step.kind != KIND_PHRASE:
-                    continue
-                text = (step.text or "").strip()
-                if not text:
-                    skipped += 1
-                    continue
-                step.delay = estimate_post_delay(text)
-                changed += 1
+        changed, skipped = self._fill_post_delays(self.model.cases)
         if changed:
-            self.model.save()
             self._reload_steps()      # 让中栏显示新的等待时间
         if changed == 0:
             self.status_label.setText("没有可重算的步骤（文案都为空）")
@@ -1308,6 +1301,32 @@ class VoiceView(QWidget):
                 f"已重算全部用例的 {changed} 条播后等待（{skipped} 条空文案未动）")
         else:
             self.status_label.setText(f"已重算全部用例的 {changed} 条播后等待")
+
+    def _fill_post_delays(self, cases) -> tuple:
+        """按文案长度重算指定用例的「播后等待」，返回 (改动条数, 空文案跳过条数)。
+
+        表格导入与「批量重算」共用这一套：导入只传本次涉及的用例（不碰用户
+        手调过的其它用例），手动重算传全部。
+
+        性能要点：必须**全部算完只落盘一次**。若沿用 model.update_step()，
+        它每改一步就 save() 一次（整份 JSON 重写）；2000 多条播报要跑几十秒。
+        这里直接改 step.delay、最后 save() 一次。
+        """
+        from services.voice_service import estimate_post_delay
+        changed = skipped = 0
+        for case in cases or []:
+            for step in case.steps:
+                if step.kind != KIND_PHRASE:
+                    continue                      # 检测步骤没有等待时长
+                text = (step.text or "").strip()
+                if not text:
+                    skipped += 1                  # 空文案不动
+                    continue
+                step.delay = estimate_post_delay(text)
+                changed += 1
+        if changed:
+            self.model.save()
+        return changed, skipped
 
     def _on_add_verify(self):
         """追加一条检测步骤（预期结果）到当前用例末尾。"""
