@@ -478,11 +478,28 @@
       <p>一句话：<b>加一个独立的 MCP server 进程，把 <code>services/device_service.py</code> 的能力暴露成工具；
         现有 GUI、数据结构、打包产物都不动。</b></p>
       <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">┌──────────────────┐   stdio / JSON-RPC   ┌───────────────────┐   adb / u2   ┌───────────┐
-│ Claude / 搭子 /   │ ◄──────────────────► │ mcp_server.py     │ ◄──────────► │ 手机/车机  │
-│ 任意 MCP 客户端   │                      │ 薄封装 device_service │            │           │
+│ 任意 MCP 客户端   │ ◄──────────────────► │ mcp_server.py     │ ◄──────────► │ 手机/车机  │
+│ Claude/Cursor/扣子│                      │ 薄封装 device_service │            │           │
 └──────────────────┘                      └───────────────────┘              └───────────┘
                                                     │
                                           data/ 共享：元素库 / 用例 / 执行记录</pre>
+      <p><b>能接哪些客户端</b>：MCP 是开放协议（Anthropic 2024-11 开源，2025 年底捐给
+        Linux 基金会旗下的 Agentic AI 基金会），<b>不是某家私有标准</b>。所以「写一份 Server，
+        所有客户端都能接」这件事是成立的，区别只在把同一段 JSON 粘到哪个入口：</p>
+      <table>
+        <tr><th style="width:24%">类型</th><th style="width:46%">代表</th><th>怎么接</th></tr>
+        <tr><td><b>原生支持 MCP</b></td>
+            <td>Claude Desktop / Claude Code、Cursor、VS Code（Copilot Chat）、Windsurf、Zed、Cline、Continue、Trae、Cherry Studio、Qoder、Codex</td>
+            <td>同一段 JSON 配置，只改可执行文件路径</td></tr>
+        <tr><td><b>国内平台</b></td>
+            <td>阿里百炼 / 魔搭 MCP 广场、百度智能云 MCP World / 千帆 MCP 广场、腾讯云 AI 套件 / 元器、字节扣子 / 火山 AIbase</td>
+            <td>多数支持导入自定义 MCP Server，入口在平台设置里；少数只认自家插件体系，需单独适配</td></tr>
+        <tr><td><b>自研 Agent</b></td>
+            <td>LangChain / LlamaIndex / OpenAI Agents SDK / Claude Agent SDK</td>
+            <td>用官方 MCP client 连本地 stdio</td></tr>
+      </table>
+      <p class="small">注：百度「搭子」在 2026-11 大会上开放的是 Harness 引擎与 Agent API，那是它自己的接入方式，
+        <b>不等于支持 MCP</b>；百度侧确切的 MCP 入口是智能云 MCP World / 千帆 MCP 广场。</p>
       <table>
         <tr><th style="width:34%">场景</th><th>约定</th></tr>
         <tr><td>只开 MCP，GUI 没开</td><td>正常，独占设备；只在 <code>data/mcp_runs/</code> 写执行记录，<b>不碰</b> <code>steps_data / voice_data</code></td></tr>
@@ -631,7 +648,7 @@
         MCP 用 asyncio，包一层 <code>asyncio.to_thread</code> 即可（别改成 async 大改）；
         ② 打包版要用 stdio 起 server，<b>不能在 exe 里弹控制台窗口</b>，得沿用
         <code>_PopenNoConsole</code> 那套思路或单独出一个 <code>虫师-mcp.exe</code>。</div>
-      <p><b>客户端侧配置示例</b>（Claude Desktop / Cline / 搭子 通用，改路径即可）：</p>
+      <p><b>客户端侧配置示例</b>（Claude Desktop / Cursor / Cline / Cherry Studio 通用，改路径即可）：</p>
       <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">{
   "mcpServers": {
     "chongshi": {
