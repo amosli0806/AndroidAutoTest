@@ -500,6 +500,14 @@
       </table>
       <p class="small">注：百度「搭子」在 2026-11 大会上开放的是 Harness 引擎与 Agent API，那是它自己的接入方式，
         <b>不等于支持 MCP</b>；百度侧确切的 MCP 入口是智能云 MCP World / 千帆 MCP 广场。</p>
+      <div class="tip">⚠ <b>接入前必须确认的两件事</b><br>
+        ① <b>对方是否支持本地 stdio</b>——部分平台只开放远程 <code>streamable-http</code>，不接受本地进程启动。
+        虫师连的是 USB 设备，只能在本机跑；遇到只认 HTTP 的平台，就得自己加一层
+        「stdio ↔ 本地 HTTP」桥接，多一层就多一个故障点，能不做就不做。<br>
+        ② <b>锁死 SDK 版本</b>——MCP 协议本身还在快速演进（2026-06 企业级授权扩展稳定、
+        2026-07 从有状态连接改为无状态连接）。<code>requirements.txt</code> 里写
+        <code>mcp==x.y.z</code> 而不是 <code>mcp&gt;=</code>，否则客户端一升级，server 可能直接起不来。
+      </div>
       <table>
         <tr><th style="width:34%">场景</th><th>约定</th></tr>
         <tr><td>只开 MCP，GUI 没开</td><td>正常，独占设备；只在 <code>data/mcp_runs/</code> 写执行记录，<b>不碰</b> <code>steps_data / voice_data</code></td></tr>
@@ -640,7 +648,8 @@
           <code>tools.py</code>（薄封装 <code>device_service</code>，不复制业务逻辑）、
           <code>schema.py</code>（入参校验与返回结构）</li>
         <li><code>main.py</code>：加 <code>--mcp</code> 启动分支（不建 QApplication，直接跑 server）</li>
-        <li><code>requirements.txt</code>：加官方 <code>mcp</code> SDK（纯 Python，无平台依赖）</li>
+        <li><code>requirements.txt</code>：加官方 <code>mcp</code> SDK（纯 Python，无平台依赖）；
+          <b>写死版本</b>（<code>mcp==x.y.z</code>），原因见第二章的「接入前必须确认的两件事」</li>
         <li><code>views/help_view.py</code>：新增一节「在 Claude / 搭子里连虫师」的配置示例</li>
         <li><code>README.md</code>：一段 JSON 配置样例（客户端侧 <code>mcpServers</code>）</li>
       </ul>
