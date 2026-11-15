@@ -166,10 +166,10 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-09（v1.5.23）</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-15（v1.5.24）</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.5.23</span>
-      <span class="badge">9 项规划</span>
+      <span class="badge">当前版本 v1.5.24</span>
+      <span class="badge">9 项规划 + 1 个新方向</span>
       <span class="badge">车机 / 手机均已实机验证</span>
       <span class="badge">按改动量分 A~D 四档</span>
     </div>
@@ -187,6 +187,7 @@
     <div class="links">
       <a href="#s1">一、待办与扩展方向（按改动量排序）</a>
       <a href="#s2">二、macOS 移植注意事项</a>
+      <a href="#s3">三、MCP 服务：把虫师变成智能体的执行层</a>
     </div>
   </nav>
 
@@ -435,7 +436,242 @@
     <div class="example">💡 <b>打个比方：</b>这就像把一间按自家户型装修好的房子搬到另一栋楼 —— 家具（Qt 界面、adb / uiautomator2 那套逻辑）都能直接用，但门框尺寸（打包成 <code>.app</code>）、水电接口（路径规范）、门锁（签名 / 公证）都不一样；至于「自动更新」，它更像埋在墙里的暗线，到新楼只能整条重走。</div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-07 · v1.5.21</footer>
+  <!-- ============ 三、MCP 服务：把虫师变成智能体的执行层 ============ -->
+  <section class="chapter" id="s3">
+    <h2><span class="num">3</span>MCP 服务：把虫师变成智能体的执行层 <span class="tag plan">📋 2026-11-15 方案 · 未开始</span></h2>
+    <p class="small" style="margin-top:0">
+      起因：2026-11-12 百度世界主题是「智能组织」——打破岗位边界、沉淀隐性知识、设计流程闭环，
+      公式「可衡量 + Looping = 持续进化」；同场百度搭子开放了 Harness 引擎与 Agent API，
+      文心 5.5 Flash 也把 <b>AutomationBench</b>（自动化任务基准）当成卖点。
+      大厂在做「让智能体真正进业务」，而落到真机上，<b>最缺的那一层正好是虫师已经做了三年的东西</b>。
+      本章只讲一件事：加一个 MCP server，把现有能力暴露给智能体，GUI 一行不改。
+    </p>
+
+    <div class="card">
+      <h3>一、判断：智能体会「决定做什么」，但「真的做到」很差</h3>
+      <p>现在把任意一个强模型接到手机上，它能截屏、能点坐标、能写 <code>adb shell input tap</code>。
+        但只要界面稍微复杂一点，下面六条它会全部踩坑——而这六条虫师每一条都踩过并解决了：</p>
+      <table>
+        <tr><th style="width:42%">智能体的典型失败</th><th>虫师已有的解法</th></tr>
+        <tr><td>同一个 <code>resource-id</code> 在列表里有 20 个，不知道点第几个</td>
+            <td><code>utils/ui_tree.py::compute_instance()</code> —— 同 ID 计数 + 序号 + bounds 排序</td></tr>
+        <tr><td>控件在层级里，但在屏幕外，得先滚</td>
+            <td>点击前先判断 bounds 是否在屏幕内，必要时先滑动（执行器已有这段逻辑）</td></tr>
+        <tr><td>dump 一次 8~12 秒，它以为卡死，反复重试把设备搞崩</td>
+            <td>「一次 dump + 本地多次命中」的模型，实测车机 8~12 秒并已按此调优</td></tr>
+        <tr><td>弹窗 0.6 秒后自动消失，它截不到也点不中</td>
+            <td>显式等待（元素出现 / 消失 / 可点击）＋ 轮询间隔已按车机调过</td></tr>
+        <tr><td>输入法挡住了目标控件，点了没反应</td>
+            <td>输入前收键盘、失败后现场反查（<code>_diagnose_*</code> 那一套）</td></tr>
+        <tr><td>图标按钮没有文字、没有 ID，只能靠图像匹配</td>
+            <td><code>utils/image_match.py</code>（OpenCV 模板匹配）＋ 应用可视化里框选生成模板</td></tr>
+      </table>
+      <div class="example">💡 <b>打个比方：</b>智能体是刚空降的工程师，虫师是干了三年的老师傅。
+        工程师说「我要点播放」——老师傅知道那个按钮在哪一屏、要不要先滑一下、等它加载多久、
+        点不中换哪个定位值。工程师负责<b>决定</b>，老师傅负责<b>真的点到</b>。</div>
+      <p><b>所以角色定位是：</b>虫师不是「AI 帮你写用例的测试工具」，而是
+        <b>智能体的执行层</b>——它决定去哪，虫师负责稳稳地到。</p>
+    </div>
+
+    <div class="card">
+      <h3>二、目标形态与进程共存</h3>
+      <p>一句话：<b>加一个独立的 MCP server 进程，把 <code>services/device_service.py</code> 的能力暴露成工具；
+        现有 GUI、数据结构、打包产物都不动。</b></p>
+      <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">┌──────────────────┐   stdio / JSON-RPC   ┌───────────────────┐   adb / u2   ┌───────────┐
+│ Claude / 搭子 /   │ ◄──────────────────► │ mcp_server.py     │ ◄──────────► │ 手机/车机  │
+│ 任意 MCP 客户端   │                      │ 薄封装 device_service │            │           │
+└──────────────────┘                      └───────────────────┘              └───────────┘
+                                                    │
+                                          data/ 共享：元素库 / 用例 / 执行记录</pre>
+      <table>
+        <tr><th style="width:34%">场景</th><th>约定</th></tr>
+        <tr><td>只开 MCP，GUI 没开</td><td>正常，独占设备；只在 <code>data/mcp_runs/</code> 写执行记录，<b>不碰</b> <code>steps_data / voice_data</code></td></tr>
+        <tr><td>GUI 与 MCP 同时开</td><td>MCP 检测 <code>data/gui.lock</code>（GUI 启动即有单实例锁），自动降级为<b>只读</b>：dump / 截图 / 查询可用，操作类工具返回 <code>PERMISSION_DENIED</code> 并提示「先关闭虫师界面」</td></tr>
+        <tr><td>多个客户端连同一个 server</td><td>允许；server 内部串行化（一把 asyncio.Lock），避免两条指令同时发给设备</td></tr>
+        <tr><td>不做 HTTP 端口</td><td>stdio 不监听网络，天然只限本机；生命周期跟随客户端，退出即结束，不留后台服务</td></tr>
+      </table>
+      <div class="tip">⚠ <b>最容易踩的坑（先写在这里）：</b><code>stdout</code> 是协议通道，任何
+        <code>print()</code> / 第三方库的调试输出写进 stdout 都会让客户端解析失败。
+        server 启动第一件事就是 <code>sys.stdout</code> 只留给协议，把 <code>sys.stderr</code> 和
+        <code>logging</code> 全部指向 <code>data/mcp.log</code>。项目里 <code>print()</code> 不少（约 200 处），
+        运行时必须整体重定向，别指望一个个改干净。</div>
+    </div>
+
+    <div class="card">
+      <h3>三、工具清单</h3>
+      <p><b>P0 —— 八个工具构成「看 → 找 → 点 → 验」最小闭环（先只做这些就能跑通真实任务）</b></p>
+      <table>
+        <tr><th style="width:20%">工具</th><th style="width:38%">入参</th><th>用途</th></tr>
+        <tr><td><code>device_list</code></td><td><code>{}</code></td><td>列出已连接设备（序列号 / 型号 / 分辨率 / 是否车机）</td></tr>
+        <tr><td><code>screenshot</code></td><td><code>{ inline?, region? }</code></td><td>截图，默认返回文件路径（省 token）；<code>inline=true</code> 返回图片内容</td></tr>
+        <tr><td><code>ui_find</code></td><td><code>{ text?, resource_id?, description?, contains?, clickable_only?, limit? }</code></td><td><b>核心工具</b>：一次 dump 后本地命中，返回候选列表 + 每种可用的定位值</td></tr>
+        <tr><td><code>tap</code></td><td><code>{ element_index? | x,y | text?, timeout? }</code></td><td>点击；优先用 <code>ui_find</code> 返回的序号，避免坐标漂移</td></tr>
+        <tr><td><code>input_text</code></td><td><code>{ element_index? | x,y, text }</code></td><td>输入文字（自动收键盘、清空原内容可配）</td></tr>
+        <tr><td><code>swipe</code></td><td><code>{ direction | x1,y1,x2,y2, duration_ms? }</code></td><td>滑动</td></tr>
+        <tr><td><code>wait_until</code></td><td><code>{ cond: appear|disappear|clickable, 定位条件, timeout_s }</code></td><td>显式等待，替代「sleep 3 秒」这种赌博写法</td></tr>
+        <tr><td><code>assert</code></td><td><code>{ type: exists|absent|text_equals|text_contains|image, 定位条件, expected? }</code></td><td>断言，失败返回现场证据（截图路径 + 层级片段 + 相近元素）</td></tr>
+      </table>
+
+      <p style="margin-top:14px"><b>P1 —— 批量与动作补齐（让 Agent 少绕路）</b></p>
+      <table>
+        <tr><th style="width:20%">工具</th><th style="width:38%">入参</th><th>用途</th></tr>
+        <tr><td><code>ui_dump</code></td><td><code>{ mode: summary|full, max_nodes? }</code></td><td><code>summary</code> 只返回可点击/有文本的节点（token 友好）；<code>full</code> 返回原始 XML 路径</td></tr>
+        <tr><td><code>press_key</code></td><td><code>{ key: back|home|menu|volume_up|... }</code></td><td>物理/系统按键</td></tr>
+        <tr><td><code>launch_app</code></td><td><code>{ package, activity? }</code></td><td>启动/停止/重启应用（不提供清空数据、卸载——见安全边界）</td></tr>
+        <tr><td><code>run_case</code></td><td><code>{ case_name | case_id, stop_on_failure? }</code></td><td>跑一条虫师用例，返回逐步结果；<b>这是把「手写用例」和「Agent 执行」接起来的关键</b></td></tr>
+        <tr><td><code>list_cases</code></td><td><code>{ module? }</code></td><td>列出用例树，让 Agent 知道有哪些现成的可复用</td></tr>
+      </table>
+
+      <p style="margin-top:14px"><b>P2 —— 用例生成（最有想象力，但放最后）</b></p>
+      <table>
+        <tr><th style="width:20%">工具</th><th style="width:38%">入参</th><th>用途</th></tr>
+        <tr><td><code>explore_and_draft</code></td><td><code>{ goal: "打开地图并进入全屏", max_steps? }</code></td><td>让 Agent 自己探索，把每步的「命中节点 + 定位值」记成步骤草稿（<b>不直接落库</b>）</td></tr>
+        <tr><td><code>save_case</code></td><td><code>{ module, case_name, steps[], overwrite? }</code></td><td>把草稿存成正式用例（走与表格导入同一套校验，定位缺失的步骤会被标红拒绝）</td></tr>
+        <tr><td><code>run_suite</code></td><td><code>{ suite_name }</code></td><td>跑整套并返回聚合结果（通过率 / 失败步骤 / 耗时）</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>四、接口约定（照着写就不会跑偏）</h3>
+      <p><b>1. <code>ui_find</code> 的返回结构</b>（所有定位值的来源，Agent 最爱用这个）：</p>
+      <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">{
+  "ok": true,
+  "device": "DKSK2391400082",
+  "screen": { "w": 1920, "h": 1080 },
+  "dump_ms": 8600,
+  "dumped_at": "2026-11-15T22:30:11+08:00",
+  "candidates": [
+    {
+      "index": 1,
+      "class": "android.widget.Button",
+      "text": "播放",
+      "resource_id": "com.honda.media:id/btn_play",
+      "description": "",
+      "bounds": [864, 520, 1286, 686],
+      "center": [1075, 603],
+      "clickable": true,
+      "instance": 0,
+      "same_id_count": 1,
+      "locators": {
+        "资源ID": "com.honda.media:id/btn_play",
+        "文本": "播放",
+        "XPath": "//*[@resource-id=\"com.honda.media:id/btn_play\"]",
+        "坐标": "1075,603"
+      }
+    }
+  ]
+}</pre>
+      <p><b>2. 统一返回与错误码</b>：所有工具返回 <code>{ "ok": true, ... }</code> 或
+        <code>{ "ok": false, "error": { "code": "...", "message": "...", "hint": "..." } }</code>。
+        <code>hint</code> 是给人/AI 看的下一步建议，<b>不要只报错不给方向</b>。</p>
+      <table>
+        <tr><th style="width:26%">错误码</th><th>含义与建议</th></tr>
+        <tr><td><code>NO_DEVICE</code></td><td>没设备：先 <code>device_list</code>，提示用户连 USB 或开无线调试</td></tr>
+        <tr><td><code>DUMP_FAILED</code></td><td>层级读不出（界面一直在动/自绘 UI）：改用 <code>screenshot</code> + 图像匹配</td></tr>
+        <tr><td><code>ELEMENT_NOT_FOUND</code></td><td>没命中：hint 里带 3 个「文本/ID 相近」的候选（复用 <code>_diagnose_element</code>）</td></tr>
+        <tr><td><code>ELEMENT_AMBIGUOUS</code></td><td>命中多个：返回候选列表让 Agent 选 <code>index</code>，别自己猜</td></tr>
+        <tr><td><code>TIMEOUT</code></td><td>超时：附已等待时长与最后一次截图路径</td></tr>
+        <tr><td><code>ASSET_MISSING</code></td><td>图像模板不存在（历史坑：只存了文件名）：hint 指向 <code>data/element_images/</code></td></tr>
+        <tr><td><code>PERMISSION_DENIED</code></td><td>GUI 正在运行 / 危险动作未授权</td></tr>
+      </table>
+      <p><b>3. 超时默认值</b>（不用 Agent 传，除非它明确要覆盖）：
+        <code>ui_find</code> / <code>ui_dump</code> 20 秒（车机 dump 8~12 秒，留足余量）；
+        <code>tap</code> / <code>input_text</code> 10 秒；<code>wait_until</code> 默认 10 秒、上限 120 秒；
+        <code>run_case</code> 按用例步数 × 单步上限动态计算，最长 30 分钟。</p>
+      <p><b>4. 缓存策略</b>：<code>ui_find</code> 用「最近一次 dump」，默认不重复 dump；
+        但距上次超过 <b>3 秒</b>或界面已变（<code>tap</code> 之后）必须重新 dump。
+        Agent 连续点同一个界面时不会退化成「每点一次等 8 秒」。</p>
+    </div>
+
+    <div class="card">
+      <h3>五、安全边界（本地工具，也要有边界）</h3>
+      <ul>
+        <li><b>只走 stdio</b>：不监听端口、不做 HTTP，天然只有本机进程能连。要开放给局域网？不做。</li>
+        <li><b>工具白名单</b>：不提供 <code>adb shell</code> 透传、不提供文件读写、不提供安装/卸载/清空数据。
+          需要这类的场景请用 GUI 的 ADB 工具箱，人工确认。</li>
+        <li><b>危险动作需显式授权</b>：<code>launch_app</code> 的 <code>clear_data</code> / <code>uninstall</code>
+          默认拒绝，除非启动参数带 <code>--allow-destructive</code>。</li>
+        <li><b>审计日志</b>：每次工具调用写 <code>data/mcp_audit.log</code>（时间 / 客户端 / 工具 / 参数摘要 / 结果 / 耗时）。
+          出问题能复盘「到底是人点的还是 AI 点的」。</li>
+        <li><b>不写用户数据</b>：MCP 不修改 <code>steps_data.json</code> / <code>voice_data.json</code>，
+          只有 <code>save_case</code>（P2）会写用例，且必须显式调用、可预览草稿。</li>
+        <li><b>端口/进程卫生</b>：uiautomator2 首次连接会装 atx-agent，MCP 进程应<b>常驻</b>而不是每次重连；
+          进程退出时清理自己拉起的 adb 子进程（复用 <code>utils/win_job.py</code> 那套）。</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>六、实施计划与工作量</h3>
+      <table>
+        <tr><th style="width:14%">阶段</th><th style="width:16%">工作量</th><th>内容</th></tr>
+        <tr><td><b>P0</b></td><td>1 ~ 1.5 天</td><td>
+          <code>mcp_server/</code>（server + 8 个 P0 工具）＋ <code>main.py --mcp</code> 分支；
+          本地用 Claude Desktop / Cline 连上跑通「打开地图 → 找到播放 → 点击 → 断言」
+        </td></tr>
+        <tr><td><b>P1</b></td><td>2 天</td><td>
+          <code>ui_dump</code> 的 summary 模式、<code>run_case</code> / <code>list_cases</code>、
+          错误码与 hint 打磨、审计日志、GUI 共存互斥
+        </td></tr>
+        <tr><td><b>P2</b></td><td>2 ~ 3 天</td><td>
+          <code>explore_and_draft</code> → <code>save_case</code> 的用例生成闭环（含定位校验）、
+          <code>run_suite</code> 聚合结果、帮助中心教程
+        </td></tr>
+      </table>
+      <p><b>涉及文件（预计）</b>：</p>
+      <ul>
+        <li><code>mcp_server/__init__.py</code>、<code>server.py</code>（协议与注册）、
+          <code>tools.py</code>（薄封装 <code>device_service</code>，不复制业务逻辑）、
+          <code>schema.py</code>（入参校验与返回结构）</li>
+        <li><code>main.py</code>：加 <code>--mcp</code> 启动分支（不建 QApplication，直接跑 server）</li>
+        <li><code>requirements.txt</code>：加官方 <code>mcp</code> SDK（纯 Python，无平台依赖）</li>
+        <li><code>views/help_view.py</code>：新增一节「在 Claude / 搭子里连虫师」的配置示例</li>
+        <li><code>README.md</code>：一段 JSON 配置样例（客户端侧 <code>mcpServers</code>）</li>
+      </ul>
+      <div class="tip">⚠ <b>两个前置依赖</b>：① <code>device_service</code> 现在是同步阻塞的，
+        MCP 用 asyncio，包一层 <code>asyncio.to_thread</code> 即可（别改成 async 大改）；
+        ② 打包版要用 stdio 起 server，<b>不能在 exe 里弹控制台窗口</b>，得沿用
+        <code>_PopenNoConsole</code> 那套思路或单独出一个 <code>虫师-mcp.exe</code>。</div>
+      <p><b>客户端侧配置示例</b>（Claude Desktop / Cline / 搭子 通用，改路径即可）：</p>
+      <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">{
+  "mcpServers": {
+    "chongshi": {
+      "command": "D:\\AndroidAutoTest\\dist\\虫师-mcp.exe",
+      "args": [],
+      "env": { "CHONGSHI_MCP_AUDIT": "1" }
+    }
+  }
+}</pre>
+      <p class="small">开发期不用打包，直接 <code>"command": "D:\\AndroidAutoTest\\.venv\\Scripts\\python.exe",
+        "args": ["D:\\AndroidAutoTest\\main.py", "--mcp"]</code> 即可。</p>
+      <p><b>与现有 AI 能力的关系</b>：<code>services/ai_service.py</code> 已经会做失败归因，
+        MCP 的 <code>hint</code> 可以复用它 —— 元素找不到时先把「相近元素 + 最近 3 步」喂给模型，
+        返回一句「是不是定位值改版了」这种可执行建议，而不是干巴巴的 <code>ELEMENT_NOT_FOUND</code>。
+        <b>但要设开关并限流</b>：每次失败都调模型既慢又花钱，默认只做本地启发式。</p>
+    </div>
+
+    <div class="card">
+      <h3>七、给 Agent 的使用约定（写进客户端提示词，能省一半调试）</h3>
+      <ul>
+        <li>「先看再动」：任何点击前先 <code>ui_find</code>，<b>不要盲点坐标</b>；命中多个就按
+          <code>clickable=true</code> + 文本精确匹配挑，挑不出来问人。</li>
+        <li>「一次 dump，多次用」：同一屏内连续操作不必每步都 <code>ui_find</code>，用上一次返回的
+          <code>index</code> 直接 <code>tap</code>；界面变了再重新查。</li>
+        <li>「不确定就截图」：<code>ui_find</code> 返回空时先 <code>screenshot</code> 看一眼，
+          别连续重试同一个条件。</li>
+        <li>「等，不要睡」：需要界面变化时用 <code>wait_until</code>，不要 <code>sleep</code>。</li>
+        <li>「失败要现场」：断言失败时把 <code>screenshot</code> 路径、失败步骤、相近元素一起回给人，
+          这是虫师报告能「自证」的关键。</li>
+      </ul>
+      <div class="example">💡 <b>打个比方：</b>这五条就像给新来的实习生写的操作手册 —— 不写清楚，
+        他会对着同一个按钮连点八次然后说「它没反应」。</div>
+    </div>
+
+    <div class="tip">🚫 <b>明确不做</b>：① 不自研 Agent 框架 / 不做模型微调（差异化在执行层，不在模型层）；
+      ② 不做通用 RPA（Android + 车机语音这条线已经够深，摊薄到 PC/Web 会同时失去深度和场景）；
+      ③ 不把 MCP 做成「远程控制」（涉及安全与合规，且与「绿色免安装桌面工具」定位冲突）。</div>
+  </section>
+
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-15 · v1.5.24</footer>
 </div>
 </body>
 </html>
