@@ -30,7 +30,14 @@ LEGACY_DATA_FILES = (
 
 
 def get_app_dir() -> str:
-    """程序所在目录：打包后为 exe 同级目录，开发环境为项目根目录。"""
+    """程序所在目录：打包后为 exe 同级目录，开发环境为项目根目录。
+
+    `CHONGSHI_APP_DIR` 可显式覆盖（MCP 独立 exe 从 dist_mcp 启动时，
+    需要和主程序共用同一份 data/）。
+    """
+    override = (os.environ.get("CHONGSHI_APP_DIR") or "").strip()
+    if override and os.path.isdir(override):
+        return os.path.abspath(override)
     if getattr(sys, "frozen", False):
         # 打包环境：onedir 下 exe 与 _internal 同级，数据放在 exe 旁边
         return os.path.dirname(os.path.abspath(sys.executable))

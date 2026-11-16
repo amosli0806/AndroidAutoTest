@@ -513,6 +513,51 @@ class HelpView(QFrame):
                 """
             },
 
+            "🔌 MCP 接入": {
+                "在 Comate 中连接": f"""
+                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🔌 在 Comate 中连接虫师</h2>
+                <p style="font-size: 15px;">
+                    虫师提供本地 <b>stdio MCP Server</b>，Comate / Claude Desktop / Cursor / Cline
+                    都可以通过它直接驱动虫师。
+                </p>
+                <p style="font-size: 14px;">项目级配置：<code>.comate/mcp.json</code></p>
+                <pre style="background:#f6f8fb;border:1px solid #d0d0d0;border-radius:6px;padding:10px;font-size:13px;">{{
+  "mcpServers": {{
+    "chongshi": {{
+      "command": "D:\\\\AndroidAutoTest\\\\dist_mcp\\\\虫师-mcp.exe",
+      "args": []
+    }}
+  }}
+}}</pre>
+                <ul style="font-size: 14px;">
+                    <li>开发期也可以把 command 换成 <code>.venv\\Scripts\\python.exe</code>，
+                        args 填 <code>main.py --mcp</code>；</li>
+                    <li>注册后需要新开 / 重载会话，工具定义才会加载；</li>
+                    <li>工具名统一为 <code>chongshi.*</code>，例如 <code>ui_find</code>、
+                        <code>tap</code>、<code>run_case</code>。</li>
+                </ul>
+                """,
+                "工具与安全边界": f"""
+                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">🔌 工具与安全边界</h2>
+                <ul style="font-size: 14px;">
+                    <li>设备/定位：<code>device_list</code>、<code>screenshot</code>、
+                        <code>ui_find</code>、<code>ui_dump</code>；</li>
+                    <li>操作：<code>tap</code>、<code>input_text</code>、<code>swipe</code>、
+                        <code>press_key</code>、<code>launch_app</code>；</li>
+                    <li>等待/断言：<code>wait_until</code>、<code>assert</code>；</li>
+                    <li>用例：<code>list_cases</code>、<code>run_case</code>、
+                        <code>run_case_status</code>、<code>run_case_stop</code>；</li>
+                    <li>用例生成：<code>explore_and_draft</code>、<code>draft_status</code>、
+                        <code>save_case</code>、<code>run_suite</code>。</li>
+                </ul>
+                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
+                    ⚠ 虫师界面运行时，MCP 自动降级为只读；点击、输入、<code>run_case</code>
+                    等写操作需要先完全退出虫师。MCP 只走本机 stdio，不监听端口；每次调用都会写
+                    <code>data/mcp_audit.log</code>。
+                </div>
+                """
+            },
+
             "⚡ 自动化执行": {
                 "执行与报告": f"""
                 <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">⚡ 自动化执行</h2>

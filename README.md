@@ -99,6 +99,8 @@ python main.py
 pyinstaller main.spec --noconfirm                              # -> dist/虫师/（onedir）
 pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_updater
                                                                # -> dist_updater/updater.exe（onefile，约 7 MB）
+pyinstaller mcp_server.spec --noconfirm --distpath dist_mcp --workpath build_mcp
+                                                               # -> dist_mcp/虫师-mcp.exe（onefile，约 93 MB，无控制台）
 ```
 
 ---
@@ -698,7 +700,7 @@ for loop in 1..循环次数:
 - **快捷键**：7 组共 41 个，全部可在设置里改，留空即禁用（默认表见 `utils/settings.py:DEFAULT_SHORTCUTS`）
 - **检查更新**：启动 4 秒后后台检查（失败静默），有新版在菜单亮红点；见 5.8
 
-### 4.14 MCP 服务（本地 stdio，P0/P1）
+### 4.14 MCP 服务（本地 stdio，P0/P1/P2）
 
 `mcp_server/` + `main.py --mcp`。这是**开发中的能力**：把 `device_service` 薄封装成 MCP 工具，
 让 Comate / Claude Desktop / Cursor / Cline 等支持本地 stdio 的客户端驱动虫师。**不监听端口、不做 HTTP**。
@@ -708,11 +710,13 @@ for loop in 1..循环次数:
 - 操作：`tap`、`input_text`、`swipe`、`press_key`、`launch_app`
 - 等待/断言：`wait_until`、`assert`
 - 用例：`list_cases`、`run_case`、`run_case_status`、`run_case_stop`
+- 用例生成：`explore_and_draft` 开草稿，后续成功的操作自动记录；`draft_status` 查看；
+  `save_case` 落库（支持覆盖与定位校验）；`run_suite` 执行已保存套件
 - `ui_find` 一次 dump、本地搜索；3 秒内复用缓存，`tap` 后自动失效
-- `run_case` 在后台线程执行，`wait=true` 最多等 `timeout_s`；超时返回 `run_id`，用
-  `run_case_status` 轮询、`run_case_stop` 停止
+- `run_case` / `run_suite` 在后台线程执行，`wait=true` 最多等 `timeout_s`；超时返回 `run_id`，
+  用 `run_case_status` 轮询、`run_case_stop` 停止
 - 虫师界面正在运行时（`data/gui.lock` 被占用），MCP 自动降级为只读：查询/截图/用例列表可用，
-  写操作返回 `PERMISSION_DENIED`；`run_case` 执行期间其他设备工具返回 `DEVICE_BUSY`
+  写操作返回 `PERMISSION_DENIED`；`run_case` / `run_suite` 执行期间其他设备工具返回 `DEVICE_BUSY`
 - 每次调用写 `data/mcp_audit.log`（参数摘要，不落截图/完整层级）；日志写 `data/mcp.log`
 - 错误统一 `{ok:false,error:{code,message,hint}}`；错误码见 `mcp_server/schema.py`
 - 客户端配置示例（打包后把 command 换成 `虫师-mcp.exe`）：
@@ -721,18 +725,23 @@ for loop in 1..循环次数:
 {
   "mcpServers": {
     "chongshi": {
-      "command": "D:\\AndroidAutoTest\\.venv\\Scripts\\python.exe",
-      "args": ["D:\\AndroidAutoTest\\main.py", "--mcp"]
+      "command": "D:\\AndroidAutoTest\\dist_mcp\\虫师-mcp.exe",
+      "args": [],
+      "env": { "CHONGSHI_APP_DIR": "D:\\AndroidAutoTest" }
     }
   }
 }
 ```
 
+`CHONGSHI_APP_DIR` 用于让独立的 `虫师-mcp.exe` 和主程序共用同一份 `data/`；正式安装包里把
+`虫师-mcp.exe` 放到 `虫师.exe` 同级即可省略这个环境变量。
+
 Comate 的入口在 **Context → MCP**（个人级 `~/.comate/mcp.json` / 项目级 `.comate/mcp.json`）；
 也支持 STDIO / SSE / Streamable HTTP。当前推荐项目级 `.comate/mcp.json`，格式同上；该目录已加入
 `.gitignore`，不会把本机绝对路径提交。注册后新开会话加载 `chongshi.*` 工具。
-P2（`explore_and_draft` / `save_case` / `run_suite`）尚未实现；网页端接入属于远期扩展（见
-`扩展方向.html` 第 3 章第八节），不属于本期。
+
+P2 工具已完成并做过真机闭环验收：草稿生成 → `save_case` 覆盖保存 → `run_case` → `run_suite`
+全部通过。网页端接入属于远期扩展（见 `扩展方向.html` 第 3 章第八节），不属于本期。
 
 ---
 
@@ -745,7 +754,7 @@ main.py              入口：装配模型 / 视图 / 控制器，启动封面�
 main.spec            主程序打包配置（自绘启动封面、DPI 感知清单）
 updater.py/.spec     独立更新器（下载完成后替换文件并重启）
 release.py           发版辅助脚本（改版本号 / 打 tag / 等 CI / 转正）
-mcp_server/          本地 stdio MCP Server（P0：设备 / 截图 / 查找 / 点击 / 输入 / 滑动 / 等待 / 断言）
+mcp_server/          本地 stdio MCP Server（P0/P1/P2：设备、定位、操作、用例、草稿与套件）
 models/              数据模型（项目树、步骤、元素、套件、任务、性能、语音、接口、知识库、变量…）
 views/               界面（主窗口、8 个功能页 + 右栏入口、对话框、ADB 面板、性能控件）
 controllers/         控制器（把视图事件转成模型操作与执行流程）

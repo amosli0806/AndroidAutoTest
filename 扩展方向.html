@@ -438,7 +438,7 @@
 
   <!-- ============ 三、MCP 服务：把虫师变成智能体的执行层 ============ -->
   <section class="chapter" id="s3">
-    <h2><span class="num">3</span>MCP 服务：把虫师变成智能体的执行层 <span class="tag plan">📋 阶段 0-4 已真机验证 · P2 待做</span></h2>
+    <h2><span class="num">3</span>MCP 服务：把虫师变成智能体的执行层 <span class="tag plan">📋 阶段 0-5 已完成 · 真机闭环通过</span></h2>
     <p class="small" style="margin-top:0">
       起因：2026-11-12 百度世界主题是「智能组织」——打破岗位边界、沉淀隐性知识、设计流程闭环，
       公式「可衡量 + Looping = 持续进化」；同场百度搭子开放了 Harness 引擎与 Agent API，
@@ -663,21 +663,21 @@
           <code>list_cases</code> / <code>run_case</code>；<code>run_case</code> 走
           <code>CaseRunner + asyncio.to_thread</code>；取消、结构化结果、长任务策略
         </td></tr>
-        <tr><td><b>5 P2 + 交付</b></td><td>2 ~ 3 天</td><td>4</td><td>
-          <code>explore_and_draft</code> / <code>save_case</code> / <code>run_suite</code>；
-          帮助中心与 README 配置示例；打包 <code>虫师-mcp.exe</code>（无控制台）；
-          macOS 条件依赖预留
+        <tr><td><b>5 P2 + 交付</b> ✅</td><td>2 ~ 3 天</td><td>4</td><td>
+          <code>explore_and_draft</code> / <code>save_case</code> /
+          <code>run_suite</code> 已实现并真机验收；<code>虫师-mcp.exe</code> 已打包
+          （约 93 MB，无控制台）并通过 stdio 握手；帮助中心 / README / CHANGELOG 已更新
         </td></tr>
       </table>
-      <p class="small"><b>当前进度</b>：阶段 0-4 已完成，并在真实设备上验证通过：
-        Comate 项目级 <code>.comate/mcp.json</code> 注册成功；P0/P1 工具（
-        <code>device_list</code> / <code>screenshot</code> / <code>ui_find</code> /
-        <code>tap</code> / <code>press_key</code> / <code>assert</code> /
-        <code>wait_until</code> / <code>ui_dump</code> / <code>list_cases</code>）已实测；
-        <code>run_case</code> 跑通「MCP验证：搜索页往返」6 步全绿（约 8.25 秒）；
-        <code>run_case_status</code> / <code>run_case_stop</code> 的自锁死已修复并验证。
+      <p class="small"><b>当前进度</b>：阶段 0-5 已完成并通过真机闭环。Comate 项目级
+        <code>.comate/mcp.json</code> 注册成功；P0/P1 工具已实测；<code>run_case</code>
+        跑通「MCP验证：搜索页往返」6 步全绿（约 8 秒）；<code>run_case_status</code> /
+        <code>run_case_stop</code> 的自锁死已修复并验证。P2 已真机跑通
+        <code>explore_and_draft</code> → <code>save_case</code>（覆盖）→
+        <code>run_case</code> → <code>run_suite</code>；<code>虫师-mcp.exe</code>
+        已打包（onefile，约 93 MB，无控制台），stdio 握手与 19 个工具列表通过。
         GUI 与 MCP 可共存，GUI 开着时 MCP 自动只读；写操作和 <code>run_case</code>
-        需退出虫师界面。阶段 5 待开工。</p>
+        需退出虫师界面。</p>
       <p class="small">阶段 1 与 2 可并行；阶段 3 必须等 2；阶段 4 必须等 1 + 2。
         预计总量 7 ~ 9 天（含 CaseRunner 与 GUI lock 的重构成本）。</p>
       <p><b>涉及文件（预计）</b>：</p>

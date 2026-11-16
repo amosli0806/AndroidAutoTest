@@ -19,6 +19,7 @@ from mcp.server.mcpserver import MCPServer
 from models.execution_model import ExecutionModel
 from models.project_model import ProjectModel
 from models.step_model import Step, StepModel
+from models.suite_model import SuiteModel
 from services.case_runner import CaseRunner
 from services.device_service import DeviceService
 from utils.adb_path import get_adb_path
@@ -53,6 +54,7 @@ def _execute(name: str, params: dict, fn, mutating: bool = False) -> str:
     try:
         with RUNTIME.lock:
             if _case_running() and name not in ("device_list", "list_cases",
+                                                "draft_status", "explore_and_draft",
                                                 "run_case_status", "run_case_stop"):
                 raise ToolFailure("DEVICE_BUSY", "run_case 正在执行，设备暂时被占用",
                                   "等用例结束，或先调用 run_case_stop")
@@ -87,7 +89,9 @@ def _hint_for(code: str) -> str:
         "PERMISSION_DENIED": "先关闭虫师界面；MCP 与 GUI 同时开时只允许只读工具",
         "CASE_NOT_FOUND": "先调用 list_cases 查看用例 id / 名称",
         "CASE_AMBIGUOUS": "用例名重复，改用 case_id 或在 module 里指定模块",
-        "DEVICE_BUSY": "run_case 正在执行；等它结束或先调用 run_case_stop",
+        "CASE_EXISTS": "换一个 case_name，或传 overwrite=true 覆盖",
+        "SUITE_NOT_FOUND": "先在执行页保存套件，或核对套件名 / 用例是否被删除",
+        "DEVICE_BUSY": "run_case / run_suite 正在执行；等它结束或先调用 run_case_stop",
         "ASSERT_FAILED": "查看返回的截图路径 / 失败步骤，必要时用 screenshot 看现场",
     }.get(code, "查看 data/mcp.log；如是参数问题请修正后重试")
 
@@ -99,6 +103,11 @@ _JOBS: Dict[str, dict] = {}
 # RLock：_run_case_status / _run_case_stop 会在持锁时调用 _job_snapshot，
 # 普通 Lock 会在这里自锁死，进而把整个 MCP server 卡住。
 _JOBS_LOCK = threading.RLock()
+
+# 草稿：explore_and_draft 开一个会话，后续动作工具自动记录
+_DRAFTS: Dict[str, dict] = {}
+_DRAFT_LOCK = threading.RLock()
+_ACTIVE_DRAFT: Optional[str] = None
 
 
 def _case_running() -> bool:
@@ -118,6 +127,86 @@ def _job_snapshot(job: dict) -> dict:
             "result": job.get("result"),
             "logs": list(job.get("logs", []))[-100:],
         }
+
+
+def _draft_snapshot(draft: dict) -> dict:
+    with _DRAFT_LOCK:
+        return {
+            "draft_id": draft["draft_id"],
+            "goal": draft.get("goal", ""),
+            "steps": list(draft.get("steps", [])),
+            "max_steps": draft.get("max_steps", 0),
+            "truncated": bool(draft.get("truncated", False)),
+            "created_at": draft.get("created_at", ""),
+        }
+
+
+def _record_step(step_type: str, name: str, params: dict):
+    """当前有草稿会话时，把一次成功的动作追加到草稿。"""
+    global _ACTIVE_DRAFT
+    with _DRAFT_LOCK:
+        if not _ACTIVE_DRAFT:
+            return
+        draft = _DRAFTS.get(_ACTIVE_DRAFT)
+        if draft is None:
+            return
+        if len(draft["steps"]) >= draft["max_steps"]:
+            draft["truncated"] = True
+            return
+        draft["steps"].append({
+            "type": step_type,
+            "name": name,
+            "params": dict(params),
+        })
+
+
+def _start_draft(goal: str, max_steps: int = 30) -> dict:
+    global _ACTIVE_DRAFT
+    goal = (goal or "").strip()
+    if not goal:
+        raise ToolFailure("INTERNAL_ERROR", "goal 不能为空",
+                          "例如：打开搜索并进入搜索页，再返回首页")
+    draft_id = uuid.uuid4().hex[:12]
+    draft = {
+        "draft_id": draft_id,
+        "goal": goal,
+        "steps": [],
+        "max_steps": max(1, min(100, int(max_steps or 30))),
+        "truncated": False,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    with _DRAFT_LOCK:
+        _DRAFTS.clear()  # 只保留当前草稿，避免 Agent 误存旧会话
+        _DRAFTS[draft_id] = draft
+        _ACTIVE_DRAFT = draft_id
+    return _draft_snapshot(draft)
+
+
+def _draft_locator(candidate: dict, timeout: float = 10.0) -> dict:
+    loc = (candidate or {}).get("locators") or {}
+    if loc.get("资源ID"):
+        params = {"locationType": "资源ID", "locationValue": loc["资源ID"]}
+        if candidate.get("same_id_count", 1) > 1:
+            params["instance"] = int(candidate.get("instance") or 0)
+    elif loc.get("文本"):
+        params = {"locationType": "文本", "locationValue": loc["文本"]}
+    elif loc.get("描述"):
+        params = {"locationType": "描述", "locationValue": loc["描述"]}
+    elif loc.get("XPath"):
+        params = {"locationType": "XPath", "locationValue": loc["XPath"]}
+    else:
+        center = candidate.get("center") or [0, 0]
+        params = {"locationType": "坐标", "locationValue": f"{center[0]},{center[1]}"}
+    params["timeout"] = float(timeout)
+    return params
+
+
+def _draft_name(prefix: str, candidate: dict) -> str:
+    text = (candidate or {}).get("text") or ""
+    rid = (candidate or {}).get("resource_id") or ""
+    tail = rid.rsplit("/", 1)[-1] if rid else ""
+    label = text or tail or "坐标"
+    return f"{prefix} - {label[:24]}"
 
 
 def _walk_cases(nodes, project_name="", module_name=""):
@@ -418,6 +507,13 @@ def _tap(element_index: Optional[int] = None, x: Optional[int] = None,
         }
     if suspect:
         out["warning"] = f"点击 ({suspect[0]},{suspect[1]}) 后界面几乎没变化（差异 {suspect[2]}）"
+    if by_index:
+        draft_params = _draft_locator(by_index, timeout)
+        draft_name = _draft_name("点击", by_index)
+    else:
+        draft_params = {k: v for k, v in params.items()}
+        draft_name = f"点击 - {params.get('locationValue', '')[:24]}"
+    _record_step("click", draft_name, draft_params)
     return out
 
 
@@ -436,11 +532,19 @@ def _input_text(text: str, element_index: Optional[int] = None,
         resource_id=resource_id, description=description,
         xpath=xpath, instance=instance,
     )
-    params.pop("_by_index", None)
+    by_index = params.pop("_by_index", None)
     params["text"] = text
     params["timeout"] = float(timeout)
     svc.perform(_step("input", **params))
     RUNTIME.invalidate()
+    if by_index:
+        draft_params = _draft_locator(by_index, timeout)
+        draft_name = _draft_name("输入", by_index)
+    else:
+        draft_params = {k: v for k, v in params.items()}
+        draft_name = f"输入 - {params.get('locationValue', '')[:24]}"
+    draft_params["text"] = text
+    _record_step("input", draft_name, draft_params)
     return {"input": True, "chars": len(text)}
 
 
@@ -471,6 +575,13 @@ def _swipe(direction: Optional[str] = None,
     svc.device.swipe(int(x1), int(y1), int(x2), int(y2),
                      duration=max(0.05, float(duration_ms) / 1000.0))
     RUNTIME.invalidate()
+    direction_cn = {"up": "上滑", "down": "下滑", "left": "左滑", "right": "右滑"}.get(
+        (direction or "").lower(), "自定义坐标")
+    _record_step("swipe", f"滑动 - {direction_cn}", {
+        "direction": direction_cn,
+        "startX": int(x1), "startY": int(y1),
+        "endX": int(x2), "endY": int(y2),
+    })
     return {"swiped": True, "from": [int(x1), int(y1)], "to": [int(x2), int(y2)]}
 
 
@@ -492,6 +603,7 @@ def _wait_until(cond: str = "appear", text: Optional[str] = None,
     params["timeout"] = float(timeout_s)
     svc.perform(_step("wait_for", **params))
     RUNTIME.invalidate()
+    _record_step("wait_for", f"等待 - {wait_type}", dict(params))
     return {"waited": True, "cond": cond, "timeout_s": float(timeout_s)}
 
 
@@ -554,6 +666,7 @@ def _assert_ui(assert_type: str = "exists", text: Optional[str] = None,
         svc.perform(_step("assert", **params))
     except AssertionError as e:
         raise ToolFailure("ASSERT_FAILED", str(e), "查看返回的截图路径 / 相近元素")
+    _record_step("assert", f"断言 - {a_type}", dict(params))
     return {"passed": True, "assert_type": assert_type}
 
 
@@ -604,6 +717,7 @@ def _press_key(key: str) -> dict:
     svc = RUNTIME.ensure_device(RUNTIME.serial)
     svc.perform(_step("physical_key", keyName=key_name))
     RUNTIME.invalidate()
+    _record_step("physical_key", f"按键 - {key_name}", {"keyName": key_name})
     return {"pressed": key_name}
 
 
@@ -628,6 +742,9 @@ def _launch_app(package: str, action: str = "start",
     else:
         svc.perform(_step("app_mgr", action=action_name, packageName=package))
     RUNTIME.invalidate()
+    _record_step("app_mgr", f"应用管理 - {action_name}", {
+        "action": action_name, "packageName": package,
+    })
     return {"package": package, "action": action_name, "activity": activity or ""}
 
 
@@ -648,6 +765,232 @@ def _run_case_stop(run_id: str) -> dict:
                               "用 run_case 返回的 run_id")
         job["abort"].set()
         return _job_snapshot(job)
+
+
+# ----------------------------------------------------------------------
+# P2：草稿 / 保存用例 / 套件
+# ----------------------------------------------------------------------
+_LOCATOR_STEP_TYPES = {"click", "input", "wait_for", "assert",
+                       "long_press", "double_click"}
+_VALID_STEP_TYPES = {
+    "wait", "wait_for", "click", "app_mgr", "input", "swipe", "assert",
+    "physical_key", "screen_ctrl", "long_press", "flick", "double_click",
+    "multi_swipe", "drag_drop", "gesture_zoom", "screenshot", "voice",
+}
+
+
+def _validate_draft_steps(steps) -> list[dict]:
+    if not isinstance(steps, list) or not steps:
+        raise ToolFailure("INTERNAL_ERROR", "没有可保存的步骤",
+                          "先 explore_and_draft，或直接传 steps[]")
+    clean = []
+    for i, item in enumerate(steps, 1):
+        if not isinstance(item, dict):
+            raise ToolFailure("INTERNAL_ERROR", f"第 {i} 步不是对象")
+        typ = str(item.get("type") or "").strip()
+        if typ not in _VALID_STEP_TYPES:
+            raise ToolFailure("INTERNAL_ERROR", f"第 {i} 步类型不支持：{typ}")
+        params = dict(item.get("params") or {})
+        if typ in _LOCATOR_STEP_TYPES:
+            if not params.get("locationType") or not params.get("locationValue"):
+                raise ToolFailure("INTERNAL_ERROR",
+                                  f"第 {i} 步 {typ} 缺少定位方式/定位值")
+        if typ == "wait_for" and not params.get("wait_type"):
+            raise ToolFailure("INTERNAL_ERROR", f"第 {i} 步等待方式为空")
+        if typ == "assert" and not params.get("assert_type"):
+            raise ToolFailure("INTERNAL_ERROR", f"第 {i} 步断言类型为空")
+        clean.append({
+            "type": typ,
+            "name": str(item.get("name") or typ),
+            "params": params,
+        })
+    return clean
+
+
+def _explore_and_draft(goal: str, max_steps: int = 30) -> dict:
+    draft = _start_draft(goal, max_steps)
+    draft["next"] = (
+        "用 ui_find 找到控件后，调用 tap/input_text/swipe/press_key/wait_until/assert；"
+        "成功的动作会自动记入草稿。最后调用 save_case(draft_id=...) 落库。"
+    )
+    return draft
+
+
+def _draft_status(draft_id: Optional[str] = None) -> dict:
+    with _DRAFT_LOCK:
+        did = draft_id or _ACTIVE_DRAFT or ""
+        draft = _DRAFTS.get(did)
+        if draft is None:
+            raise ToolFailure("INTERNAL_ERROR", "没有可用的草稿",
+                              "先调用 explore_and_draft")
+        return _draft_snapshot(draft)
+
+
+def _save_case(project_name: Optional[str], module: str, case_name: str,
+               steps=None, draft_id: Optional[str] = None,
+               overwrite: bool = False) -> dict:
+    global _ACTIVE_DRAFT
+    module = (module or "").strip()
+    case_name = (case_name or "").strip()
+    if not module or not case_name:
+        raise ToolFailure("INTERNAL_ERROR", "module / case_name 不能为空")
+    if steps is None:
+        with _DRAFT_LOCK:
+            draft = _DRAFTS.get(draft_id or _ACTIVE_DRAFT or "")
+            if draft is None:
+                raise ToolFailure("INTERNAL_ERROR", "没有可用的草稿",
+                                  "先 explore_and_draft 并执行动作")
+            steps = draft["steps"]
+    clean = _validate_draft_steps(steps)
+
+    project_model = ProjectModel()
+    project = None
+    if project_name:
+        project = next((n for n in project_model.root_nodes
+                        if n.type == "project" and n.name == project_name), None)
+        if project is None:
+            project = project_model.create_project(project_name)
+    else:
+        project = next((n for n in project_model.root_nodes if n.type == "project"), None)
+        if project is None:
+            project = project_model.create_project("MCP")
+
+    folder = next((n for n in project.children
+                   if n.type == "folder" and n.name == module), None)
+    if folder is None:
+        folder = project_model.create_folder(project.id, module)
+
+    existing = next((n for n in folder.children
+                     if n.type == "case" and n.name == case_name), None)
+    if existing is not None and not overwrite:
+        raise ToolFailure("CASE_EXISTS", f"用例已存在：{module}/{case_name}",
+                          "传 overwrite=true 覆盖，或换一个 case_name")
+    step_model = StepModel()
+    if existing is not None:
+        case = existing
+        for sid in list(step_model.case_steps.get(case.id, [])):
+            step_model._steps.pop(sid, None)
+        step_model.case_steps[case.id] = []
+        step_model.save()
+    else:
+        case = project_model.create_case(folder.id, case_name)
+
+    for item in clean:
+        step_model.add_step_to_case(
+            case.id, Step(0, item["type"], item["name"], item["params"]))
+    with _DRAFT_LOCK:
+        used = draft_id or _ACTIVE_DRAFT
+        if used:
+            _DRAFTS.pop(used, None)
+            if _ACTIVE_DRAFT == used:
+                _ACTIVE_DRAFT = None
+    return {
+        "case_id": case.id,
+        "case_name": case.name,
+        "module": module,
+        "steps": len(clean),
+        "overwritten": bool(existing),
+    }
+
+
+def _start_suite_job(suite_name: str, stop_on_failure: bool = False,
+                     loop_count: int = 1, retry_count: int = 0,
+                     retry_delay: int = 0) -> dict:
+    if _case_running():
+        raise ToolFailure("DEVICE_BUSY", "已有 run_case / run_suite 正在执行",
+                          "先调用 run_case_status 查看，或 run_case_stop 停止")
+    suite = SuiteModel().get_suite_by_name(suite_name)
+    if suite is None:
+        raise ToolFailure("SUITE_NOT_FOUND", f"套件不存在：{suite_name}",
+                          "先在执行页保存套件，或检查套件名")
+    project = ProjectModel()
+    valid_ids = []
+    for cid in suite.case_ids:
+        node = project.get_node_by_id(cid)
+        if node is not None and node.type == "case":
+            valid_ids.append(cid)
+    if not valid_ids:
+        raise ToolFailure("SUITE_NOT_FOUND", f"套件里没有有效用例：{suite_name}",
+                          "检查套件是否引用了已删除的用例")
+    step_model = StepModel()
+    exec_model = ExecutionModel()
+    abort = threading.Event()
+    run_id = uuid.uuid4().hex[:12]
+    job = {
+        "run_id": run_id,
+        "status": "running",
+        "case": {"suite": suite_name, "case_count": len(valid_ids)},
+        "started_at": datetime.now().isoformat(timespec="seconds"),
+        "finished_at": "",
+        "error": "",
+        "result": None,
+        "logs": [],
+        "abort": abort,
+        "done": threading.Event(),
+    }
+    with _JOBS_LOCK:
+        _JOBS[run_id] = job
+
+    def progress(message, level="info"):
+        with _JOBS_LOCK:
+            logs = job["logs"]
+            logs.append({"level": level, "message": message})
+            if len(logs) > 500:
+                del logs[:200]
+
+    def work():
+        try:
+            svc = RUNTIME.ensure_device(RUNTIME.serial)
+            runner = CaseRunner(
+                valid_ids, project, step_model, svc, exec_model,
+                loop_count=loop_count, stop_on_fail=stop_on_failure,
+                retry_count=retry_count, retry_delay=retry_delay,
+                on_progress=progress, abort_event=abort,
+            )
+            result = runner.run()
+            with _JOBS_LOCK:
+                job["result"] = asdict(result)
+                job["status"] = "stopped" if result.aborted else "done"
+        except Exception as e:
+            with _JOBS_LOCK:
+                job["status"] = "error"
+                job["error"] = str(e)
+        finally:
+            with _JOBS_LOCK:
+                job["finished_at"] = datetime.now().isoformat(timespec="seconds")
+            job["done"].set()
+
+    threading.Thread(target=work, name=f"mcp-suite-{run_id}", daemon=True).start()
+    return job
+
+
+def _run_suite_tool(suite_name: str, stop_on_failure: bool = False,
+                    loop_count: int = 1, retry_count: int = 0,
+                    retry_delay: int = 0, wait: bool = True,
+                    timeout_s: float = 60.0) -> str:
+    started = time.time()
+    try:
+        info = probe_gui()
+        if info is not None:
+            raise ToolFailure("PERMISSION_DENIED", "虫师界面正在运行，MCP 当前为只读模式",
+                              "请先关闭虫师界面后再执行 run_suite")
+        job = _start_suite_job(suite_name, stop_on_failure,
+                               loop_count, retry_count, retry_delay)
+        if wait and timeout_s and timeout_s > 0:
+            job["done"].wait(float(timeout_s))
+        snap = _job_snapshot(job)
+        audit_write("run_suite", {"suite_name": suite_name}, True, "",
+                    int((time.time() - started) * 1000))
+        return ok(snap)
+    except ToolFailure as e:
+        audit_write("run_suite", {"suite_name": suite_name}, False, e.code,
+                    int((time.time() - started) * 1000))
+        return err(e.code, e.message, e.hint)
+    except Exception as e:
+        code = classify_error(e)
+        audit_write("run_suite", {"suite_name": suite_name}, False, code,
+                    int((time.time() - started) * 1000))
+        return err(code, str(e), _hint_for(code))
 
 
 # ----------------------------------------------------------------------
@@ -803,6 +1146,46 @@ async def run_case_status(run_id: str) -> str:
 async def run_case_stop(run_id: str) -> str:
     return await _run("run_case_stop", {"run_id": run_id},
                       lambda: _run_case_stop(run_id))
+
+
+@server.tool(name="explore_and_draft",
+             description="开始一个探索草稿：后续成功的 tap/input/swipe/按键/等待/断言会自动记入草稿")
+async def explore_and_draft(goal: str, max_steps: int = 30) -> str:
+    return await _run("explore_and_draft", {"goal": goal, "max_steps": max_steps},
+                      lambda: _explore_and_draft(goal, max_steps))
+
+
+@server.tool(name="draft_status", description="查看当前草稿（或指定 draft_id）已记录的动作")
+async def draft_status(draft_id: Optional[str] = None) -> str:
+    return await _run("draft_status", {"draft_id": draft_id},
+                      lambda: _draft_status(draft_id))
+
+
+@server.tool(name="save_case",
+             description="把草稿或显式 steps[] 保存为用例；支持覆盖，保存前做定位校验")
+async def save_case(module: str, case_name: str,
+                    project_name: Optional[str] = None,
+                    steps: Optional[list] = None,
+                    draft_id: Optional[str] = None,
+                    overwrite: bool = False) -> str:
+    params = {"module": module, "case_name": case_name,
+              "project_name": project_name, "draft_id": draft_id,
+              "overwrite": overwrite, "steps": steps}
+    return await _run("save_case", params,
+                      lambda: _save_case(project_name, module, case_name,
+                                         steps, draft_id, overwrite),
+                      mutating=True)
+
+
+@server.tool(name="run_suite",
+             description="执行一个已保存的自动套件；wait=true 最多等 timeout_s，超时返回 run_id")
+async def run_suite(suite_name: str, stop_on_failure: bool = False,
+                    loop_count: int = 1, retry_count: int = 0,
+                    retry_delay: int = 0, wait: bool = True,
+                    timeout_s: float = 60.0) -> str:
+    return await asyncio.to_thread(
+        _run_suite_tool, suite_name, stop_on_failure, loop_count,
+        retry_count, retry_delay, wait, timeout_s)
 
 
 def main():
