@@ -1,5 +1,13 @@
 # main.py
 import sys
+
+# MCP stdio 入口必须抢在 PyQt6 / views 等重 import 之前：
+# 否则 --mcp 还没解析，GUI 模块已经全部加载，stdout 也可能被污染。
+if __name__ == "__main__" and "--mcp" in sys.argv:
+    from mcp_server.server import main as _mcp_main
+    _mcp_main()
+    raise SystemExit(0)
+
 import os
 import time
 import threading
@@ -34,13 +42,13 @@ from controllers.step_controller import StepController
 from controllers.execution_controller import ExecutionController
 from controllers.element_controller import ElementController
 from services.device_service import DeviceService
-from services.weditor_service import WeditorService
 from services.update_service import (
     check_for_update, is_enabled as update_check_enabled,
     pending_staged, cleanup_staging, updater_exe_in,
 )
 from utils.toast import show_toast
 from utils.app_paths import migrate_legacy_data_files, get_app_dir
+from utils.gui_presence import GuiPresence
 from utils import log_colors
 from utils.settings import Settings, THEME_MODE_SYSTEM, THEME_MODE_DARK
 from utils.theme import Theme, ThemeMode
@@ -495,10 +503,6 @@ def main():
     # 若将来要做通知中心、跳转列表等真正依赖 AUMID 的功能，正确做法是随安装
     # 创建一个带 System.AppUserModel.ID 属性的快捷方式，而不是在进程里裸设 ID。
 
-    # 关键：必须在 QApplication 创建之前设置
-    # 否则 QWebEngineView 首次创建时会触发窗口重建（看起来像应用重启）
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
-
     # 高 DPI 舍入策略同样必须在 QApplication 之前定：PassThrough 让 125%/150%
     # 按真实比例换算，不会被舍成 100%/200%（否则界面忽大忽小）
     _apply_dpi_rounding_policy()
@@ -756,7 +760,7 @@ def main():
     }
 
     # 4. 应用可视化（整页，index 2）：自研页面，点画面取定位值。
-    #    右栏那个眼睛按钮仍然开关 weditor 浮窗，两者并存（稳定后再决定是否下线）。
+    #    旧版 weditor 浮窗及其后端已移除，不再创建 Dock。
     from controllers.visual_controller import VisualController
     from views.visual_view import VisualView
 
@@ -768,9 +772,6 @@ def main():
     main_window.set_visualize_page(visual_view)
     # 动作卡片右键「在应用可视化中打开」→ 切页并挂回填目标
     action_card.visual_pick_requested.connect(main_window.open_visual_for_card)
-
-    # 4.1 weditor 浮窗（传入 None，由主窗口创建默认启动按钮）
-    main_window.set_visualize_view(None)
 
     # 5. 帮助中心
     main_window.set_help_view(help_view)
@@ -935,15 +936,6 @@ def main():
         notification_controller.on_adb_command_finished)
     # AI 失败分析完成
     logs_view.ai_analysis_done.connect(notification_controller.on_ai_analyzed)
-
-    # ---------- Weditor ----------
-    weditor_svc = WeditorService()
-    main_window.set_weditor_service(weditor_svc)
-    # 退出清理第二道防线：事件循环退出时立即杀 weditor 服务进程。
-    # QWebEngine 应用退出时 Chromium 清理可能跳过 atexit（实测 1.1.8 残留
-    # weditor.exe），aboutToQuit 在事件循环退出时就发出，时机更早更可靠；
-    # 第三道防线是 spawn 时的 Job Object（父死子亡，系统级保证）。
-    app.aboutToQuit.connect(weditor_svc.stop)
 
     # ---------- 设备刷新 ----------
     last_devices = []
@@ -1678,6 +1670,11 @@ if __name__ == "__main__":
             sys.exit(0)
         _log_single_instance("window_vanished_continue")
 
+    # GUI presence lock：MCP 用它判断虫师界面是否在跑。
+    # 拿不到锁不阻断启动（Windows 还有命名互斥量兜底），但 MCP 会按只读处理。
+    if not GuiPresence.acquire():
+        logger.warning("[gui_presence] 获取 data/gui.lock 失败，MCP 将依赖 Windows 互斥量兜底")
+
     # ---------- 先弹启动封面，再让后面那些重活开始 ----------
     # 说明：main.py 顶层的 import（PyQt6、uiautomator2、views.* …）在进入这个块
     # 之前就已经执行完了，所以这里做不到「封面早于顶层 import」。
@@ -1685,9 +1682,7 @@ if __name__ == "__main__":
     # 之后 main() 里的模型初始化 / 主窗口构建（几秒）由封面盖住。
     # main() 复用这里的 app（_APP），封面也靠 splash_show 的幂等保护不会重复建。
     try:
-        from PyQt6.QtCore import Qt as _Qt
         from PyQt6.QtWidgets import QApplication as _QApplication
-        _QApplication.setAttribute(_Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
         _apply_dpi_rounding_policy()
         _APP = _QApplication(sys.argv)
         _boot_base = (sys._MEIPASS if getattr(sys, "frozen", False)

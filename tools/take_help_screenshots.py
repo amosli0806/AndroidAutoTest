@@ -70,7 +70,6 @@ from controllers.step_controller import StepController
 from controllers.execution_controller import ExecutionController
 from controllers.element_controller import ElementController
 from services.device_service import DeviceService
-from services.weditor_service import WeditorService
 from utils.toast import show_toast
 from utils.app_paths import migrate_legacy_data_files
 from utils import log_colors
@@ -156,7 +155,6 @@ task_view.start_scheduler()
 main_window.set_edit_views(project_tree, step_list, action_card)
 main_window.set_execute_view_with_logs(execute_view, logs_view)
 main_window.set_element_manager_view(element_manager)
-main_window.set_visualize_view(None)
 main_window.set_help_view(help_view)
 
 from views.adb_toolbox_view import AdbToolboxView
@@ -231,9 +229,6 @@ task_controller.task_finished.connect(notification_controller.on_task_finished)
 task_controller.task_skipped.connect(notification_controller.on_task_skipped)
 adb_toolbox_controller.pool.command_finished.connect(notification_controller.on_adb_command_finished)
 logs_view.ai_analysis_done.connect(notification_controller.on_ai_analyzed)
-
-weditor_svc = WeditorService()
-main_window.set_weditor_service(weditor_svc)
 
 main_window.set_device_service(device_svc)
 
@@ -663,12 +658,9 @@ def step_select_case():
     print(f"[step] select case -> {ok}")
 
 def step_toolbar_shots():
-    # record_1 / weditor_1 / device_1：顶部工具栏左侧（设备区）
+    # record_1 / device_1：顶部工具栏左侧（设备区）
     tb = main_window.toolbar
     crop_shot(tb, "record_1_connect_device.png",
-              targets=[main_window.device_combo], include=[find_refresh_btn()],
-              pad=30, rect=QRect(0, 0, 360, tb.height()))
-    crop_shot(tb, "weditor_1_connect.png",
               targets=[main_window.device_combo], include=[find_refresh_btn()],
               pad=30, rect=QRect(0, 0, 360, tb.height()))
     crop_shot(tb, "device_1_view_devices.png",
@@ -881,17 +873,6 @@ def step_element_context_menu():
     menu.close()
     process()
 
-def step_weditor_container_shot():
-    """不打开 Dock（打开会自动启动 weditor 子进程并清掉按钮），
-    直接离屏抓取还带"启动 weditor"按钮的容器"""
-    container = getattr(main_window, "_visualize_container", None)
-    btn = getattr(main_window, "visualize_button", None)
-    if container is None or btn is None:
-        return
-    container.resize(900, 520)
-    process()
-    crop_shot(container, "weditor_2_launch.png", targets=[btn], pad=90)
-
 def step_device_combo_popup():
     """无设备时下拉列表只有"未检测到设备"一项，真实弹窗抓取不可靠，
     改为工具栏设备区特写：与 device_1 同区域，箭头指向下拉框"""
@@ -1051,15 +1032,6 @@ def step_cleanup_and_quit():
         main_window._device_watcher.stop()
     except Exception:
         pass
-    # 兜底：若 weditor 子进程被意外拉起，结束它避免残留
-    try:
-        svc = getattr(main_window, "weditor_service", None)
-        proc = getattr(svc, "process", None) if svc is not None else None
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
-            print("[cleanup] weditor process terminated")
-    except Exception:
-        pass
     print("[done] shots:", len(SHOT_LOG))
     app.quit()
 
@@ -1093,7 +1065,6 @@ STEPS = [
     (400,  step_element_select_row,  "选中元素行"),
     (400,  step_element_btn_shots,   "元素库按钮截图"),
     (500,  step_element_context_menu,"元素右键菜单"),
-    (500,  step_weditor_container_shot, "weditor 启动按钮页"),
     (500,  step_device_combo_popup,  "设备下拉弹窗"),
     (600,  step_settings_device_page,"设置-恢复输入法页"),
     (600,  step_settings_voice_page, "设置-语音设置页"),

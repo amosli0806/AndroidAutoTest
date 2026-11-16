@@ -1,7 +1,7 @@
 # utils/win_job.py
 """Windows Job Object：把子进程绑成「父死子亡」。
 
-为什么要有这个模块：应用可视化（weditor.exe）和 ADB 命令池（adb.exe）需要的能力完全一样
+为什么要有这个模块：ADB 命令池（adb.exe）等子进程需要在主程序退出时一并结束
 —— 虫师退出（正常 / 崩溃 / 被任务管理器强杀）时子进程必须跟着走，否则会留下孤儿进程。
 
 对 ADB 命令池尤其要紧：指令是用 `shell=True` 拉起的，真正的 adb.exe 是中间 cmd.exe 的子

@@ -41,6 +41,7 @@ tools/import_more_sheets.py
 # ---------- IDE / 编辑器 ----------
 .idea/
 .vscode/
+.comate/
 *.swp
 
 # ---------- 工作助手本地记忆（不进公开仓库） ----------

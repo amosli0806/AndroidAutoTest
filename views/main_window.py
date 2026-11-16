@@ -11,15 +11,13 @@ from PyQt6.QtWidgets import (
     QDialog, QTextEdit, QApplication, QLineEdit,
     QStackedWidget, QWidgetAction, QGraphicsOpacityEffect, QFrame, QToolTip,
     QScrollArea,
-    QDockWidget
 )
 from PyQt6.QtGui import (
-    QAction, QColor, QIcon, QPainter, QPixmap, QPainterPath, QRegion,
+    QAction, QColor, QIcon, QPainter, QPixmap,
     QShortcut, QKeySequence,
 )
-from PyQt6.QtCore import (Qt, pyqtSignal, QThread, QObject, QUrl, QSize, QPoint, QEvent,
+from PyQt6.QtCore import (Qt, pyqtSignal, QSize, QPoint, QEvent,
                         QRectF, QTimer)
-from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from models.project_model import TreeNode, new_node_id
 from models.step_model import Step
@@ -31,93 +29,6 @@ from utils.toast import show_toast
 from utils.dialogs import WarningDialog, ErrorDialog
 from views.help_view import HelpView
 from views.dialogs.settings_dialog import SettingsDialog
-
-
-class WeditorWorker(QObject):
-    success = pyqtSignal(int)
-    error = pyqtSignal(str)
-
-    def __init__(self, service, port=17310):
-        super().__init__()
-        self.service = service
-        self.port = port
-
-    def run(self):
-        try:
-            result_port = self.service._start_process_and_wait(self.port)
-            if result_port:
-                self.success.emit(result_port)
-            else:
-                self.error.emit("启动 weditor 失败，请检查是否已安装 weditor (pip install weditor)")
-        except Exception as e:
-            self.error.emit(str(e))
-
-class RoundedWebEngineView(QWebEngineView):
-    """带圆角的 QWebEngineView。
-    QWebEngineView 本身不支持 QSS 的 border-radius，只能用 setMask 实现。"""
-
-    def __init__(self, radius=8, parent=None):
-        super().__init__(parent)
-        self._radius = radius
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._apply_rounded_mask()
-
-    def _apply_rounded_mask(self):
-        try:
-            w = self.width()
-            h = self.height()
-            if w <= 0 or h <= 0:
-                return
-            path = QPainterPath()
-            path.addRoundedRect(QRectF(0, 0, w, h), self._radius, self._radius)
-            poly = path.toFillPolygon().toPolygon()
-            self.setMask(QRegion(poly))
-        except Exception as e:
-            print(f"[RoundedWebEngineView] mask 应用失败: {e}")
-
-class RoundedDockWidget(QDockWidget):
-    """带圆角的最外层 DockWidget。
-    QDockWidget 不支持 QSS 的 border-radius（标题栏由 Qt 自绘），
-    只能用 setMask 实现整体圆角。
-    但悬浮时 setMask 会裁掉标题栏与关闭按钮，需 clearMask。"""
-
-    def __init__(self, title, parent=None, radius=8):
-        super().__init__(title, parent)
-        self._radius = radius
-        self.topLevelChanged.connect(self._on_top_level_changed)
-
-    def _on_top_level_changed(self, floating):
-        """悬浮 ↔ 停靠切换时，切换是否应用 mask"""
-        if floating:
-            # 悬浮时清掉 mask，否则关闭按钮和标题栏区域被裁掉
-            self.clearMask()
-        else:
-            self._apply_rounded_mask()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if not self.isFloating():
-            self._apply_rounded_mask()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        if not self.isFloating():
-            self._apply_rounded_mask()
-
-    def _apply_rounded_mask(self):
-        try:
-            w = self.width()
-            h = self.height()
-            if w <= 0 or h <= 0:
-                return
-            path = QPainterPath()
-            path.addRoundedRect(QRectF(0, 0, w, h), self._radius, self._radius)
-            poly = path.toFillPolygon().toPolygon()
-            self.setMask(QRegion(poly))
-        except Exception as e:
-            print(f"[RoundedDockWidget] mask 应用失败: {e}")
 
 
 def _should_hide_to_tray(minimize: bool, tray_controller) -> bool:
@@ -152,8 +63,6 @@ class MainWindow(QMainWindow):
         self.setObjectName("MainWindow")
         self.setWindowTitle("虫师")
         self.device_service = None
-        self.weditor_service = None
-        self.visualize_button = None
         self.project_model = None
         self.step_model = None
         self.data_cleanup_handler = None    # 「清理缓存」执行入口，由 main.py 注入
@@ -161,8 +70,6 @@ class MainWindow(QMainWindow):
         self.element_controller = None
         self.project_controller = None
         self.step_controller = None
-        self.thread = None
-        self.worker = None
         self.record_btn = None
         self.step_generate_btn = None
         self.step_search_input = None
@@ -188,14 +95,10 @@ class MainWindow(QMainWindow):
         self._bottom_panel_contents = {}         # cache：Crash / ANR 拉取结果
         self._bottom_panel_actions = {}  # kind -> QAction
         self.help_action = None
-        self.visual_action = None
         self.device_status_label = None
         self.nav_actions = []
         self.nav_icons = []
         self.nav_indices = []
-        self.visualize_widget = None
-        self._visualize_container = None
-        self.visualize_dock = None
         self._perf_view = None
         self._voice_view = None
         self._adb_toolbox_controller = None
@@ -362,57 +265,6 @@ class MainWindow(QMainWindow):
         for key, action in self._main_menu_actions.items():
             if key in icon_map:
                 action.setIcon(qta.icon(icon_map[key], color=icon_color))
-
-    def _apply_visualize_dock_theme(self, is_dark, has_wallpaper=False):
-        """应用主题到应用可视化 Dock（标题栏 + 边框 + 悬浮/关闭按钮）"""
-        if self.visualize_dock is None:
-            return
-
-        if is_dark:
-            dock_bg = "#2c2c2c"
-            title_bg = "#252526"
-            title_fg = "#eeeeee"
-            border = "#4a4a4a"
-            hover_bg = "rgba(255, 255, 255, 0.08)"
-            icon_color = "#cccccc"
-        else:
-            dock_bg = "#ffffff"
-            title_bg = "#f0f2f5"
-            title_fg = "#333333"
-            border = "#d0d0d0"
-            hover_bg = "rgba(0, 0, 0, 0.06)"
-            icon_color = "#666666"
-
-        self.visualize_dock.setStyleSheet(f"""
-            QDockWidget {{
-                background-color: {dock_bg};
-                border: 1px solid {border};
-                border-radius: 8px;
-                font-size: 13px;
-            }}
-            QDockWidget::title {{
-                background-color: {title_bg};
-                color: {title_fg};
-                padding: 6px 10px;
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
-                font-weight: 600;
-                font-size: 13px;
-                text-align: left;
-            }}
-            QDockWidget::close-button,
-            QDockWidget::float-button {{
-                background: transparent;
-                border: none;
-                padding: 3px;
-                icon-size: 12px;
-            }}
-            QDockWidget::close-button:hover,
-            QDockWidget::float-button:hover {{
-                background-color: {hover_bg};
-                border-radius: 3px;
-            }}
-        """)
 
     def _apply_project_menu_theme(self, is_dark):
         """应用主题到项目下拉按钮及其菜单（参照 PyCharm 风格）"""
@@ -1148,8 +1000,7 @@ class MainWindow(QMainWindow):
             ("ADB工具箱", 'fa6s.screwdriver-wrench', 0),
             ("自动化编辑", 'fa6s.pen-to-square', 1),
             # 「应用可视化」是整页（index 2），排在「应用元素库」之后 ——
-            # 两者都在处理元素定位，相邻更好找。右栏那个眼睛按钮仍然开关
-            # weditor 浮窗，与本页并存（2026-11-14 用户定的方案）。
+            # 两者都在处理元素定位，相邻更好找。旧版 weditor 浮窗已移除。
             ("自动化执行", 'fa6s.play', 3),
             ("应用元素库", 'fa6s.list', 4),
             ("应用可视化", 'fa6s.eye', 2),
@@ -1277,14 +1128,7 @@ class MainWindow(QMainWindow):
         # 复用底部面板那套互斥机制：一次只显示一种内容
         self._bottom_panel_actions["message"] = self.msg_action
 
-        # 应用可视化：开/关 weditor 浮窗，不占整页（所以不进 _right_toolbar_pages 那张表）。
-        # 放在消息与帮助中心之间 —— 与「点一下占一页」的入口区分开，靠位置说明它是开关。
-        self.visual_action = QAction(
-            qta.icon('fa6s.eye', color=self._toolbar_icon_color()), "应用可视化", self)
-        self.visual_action.setCheckable(True)
-        self.visual_action.setToolTip("应用可视化：内嵌 weditor，查看画面与 UI 层级")
-        self.visual_action.toggled.connect(self._on_visualize_action_toggled)
-        self.right_toolbar.addAction(self.visual_action)
+        # 应用可视化：只保留左栏整页，旧版 weditor 浮窗已移除。
         self.help_action = QAction(qta.icon('fa6s.circle-question', color=self._toolbar_icon_color()), "帮助中心", self)
         self.help_action.setCheckable(True)
         # 与左侧功能按钮一致：再次点击已选中的按钮 -> 取消选中并回到欢迎页
@@ -1326,8 +1170,6 @@ class MainWindow(QMainWindow):
         self.statusBar().messageChanged.connect(self._on_status_message_changed)
         self._last_device_list = None   # update_device_list 的内容去重基线
         self.apply_shortcuts()
-        # ---------- 应用可视化 Dock ----------
-        self.setup_visualize_dock()
 
     def apply_shortcuts(self):
         """根据配置注册所有快捷键（全局 + 页内 + 快捷功能）"""
@@ -1546,196 +1388,6 @@ class MainWindow(QMainWindow):
                 winners = {id(sc) for sc, page in items if page is None}
             for sc, _page in items:
                 sc.setEnabled(id(sc) in winners)
-
-    # ---------- 应用可视化 Dock ----------
-    def setup_visualize_dock(self):
-        """创建应用可视化 Dock（默认隐藏，由左侧按钮开关）"""
-        # 用 RoundedDockWidget 替代 QDockWidget，最外层带圆角
-        self.visualize_dock = RoundedDockWidget("应用可视化", self, radius=8)
-        self.visualize_dock.setObjectName("VisualizeDock")
-        self.visualize_dock.setAllowedAreas(
-            Qt.DockWidgetArea.LeftDockWidgetArea |
-            Qt.DockWidgetArea.RightDockWidgetArea
-        )
-        self.visualize_dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable |
-            QDockWidget.DockWidgetFeature.DockWidgetFloatable |
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-        )
-
-        # 内部容器（后续 set_visualize_view 会把真正的可视化 widget 塞进来）
-        dock_content = QWidget()
-        dock_content.setObjectName("VisualizeDockContent")
-        # dock_content 透明，让圆角外露出的部分透出 dock 底色
-        dock_content.setStyleSheet(
-            "#VisualizeDockContent { background-color: rgba(44, 44, 44, 0); }"
-        )
-        dock_layout = QVBoxLayout(dock_content)
-        # 四周边距，让内部容器的圆角露出来
-        dock_layout.setContentsMargins(6, 6, 6, 6)
-        dock_layout.setSpacing(0)
-        self.visualize_dock.setWidget(dock_content)
-
-        # 添加到右侧
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.visualize_dock)
-        self.visualize_dock.resize(500, self.height())
-        self.visualize_dock.hide()
-
-        # 联动左侧按钮状态
-        self.visualize_dock.visibilityChanged.connect(self._on_visualize_dock_visibility)
-
-    def _on_visualize_dock_visibility(self, visible):
-        """dock 显示/隐藏时，同步右侧「应用可视化」按钮的选中与图标状态。
-
-        用户点浮窗自己的 × 关掉时也要同步回按钮，所以这里以浮窗实际可见性为准；
-        blockSignals 防止和 toggled 互相触发。
-        """
-        action = getattr(self, "visual_action", None)
-        if action is None:
-            return
-        action.blockSignals(True)
-        action.setChecked(visible)
-        action.blockSignals(False)
-        color = 'white' if visible else self._toolbar_icon_color()
-        action.setIcon(qta.icon('fa6s.eye', color=color))
-
-    def _on_visualize_action_toggled(self, checked):
-        """右侧「应用可视化」按钮：开 / 关 weditor 浮窗。"""
-        if self.visualize_dock is None:
-            # 浮窗还没建好（启动早期），回滚按钮状态，避免显示成已选中
-            self.visual_action.blockSignals(True)
-            self.visual_action.setChecked(False)
-            self.visual_action.blockSignals(False)
-            return
-        self.toggle_visualize_dock(checked)
-
-    def _visualize_dock_size(self, avail=None):
-        """可视化浮窗尺寸：设计值 1180×760，按屏幕可用区收缩且**绝不超过屏幕**。
-
-        原来的写法在按屏幕收缩后又套了 600×400 的下限：可用区比 600×400 还小时
-        （如 1024×600@150%、800×600@150%），下限反而把窗口顶出屏幕。这里在
-        下限之后再做一次最终夹取。
-        """
-        target_w, target_h = 1180, 760
-        if avail is None:
-            return target_w, target_h
-        w = min(target_w, max(600, avail.width() - 80))
-        h = min(target_h, max(400, avail.height() - 120))
-        w = min(w, max(200, avail.width() - 16))
-        h = min(h, max(200, avail.height() - 48))
-        return w, h
-
-    def _fit_visualize_dock_to_screen(self):
-        """把浮动中的可视化窗口整体（含标题栏/边框）收敛进屏幕可用区域。
-
-        move() 用的是窗口框架坐标，标题栏会额外占掉约一行高度，
-        所以在窗口 show() 之后再按 frameGeometry() 校正一次。
-        """
-        dock = self.visualize_dock
-        if dock is None or not dock.isVisible() or not dock.isFloating():
-            return
-        screen = dock.screen() or self.screen() or QApplication.primaryScreen()
-        if screen is None:
-            return
-        avail = screen.availableGeometry()
-
-        # 与屏幕相关的动态最小宽度：保证 weditor 三栏（220/180/240 + 间距）
-        # 至少放得下；屏幕本身更窄时以屏幕为准，不在屏幕外硬撑
-        dock.setMinimumWidth(min(650, max(320, avail.width() - 16)))
-
-        # 窗口本身比屏幕还大时先缩小（尺寸同样按屏幕可用区夹取）
-        frame = dock.frameGeometry()
-        if frame.width() > avail.width() or frame.height() > avail.height():
-            w, h = self._visualize_dock_size(avail)
-            dock.resize(min(dock.width(), w), min(dock.height(), h))
-            frame = dock.frameGeometry()
-
-        dx = dy = 0
-        if frame.left() < avail.left():
-            dx = avail.left() - frame.left()
-        elif frame.right() > avail.right():
-            dx = avail.right() - frame.right()
-        if frame.top() < avail.top():
-            dy = avail.top() - frame.top()
-        elif frame.bottom() > avail.bottom():
-            dy = avail.bottom() - frame.bottom()
-        if dx or dy:
-            dock.move(dock.x() + dx, dock.y() + dy)
-
-    def _on_visualize_screen_changed(self, screen):
-        """浮动 Dock 被拖到另一块屏幕（可能缩放不同）时重新收一次。"""
-        if self.visualize_dock is None or not self.visualize_dock.isVisible():
-            return
-        QTimer.singleShot(0, self._fit_visualize_dock_to_screen)
-
-    def _attach_visualize_screen_watch(self):
-        dock = self.visualize_dock
-        handle = dock.windowHandle() if dock is not None else None
-        if handle is None:
-            return
-        try:
-            handle.screenChanged.disconnect(self._on_visualize_screen_changed)
-        except (TypeError, RuntimeError):
-            pass
-        handle.screenChanged.connect(self._on_visualize_screen_changed)
-
-    def _detach_visualize_screen_watch(self):
-        dock = self.visualize_dock
-        handle = dock.windowHandle() if dock is not None else None
-        if handle is None:
-            return
-        try:
-            handle.screenChanged.disconnect(self._on_visualize_screen_changed)
-        except (TypeError, RuntimeError):
-            pass
-
-    def _after_show_visualize_dock(self):
-        """浮动窗口显示后：挂屏幕监听 + 按实际 frame 再校正一次尺寸/位置。"""
-        self._attach_visualize_screen_watch()
-        self._fit_visualize_dock_to_screen()
-
-    def toggle_visualize_dock(self, checked):
-        """显示或隐藏可视化 Dock；首次显示时自动启动 weditor"""
-        if self.visualize_dock is None:
-            return
-        if checked:
-            # 以浮动窗口方式显示，避开对主界面布局的挤压
-            if not self.visualize_dock.isFloating():
-                self.visualize_dock.setFloating(True)
-
-            # 首次浮动时给一个合适的尺寸和位置
-            if not getattr(self, '_visualize_dock_positioned', False):
-                screen = self.screen() or QApplication.primaryScreen()
-                avail = screen.availableGeometry() if screen is not None else None
-                w, h = self._visualize_dock_size(avail)
-                self.visualize_dock.resize(w, h)
-
-                # 相对主窗口右对齐居中，同时保证整个窗口落在屏幕内
-                main_geo = self.geometry()
-                x = main_geo.right() - w - 60
-                y = main_geo.top() + 80
-                if avail is not None:
-                    x = max(avail.left(), min(x, avail.right() - w + 1))
-                    y = max(avail.top(), min(y, avail.bottom() - h + 1))
-                self.visualize_dock.move(x, y)
-                self._visualize_dock_positioned = True
-
-            # 可视化容器在隐藏期间可能被延后刷主题了，显示前先补一次
-            if self._visualize_container is not None:
-                self._flush_pending_theme(self._visualize_container)
-            self.visualize_dock.show()
-            self.visualize_dock.raise_()
-
-            # 窗口显示后才能拿到包含标题栏/边框的 frameGeometry，再校正一次
-            QTimer.singleShot(0, self._after_show_visualize_dock)
-
-            # 首次打开时，若无 weditor 进程则自动启动
-            if self.weditor_service is not None:
-                if getattr(self.weditor_service, 'process', None) is None:
-                    self._start_weditor()
-        else:
-            self._detach_visualize_screen_watch()
-            self.visualize_dock.hide()
 
     # ---------- 壁纸相关 ----------
     def setup_wallpaper(self):
@@ -2205,11 +1857,6 @@ class MainWindow(QMainWindow):
             for lbl in self.findChildren(QLabel, "GroupTitleLabel"):
                 lbl.setStyleSheet(self._group_title_qss("#ffffff"))
 
-            if self._visualize_container is not None:
-                self._visualize_container.setStyleSheet(
-                    "#VisualizeContainer { background-color: #2c2c2c; }"
-                )
-            self._apply_visualize_dock_theme(is_dark=True, has_wallpaper=has_wallpaper)
             # 执行页三面板（日志/执行/定时任务）壁纸适配
             self._apply_execute_page_theme(has_wallpaper, is_dark=True)
             # 捕虫师日志面板
@@ -2545,13 +2192,7 @@ class MainWindow(QMainWindow):
                         border-radius: 8px;
                     }
                 """)
-        # 可视化页容器：不透明背景，遮挡壁纸
-        if self._visualize_container is not None:
-            self._visualize_container.setStyleSheet(
-                "#VisualizeContainer { background-color: #e9eaee; }"
-            )
-        self._apply_visualize_dock_theme(is_dark=False, has_wallpaper=has_wallpaper)
-            # 执行页三面板（日志/执行/定时任务）壁纸适配
+        # 执行页三面板（日志/执行/定时任务）壁纸适配
         self._apply_execute_page_theme(has_wallpaper, is_dark=False)
         # 捕虫师日志面板
         self._apply_bottom_log_theme(is_dark=False, has_wallpaper=has_wallpaper)
@@ -3022,9 +2663,6 @@ class MainWindow(QMainWindow):
         # 底部状态栏保留（用户要求迷你模式下也展示）
         for _idx, (action, _icon, _name) in self._right_toolbar_pages().items():
             action.setVisible(not enabled)
-        # 应用可视化也隐藏：迷你模式窗口只有 500 宽，1180 宽的浮窗没地方放
-        if self.visual_action is not None:
-            self.visual_action.setVisible(not enabled)
 
         # 执行日志按钮同理：迷你模式只留 ADB 指令管理区，用例执行用不上它。
         # 面板若正开着要一并收起 —— 否则按钮藏了、日志还占着下半屏，关不掉。
@@ -3446,17 +3084,9 @@ class MainWindow(QMainWindow):
 
         # 左侧功能导航
         for i, action in enumerate(self.nav_actions):
-            on = (i != 2 and action.isChecked()
-                  and self.nav_indices[i] == current)
+            on = (action.isChecked() and self.nav_indices[i] == current)
             action.setIcon(qta.icon(self.nav_icons[i],
                                     color='white' if on else color))
-        # 应用可视化是 Dock 开关，选中态看 Dock 可见性
-        if len(self.nav_actions) > 2:
-            dock = getattr(self, "visualize_dock", None)
-            vis = dock is not None and dock.isVisible()
-            self.nav_actions[2].setChecked(vis)
-            self.nav_actions[2].setIcon(qta.icon(
-                self.nav_icons[2], color='white' if vis else color))
 
         # 底部面板开关（日志 / 硬件 / Crash / ANR / 消息）
         panel_on = (getattr(self, "bottom_placeholder", None) is not None
@@ -3482,12 +3112,6 @@ class MainWindow(QMainWindow):
             on = (idx == current)
             action.setChecked(on)
             action.setIcon(qta.icon(icon, color='white' if on else color))
-
-        # 应用可视化是浮窗开关，不属于「整页入口」，单独刷一次
-        if self.visual_action is not None:
-            on = (self.visualize_dock is not None and self.visualize_dock.isVisible())
-            self.visual_action.setIcon(qta.icon('fa6s.eye',
-                                             color='white' if on else color))
 
     def _render_update_icon(self, icon_name: str, available: bool, color: str = None):
         """生成带红点角标的图标；无更新时就是普通图标。color 缺省时跟随主题。"""
@@ -3815,8 +3439,7 @@ class MainWindow(QMainWindow):
     def set_visualize_page(self, visual_view):
         """挂载「应用可视化」整页到 index 2（替换占位页）。
 
-        与右栏按钮打开的 weditor 浮窗**并存**：浮窗是第三方 Web 页面，
-        本页是自研的取定位页面，两者互不影响（稳定后再决定是否下线 weditor）。
+        这是旧 weditor 浮窗下线后的唯一入口：自研页面，点画面取定位值。
         """
         # 不覆盖 objectName：VisualView 自己设了 "VisualView"，页面 QSS 靠它作用域
         #
@@ -3862,70 +3485,6 @@ class MainWindow(QMainWindow):
             callback = card.take_visual_target()
         view.set_return_target(label, callback)
         self.switch_view(2)
-
-    def set_visualize_view(self, widget):
-        if self._visualize_container is None:
-            container = QWidget()
-            container.setObjectName("VisualizeContainer")
-            # 让 QSS 的 background/border-radius 生效
-            container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-            # 可视化面板不透明，遮挡壁纸；带圆角
-            if Settings.get_theme_mode() == THEME_MODE_DARK:
-                container.setStyleSheet(
-                    "#VisualizeContainer { background-color: #2c2c2c; }"
-                )
-            else:
-                container.setStyleSheet(
-                    "#VisualizeContainer { background-color: #e9eaee; }"
-                )
-            layout = QVBoxLayout(container)
-            layout.setContentsMargins(0, 0, 0, 0)
-            self._visualize_container = container
-            self.visualize_button = QPushButton("启动 weditor")
-            self.visualize_button.setIcon(qta.icon('fa6s.eye', color='white'))
-            self.visualize_button.setStyleSheet("""
-                QPushButton {
-                    background: #1976d2;
-                    color: white;
-                    border: none;
-                    padding: 20px 40px;
-                    border-radius: 8px;
-                    font-size: 16px;
-                    font-weight: 600;
-                }
-                QPushButton:hover { background: #1565c0; }
-            """)
-            self.visualize_button.clicked.connect(self._start_weditor)
-            layout.addWidget(self.visualize_button, alignment=Qt.AlignmentFlag.AlignCenter)
-        else:
-            layout = self._visualize_container.layout()
-            while layout.count():
-                item = layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
-            layout.addWidget(widget,
-                             alignment=Qt.AlignmentFlag.AlignCenter if isinstance(widget, QPushButton) else None)
-
-        # 关键改动：把可视化 container 塞进 Dock，而不是 stacked_widget
-        if self.visualize_dock is not None:
-            dock_content = self.visualize_dock.widget()
-            if dock_content is None:
-                dock_content = QWidget()
-                dock_layout = QVBoxLayout(dock_content)
-                dock_layout.setContentsMargins(0, 0, 0, 0)
-                self.visualize_dock.setWidget(dock_content)
-            dock_layout = dock_content.layout()
-            # 清空 dock 里旧内容（但不要 deleteLater，因为 container 还要复用）
-            while dock_layout.count():
-                item = dock_layout.takeAt(0)
-                w = item.widget()
-                if w is not None:
-                    w.setParent(None)
-            dock_layout.addWidget(self._visualize_container)
-            self._visualize_container.show()
-
-        self.register_sub_view(self._visualize_container)
-        self.apply_theme()
 
     def set_execute_view_with_logs(self, execute_view, logs_view):
         execute_view.setObjectName("ExecuteView")
@@ -4424,147 +3983,6 @@ class MainWindow(QMainWindow):
             self.stacked_widget.addWidget(container)
         self.register_sub_view(knowledge_view)
         self.apply_theme()
-    # ---------- Weditor ----------
-    def set_weditor_service(self, service):
-        self.weditor_service = service
-
-    def _start_weditor(self):
-        if not self.weditor_service:
-            WarningDialog.show_warning(self, "提示", "weditor 服务未初始化")
-            return
-
-        # 避免重复启动
-        if self.thread is not None and self.thread.isRunning():
-            return
-
-        # 立即清空容器内容（去掉"启动 weditor"按钮），后续由 web_view 填充
-        if self._visualize_container is not None:
-            try:
-                layout = self._visualize_container.layout()
-                while layout.count():
-                    item = layout.takeAt(0)
-                    if item.widget():
-                        item.widget().deleteLater()
-            except RuntimeError:
-                pass
-        # 清空 Python 侧引用（避免后续误用已删除的 C++ 对象）
-        self.visualize_button = None
-
-        # 用 Toast 提示替代容器内文字（容器保持不变，等加载完成直接切换）
-        show_toast(
-            self.visualize_dock,
-            "正在启动 weditor，请稍候...",
-            duration=2500
-        )
-
-        QApplication.processEvents()
-
-        self.thread = QThread()
-        self.worker = WeditorWorker(self.weditor_service)
-        self.worker.moveToThread(self.thread)
-
-        self.worker.success.connect(self._on_weditor_success)
-        self.worker.error.connect(self._on_weditor_error)
-        self.thread.started.connect(self.worker.run)
-        self.thread.finished.connect(self.thread.deleteLater)
-        self.thread.start()
-
-    def _set_container_message(self, text, color="#888"):
-        """在可视化容器里显示一条提示文字（清空已有内容）"""
-        if self._visualize_container is None:
-            return
-        try:
-            layout = self._visualize_container.layout()
-            while layout.count():
-                item = layout.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
-            label = QLabel(text)
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setStyleSheet(
-                f"color: {color}; font-size: 14px; background: transparent;"
-            )
-            layout.addWidget(label)
-        except RuntimeError:
-            pass
-
-    # weditor 页面三栏是固定宽度（#left 500px、.middle 400px），而且 flex 子项
-    # 默认 min-width:auto 不允许收缩，窗口一窄就会撑出页面级横向滚动条。
-    # 这里注入一段样式让它按窗口宽度自适应（只改布局宽度，不动功能）。
-    # 右侧 Coding 区没有最小宽度，1180 宽时会被压到 ~270px、工具栏贴边裁切；
-    # 给它 flex-basis 280 / min 240，宽度不够时优先压缩左/中两栏。
-    _WEDITOR_FIT_CSS = (
-        "html,body{overflow-x:hidden;}"
-        "#app,#upper{max-width:100%;}"
-        "#upper>*{min-width:0;}"
-        "#left{flex:0 1 500px;min-width:220px;}"
-        "div.middle{flex:0 1 400px;min-width:180px;}"
-        "#right{flex:1 1 280px;min-width:240px;}"
-    )
-
-    def _inject_weditor_fit_css(self, web_view):
-        """往 weditor 页面注入自适应样式，避免窗口变窄时出现横向滚动条。"""
-        import json as _json
-        js = """
-        (function () {
-            var ID = 'qishi-fit-window';
-            var old = document.getElementById(ID);
-            if (old && old.parentNode) { old.parentNode.removeChild(old); }
-            var style = document.createElement('style');
-            style.id = ID;
-            style.type = 'text/css';
-            style.appendChild(document.createTextNode(%s));
-            document.head.appendChild(style);
-        })();
-        """ % _json.dumps(self._WEDITOR_FIT_CSS)
-        try:
-            web_view.page().runJavaScript(js)
-        except Exception as e:
-            print(f"[weditor] 注入自适应样式失败: {e}")
-
-    def _on_weditor_success(self, port):
-        self._cleanup_thread()
-
-        try:
-            web_view = QWebEngineView()
-            web_view.setParent(self._visualize_container)
-            web_view.hide()
-
-            def on_loaded(ok):
-                if not ok:
-                    return
-                # 页面自带样式加载完之后再注入，保证优先级
-                self._inject_weditor_fit_css(web_view)
-                try:
-                    if self._visualize_container:
-                        layout = self._visualize_container.layout()
-                        while layout.count():
-                            item = layout.takeAt(0)
-                            if item.widget():
-                                item.widget().deleteLater()
-                        web_view.setParent(self._visualize_container)
-                        layout.addWidget(web_view)
-                        web_view.show()
-                        self._visualize_container.update()
-                except RuntimeError:
-                    pass
-
-            web_view.loadFinished.connect(on_loaded)
-            web_view.load(QUrl(f"http://localhost:{port}"))
-        except Exception as e:
-            self._set_container_message(f"加载 weditor 失败: {e}", color="red")
-
-    def _on_weditor_error(self, err_msg):
-        self._cleanup_thread()
-        self._set_container_message(f"weditor 启动失败: {err_msg}", color="red")
-
-    def _cleanup_thread(self):
-        if self.thread and self.thread.isRunning():
-            self.thread.quit()
-            self.thread.wait()
-        self.thread = None
-        self.worker = None
-
     # ---------- 设备 ----------
     def set_device_service(self, service):
         self.device_service = service
@@ -4572,7 +3990,7 @@ class MainWindow(QMainWindow):
     def update_device_list(self, devices):
         # 内容没变化就不重绘：设备插拔瞬间 adb 列表会抖动，2 秒轮询 + devices_changed
         # 会连续多次调用这里，clear()+addItem 反复触发下拉框重绘，Windows 下 Qt6.11
-        # 会把关联的浮动窗口（可视化 Dock 等）短暂渲染成独立窗口闪一下。
+        # 会把关联的浮动窗口短暂渲染成独立窗口闪一下。
         if getattr(self, '_last_device_list', None) == devices:
             return
         self._last_device_list = devices
@@ -4984,7 +4402,7 @@ class MainWindow(QMainWindow):
 
         info_v.addWidget(QLabel("作者：李金钊"))
         info_v.addWidget(QLabel("技术栈：Python 3.13 · PyQt6 · uiautomator2"))
-        info_v.addWidget(QLabel("weditor · qtawesome"))
+        info_v.addWidget(QLabel("qtawesome"))
 
         info_v.addStretch()
         top.addLayout(info_v, 1)
@@ -5030,7 +4448,7 @@ class MainWindow(QMainWindow):
                 "虫师\n"
                 f"版本：V{APP_VERSION} (Build: {BUILD_DATE})\n"
                 "作者：李金钊\n"
-                "技术栈：Python 3.13 · PyQt6 · uiautomator2 · weditor · qtawesome\n"
+                "技术栈：Python 3.13 · PyQt6 · uiautomator2 · qtawesome\n"
                 "© 2026 李金钊 · 虫师团队"
             )
             QApplication.clipboard().setText(info)

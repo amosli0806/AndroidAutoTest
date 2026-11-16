@@ -12,9 +12,9 @@
 |---|---|
 | 当前版本 | **1.5.24**（预发布；公开最新稳定版 **1.5.23**）。`utils/version.py` 是唯一版本号来源 |
 | 平台 | Windows 10 / 11 x64，绿色免安装 |
-| 技术栈 | Python 3.13 + PyQt6（含 QtWebEngine）+ uiautomator2 + adb |
+| 技术栈 | Python 3.13 + PyQt6 + uiautomator2 + adb |
 | 代码规模 | 139 个 Python 文件，约 7.1 万行（views 34.1k / utils 10.2k / services 9.6k / controllers 7.1k / models 4.1k） |
-| 安装包 | zip 约 440 MB，解压后程序约 890 MB（另含 `data/` 用户数据；内置 scrcpy / tcpdump / weditor.exe，**不含 adb**） |
+| 安装包 | zip 约 440 MB（1.5.24 实测；移除 QtWebEngine / weditor 后需重新打包测量），解压后程序约 890 MB（另含 `data/` 用户数据；内置 scrcpy / tcpdump，**不含 adb**） |
 | 发布通道 | GitHub Releases：正式版走 `/releases/latest`，预发布即灰度通道（见 5.9） |
 | 许可 | MIT |
 
@@ -47,7 +47,7 @@
 
 Android 自动化测试工具链长期存在三个断层：
 
-1. **工具碎**：定位元素用 uiautomatorviewer / weditor，跑用例用 Appium / uiautomator 脚本，
+1. **工具碎**：定位元素用 uiautomatorviewer / Android Studio Layout Inspector，跑用例用 Appium / uiautomator 脚本，
    抓包用 tcpdump，看性能用 PerfDog / atrace，每个工具一套概念。
 2. **门槛高**：写脚本要懂 Python、懂 selector、懂等待策略，测试同学往往卡在「等元素」上。
 3. **车机场景缺位**：车机分辨率、朝向、系统签名、日志路径、无 root、多屏，和手机差别很大，
@@ -96,7 +96,6 @@ python main.py
 ### 2.3 打包
 
 ```bash
-pyinstaller weditor.spec --noconfirm --distpath dist_weditor   # 先打 weditor（应用可视化依赖）
 pyinstaller main.spec --noconfirm                              # -> dist/虫师/（onedir）
 pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_updater
                                                                # -> dist_updater/updater.exe（onefile，约 7 MB）
@@ -108,7 +107,7 @@ pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_up
 
 主窗口是「左栏功能导航 + 右栏整页入口 + 顶部工具栏 + 底部面板」的结构（`views/main_window.py`）。
 
-**左栏 7 个功能页**（`nav_items`，页面在 `QStackedWidget` 里，索引见 `nav_indices`）：
+**左栏 8 个功能页**（`nav_items`，页面在 `QStackedWidget` 里，索引见 `nav_indices`）：
 
 | 页面 | 职责 | 代码 |
 |---|---|---|
@@ -116,14 +115,15 @@ pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_up
 | **自动化编辑** | 项目树 + 步骤列表 + 动作卡片（三栏），支持录制与自然语言生成 | `views/project_tree_view.py` / `step_list_view.py` / `action_card_view.py` |
 | **自动化执行** | 勾选用例 → 执行 → 日志（在底部面板）→ 报告 | `views/execute_view.py` |
 | **应用元素库** | 元素集中管理 + 一键验证 + 抓取界面 + 拾取入库 | `views/element_manager_view.py` |
+| **应用可视化** | 整页看画面、点控件取六种定位值、存入元素库 / 回填卡片 | `views/visual_view.py` / `controllers/visual_controller.py` |
 | **接口自动化** | 分组/接口 + 环境变量 + 断言 + 批量执行 + 报告 | `views/api_view.py` |
 | **性能检测** | CPU/内存/FPS/流量采集 + 整机探针 + 现场留证 + 报告 | `views/perf_view.py` |
 | **语音播报** | 语音用例库 + TTS 播报 + logcat 回执验证 | `views/voice_view.py` |
 
 底部左栏有 6 个开关：硬件信息 / Crash 日志 / ANR 日志 / **执行日志** / 虫师日志（`Ctrl+L`）/ 迷你模式。
 
-**右栏 4 个入口**：消息中心（铃铛，带未读角标）、**应用可视化**（开关 weditor 浮窗，不占整页）、
-帮助中心（`F1`）、个人知识库。另有「欢迎页」（`QStackedWidget` index 6）作起始页。
+**右栏 3 个入口**：消息中心（铃铛，带未读角标）、帮助中心（`F1`）、个人知识库。
+「应用可视化」已改为左栏整页（index 2），不再占右栏。另有「欢迎页」（`QStackedWidget` index 6）作起始页。
 
 顶部工具栏：设备下拉 + 刷新 + 无线联调 + 投屏 + 安装 APK + 推送文件 + MD5 + 齿轮菜单（设置/检查更新/关于）。
 
@@ -139,7 +139,8 @@ pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_up
 
 ### 界面截图
 
-主界面 —— 左侧 7 个功能页，右侧工具栏依次是消息、应用可视化、帮助中心、个人知识库：
+主界面 —— 左侧 8 个功能页，右侧工具栏依次是消息、帮助中心、个人知识库
+（截图中的「应用可视化」眼睛入口已下线）：
 
 ![虫师主界面](docs/screenshots/01-welcome.png)
 
@@ -284,7 +285,7 @@ pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_up
 
 #### 4.1.7 从画面拾取定位（元素拾取器）✅
 
-`views/dialogs/element_pick_dialog.py` + `utils/ui_tree.py`。目标：不必再「开 weditor → 点控件 →
+`views/dialogs/element_pick_dialog.py` + `utils/ui_tree.py`。目标：不必再「开可视化工具 → 点控件 →
 复制 selector → 回卡片粘贴」。
 
 - **入口**：动作卡片定位值右侧的定位辅助按钮（准星 / 相机，见 4.1.3）；
@@ -336,7 +337,8 @@ pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_up
 
 #### 4.2.2 执行时序
 
-`controllers/execution_controller.py:ExecutionWorker.run`，跑在 `QThread` 里：
+执行逻辑在 `services/case_runner.py:CaseRunner.run`，GUI 侧由
+`controllers/execution_controller.py:ExecutionWorker` 放到 `QThread` 里跑并转发进度信号：
 
 ```
 for loop in 1..循环次数:
@@ -400,21 +402,23 @@ for loop in 1..循环次数:
 
 ---
 
-### 4.4 应用可视化（weditor）
+### 4.4 应用可视化
 
-`services/weditor_service.py`：在 `localhost:17310` 起 weditor 服务，用 `QWebEngineView` 内嵌到浮动 Dock。
-**不是独立工具**，在虫师里就能看画面 + UI 层级树 + 复制 selector。
+`views/visual_view.py` + `controllers/visual_controller.py`，入口是**左栏的「应用可视化」整页**（index 2）。
+旧版右栏 weditor 浮窗及其后端、打包产物已移除，不再保留第二套可视化入口。
 
-入口是**右栏的「应用可视化」按钮**（位于消息中心与帮助中心之间）：它是**开关**而不是「占一整页」，
-点一下弹出浮窗、再点一下收起；用户用浮窗自己的 × 关掉时按钮会自动取消选中（`visibilityChanged` 回同步）。
-迷你模式下该按钮隐藏（浮窗设计宽度 1180，迷你窗口只有 500 宽，放不下）。
-
-- 首次打开自动启动服务（端口轮询 0.2s，上限 15s），关闭 Dock 不退出进程，程序退出时清理
-- 打包版用 `_internal/tools/weditor.exe`，源码模式用 `python -m weditor`
-- 两个启动期源码补丁：修正 weditor 0.7.3 在 Python 3.13 下的 `pkg_resources` 失效问题；
-  给 ipyshell 的 `Popen` 补 `CREATE_NO_WINDOW`（否则每次查询弹黑框）
-- 进程治理：Job Object（父死子亡）+ `aboutToQuit` + `atexit` 三重兜底
-- 已知限制：weditor 的 selector 仍需手动复制；卡片里可直接用定位值旁的准星从画面拾取（见 4.1.3）
+- 点「刷新」在后台读取一次截图 + UI 层级，界面不阻塞；完成后显示读取耗时与节点数。
+  层级读取失败时仍保留画面，只是暂时不能点选定位
+- 在画面上点要定位的控件，右侧列出六种定位方式（资源 ID / 文本 / 描述 / XPath / 坐标 / 图像）；
+  点任意一行即复制，不可用的行置灰并说明原因
+- 同一位置常有多个嵌套控件，用 `↑` / `↓` 在外层与内层之间切换；滚轮缩放、按住拖动平移、
+  双击回到「适配」
+- 图像定位：点「图像」行进入框选模式，框一块区域生成模板图
+- 「存入元素库」展开内联表单，应用 / 模块 / 名称可预填；从动作卡片右键「在应用可视化中打开」
+  进入时还能「填入卡片」，把当前定位回填到原卡片
+- 命中规则、XPath 生成复用 `utils/ui_tree.py`，与元素拾取面板、录制反查共用同一份
+- 设备切换 / 断开时清空旧画面与层级，避免拿旧设备数据配新设备；**不会自动刷新**，
+  换页面后需要手动点「刷新」
 
 ---
 
@@ -694,6 +698,42 @@ for loop in 1..循环次数:
 - **快捷键**：7 组共 41 个，全部可在设置里改，留空即禁用（默认表见 `utils/settings.py:DEFAULT_SHORTCUTS`）
 - **检查更新**：启动 4 秒后后台检查（失败静默），有新版在菜单亮红点；见 5.8
 
+### 4.14 MCP 服务（本地 stdio，P0/P1）
+
+`mcp_server/` + `main.py --mcp`。这是**开发中的能力**：把 `device_service` 薄封装成 MCP 工具，
+让 Comate / Claude Desktop / Cursor / Cline 等支持本地 stdio 的客户端驱动虫师。**不监听端口、不做 HTTP**。
+
+- 启动：`python main.py --mcp`（`--mcp` 在任何 PyQt6 / views import 之前分流，stdout 只留给 MCP 协议）
+- 设备/定位：`device_list`、`screenshot`、`ui_find`、`ui_dump`
+- 操作：`tap`、`input_text`、`swipe`、`press_key`、`launch_app`
+- 等待/断言：`wait_until`、`assert`
+- 用例：`list_cases`、`run_case`、`run_case_status`、`run_case_stop`
+- `ui_find` 一次 dump、本地搜索；3 秒内复用缓存，`tap` 后自动失效
+- `run_case` 在后台线程执行，`wait=true` 最多等 `timeout_s`；超时返回 `run_id`，用
+  `run_case_status` 轮询、`run_case_stop` 停止
+- 虫师界面正在运行时（`data/gui.lock` 被占用），MCP 自动降级为只读：查询/截图/用例列表可用，
+  写操作返回 `PERMISSION_DENIED`；`run_case` 执行期间其他设备工具返回 `DEVICE_BUSY`
+- 每次调用写 `data/mcp_audit.log`（参数摘要，不落截图/完整层级）；日志写 `data/mcp.log`
+- 错误统一 `{ok:false,error:{code,message,hint}}`；错误码见 `mcp_server/schema.py`
+- 客户端配置示例（打包后把 command 换成 `虫师-mcp.exe`）：
+
+```json
+{
+  "mcpServers": {
+    "chongshi": {
+      "command": "D:\\AndroidAutoTest\\.venv\\Scripts\\python.exe",
+      "args": ["D:\\AndroidAutoTest\\main.py", "--mcp"]
+    }
+  }
+}
+```
+
+Comate 的入口在 **Context → MCP**（个人级 `~/.comate/mcp.json` / 项目级 `.comate/mcp.json`）；
+也支持 STDIO / SSE / Streamable HTTP。当前推荐项目级 `.comate/mcp.json`，格式同上；该目录已加入
+`.gitignore`，不会把本机绝对路径提交。注册后新开会话加载 `chongshi.*` 工具。
+P2（`explore_and_draft` / `save_case` / `run_suite`）尚未实现；网页端接入属于远期扩展（见
+`扩展方向.html` 第 3 章第八节），不属于本期。
+
 ---
 
 ## 5. 技术架构
@@ -705,12 +745,13 @@ main.py              入口：装配模型 / 视图 / 控制器，启动封面�
 main.spec            主程序打包配置（自绘启动封面、DPI 感知清单）
 updater.py/.spec     独立更新器（下载完成后替换文件并重启）
 release.py           发版辅助脚本（改版本号 / 打 tag / 等 CI / 转正）
+mcp_server/          本地 stdio MCP Server（P0：设备 / 截图 / 查找 / 点击 / 输入 / 滑动 / 等待 / 断言）
 models/              数据模型（项目树、步骤、元素、套件、任务、性能、语音、接口、知识库、变量…）
-views/               界面（主窗口、7 个功能页 + 右栏入口、对话框、ADB 面板、性能控件）
+views/               界面（主窗口、8 个功能页 + 右栏入口、对话框、ADB 面板、性能控件）
 controllers/         控制器（把视图事件转成模型操作与执行流程）
-services/            服务层（设备、ADB 命令池、weditor、语音、AI、抓包、更新）
+services/            服务层（设备、用例执行器 case_runner、ADB 命令池、语音、AI、抓包、更新）
 utils/               通用工具（路径、设置、主题、变量、数据驱动、图像匹配、报告、
-                      ui_tree 元素命中规则…）
+                      ui_tree 元素命中规则、gui_presence 跨平台 GUI 锁…）
 resources/           图标、帮助截图、内嵌 JS（Chart.js 等）
 tools/               内置 scrcpy / tcpdump（adb 需自行安装）
 data/                运行期数据（不进仓库）
@@ -723,7 +764,7 @@ data/                运行期数据（不进仓库）
 
 | 场景 | 实现 | 说明 |
 |---|---|---|
-| 用例执行 | `QObject` + `moveToThread(QThread)` | `ExecutionWorker`，信号回投 GUI |
+| 用例执行 | `services.case_runner.CaseRunner`（纯 Python）+ `ExecutionWorker` 适配器 | Worker 在 `QThread` 里跑，进度转成信号回投 GUI |
 | 性能采样 | `QThread`（`PerfWorker`） | 到时长自然退出 |
 | 场景化执行 | `QThread`（`ScenarioWorker`）内嵌 `ExecutionWorker` | 停止要转发中止请求 |
 | 接口批量执行 | `QThread`（`_ApiRunWorker`） | 每条完成即 emit |
@@ -840,7 +881,8 @@ data/                运行期数据（不进仓库）
 - 单实例检查在最前、早于 QApplication：`Local\ChongshiSingleInstance` 互斥量，启动时最多重试 3 秒；
   互斥量拿到后仍会枚举窗口，排除 `CabinetWClass` / `ExploreWClass`（资源管理器）并校验窗口所属 exe，
   避免把停在安装目录的资源管理器当成「虫师已在运行」。判定过程写 `%TEMP%\chongshi_single_instance.log`
-- `AA_ShareOpenGLContexts` 必须在 QApplication 之前设置，否则 QWebEngineView 首次创建会重建窗口
+- 单实例检查通过后获取 `data/gui.lock`（`utils/gui_presence.py`）：MCP 用它判断界面是否在跑；
+  拿不到锁不阻断 GUI 启动，Windows 仍有命名互斥量兜底
 - **批量装配**：`begin_batch_assembly()` / `end_batch_assembly()` 期间跳过每个视图的 `apply_theme()`
   （单次 0.3~1.5s × 十几次 = 十几秒），最后统一刷新一次（约 0.9s）
 - 主窗口等封面**完全关闭**才 `showMaximized()`（提前显示会被任务栏压住底部状态栏）
@@ -869,7 +911,7 @@ data/                运行期数据（不进仓库）
 - 安装：下载到安装目录下的 `_update_staging/`（同卷 rename 才快），用 `QProcess.startDetached` 拉起
   `updater.exe` 后主程序退出
 - `updater.py` 流程：等主进程退出（`OpenProcess` + `WaitForSingleObject`）→ 校验新版目录 →
-  停旧 adb server / weditor → 全部改名备份 `.old` → 依次搬入 → 失败按 `reversed` 逐项回滚；
+  停旧 adb server / 旧版 weditor 服务（升级清理）→ 全部改名备份 `.old` → 依次搬入 → 失败按 `reversed` 逐项回滚；
   **绝不碰 `data/`**
 - 实测：PyInstaller 构建不具确定性（PE 时间戳导致同一份代码两次构建 87% 的 4KB 块不同），
   所以补丁体积常在 **100MB 左右**（1.5.23→1.5.24 实测 105MB），真实业务改动通常只有 1~3MB
@@ -989,8 +1031,8 @@ CI（`.github/workflows/release.yml`）默认把 Release 造成**预发布**，�
 Windows 上「父进程退出，子进程还在」是常见问题，本项目排了三道：
 
 1. **Job Object**（`utils/win_job.py`）：`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，父进程崩溃/被强杀也生效
-2. `aboutToQuit` 主动停（adb 命令池先 `stop_all`，再 weditor，再设备监听）
-3. `atexit` 兜底（对 QWebEngine 不可靠，只当第三道）
+2. `aboutToQuit` 主动停（adb 命令池先 `stop_all`，再停设备监听）
+3. `atexit` 兜底（只当第三道）
 
 `Popen` 统一补 `CREATE_NO_WINDOW`，避免每次调 adb 弹黑框；`subprocess.Popen` 的补丁必须用
 **类包装**（`asyncio.windows_utils` 会 `class Popen(subprocess.Popen)` 继承它，换成函数会让 `import asyncio` 崩）。
@@ -1038,8 +1080,8 @@ Windows 上「父进程退出，子进程还在」是常见问题，本项目排
 | 接口 | JSON 取值只支持 `a.b[0].c` / `$.a.b` | 无通配、无过滤、无递归下降 |
 | 语音 | 回执验证依赖 logcat 标签，标签配错就判不出 | 需要被测应用有可识别的日志 |
 | 语音 | 唤醒确认与回执验证共用一套关键词机制 | 场景复杂时需要仔细配成功/失败词 |
-| 可视化 | weditor 是第三方包，版本升级可能破坏内嵌 | 现有两个源码补丁是版本相关的 |
-| 可视化 | weditor 里的 selector 仍需手动复制 | 卡片内可直接用准星从画面拾取（4.1.3） |
+| 可视化 | 页面不会自动刷新，换页面后需手动点「刷新」 | 适合看单个页面，不适合连续跟踪 |
+| 可视化 | 层级 dump 失败时只能看画面、框选图像，点不出语义定位 | 自绘 UI / 界面持续动画时 |
 | 工具 | 无线调试只做 `tcpip + connect`，**没有 `adb pair`** | Android 11+ 需先在系统里配对 |
 | 工具 | 弱网、磁盘 IO、部分抓包需要 root | 无 root 时置灰 |
 | 数据 | 没有数据库，全是 JSON 全量读写；`perf_data.json` 随会话累积 | 90 个会话 / 7.9MB 时保存 0.31 秒，长期不清理会越来越慢 |
@@ -1091,7 +1133,7 @@ Windows 上「父进程退出，子进程还在」是常见问题，本项目排
 **哪些功能需要 root？** 磁盘 IO、smaps 内存明细、弱网模拟、部分机型的抓包。都没有时优先用
 debug 包 + `run-as`。
 
-**为什么增量补丁也有一百多兆？** PyInstaller 构建不具确定性，`weditor.exe`、`虫师.exe`
+**为什么增量补丁也有一百多兆？** PyInstaller 构建不具确定性，`虫师.exe`、`scrcpy.exe`
 即使代码没改，每次打出来也略有差异，二进制差分压不下去。1.5.23→1.5.24 的补丁实测 105MB，
 而真实业务改动通常只有几 MB。
 
@@ -1130,7 +1172,7 @@ debug 包 + `run-as`。
 [CHANGELOG.md](CHANGELOG.md)；其中 `## 未发布` 段是下一个版本的草稿，发版时改成版本号即可。
 
 1.5.24 的改动已在本文中体现，包括：定位值旁可从设备画面拾取元素（图像方式改为截屏取图）、
-执行日志改为底部面板、应用可视化移到右栏、左右工具栏固定、性能采集剩余时间倒计时、
+执行日志改为底部面板、应用可视化改为左栏整页并移除旧 weditor 浮窗及后端、左右工具栏固定、性能采集剩余时间倒计时、
 自动堆转储开关更醒目且关闭阈值告警时置灰、自动堆转储完成不再弹提示、报告不再展示未运行的
 多进程目标、拾取加载中先显示紧凑提示并在加载后居中完整画面、设置页复选框加边框、
 移除未接线的启动耗时测试、双击标题栏还原后窗口越界的修复。

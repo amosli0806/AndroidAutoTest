@@ -5,13 +5,15 @@ import sys
 import subprocess
 import os
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 from models.step_model import Step
 from services.perf_compat import GUI_TIMEOUT, shell_text
 from utils.adb_path import get_adb_path
 from utils.settings import Settings
-from utils.theme import ThemeMode
 from utils.vars import current_values as var_values, resolve_params
+
+if TYPE_CHECKING:
+    from utils.theme import ThemeMode
 
 
 class DeviceService:
@@ -48,7 +50,7 @@ class DeviceService:
         if serial:
             self.connect(serial)
 
-    def apply_theme(self, theme_mode: ThemeMode):
+    def apply_theme(self, theme_mode: "ThemeMode"):
         """应用主题到服务（占位方法，保持接口一致性）"""
         # 设备服务不涉及界面样式，无需实际操作
         pass

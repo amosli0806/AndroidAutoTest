@@ -246,8 +246,8 @@
         <b>思源笔记 SiYuan</b>（块级引用 / 双链 / 反链面板，双链交互最好的范本）、
         <b>Trilium</b>（层级 + 属性视图）、<b>Logseq</b>（命令面板与大纲的联动）。</p>
       <div class="tip">🚫 <b>不建议整包集成</b>：AppFlowy / AFFiNE / Joplin / Outline 都要 Electron 或服务器，
-        与「绿色免安装桌面工具」的定位冲突，且安装包已经 440MB。<br>
-        ✅ <b>可嵌的组件</b>：<code>markdown-it-py</code> + <code>QWebEngineView</code>（项目已用 QWebEngine）、
+        与「绿色免安装桌面工具」的定位冲突，且安装包已经较大（1.5.24 约 440MB，移除 QtWebEngine 后会下降）。<br>
+        ✅ <b>可嵌的组件</b>：<code>markdown-it-py</code> + <code>QTextBrowser</code>（Qt 原生，不再依赖 QtWebEngine）、
         <code>highlight.js</code> / <code>mermaid</code> / <code>KaTeX</code>（离线打包即可）、
         SQLite <b>FTS5</b>（Python 标准库自带，笔记量大时再上）。</div>
       <p><b>建议起步</b>：代码块 + 一键发 ADB（0.5 天）→ 速查字段卡（0.5 天）→ <code>Ctrl+P</code> 命令面板（1 天）。
@@ -367,7 +367,7 @@
         <li><b>离线语音是 Windows 专有</b>：<code>services/voice_service.py</code> 的 <code>WindowsSapiEngine</code> 走 <code>win32com</code> + SAPI。macOS 要么接系统 <code>say</code> / <code>NSSpeechSynthesizer</code>，要么只用跨平台的 Edge 在线语音（<code>EdgeTtsEngine</code> 已实现）。<code>main.spec</code> 里登记的 <code>win32com.client</code> / <code>pythoncom</code> 也要按平台去掉。</li>
         <li><b>数据会写进 .app 里</b>：<code>utils/app_paths.py::get_app_dir()</code> 返回「exe 同级目录」。macOS 打包后 <code>sys.executable</code> 在 <code>虫师.app/Contents/MacOS/</code> 内，往那儿写 <code>data/</code> 会破坏 bundle（<code>/Applications</code> 下还可能只读，代码签名校验也会判为被篡改）。应改为 <code>~/Library/Application Support/虫师/</code>。</li>
         <li><b>日志同样会写进 .app 里</b>：<code>utils/logger.py</code> 的 <code>LOG_DIR = "logs"</code> 是<b>相对路径</b>（相对当前工作目录），<code>main.py:55</code> 的 <code>app_debug.log</code> 也是裸文件名 —— 打包后随启动方式不同会散落在 bundle 内或任意 cwd。要一并归到 <code>~/Library/Logs/虫师/</code>（或与 data 同级的 <code>~/Library/Application Support/虫师/logs/</code>）。</li>
-        <li><b>打包脚本是 Windows 形态</b>：<code>main.spec</code> 用的是 <code>EXE(manifest=…)</code>（Windows DPI 清单）、<code>icon=.ico</code>、<code>COLLECT</code> onedir。macOS 要改成 <code>BUNDLE(...)</code> + <code>.icns</code>，产物是 <code>.app</code> 目录。三个 spec（main / weditor / updater）各自都要处理。<b>好消息</b>：<code>resources/icons/app_icon.icns</code> 已经在了，图标素材不用另做；<code>main.spec</code> 里那段 <code>_MANIFEST</code>（DPI 清单）只在 Windows 有意义，macOS 分支要整个去掉，否则 PyInstaller 会报错。</li>
+        <li><b>打包脚本是 Windows 形态</b>：<code>main.spec</code> 用的是 <code>EXE(manifest=…)</code>（Windows DPI 清单）、<code>icon=.ico</code>、<code>COLLECT</code> onedir。macOS 要改成 <code>BUNDLE(...)</code> + <code>.icns</code>，产物是 <code>.app</code> 目录。两个 spec（main / updater）各自都要处理。<b>好消息</b>：<code>resources/icons/app_icon.icns</code> 已经在了，图标素材不用另做；<code>main.spec</code> 里那段 <code>_MANIFEST</code>（DPI 清单）只在 Windows 有意义，macOS 分支要整个去掉，否则 PyInstaller 会报错。</li>
       </ul>
     </div>
 
@@ -378,7 +378,7 @@
         <li><b>菜单栏托盘的平台差异不止提示语</b>：macOS 托盘在菜单栏，<code>setToolTip</code> 无效、<code>activated</code> 的 <code>Context</code> 语义与 Windows 不同（左键单击即弹菜单是常态）、没有「双击」；自绘快捷面板（<code>views/tray_controller.py</code>）需按平台调整，或干脆改用原生 QMenu。<b>注意</b>：托盘面板里的「打开输出目录」还踩了上面那条 <code>os.startfile</code> 的坑。</li>
         <li><b>系统级通知</b>：<code>controllers/notification_controller.py</code> 走 <code>QSystemTrayIcon.showMessage</code>（跨平台可用），但 macOS 的横幅通知需要用户授权、且「关闭最小化到托盘」的交互习惯不同（Mac 习惯关窗不退、由 Dock 收回），文案与默认行为都要重新考虑。</li>
         <li><b>单实例保护</b>：现在用 Windows 命名互斥体（<code>main.py::_acquire_single_instance</code>，非 win32 已直接放行）。macOS 上要换成 <code>QLocalServer</code> 或文件锁。</li>
-        <li><b>子进程「父死子亡」（weditor ＋ ADB 命令池）</b>：这条目前靠 Windows Job Object 兜底 —— 实现已抽到公共模块 <code>utils/win_job.py::bind_kill_on_close()</code>，由 <code>services/weditor_service.py</code>（应用可视化）与 <code>services/adb_command_pool.py</code>（ADB 指令）共用（v1.4.8 修「残留一堆 adb 孤儿进程」时并入）。<b>它在非 win32 直接返回 True（等于不绑）</b>，所以 macOS 上这层保护是空的：正常退出还能靠主动清理（<code>_kill_process_tree</code> / <code>stop_all</code> / atexit）收掉，但<b>被强杀或崩溃时收不住</b>（Windows 恰恰靠 Job Object 兜这两条路径）。macOS 没有等价的内核机制，只能把「进程组 + 退出时 kill」这条正常路径做扎实，或另找 launchd 之类的方案。</li>
+        <li><b>子进程「父死子亡」（ADB 命令池）</b>：这条目前靠 Windows Job Object 兜底 —— 实现已抽到公共模块 <code>utils/win_job.py::bind_kill_on_close()</code>，由 <code>services/adb_command_pool.py</code>（ADB 指令）使用（v1.4.8 修「残留一堆 adb 孤儿进程」时并入）。<b>它在非 win32 直接返回 True（等于不绑）</b>，所以 macOS 上这层保护是空的：正常退出还能靠主动清理（<code>_kill_process_tree</code> / <code>stop_all</code> / atexit）收掉，但<b>被强杀或崩溃时收不住</b>（Windows 恰恰靠 Job Object 兜这两条路径）。macOS 没有等价的内核机制，只能把「进程组 + 退出时 kill」这条正常路径做扎实，或另找 launchd 之类的方案。</li>
         <li><b>字体</b>：<code>utils/theme.py</code> 写的是 <code>'Segoe UI', 'Microsoft YaHei'</code>，日志区与报告的等宽字体是 <code>Consolas</code> —— 这些在 macOS 上都不存在。中文会由系统挑 CJK 回退、不至于乱码，但等宽字体要补 <code>Menlo</code> / <code>SF Mono</code>。<code>views/splash_window.py</code> 的 <code>QFont('Microsoft YaHei')</code>、<code>utils/perf_report.py</code> 与 <code>views/help_view.py</code> 的 HTML 字体同理（<code>utils/api_report.py</code> 已经带了 <code>PingFang SC</code>，可照抄）。</li>
         <li><b>内置工具是 Windows 二进制</b>：<code>tools/</code> 下的 <code>scrcpy.exe</code> 与一堆 dll（<code>SDL2.dll</code>／<code>avcodec-61.dll</code>／<code>libusb-1.0.dll</code> 等）只能在 Windows 用，macOS 要换 mac 版 scrcpy（建议改走 <code>brew install scrcpy</code>，同时把 <code>tools/</code> 的 Windows 文件从 mac 包里排除）。（<code>tools/take_help_screenshots.py</code>、<code>import_*.py</code> 是开发脚本，不随包发布，可不管。）<code>utils/adb_path.py</code> 已按平台返回 <code>adb</code> / <code>adb.exe</code>，但 macOS 上得让用户 <code>brew install android-platform-tools</code>，帮助中心的安装指引（<code>views/help_view.py</code>「环境准备 → 安装 adb」）整段是 Windows 截图 + <code>D:\platform-tools</code> + 环境变量操作，需要一套 mac 版文案与截图。</li>
         <li><b>「打开所在文件夹」有四处是坏的</b>：<code>controllers/notification_controller.py</code>、<code>controllers/execution_controller.py</code>、<code>controllers/api_controller.py</code> 用的是 <code>os.name == 'nt' → os.startfile，否则 xdg-open</code>，而 macOS 上没有 <code>xdg-open</code>，点了会静默失败；<code>views/tray_controller.py::_open_output_dir</code>（托盘面板「打开输出目录」）更彻底 —— <b>直接 <code>os.startfile(p)</code>，连平台判断都没有</b>，macOS 上会抛 <code>AttributeError</code>。四处都应统一成 win32 / darwin / else 三分支 —— <code>controllers/perf_controller.py</code> 里已经是正确写法（<code>os.startfile</code> / <code>open</code> / <code>xdg-open</code>），照抄即可。</li>
@@ -394,7 +394,7 @@
         <li><code>utils/adb_path.py</code>：<code>adb</code> / <code>adb.exe</code>、<code>scrcpy</code> / <code>scrcpy.exe</code> 已按平台取名。</li>
         <li><code>utils/wireless_manager.py</code>：ping 次数参数 <code>-n</code>（Windows）/ <code>-c</code>（其他）。</li>
         <li><code>services/adb_command_pool.py</code> 的 <code>_kill_process_tree()</code>：Windows 走 <code>taskkill /PID /T /F</code>；<b>POSIX 走 <code>os.killpg(os.getpgid(pid), SIGTERM→SIGKILL)</code></b>（配 <code>preexec_fn=os.setsid</code> 让子进程自成一个进程组），两处都套了 <code>try/except</code> —— macOS 可用。</li>
-        <li><code>utils/win_dark_title.py</code>、<code>utils/win_job.py::bind_kill_on_close</code>（<code>weditor_service._bind_kill_on_close</code> 只是它的薄包装）、<code>main._acquire_single_instance</code>：都有非 win32 早退。</li>
+        <li><code>utils/win_dark_title.py</code>、<code>utils/win_job.py::bind_kill_on_close</code>、<code>main._acquire_single_instance</code>：都有非 win32 早退。</li>
         <li><code>main.py</code> 的 <code>_PopenNoConsole</code>（给子进程补 <code>CREATE_NO_WINDOW</code> 防黑窗）整段包在 <code>if sys.platform == 'win32'</code> 里，非 Windows 直接跳过 —— 正确（macOS 没有黑窗问题）。<code>updater.py</code> 是例外，见上面「能跑但行为不对」。</li>
         <li><code>services/voice_service.py</code> 的 <code>EdgeTtsEngine</code>（edge-tts 在线语音）本身跨平台，<code>miniaudio</code> 也支持 macOS —— 只要绕开 <code>WindowsSapiEngine</code>，语音播报主线可用。</li>
         <li><b>2026-10-17 新增的模块同样跨平台</b>：<code>utils/vars.py</code>（变量替换）、<code>utils/test_data.py</code>（CSV / XLSX 数据驱动）、<code>models/var_model.py</code>、<code>utils/no_context_menu.py</code>（纯 Qt 事件过滤）、<code>utils/image_match.py</code>（OpenCV 模板匹配，<code>opencv-python-headless</code> 三平台通用）—— 都是纯 Python / 跨平台库，没有 Windows 专属调用；只需在 mac 上照常 <code>pip install opencv-python-headless</code>。</li>
@@ -418,7 +418,7 @@
       <h3>五、本次复核补充（2026-10-14 二次核查）</h3>
       <p class="small" style="margin-top:0">又按代码逐处扫了一遍，以下是<b>前四节没提到</b>的新发现。</p>
       <ul>
-        <li><b>QtWebEngine 是 macOS 上最大的一个坑</b>：「应用可视化」内嵌的 weditor 用 <code>QWebEngineView</code>（<code>services/weditor_service.py</code>、<code>views/main_window.py</code>）。macOS 上它要求 ① 必须是真正的 <code>.app</code>（裸可执行文件起不来）；② PyInstaller 要带上 <code>QtWebEngineProcess</code> helper 并传 <code>--osx-bundle-identifier</code>；③ 一旦启用强化运行时／公证，必须加 <code>com.apple.security.cs.allow-jit</code> 与 <code>com.apple.security.cs.allow-unsigned-executable-memory</code>（Chromium 要 JIT），加载 <code>http://localhost</code> 页面还要 <code>com.apple.security.network.client</code>；④ 体积会明显变大（约 +200MB）。<b>好消息</b>：<code>main.py</code> 已在建 <code>QApplication</code> 之前设好 <code>AA_ShareOpenGLContexts</code>，macOS 同样必须有，这点不用改。</li>
+        <li><b>QtWebEngine 的坑已消失</b>：「应用可视化」已改为自研整页（<code>views/visual_view.py</code>），旧 weditor 浮窗、<code>services/weditor_service.py</code>、<code>weditor.spec</code> 与 QtWebEngine 依赖已移除。macOS 不再需要处理 <code>QtWebEngineProcess</code>、JIT 权限与 <code>AA_ShareOpenGLContexts</code>，包体也会明显变小。</li>
         <li><b>图标还有一处是 .ico</b>：<code>main.py</code> 的 <code>app.setWindowIcon()</code> 与 <code>views/tray_controller.py</code> 都读 <code>resources/icons/app_icon.ico</code>。Dock 图标由 <code>.app</code> 里的 <code>.icns</code> 决定（打包时设好即可），但<b>菜单栏托盘图标需要「模板图」</b>（单色 + <code>setIsMask(True)</code>）才能在浅色 / 深色菜单栏下都清晰；直接用彩色 .ico 会发糊，深色菜单栏下甚至看不清。</li>
         <li><b>离线语音还有一层注册表依赖</b>：除 <code>WindowsSapiEngine</code> 走 <code>win32com</code> 外，<code>services/voice_service.py</code> 还用 <code>HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech\AudioOutput</code> 枚举音频输出设备；<code>data/voice_data.json</code> 里也存着 <code>HKEY_LOCAL_MACHINE\...\TTS_MS_ZH-CN_HUIHUI</code> 这类 Windows voice_id。macOS 上这块要整段换掉（走系统默认输出，或改接 <code>say</code> / <code>NSSpeechSynthesizer</code>）。</li>
         <li><b>字体又漏了两处新页面</b>：<code>views/easter_egg.py</code>（彩蛋，3 处 <code>Microsoft YaHei</code>）与 <code>views/knowledge_view.py</code>（个人知识库代码块，<code>Consolas, "Microsoft YaHei"</code>）—— 都是 10-11 之后新增的，前文的字体清单没覆盖到。</li>
@@ -431,14 +431,14 @@
       </ul>
     </div>
 
-    <div class="tip">⚠ <b>工作量估计</b>：只求跑通「连车机 + 自动化执行 + 性能检测」这条主线，主要是 ① 拆依赖 ② 数据目录改到 <code>~/Library</code>（含日志） ③ 改 <code>main.spec</code> 出 <code>.app</code> ④ 修四处「打开文件夹」 ⑤ 补字体回退，属小到中等改动；若连「自动更新 + 系统托盘 + 离线语音」也一并搬，则要大改 —— 这三块本质上依赖 Windows。<b>另外注意</b>：只要还想要「应用可视化 / weditor」，QtWebEngine 的打包 + 签名这条链就绕不开（第五节第一条）。</div>
+    <div class="tip">⚠ <b>工作量估计</b>：只求跑通「连车机 + 自动化执行 + 性能检测」这条主线，主要是 ① 拆依赖 ② 数据目录改到 <code>~/Library</code>（含日志） ③ 改 <code>main.spec</code> 出 <code>.app</code> ④ 修四处「打开文件夹」 ⑤ 补字体回退，属小到中等改动；若连「自动更新 + 系统托盘 + 离线语音」也一并搬，则要大改 —— 这三块本质上依赖 Windows。旧 weditor / QtWebEngine 已移除，不再有这条额外的打包与签名负担。</div>
 
     <div class="example">💡 <b>打个比方：</b>这就像把一间按自家户型装修好的房子搬到另一栋楼 —— 家具（Qt 界面、adb / uiautomator2 那套逻辑）都能直接用，但门框尺寸（打包成 <code>.app</code>）、水电接口（路径规范）、门锁（签名 / 公证）都不一样；至于「自动更新」，它更像埋在墙里的暗线，到新楼只能整条重走。</div>
   </section>
 
   <!-- ============ 三、MCP 服务：把虫师变成智能体的执行层 ============ -->
   <section class="chapter" id="s3">
-    <h2><span class="num">3</span>MCP 服务：把虫师变成智能体的执行层 <span class="tag plan">📋 2026-11-15 方案 · 未开始</span></h2>
+    <h2><span class="num">3</span>MCP 服务：把虫师变成智能体的执行层 <span class="tag plan">📋 阶段 0-4 已真机验证 · P2 待做</span></h2>
     <p class="small" style="margin-top:0">
       起因：2026-11-12 百度世界主题是「智能组织」——打破岗位边界、沉淀隐性知识、设计流程闭环，
       公式「可衡量 + Looping = 持续进化」；同场百度搭子开放了 Harness 引擎与 Agent API，
@@ -489,8 +489,8 @@
       <table>
         <tr><th style="width:24%">类型</th><th style="width:46%">代表</th><th>怎么接</th></tr>
         <tr><td><b>原生支持 MCP</b></td>
-            <td>Claude Desktop / Claude Code、Cursor、VS Code（Copilot Chat）、Windsurf、Zed、Cline、Continue、Trae、Cherry Studio、Qoder、Codex</td>
-            <td>同一段 JSON 配置，只改可执行文件路径</td></tr>
+            <td><b>Comate（优先目标）</b>、Claude Desktop / Claude Code、Cursor、VS Code（Copilot Chat）、Windsurf、Zed、Cline、Continue、Trae、Cherry Studio、Qoder、Codex</td>
+            <td>同一段 JSON 配置，只改可执行文件路径；Comate 走 Context → MCP 注册本地 stdio（具体入口见 MCP 文档）</td></tr>
         <tr><td><b>国内平台</b></td>
             <td>阿里百炼 / 魔搭 MCP 广场、百度智能云 MCP World / 千帆 MCP 广场、腾讯云 AI 套件 / 元器、字节扣子 / 火山 AIbase</td>
             <td>多数支持导入自定义 MCP Server，入口在平台设置里；少数只认自家插件体系，需单独适配</td></tr>
@@ -500,6 +500,11 @@
       </table>
       <p class="small">注：百度「搭子」在 2026-11 大会上开放的是 Harness 引擎与 Agent API，那是它自己的接入方式，
         <b>不等于支持 MCP</b>；百度侧确切的 MCP 入口是智能云 MCP World / 千帆 MCP 广场。</p>
+      <p class="small"><b>本项目接入优先级</b>：优先在 Comate 的 Context → MCP 里把
+        <code>虫师-mcp.exe</code> 注册为本地 stdio server；注册后 Comate 会话可直接加载
+        <code>chongshi.*</code> 工具。DeepSeek / Claude 网页端不能启动本机进程，不能直连 stdio；
+        如确需网页端，必须另做「stdio ↔ 本地 bridge ↔ 公网 relay」桥接与安全评审，
+        本期不做，远期可选方案见第八节。</p>
       <div class="tip">⚠ <b>接入前必须确认的两件事</b><br>
         ① <b>对方是否支持本地 stdio</b>——部分平台只开放远程 <code>streamable-http</code>，不接受本地进程启动。
         虫师连的是 USB 设备，只能在本机跑；遇到只认 HTTP 的平台，就得自己加一层
@@ -626,37 +631,78 @@
     </div>
 
     <div class="card">
-      <h3>六、实施计划与工作量</h3>
+      <h3>六、实施节奏与任务（已定稿）</h3>
+      <p><b>原则</b>：质量优先、一步一步；每阶段可独立提交、独立回滚。GUI 共存采用
+        <b>跨平台文件锁</b>（方案 B：<code>data/gui.lock</code> + <code>gui.info.json</code>），
+        Windows 命名互斥量暂时保留做单实例兜底；<code>run_case</code> 先抽
+        <code>CaseRunner</code> 纯执行器，不直接复用 Qt Worker。目标客户端优先
+        <b>Comate</b>，同时兼容 Claude Desktop / Cursor / Cline。</p>
       <table>
-        <tr><th style="width:14%">阶段</th><th style="width:16%">工作量</th><th>内容</th></tr>
-        <tr><td><b>P0</b></td><td>1 ~ 1.5 天</td><td>
-          <code>mcp_server/</code>（server + 8 个 P0 工具）＋ <code>main.py --mcp</code> 分支；
-          本地用 Claude Desktop / Cline 连上跑通「打开地图 → 找到播放 → 点击 → 断言」
+        <tr><th style="width:16%">阶段</th><th style="width:12%">工作量</th><th style="width:10%">依赖</th><th>内容与验收</th></tr>
+        <tr><td><b>0 冻结接口</b> ✅</td><td>0.5 天</td><td>—</td><td>
+          <code>run_cases</code> 签名、<code>CaseResult/StepResult</code>、
+          <code>GuiPresence.acquire/probe</code>、统一错误码；长任务 progress vs
+          <code>start/status</code> 策略先定死
         </td></tr>
-        <tr><td><b>P1</b></td><td>2 天</td><td>
-          <code>ui_dump</code> 的 summary 模式、<code>run_case</code> / <code>list_cases</code>、
-          错误码与 hint 打磨、审计日志、GUI 共存互斥
+        <tr><td><b>1 抽 CaseRunner</b> ✅</td><td>1 ~ 1.5 天</td><td>0</td><td>
+          <code>services/case_runner.py</code>；<code>ExecutionWorker</code> 变薄适配器；
+          GUI 日志 / 统计 / 重试 / 数据驱动行为不变；<code>case_runner</code> 不 import
+          <code>views</code>、不依赖 QApplication
         </td></tr>
-        <tr><td><b>P2</b></td><td>2 ~ 3 天</td><td>
-          <code>explore_and_draft</code> → <code>save_case</code> 的用例生成闭环（含定位校验）、
-          <code>run_suite</code> 聚合结果、帮助中心教程
+        <tr><td><b>2 GUI presence lock</b> ✅</td><td>0.5 ~ 1 天</td><td>0</td><td>
+          <code>data/gui.lock</code> + <code>gui.info.json</code>；Windows
+          <code>msvcrt</code> / POSIX <code>fcntl</code>；GUI 持有锁、MCP 每次工具调用前探测；
+          <code>--mcp</code> 不抢锁；文件存在 ≠ 在运行，只有锁被占用才算
+        </td></tr>
+        <tr><td><b>3 MCP P0</b> ✅</td><td>1 ~ 1.5 天</td><td>2</td><td>
+          <code>mcp_server/</code> + 独立无控制台入口；8 个 P0 工具；dump 缓存、错误码、
+          审计、GUI 只读保护；已用 Comate 连接真实设备验证
+        </td></tr>
+        <tr><td><b>4 MCP P1</b> ✅</td><td>2 天</td><td>1 + 2</td><td>
+          <code>ui_dump</code> / <code>press_key</code> / <code>launch_app</code> /
+          <code>list_cases</code> / <code>run_case</code>；<code>run_case</code> 走
+          <code>CaseRunner + asyncio.to_thread</code>；取消、结构化结果、长任务策略
+        </td></tr>
+        <tr><td><b>5 P2 + 交付</b></td><td>2 ~ 3 天</td><td>4</td><td>
+          <code>explore_and_draft</code> / <code>save_case</code> / <code>run_suite</code>；
+          帮助中心与 README 配置示例；打包 <code>虫师-mcp.exe</code>（无控制台）；
+          macOS 条件依赖预留
         </td></tr>
       </table>
+      <p class="small"><b>当前进度</b>：阶段 0-4 已完成，并在真实设备上验证通过：
+        Comate 项目级 <code>.comate/mcp.json</code> 注册成功；P0/P1 工具（
+        <code>device_list</code> / <code>screenshot</code> / <code>ui_find</code> /
+        <code>tap</code> / <code>press_key</code> / <code>assert</code> /
+        <code>wait_until</code> / <code>ui_dump</code> / <code>list_cases</code>）已实测；
+        <code>run_case</code> 跑通「MCP验证：搜索页往返」6 步全绿（约 8.25 秒）；
+        <code>run_case_status</code> / <code>run_case_stop</code> 的自锁死已修复并验证。
+        GUI 与 MCP 可共存，GUI 开着时 MCP 自动只读；写操作和 <code>run_case</code>
+        需退出虫师界面。阶段 5 待开工。</p>
+      <p class="small">阶段 1 与 2 可并行；阶段 3 必须等 2；阶段 4 必须等 1 + 2。
+        预计总量 7 ~ 9 天（含 CaseRunner 与 GUI lock 的重构成本）。</p>
       <p><b>涉及文件（预计）</b>：</p>
       <ul>
+        <li><code>services/case_runner.py</code>：纯执行器（循环 / 重试 / 数据驱动 / 失败上下文），
+          GUI 与 MCP 共用</li>
+        <li><code>utils/gui_presence.py</code>：跨平台文件锁 + 元数据探测，
+          Windows <code>msvcrt</code> / POSIX <code>fcntl</code></li>
         <li><code>mcp_server/__init__.py</code>、<code>server.py</code>（协议与注册）、
           <code>tools.py</code>（薄封装 <code>device_service</code>，不复制业务逻辑）、
-          <code>schema.py</code>（入参校验与返回结构）</li>
-        <li><code>main.py</code>：加 <code>--mcp</code> 启动分支（不建 QApplication，直接跑 server）</li>
+          <code>schema.py</code>（入参校验与返回结构）、<code>gui_guard.py</code>、
+          <code>audit.py</code>、<code>logging_setup.py</code></li>
+        <li><code>main.py</code>：加 <code>--mcp</code> 启动分支（在任何 PyQt6 / views import
+          之前分流，不建 QApplication，直接跑 server）</li>
         <li><code>requirements.txt</code>：加官方 <code>mcp</code> SDK（纯 Python，无平台依赖）；
           <b>写死版本</b>（<code>mcp==x.y.z</code>），原因见第二章的「接入前必须确认的两件事」</li>
-        <li><code>views/help_view.py</code>：新增一节「在 Claude / 搭子里连虫师」的配置示例</li>
+        <li><code>views/help_view.py</code>：新增一节「在 Comate / Claude / Cline 里连虫师」的配置示例</li>
         <li><code>README.md</code>：一段 JSON 配置样例（客户端侧 <code>mcpServers</code>）</li>
       </ul>
-      <div class="tip">⚠ <b>两个前置依赖</b>：① <code>device_service</code> 现在是同步阻塞的，
+      <div class="tip">⚠ <b>三个前置依赖</b>：① <code>device_service</code> 现在是同步阻塞的，
         MCP 用 asyncio，包一层 <code>asyncio.to_thread</code> 即可（别改成 async 大改）；
         ② 打包版要用 stdio 起 server，<b>不能在 exe 里弹控制台窗口</b>，得沿用
-        <code>_PopenNoConsole</code> 那套思路或单独出一个 <code>虫师-mcp.exe</code>。</div>
+        <code>_PopenNoConsole</code> 那套思路或单独出一个 <code>虫师-mcp.exe</code>；
+        ③ <code>--mcp</code> 必须在任何 PyQt6 / views import 之前分流，并把 stdout 留给协议、
+        stderr/logging 指向 <code>data/mcp.log</code>。</div>
       <p><b>客户端侧配置示例</b>（Claude Desktop / Cursor / Cline / Cherry Studio 通用，改路径即可）：</p>
       <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">{
   "mcpServers": {
@@ -692,9 +738,63 @@
         他会对着同一个按钮连点八次然后说「它没反应」。</div>
     </div>
 
+    <div class="card">
+      <h3>八、远期扩展：网页端使用虫师（可选，非本期）</h3>
+      <p><b>为什么单独放远期</b>：DeepSeek / Claude 网页版本身不能启动你本机的进程，
+        也就不能直接连本地 <code>stdio</code> 的 MCP Server。想让网页端用虫师，必须多一层
+        「本机 bridge + 公网中继」；这不是 MCP P0~P2 的一部分，也不应该为了它牺牲当前
+        「只走本机 stdio」的安全边界。</p>
+      <p><b>两条可行路线</b>：</p>
+      <table>
+        <tr><th style="width:28%">路线</th><th style="width:32%">形态</th><th>限制</th></tr>
+        <tr><td><b>A. 虫师本地 Web 控制台</b></td>
+            <td>虫师起一个只监听 <code>127.0.0.1</code> 的页面，用户用浏览器打开</td>
+            <td>最安全，不经过公网；但这不是「DeepSeek 网页端直接调用」，只是浏览器里的虫师</td></tr>
+        <tr><td><b>B. 公网中继 + 本机 outbound bridge</b></td>
+            <td>本机 bridge 主动连公网 relay；DeepSeek / Claude 网页通过 connector / 自定义工具接 relay</td>
+            <td>需要平台支持自定义 MCP / 工具接入；需要部署 relay、TLS、账号与安全评审</td></tr>
+      </table>
+      <p><b>如果做 B，推荐架构</b>（本机永不开放入站端口）：</p>
+      <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">DeepSeek / Claude Web
+        │ HTTPS / WSS
+        ▼
+   Relay（公网，TLS + 鉴权 + 审计）
+        ▲ 本机主动 outbound WSS
+   Local Bridge（虫师进程）
+        │ stdio
+   MCP Server → device_service → USB 设备</pre>
+      <p><b>安全门槛（缺一不做）</b>：</p>
+      <ul>
+        <li><b>一次性配对</b>：虫师生成短时有效的配对码 / 二维码，用户在网页端输入并确认设备与权限范围；
+          配对码用一次即失效，不能长期复用。</li>
+        <li><b>本机 outbound</b>：bridge 只主动连 relay，不监听公网端口、不开放局域网；
+          relay 断开即停止接受指令。</li>
+        <li><b>最小权限</b>：默认只读（<code>device_list</code> / <code>screenshot</code> /
+          <code>ui_find</code>）；点击、输入、<code>run_case</code> 等写操作必须由用户逐次或按会话授权，
+          危险动作仍然拒绝。</li>
+        <li><b>审计与限流</b>：每次调用记录「哪个用户 / 哪个会话 / 工具 / 参数摘要 / 耗时 / 结果」；
+          单会话限频、限时，用户可随时在虫师里一键断开。</li>
+        <li><b>数据最小化</b>：截图、层级、日志可能包含客户包名、VIN、手机号等敏感信息；
+          默认只回传必要片段，截图 / 文本先做遮罩或让用户预览，不把整份 dump 直接发给网页模型。</li>
+        <li><b>不做多租户共享</b>：一个配对码只绑定一个用户 / 一台设备；不做公共池、不做共享账号。</li>
+      </ul>
+      <p><b>建议实施顺序（等 MCP P2 稳定后再评估）</b>：</p>
+      <table>
+        <tr><th style="width:42%">步骤</th><th style="width:14%">工作量</th><th>说明</th></tr>
+        <tr><td>A. 本地 Web 控制台（127.0.0.1）</td><td>2 ~ 3 天</td><td>验证网页交互与工具调用的最小闭环，不碰公网</td></tr>
+        <tr><td>B. Local Bridge + 配对码</td><td>3 ~ 5 天</td><td>outbound WSS、一次性配对、断线即停、GUI 只读保护</td></tr>
+        <tr><td>C. Relay + 鉴权 / 审计 / 限流</td><td>3 ~ 5 天</td><td>部署公网 relay、TLS、用户会话、审计落库</td></tr>
+        <tr><td>D. 网页端 connector / 控制台打磨</td><td>2 ~ 4 天</td><td>取决于目标平台是否支持自定义 MCP / 工具接入</td></tr>
+      </table>
+      <div class="tip">⚠ <b>决策门槛</b>：先确认 DeepSeek / Claude 网页端是否支持「自定义 MCP / 工具 connector」。
+        如果不支持，B 路线只能退化成「虫师自己的本地 Web 控制台」（A），不能承诺在 DeepSeek 聊天框里直接控制虫师。
+        另外，公网 relay 涉及数据出境、客户隐私与合规评审，必须单独走安全评估，不能作为 MCP 的顺手功能上线。</div>
+    </div>
+
     <div class="tip">🚫 <b>明确不做</b>：① 不自研 Agent 框架 / 不做模型微调（差异化在执行层，不在模型层）；
       ② 不做通用 RPA（Android + 车机语音这条线已经够深，摊薄到 PC/Web 会同时失去深度和场景）；
-      ③ 不把 MCP 做成「远程控制」（涉及安全与合规，且与「绿色免安装桌面工具」定位冲突）。</div>
+      ③ 不做<b>无授权</b>的远程控制 / 局域网开放；网页端接入作为远期可选（见第八节），
+      必须走本机 outbound 中继 + 一次性配对 + 显式授权 + 审计，并单独做安全评审。</div>
   </section>
 
   <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-15 · v1.5.24</footer>

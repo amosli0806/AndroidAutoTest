@@ -510,25 +510,6 @@ class HelpView(QFrame):
                     <li>车机会话一次要 8~12 秒，期间显示已用时间，界面不会卡住；</li>
                     <li>首次进入不会自动读取，点「刷新」才会取画面。</li>
                 </ul>
-                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 右侧工具栏的眼睛按钮仍然打开 weditor 浮窗，两者并存。
-                </div>
-                """,
-                "使用 weditor": f"""
-                <h2 style="font-size: 20px; border-bottom: 2px solid; padding-bottom: 6px;">👁️ 应用可视化 (weditor)</h2>
-                <p style="font-size: 15px;">
-                    利用 <code>weditor</code> 直接在电脑上查看 Android 设备的 UI 层级结构，快速定位元素。
-                </p>
-                {self._get_steps_html([
-                    {'image': 'weditor_1_connect.png', 'desc': '设备连接并开启调试模式'},
-                    {'image': 'weditor_2_launch.png', 'desc': '点右侧工具栏的「应用可视化」按钮，在浮窗里点「启动 weditor」'},
-                    {'image': 'weditor_3_view_ui.png', 'desc': '界面嵌入显示设备截图和 UI 树'},
-                    {'image': 'weditor_4_select_element.png', 'desc': '点击 UI 树节点，右侧高亮控件并显示属性'},
-                    {'image': 'weditor_5_copy_selector.png', 'desc': '复制资源ID或 XPath 到动作卡片中快速生成步骤'},
-                ])}
-                <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
-                    💡 首次启动需要下载依赖，请耐心等待。
-                </div>
                 """
             },
 

@@ -192,7 +192,7 @@ def main(argv=None) -> int:
     ap.add_argument("--exclude", action="append", default=[],
                     metavar="相对路径",
                     help="不进 payload 的文件（仍在清单里、客户端复用旧安装并按清单校验），"
-                         "可多次，如 _internal/tools/weditor.exe")
+                         "可多次，如 _internal/tools/scrcpy.exe")
     ap.add_argument("--max-ratio", type=float, default=0.6,
                     help="payload 占全量的比例上限，超过则判定不值得发（默认 0.6）")
     args = ap.parse_args(argv)

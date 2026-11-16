@@ -17,7 +17,7 @@ a = Analysis(
     excludes=[
         'PyQt6', 'PySide6', 'PySide2',
         'pyecharts', 'pyqtgraph', 'numpy', 'matplotlib',
-        'lxml', 'openpyxl', 'uiautomator2', 'adbutils', 'weditor',
+        'lxml', 'openpyxl', 'uiautomator2', 'adbutils',
         'tkinter', 'unittest', 'pydoc', 'email', 'http',
     ],
     win_no_prefer_redirects=False,

@@ -1,11 +1,10 @@
 # controllers/execution_controller.py
 import os
-import re
-import time
+import threading
 from datetime import datetime
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
-from models.execution_model import ExecutionModel, FailureContext
+from models.execution_model import ExecutionModel
 from models.project_model import ProjectModel
 from models.step_model import StepModel
 from utils.dialogs import ErrorDialog
@@ -13,14 +12,18 @@ from utils.app_paths import open_containing_folder
 from utils.toast import show_toast
 from views.execute_view import ExecuteView
 from views.logs_view import LogsView
+from services.case_runner import CaseRunner
 from services.device_service import DeviceService
 from utils.report_generator import ReportGenerator
-from utils.test_data import read_file
-from utils.vars import set_row_values, clear_row_values
 from utils.theme import ThemeMode
 
 
 class ExecutionWorker(QObject):
+    """Qt 适配器：把 CaseRunner 的进度回调转成信号。
+
+    真正的循环 / 重试 / 数据驱动逻辑在 services/case_runner.py，
+    MCP 侧直接调 CaseRunner，不再经过 QObject。
+    """
     progress = pyqtSignal(str, str)
     finished = pyqtSignal()
 
@@ -35,260 +38,37 @@ class ExecutionWorker(QObject):
         self.exec_model = exec_model
         self.loop_count = loop_count
         self.stop_on_fail = stop_on_fail
-        self.retry_count = max(0, int(retry_count or 0))
-        self.retry_delay = max(0, int(retry_delay or 0))
-        self.retry_only_timeout = bool(retry_only_timeout)
-        self._abort = False
-        # 区分「用户点了停止」和「失败停止标志触发」：收尾时只给前者打一条停止日志
-        self._aborted_by_user = False
+        self.retry_count = retry_count
+        self.retry_delay = retry_delay
+        self.retry_only_timeout = retry_only_timeout
+        self._abort_event = threading.Event()
+        self.results = None
 
     def request_abort(self):
-        """请求中止本轮执行。
-
-        跨线程只置一个 bool（CPython 下赋值是原子的），不碰任何界面对象；
-        worker 在每个用例、每个步骤开始前检查它，所以会在**当前步骤跑完后**停下 ——
-        一个带超时的步骤（比如等元素）最长要等它自己超时结束。
-        """
-        self._aborted_by_user = True
-        self._abort = True
-
-    def _format_error(self, e):
-        # 如果是 DeviceService 抛出的友好错误（RuntimeError），直接返回其消息
-        if isinstance(e, RuntimeError):
-            return str(e)
-
-        error_str = str(e)
-        # 原有解析逻辑
-        if hasattr(e, 'args') and len(e.args) > 0:
-            arg = e.args[0]
-            if isinstance(arg, tuple) and len(arg) >= 3:
-                loc_dict = arg[2]
-                if isinstance(loc_dict, dict):
-                    conditions = []
-                    if 'text' in loc_dict and loc_dict['text']:
-                        conditions.append(f"文本='{loc_dict['text']}'")
-                    if 'resourceId' in loc_dict and loc_dict['resourceId']:
-                        conditions.append(f"资源ID='{loc_dict['resourceId']}'")
-                    if 'description' in loc_dict and loc_dict['description']:
-                        conditions.append(f"描述='{loc_dict['description']}'")
-                    if 'className' in loc_dict and loc_dict['className']:
-                        conditions.append(f"类名='{loc_dict['className']}'")
-                    if 'xpath' in loc_dict and loc_dict['xpath']:
-                        conditions.append(f"XPath='{loc_dict['xpath']}'")
-                    if 'textContains' in loc_dict and loc_dict['textContains']:
-                        conditions.append(f"文本包含='{loc_dict['textContains']}'")
-                    if conditions:
-                        condition_str = '，'.join(conditions)
-                        return f"未找到元素：{condition_str}"
-            elif isinstance(arg, dict):
-                data = arg.get('data', '')
-                method = arg.get('method', '')
-                if data:
-                    if 'timeout' in str(arg).lower() or 'wait' in str(arg).lower():
-                        return f"等待超时，未找到元素：{data}"
-                    else:
-                        return f"操作失败：{data}"
-                elif method:
-                    return f"{method} 操作失败"
-        selector_match = re.search(r"Selector\s*\[([^\]]*)\]", error_str)
-        if selector_match:
-            selector_text = selector_match.group(0)
-            if 'timeout' in error_str.lower() or 'wait' in error_str.lower():
-                return f"等待超时，未找到元素：{selector_text}"
-            else:
-                return f"未找到元素：{selector_text}"
-        if 'timeout' in error_str.lower():
-            return f"等待超时：{error_str}"
-        elif 'not found' in error_str.lower() or 'no such element' in error_str.lower():
-            return f"未找到元素：{error_str}"
-        else:
-            return error_str
+        """请求中止本轮执行；runner 在每个用例/步骤边界检查这个 Event。"""
+        self._abort_event.set()
 
     def run(self):
-        total_loops = self.loop_count
-        for loop_idx in range(total_loops):
-            if self._abort:
-                break
-            if loop_idx > 0:
-                self.progress.emit(f"--- 第 {loop_idx + 1} 轮执行 ---", "info")
-            for idx, case_id in enumerate(self.case_ids):
-                if self._abort:
-                    break
-                case_node = self.project_model.get_node_by_id(case_id)
-                case_name = case_node.name if case_node else f"用例{case_id}"
-                self.progress.emit(
-                    f"▶ [{idx + 1}/{len(self.case_ids)}] 用例 \"{case_name}\" 开始执行", "info")
-
-                # 数据驱动：用例绑了数据文件时，以数据行为准、忽略「循环次数」
-                # （第 1 轮之外不再重复跑）。读取失败按该用例失败处理，不拖垮整轮。
-                try:
-                    data_rows = self._load_data_rows(case_node)
-                except Exception as e:
-                    self.progress.emit(f"  ✗ 数据文件加载失败：{self._format_error(e)}", "error")
-                    self.progress.emit(f"  ✗ 用例 \"{case_name}\" 执行失败", "error")
-                    if self.stop_on_fail:
-                        self.progress.emit("  ⛔ 因失败停止标志，终止后续执行", "warning")
-                        self._abort = True
-                        break
-                    continue
-
-                if data_rows is None:
-                    self._run_case(case_id, case_name, loop_idx, None)
-                elif loop_idx > 0:
-                    continue            # 数据驱动只在第 1 轮跑
-                else:
-                    total_groups = len(data_rows)
-                    for g, row in enumerate(data_rows, 1):
-                        if self._abort:
-                            break
-                        self.progress.emit(f"  · 数据 {g}/{total_groups}", "info")
-                        set_row_values(row)
-                        try:
-                            self._run_case(case_id, case_name, loop_idx,
-                                           f"[数据 {g}/{total_groups}]")
-                        finally:
-                            clear_row_values()
-
-        if self._aborted_by_user:
-            self.progress.emit("⏹ 已按你的请求停止本轮执行", "warning")
-        self.finished.emit()
-
-    def _should_retry(self, error_msg: str) -> bool:
-        """这个失败要不要重试。仅超时类时：等待/连接超时重试；点不到元素不算（白等）。"""
-        if not self.retry_only_timeout:
-            return True
-        return ('超时' in error_msg) or ('timeout' in error_msg.lower())
-
-    def _load_data_rows(self, case_node):
-        """读该用例的数据文件 → [{表头: 值}, ...]；没绑数据文件返回 None。"""
-        path = (case_node.data_file or "").strip() if case_node else ""
-        if not path:
-            return None
-        if not os.path.exists(path):
-            raise ValueError(f"数据文件不存在：{path}")
-        rows = read_file(path)
-        if not rows:
-            raise ValueError("数据文件里没有数据行")
-        return rows
-
-    def _run_case(self, case_id, case_name, loop_idx, group_label):
-        """跑一个用例（或数据驱动里的某一组）。group_label 如 '[数据 2/3]'，None 表示普通用例。"""
-        display_name = case_name + ((" " + group_label) if group_label else "")
-
-        # 用显式标志记录本用例结果，避免依赖异常穿透——
-        # 只要有一处 except 吞掉了异常，"用例通过"就会被错误地打出来
-        case_failed = False
-
         try:
-            steps = self.step_model.get_steps_for_case(case_id)
-            if not steps:
-                self.progress.emit(f"  ⚠ 用例 \"{display_name}\" 没有步骤，跳过", "warning")
-                return
-
-            for step_idx, step in enumerate(steps, 1):
-                if self._abort:
-                    break
-                attempt = 0
-                step_failed = False
-                # 下一步传给 perform：若它是等待类，就跳过本步的固定间隔，
-                # 否则「点击 + 等待 2 秒」会变成 2 + 2 = 4 秒
-                next_step = steps[step_idx] if step_idx < len(steps) else None
-                while True:
-                    attempt += 1
-                    try:
-                        self.device.perform(step, next_step=next_step)
-                        # 变量替换是"未定义就原样保留"，所以要在这里点出来：
-                        # 否则用户只会在失败信息里看到一个没被替换的 ${xxx}，很难定位。
-                        missing_vars = getattr(self.device, 'last_var_missing', None)
-                        if missing_vars:
-                            names = "、".join(f"${{{m}}}" for m in missing_vars)
-                            self.progress.emit(
-                                f"  ⚠ 步骤 {step_idx} 有未定义变量：{names}"
-                                f"（已按原样保留，请在「设置 → 变量」里补上）",
-                                "warning")
-                        suspect = getattr(self.device, 'last_click_suspect', None)
-                        if suspect:
-                            cx, cy, dv = suspect
-                            hint = (getattr(self.device, 'last_click_hint', '') or '').strip()
-                            extra = (f"；{hint}" if hint
-                                     else " —— 建议核对定位值，或用「应用可视化」看下当时界面")
-                            self.progress.emit(
-                                f"  ⚠ 步骤 {step_idx} 点击 ({cx},{cy}) 后界面几乎没变化"
-                                f"（差异 {dv}），可能没点中目标{extra}", "warning")
-                        if step.type == 'assert':
-                            self.progress.emit(f"  ✅ 断言：{step.name} 通过", "success")
-                        break
-                    except Exception as e:
-                        error_msg = self._format_error(e)
-                        # 失败重试：仅超时类（或所有失败）才重试；点不到元素重试
-                        # 多半还是点不到，白等，默认不重试。
-                        if attempt <= self.retry_count and self._should_retry(error_msg):
-                            self.progress.emit(
-                                f"  ↻ 步骤 {step_idx} 失败，{self.retry_delay} 秒后第 {attempt} 次重试"
-                                f"（{error_msg[:36]}…）", "warning")
-                            time.sleep(self.retry_delay)
-                            continue
-
-                        # 最终失败
-                        shot_path = None
-                        if hasattr(self.device, 'last_screenshot') and self.device.last_screenshot:
-                            shot_path = self.device.last_screenshot
-                            self.exec_model.screenshot_paths.append(shot_path)
-                            self.device.last_screenshot = None
-
-                        step_info = f"步骤 {step_idx} \"{step.name}\""
-                        self.progress.emit(f"  ✗ {step_info} 失败：{error_msg}", "error")
-
-                        # 收集失败上下文（不调 AI，只留数据；AI 由用户按需触发）
-                        try:
-                            self.exec_model.failure_contexts.append(FailureContext(
-                                case_id=case_id,
-                                case_name=display_name,
-                                step_index=step_idx,
-                                step_type=step.type,
-                                step_name=step.name,
-                                step_params=dict(step.params or {}),
-                                prev_steps=[
-                                    {"type": s.type, "name": s.name,
-                                     "params": dict(s.params or {})}
-                                    for s in steps[max(0, step_idx - 3):step_idx - 1]
-                                ],
-                                error_msg=error_msg,
-                                screenshot_path=shot_path,
-                                loop_index=loop_idx,
-                                timestamp=datetime.now().strftime("%H:%M:%S"),
-                            ))
-                        except Exception:
-                            pass
-
-                        step_failed = True
-                        break
-                if step_failed:
-                    # 显式标记失败并终止当前用例，不再执行后续步骤
-                    case_failed = True
-                    break
-        except Exception as e:
-            # 兜底：获取步骤等外层环节出错（例如模型层异常）
-            self.progress.emit(
-                f"  ✗ 用例 \"{display_name}\" 执行失败：{self._format_error(e)}",
-                "error",
+            runner = CaseRunner(
+                self.case_ids,
+                self.project_model,
+                self.step_model,
+                self.device,
+                self.exec_model,
+                loop_count=self.loop_count,
+                stop_on_fail=self.stop_on_fail,
+                retry_count=self.retry_count,
+                retry_delay=self.retry_delay,
+                retry_only_timeout=self.retry_only_timeout,
+                on_progress=lambda message, level: self.progress.emit(message, level),
+                abort_event=self._abort_event,
             )
-            case_failed = True
-
-        # 中途被停止：这个用例没跑完，既不算通过也不算失败 —— 半截用例记成
-        # 「执行通过」会直接骗人。已经失败的用例照常走下面的失败记账。
-        if self._abort and not case_failed:
-            self.progress.emit(f"  ⏹ 用例 \"{display_name}\" 未执行完（已停止）", "warning")
-            return
-
-        if case_failed:
-            self.progress.emit(f"  ✗ 用例 \"{display_name}\" 执行失败", "error")
-            if self.stop_on_fail:
-                self.progress.emit("  ⛔ 因失败停止标志，终止后续执行", "warning")
-                self._abort = True
-        else:
-            self.progress.emit(f"  ✓ 用例 \"{display_name}\" 执行通过", "success")
-
+            self.results = runner.run()
+        except Exception as e:  # 兜底：绝不让线程停在「没有 finished」的状态
+            self.progress.emit(f"  ✗ 执行器异常：{e}", "error")
+        finally:
+            self.finished.emit()
 
 
 class ExecutionController(QObject):

@@ -9,17 +9,7 @@ u2_path = os.path.dirname(uiautomator2.__file__)
 assets_src = os.path.join(u2_path, 'assets')
 assets_dst = os.path.join('uiautomator2', 'assets')
 
-# ---------- weditor.exe（应用可视化的独立服务，由 weditor.spec 先行打包） ----------
-# 打包顺序：pyinstaller weditor.spec --distpath dist_weditor → 再跑 main.spec。
-# 缺它时打包版的应用可视化会报「未找到内置的 weditor.exe」（见 weditor_service）。
-_WEDITOR_EXE = os.path.join(os.path.dirname(os.path.abspath('main.spec')), 'dist_weditor', 'weditor.exe')
-
-_extra_datas = []
-if os.path.exists(_WEDITOR_EXE):
-    _extra_datas.append((_WEDITOR_EXE, 'tools'))
-else:
-    print(f"[spec] 未找到 {_WEDITOR_EXE} —— 打包版的应用可视化将不可用（先跑 weditor.spec）")
-
+# ---------- 数据文件 ----------
 a = Analysis(
     ['main.py'],
     pathex=[],
@@ -27,17 +17,13 @@ a = Analysis(
     datas=[
         ('resources', 'resources'),
         (assets_src, assets_dst),
-        ('tools', 'tools'),            # ← 新增：scrcpy + tcpdump
-        *_extra_datas,
+        ('tools', 'tools'),            # scrcpy + tcpdump
     ],
     hiddenimports=[
         # ---------- PyQt6 ----------
         'PyQt6.QtCore',
         'PyQt6.QtGui',
         'PyQt6.QtWidgets',
-        'PyQt6.QtWebEngineWidgets',
-        'PyQt6.QtWebEngineCore',
-        'PyQt6.QtWebChannel',
 
         # ---------- 原有依赖 ----------
         'qtawesome',
@@ -49,7 +35,6 @@ a = Analysis(
         # 掩盖真正的问题。uiautomator2.xpath 是真的，保留。
         'uiautomator2.xpath',
         'adbutils',
-        'weditor',
         'lxml',
         'retry',
         'deprecation',
@@ -61,6 +46,8 @@ a = Analysis(
         'services.preset_commands',
         'services.command_manager',
         'services.adb_command_pool',
+        'mcp_server.server',
+        'mcp_server.runtime',
         'utils.memory_analyzer',
         'utils.wireless_manager',
         'utils.serial_helper',
