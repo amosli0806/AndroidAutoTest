@@ -791,6 +791,72 @@
         另外，公网 relay 涉及数据出境、客户隐私与合规评审，必须单独走安全评估，不能作为 MCP 的顺手功能上线。</div>
     </div>
 
+    <div class="card">
+      <h3>九、后续能力开放清单（待逐步接入）</h3>
+      <p><b>当前已开放的是「设备执行层 + 用例层」，不是整个虫师。</b>MCP Server 是独立进程，
+        能共享 <code>data/</code> 和设备，但看不到 GUI 进程里的内存状态（消息中心、定时任务调度器、
+        性能采集运行态等）。下面这些能力还没有对应的 MCP 工具，按风险分批开放。</p>
+      <table>
+        <tr><th style="width:18%">模块</th><th>未暴露能力</th><th style="width:28%">风险 / 依赖</th></tr>
+        <tr><td><b>ADB 只读</b></td><td>系统属性、电池、存储、网络信息、logcat 快照、文件 pull、硬件信息汇总</td>
+            <td>低风险，优先开放</td></tr>
+        <tr><td><b>ADB 写操作</b></td><td>push 文件、安装 / 卸载 APK、清空数据、force-stop、广播、权限授予、进程 kill</td>
+            <td>中高风险，需显式授权</td></tr>
+        <tr><td><b>ADB 长任务 / 系统控制</b></td><td>实时 logcat、Monkey、弱网 tc/netem、tcpdump、hprof、screenrecord、reboot、root/remount、无线调试配对</td>
+            <td>高影响，需要任务管理 + 停止/超时 + 独立开关</td></tr>
+        <tr><td><b>性能检测-读取</b></td><td>历史会话、报告、CSV、基线对比、阈值配置读取</td>
+            <td>低风险，直接读 <code>perf_data.json</code></td></tr>
+        <tr><td><b>性能检测-采集</b></td><td>start/stop/status、CPU/内存/FPS/流量、整机探针、留证、告警</td>
+            <td><code>PerfController</code> 依赖 Qt 信号，需要先抽 headless 层</td></tr>
+        <tr><td><b>语音播报</b></td><td>直接 TTS 播报、引擎/音色/语速/输出设备、播后等待</td>
+            <td><code>VoiceService</code> 可复用；回执验证要另接 logcat</td></tr>
+        <tr><td><b>语音用例</b></td><td>语音用例列表/执行、检测行、唤醒确认、车型模板、语音套件</td>
+            <td>需要 VoiceController / 回执逻辑 headless 化</td></tr>
+        <tr><td><b>接口自动化</b></td><td>接口/分组/环境 CRUD、断言、单接口/批量执行、接口报告</td>
+            <td><code>ApiService</code> 纯 HTTP，较容易</td></tr>
+        <tr><td><b>应用元素库</b></td><td>元素 CRUD、验证、抓取界面、图像模板管理、引用检查</td>
+            <td>写数据需 GUI 关闭或加锁</td></tr>
+        <tr><td><b>项目 / 用例管理</b></td><td>项目/模块/用例增删改、复制、重命名、步骤排序、批量改参数、数据绑定、导入导出</td>
+            <td>目前只暴露 <code>save_case</code> 创建/覆盖；其余需确认</td></tr>
+        <tr><td><b>套件管理</b></td><td>套件创建/编辑/删除/查列表</td>
+            <td><code>run_suite</code> 已有；CRUD 容易</td></tr>
+        <tr><td><b>报告 / AI</b></td><td>测试报告、性能报告、接口报告生成/读取、AI 失败分析</td>
+            <td>生成器多为纯 Python；AI 是 HTTP</td></tr>
+        <tr><td><b>消息 / 定时 / 设置 / 知识库</b></td><td>消息列表、定时任务 CRUD/立即执行、设置读写、知识库检索/编辑</td>
+            <td>消息与调度器是 GUI 内存态，MCP 独立进程看不到</td></tr>
+        <tr><td><b>图像能力</b></td><td>框选生成图像模板、模板管理、图像对比调试</td>
+            <td>截图已有；模板落库还没暴露</td></tr>
+      </table>
+
+      <p style="margin-top:14px"><b>建议分 4 批开放</b></p>
+      <table>
+        <tr><th style="width:10%">批次</th><th style="width:52%">内容</th><th>前置 / 注意</th></tr>
+        <tr><td><b>1 只读</b></td><td>
+          <code>adb_device_info</code>、<code>adb_logcat_snapshot</code>、<code>adb_pull</code>、
+          <code>perf_sessions</code> / <code>perf_report</code> / <code>perf_baseline</code>、
+          <code>voice_list_cases</code>、<code>api_list</code>、<code>element_list</code>、
+          <code>report_list</code> / <code>report_read</code>
+        </td><td>不碰设备写操作、不改用户数据，适合先让智能体“看得见”</td></tr>
+        <tr><td><b>2 可控写</b></td><td>
+          <code>voice_speak</code> / <code>voice_verify</code>、<code>api_run</code>、
+          <code>element_upsert</code>、<code>suite_save</code> / <code>suite_delete</code>、
+          用例重命名/复制/删除/步骤排序、<code>adb_push</code>、<code>ai_analyze_failure</code>
+        </td><td>加确认/预览；写 <code>data/</code> 前检查 GUI 是否在运行</td></tr>
+        <tr><td><b>3 设备影响</b></td><td>
+          安装/卸载/清空数据、Monkey、弱网、tcpdump、hprof、screenrecord、reboot/root、
+          性能采集 start/stop、实时 logcat
+        </td><td>必须 <code>allow_destructive</code> + 工具白名单 + run_id/stop + 审计</td></tr>
+        <tr><td><b>4 运维 / 内存态</b></td><td>
+          定时任务 CRUD/立即执行、消息中心读取、设置读写、知识库检索/编辑
+        </td><td>先解决 MCP 与 GUI 的共享状态问题（持久化或 MCP 自维护）</td></tr>
+      </table>
+      <div class="tip">⚠ <b>开放前先补的安全缺口</b>：<code>run_case</code> 会原样执行用例里的
+        <code>app_mgr</code> 步骤，包括清空数据、安装、卸载；<code>save_case</code> 也能写出这些步骤。
+        也就是说，虽然 <code>launch_app</code> 只开放了启动/停止/重启，智能体仍可通过用例间接执行危险动作。
+        建议在开放更多能力前加：<code>run_case</code> / <code>save_case</code> 扫描危险步骤，默认拒绝，
+        或要求显式 <code>allow_destructive=true</code>。</div>
+    </div>
+
     <div class="tip">🚫 <b>明确不做</b>：① 不自研 Agent 框架 / 不做模型微调（差异化在执行层，不在模型层）；
       ② 不做通用 RPA（Android + 车机语音这条线已经够深，摊薄到 PC/Web 会同时失去深度和场景）；
       ③ 不做<b>无授权</b>的远程控制 / 局域网开放；网页端接入作为远期可选（见第八节），
