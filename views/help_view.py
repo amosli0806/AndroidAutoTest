@@ -578,7 +578,8 @@ class HelpView(QFrame):
                         丢包与带宽限制；需要 root 和 <code>allow_destructive=true</code>，
                         TTL 到期会在设备端自动清除。</li>
                     <li>场景化与基线：<code>perf_start</code> 可带 <code>suite_name</code>
-                        在采集期间跑用例；<code>perf_baseline_save</code> /
+                        在采集期间跑用例（<code>suite_type="voice"</code> 时为语音套件）；
+                        <code>perf_baseline_save</code> /
                         <code>perf_baseline_delete</code> / <code>perf_compare</code>
                         负责基线保存、删除与对比。</li>
                     <li>知识库与语音设置：<code>knowledge_list</code> /

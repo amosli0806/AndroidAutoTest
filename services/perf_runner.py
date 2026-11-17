@@ -62,6 +62,7 @@ class PerfRunner:
         self._scenario_abort: Optional[threading.Event] = None
         self._scenario_state = ""
         self._scenario_result: dict = {}
+        self._voice_runner = None
 
     # ---------- 启动 ----------
     def start(self, package: str, processes: Optional[list],
@@ -114,18 +115,30 @@ class PerfRunner:
 
         scenario = dict(scenario or {})
         case_ids = [c for c in (scenario.get("case_ids") or []) if c]
+        scenario_type = str(scenario.get("type") or "case").lower()
         if case_ids:
-            from models.project_model import ProjectModel
-            project = ProjectModel()
-            names = []
-            for cid in case_ids:
-                node = project.get_node_by_id(cid)
-                if node is not None and node.type == "case":
-                    names.append(node.name)
-            scenario["case_ids"] = case_ids
-            session.suite_name = str(scenario.get("suite_name") or "")
-            session.case_ids = case_ids
-            session.case_names = names
+            if scenario_type == "voice":
+                from models.voice_model import VoiceModel
+                items = VoiceModel().build_play_items(case_ids)
+                if not items:
+                    raise ValueError("语音套件里没有可播报的文案")
+                scenario["items"] = items
+                session.suite_name = str(scenario.get("suite_name") or "")
+                session.case_ids = case_ids
+                session.case_names = sorted(
+                    {it[5] for it in items if len(it) > 5})
+            else:
+                from models.project_model import ProjectModel
+                project = ProjectModel()
+                names = []
+                for cid in case_ids:
+                    node = project.get_node_by_id(cid)
+                    if node is not None and node.type == "case":
+                        names.append(node.name)
+                scenario["case_ids"] = case_ids
+                session.suite_name = str(scenario.get("suite_name") or "")
+                session.case_ids = case_ids
+                session.case_names = names
 
         self.session = session
         self.metrics = metrics
@@ -177,6 +190,30 @@ class PerfRunner:
         self._scenario_abort = threading.Event()
         self._scenario_state = "running"
         self._scenario_result = {}
+
+        if str(scenario.get("type") or "case").lower() == "voice":
+            items = list(scenario.get("items") or [])
+
+            def voice_work():
+                try:
+                    from services.voice_playback import VoicePlaybackRunner
+                    runner = VoicePlaybackRunner(
+                        items, loop, stop_event=self._scenario_abort)
+                    self._voice_runner = runner
+                    result = runner.run()
+                    self._scenario_result = result
+                    self._scenario_state = ("aborted" if result.get("aborted")
+                                            else "finished")
+                except Exception as e:
+                    self._scenario_result = {"error": str(e)}
+                    self._scenario_state = "error"
+                finally:
+                    self._voice_runner = None
+
+            self._scenario_thread = threading.Thread(
+                target=voice_work, daemon=True, name="mcp-perf-voice")
+            self._scenario_thread.start()
+            return
 
         def work():
             try:
@@ -359,6 +396,11 @@ class PerfRunner:
         self._stop_evt.set()
         if self._scenario_abort is not None:
             self._scenario_abort.set()
+        if self._voice_runner is not None:
+            try:
+                self._voice_runner.stop()
+            except Exception:
+                pass
         if self._scenario_thread is not None:
             self._scenario_thread.join(timeout=20)
         if self._thread is not None:

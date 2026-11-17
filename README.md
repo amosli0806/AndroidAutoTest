@@ -739,7 +739,8 @@ for loop in 1..循环次数:
   需 `allow_destructive=true` 且设备已 root；TTL 默认 600 秒、最大 3600 秒，
   设备端 `sleep + tc qdisc del` 兜底，MCP 退出也会按时自动清除
 - 性能场景化（4.1）：`perf_start` 支持 `suite_name` / `case_ids` / `loop` /
-  `stop_on_failure`，采集期间同步执行用例；`perf_status` / `perf_stop` 会返回场景执行结果
+  `stop_on_failure`，采集期间同步执行用例；`suite_type="voice"` 时改为播放语音套件，
+  `perf_status` / `perf_stop` 会返回场景执行结果
 - 性能基线（4.2）：`perf_baseline_save`（同名需 `overwrite=true`）、
   `perf_baseline_delete`（需 `allow_destructive=true`）、`perf_compare`
   （逐项变化与 worse / better / stable 统计）
@@ -790,7 +791,8 @@ cpu / mem 主采样、sys_mem / sys_cpu / threads 探针、手动停止与到点
 下发与 TTL 自动清除、带宽限制与手动清除、`tcpdump` 真实抓包（720 字节 ICMP）均通过，
 验证后已 `adb unroot` 并确认回到 `uid=2000(shell)`、设备与 u2 会话正常。批次 4.1 ~ 4.3
 已在 30EA 车机上验证：采集期间跑套件（会话记录套件名与用例结果）、基线保存 / 自身对比 /
-删除门禁、知识库笔记增删改查、语音设置读取与写入（改后已还原）。网页端接入属于
+删除门禁、知识库笔记增删改查、语音设置读取与写入（改后已还原）；语音套件场景也在
+honda_3ya 车机上跑通（播放 2 条文案、采集 7 个样本）。网页端接入属于
 远期扩展（见 `扩展方向.html` 第 3 章第八节），不属于本期。
 
 ---

@@ -27,7 +27,7 @@ from models.perf_model import PerfBaseline, PerfModel, compare_stats
 from models.project_model import ProjectModel
 from models.step_model import Step, StepModel
 from models.suite_model import SuiteModel
-from models.voice_model import VoiceModel
+from models.voice_model import VOICE_SUITE_PREFIX, VoiceModel
 from services.api_service import ApiService
 from services.ai_service import AIService
 from services.case_runner import CaseRunner
@@ -2244,7 +2244,8 @@ def _perf_start(package: str, processes: Optional[list] = None,
                 suite_name: Optional[str] = None,
                 case_ids: Optional[list] = None,
                 loop: int = 1,
-                stop_on_failure: bool = False) -> dict:
+                stop_on_failure: bool = False,
+                suite_type: str = "case") -> dict:
     if not package:
         raise ToolFailure("INTERNAL_ERROR", "package 不能为空")
     metric_list = list(metrics or list(ALLOWED_METRICS))
@@ -2264,25 +2265,48 @@ def _perf_start(package: str, processes: Optional[list] = None,
 
     svc = RUNTIME.ensure_device(RUNTIME.serial)
     scenario = None
+    suite_type = (suite_type or "case").strip().lower()
+    if suite_type not in ("case", "voice"):
+        raise ToolFailure("INTERNAL_ERROR",
+                          f"suite_type 只支持 case / voice：{suite_type}")
     target_ids = [c for c in (case_ids or []) if c]
     if suite_name or target_ids:
-        if suite_name:
+        if suite_name and suite_type == "voice":
+            name = suite_name
+            if name.startswith(VOICE_SUITE_PREFIX):
+                name = name[len(VOICE_SUITE_PREFIX):]
+            voice_model = VoiceModel()
+            suite = voice_model.get_suite(name)
+            if suite is None:
+                raise ToolFailure("SUITE_NOT_FOUND",
+                                  f"语音套件不存在：{suite_name}",
+                                  "先调用 voice_list_cases 确认套件名")
+            target_ids = [cid for cid in (suite.case_ids or [])
+                          if voice_model.get_case(cid)]
+            if not target_ids:
+                raise ToolFailure("SUITE_NOT_FOUND", "语音套件里没有有效用例")
+            suite_name = f"{VOICE_SUITE_PREFIX}{name}"
+        elif suite_name:
             suite = SuiteModel().get_suite_by_name(suite_name)
             if suite is None:
                 raise ToolFailure("SUITE_NOT_FOUND", f"套件不存在：{suite_name}",
                                   "先在执行页保存套件，或检查套件名")
             target_ids = list(suite.case_ids or [])
-        project = ProjectModel()
-        valid = [cid for cid in target_ids
-                 if (project.get_node_by_id(cid) is not None
-                     and project.get_node_by_id(cid).type == "case")]
-        if not valid:
-            raise ToolFailure("SUITE_NOT_FOUND", "场景里没有有效用例",
-                              "检查套件引用的用例是否已被删除")
+        if suite_type == "case":
+            project = ProjectModel()
+            valid = [cid for cid in target_ids
+                     if (project.get_node_by_id(cid) is not None
+                         and project.get_node_by_id(cid).type == "case")]
+            if not valid:
+                raise ToolFailure("SUITE_NOT_FOUND", "场景里没有有效用例",
+                                  "检查套件引用的用例是否已被删除")
+        else:
+            valid = target_ids
         loop = int(loop or 1)
         if not (1 <= loop <= 99):
             raise ToolFailure("INTERNAL_ERROR", f"loop 范围 1..99：{loop}")
-        scenario = {"suite_name": suite_name or "",
+        scenario = {"type": suite_type,
+                    "suite_name": suite_name or "",
                     "case_ids": valid, "loop": loop,
                     "stop_on_failure": bool(stop_on_failure)}
 
@@ -3385,18 +3409,20 @@ async def perf_start(package: str, processes: Optional[list] = None,
                      suite_name: Optional[str] = None,
                      case_ids: Optional[list] = None,
                      loop: int = 1,
-                     stop_on_failure: bool = False) -> str:
+                     stop_on_failure: bool = False,
+                     suite_type: str = "case") -> str:
     return await _run("perf_start",
                       {"package": package, "processes": processes,
                        "metrics": metrics, "probes": probes,
                        "interval": interval,
                        "duration_minutes": duration_minutes,
                        "suite_name": suite_name, "case_ids": case_ids,
-                       "loop": loop, "stop_on_failure": stop_on_failure},
+                       "loop": loop, "stop_on_failure": stop_on_failure,
+                       "suite_type": suite_type},
                       lambda: _perf_start(package, processes, metrics,
                                           probes, interval, duration_minutes,
                                           suite_name, case_ids, loop,
-                                          stop_on_failure),
+                                          stop_on_failure, suite_type),
                       mutating=True, hold_lock=False)
 
 
