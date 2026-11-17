@@ -909,6 +909,28 @@
         也就不能直接连本地 <code>stdio</code> 的 MCP Server。想让网页端用虫师，必须多一层
         「本机 bridge + 公网中继」；这不是 MCP P0~P2 的一部分，也不应该为了它牺牲当前
         「只走本机 stdio」的安全边界。</p>
+
+      <div class="tip">📌 <b>2026-11-17 平台侧初步反馈（DeepSeek 网页端）</b>：询问「是否支持自定义
+        MCP / 工具 connector」时，回复是<b>有条件支持</b>——支持自定义 connector，但必须是
+        「平台可控、权限最小化、可审计、需用户授权」，而不是模型无条件任意调用外部工具。
+        对方列出的约束：<b>最小权限、用户确认、沙箱与隔离、密钥管理、审计与日志、
+        限流/超时/错误处理、数据隐私、可撤销</b>。<br>
+        <b>解读</b>：这与第八节原本的安全门槛基本同向，说明 B 路线在平台能力上不是死路；
+        但这是<b>模型侧回答，不是官方文档</b>，正式立项前仍需以 DeepSeek 官方 connector
+        文档与实测为准。网页端仍为远期可选，不排期。</div>
+      <table>
+        <tr><th style="width:26%">平台约束</th><th>虫师侧对应设计</th></tr>
+        <tr><td>最小权限</td><td>默认只读工具集（<code>device_list</code> / <code>screenshot</code> /
+            <code>ui_find</code>）；调用、输入、<code>run_case</code> 等按会话授权</td></tr>
+        <tr><td>用户确认</td><td>一次性配对码 + 危险动作显式确认；写操作逐次或按会话放行</td></tr>
+        <tr><td>沙箱与隔离</td><td>Local Bridge 只做 MCP 转发，不执行任意命令、不暴露文件系统</td></tr>
+        <tr><td>密钥管理</td><td>配对令牌由平台安全注入，不进入模型上下文</td></tr>
+        <tr><td>审计与日志</td><td><code>data/mcp_audit.log</code> + relay 侧会话审计，记录工具/参数摘要/结果/耗时</td></tr>
+        <tr><td>限流 / 超时 / 错误处理</td><td>单会话限频限时；工具统一 <code>ok/error</code> 结构与超时，避免拖垮会话</td></tr>
+        <tr><td>数据隐私</td><td>截图、层级、日志按需回传并支持遮罩，不整份 dump 外发</td></tr>
+        <tr><td>可撤销</td><td>虫师侧一键断开 + 删除配对；relay 断开即停止接受指令</td></tr>
+      </table>
+
       <p><b>两条可行路线</b>：</p>
       <table>
         <tr><th style="width:28%">路线</th><th style="width:32%">形态</th><th>限制</th></tr>
@@ -917,7 +939,7 @@
             <td>最安全，不经过公网；但这不是「DeepSeek 网页端直接调用」，只是浏览器里的虫师</td></tr>
         <tr><td><b>B. 公网中继 + 本机 outbound bridge</b></td>
             <td>本机 bridge 主动连公网 relay；DeepSeek / Claude 网页通过 connector / 自定义工具接 relay</td>
-            <td>需要平台支持自定义 MCP / 工具接入；需要部署 relay、TLS、账号与安全评审</td></tr>
+            <td>平台初步表态支持自定义 connector（需满足其安全约束）；仍需部署 relay、TLS、账号与安全评审</td></tr>
       </table>
       <p><b>如果做 B，推荐架构</b>（本机永不开放入站端口）：</p>
       <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">DeepSeek / Claude Web
@@ -951,9 +973,10 @@
         <tr><td>C. Relay + 鉴权 / 审计 / 限流</td><td>3 ~ 5 天</td><td>部署公网 relay、TLS、用户会话、审计落库</td></tr>
         <tr><td>D. 网页端 connector / 控制台打磨</td><td>2 ~ 4 天</td><td>取决于目标平台是否支持自定义 MCP / 工具接入</td></tr>
       </table>
-      <div class="tip">⚠ <b>决策门槛</b>：先确认 DeepSeek / Claude 网页端是否支持「自定义 MCP / 工具 connector」。
-        如果不支持，B 路线只能退化成「虫师自己的本地 Web 控制台」（A），不能承诺在 DeepSeek 聊天框里直接控制虫师。
-        另外，公网 relay 涉及数据出境、客户隐私与合规评审，必须单独走安全评估，不能作为 MCP 的顺手功能上线。</div>
+      <div class="tip">⚠ <b>决策状态（2026-11-17）</b>：平台侧已给出「有条件支持自定义 connector」的回复，
+        条件与本节的八条安全门槛同向，B 路线在平台能力上可行；但仍需以官方文档与实测为准。
+        公网 relay 涉及数据出境、客户隐私与合规评审，必须单独立项、单独做安全评估，
+        不能作为 MCP 的顺手功能上线。网页端继续放在远期，不排期。</div>
     </div>
 
     <div class="card">
