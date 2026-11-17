@@ -727,6 +727,21 @@
         进程退出后白名单文件自动清理；实测约 2.8 事件/秒，按此估算 13 小时约 13 万事件、
         60 小时约 60 万事件（不要沿用 GUI 的 5000 万默认值，那个量级会跑数百天）。
         13 ~ 60 小时长跑本次未实际执行，需按业务节奏单独安排一次长时间观察。</p>
+      <p class="small"><b>批次 3.3 落地</b>（2026-11-17）：新增
+        <code>services/perf_runner.py</code>（主采样 + 探针 + 会话落盘）与
+        <code>services/tcpdump_runner.py</code>（root 检测 / 部署 / <code>exec-out</code>
+        流式 pcap）；新增 <code>perf_start</code> / <code>perf_status</code> /
+        <code>perf_stop</code>、<code>tcpdump_start</code> / <code>tcpdump_stop</code>
+        共 5 个工具，总数 57 → 62。真机验收：1 ~ 2 分钟采集在 interval 5s 下稳定出样本
+        （cpu 约 75 ~ 85%、mem PSS 约 644 MB），sys_cpu / threads / sys_mem 探针都有数据；
+        手动停止与到点自然结束均正常，会话能在 <code>perf_sessions</code> 看到，
+        <code>perf_report</code> 生成约 329 KB 报告。顺带修了两处：
+        ① <code>sys_mem</code> 探针的 <code>dumpsys meminfo</code> 超时从 6 秒提到 12 秒
+        （这台 x9 单次实测 6.5 秒，原超时会让每次采样都记「通道异常」）；
+        ② 可选探针恢复自己的默认节奏（sys_mem 15 秒），避免跟随 2 秒主采样把 u2 通道打满。
+        <code>tcpdump</code> 因测试车机未 root（<code>uid=2000(shell)</code>），
+        只验证了 <code>CAPTURE_UNAVAILABLE</code> 前置拦截与参数校验，
+        真实抓包需在已 root 设备上补验。</p>
       <p class="small">阶段 1 与 2 可并行；阶段 3 必须等 2；阶段 4 必须等 1 + 2。
         预计总量 7 ~ 9 天（含 CaseRunner 与 GUI lock 的重构成本）。</p>
       <p><b>涉及文件（预计）</b>：</p>
@@ -891,7 +906,7 @@
           <code>element_upsert</code>、<code>suite_save</code> / <code>suite_delete</code>、
           用例重命名/复制/删除/步骤排序、<code>adb_push</code>、<code>ai_analyze_failure</code>
         </td><td>加确认/预览；写 <code>data/</code> 前检查 GUI 是否在运行</td></tr>
-        <tr><td><b>3 设备影响</b><br>3.1 ✅<br>3.2 ✅</td><td>
+        <tr><td><b>3 设备影响</b><br>3.1 ✅<br>3.2 ✅<br>3.3 ✅</td><td>
           安装/卸载/清空数据、Monkey、弱网、tcpdump、hprof、screenrecord、reboot/root、
           性能采集 start/stop、实时 logcat
         </td><td>必须 <code>allow_destructive</code> + 工具白名单 + run_id/stop + 审计</td></tr>

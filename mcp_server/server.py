@@ -33,7 +33,9 @@ from services.case_runner import CaseRunner
 from services.device_service import DeviceService
 from services.logcat_stream import LogcatStream
 from services.monkey_runner import MonkeyRunner
+from services.perf_runner import ALLOWED_METRICS, ALLOWED_PROBES, PerfRunner
 from services.screenrecord_runner import ScreenRecordRunner
+from services.tcpdump_runner import CAPTURE_MAX_BYTES, CAPTURE_MAX_SECONDS, TcpdumpRunner
 from services.voice_feedback_service import VoiceFeedbackService
 from services.voice_service import get_voice_service
 from utils.adb_path import get_adb_path
@@ -70,6 +72,7 @@ _DEVICE_JOB_EXEMPT = {
     "device_list", "adb_device_info",
     "monkey_status", "monkey_stop",
     "screenrecord_stop", "logcat_stop", "logcat_read",
+    "perf_status", "perf_stop", "tcpdump_stop",
 }
 
 _DETACHED_CHECKED = False
@@ -106,6 +109,7 @@ def _execute(name: str, params: dict, fn, mutating: bool = False,
     try:
         data = None
         with RUNTIME.lock:
+            device_jobs.init()
             _reconcile_detached_jobs()
             if device_jobs.has_active() and name not in _DEVICE_JOB_EXEMPT:
                 kinds = "/".join(device_jobs.active_kinds())
@@ -161,6 +165,7 @@ def _hint_for(code: str) -> str:
         "ADB_FAILED": "确认设备在线、路径存在且当前账号有读取权限",
         "PROCESS_NOT_FOUND": "先启动应用（launch_app），再确认包名正确",
         "JOB_NOT_FOUND": "先调用 monkey_start / screenrecord_start / logcat_start 获取 run_id",
+        "CAPTURE_UNAVAILABLE": "tcpdump 需要 root；未 root 的设备无法抓包，可换已 root 设备或先 adb root",
         "DEVICE_BUSY": "run_case / run_suite 正在执行；等它结束或先调用 run_case_stop",
         "ASSERT_FAILED": "查看返回的截图路径 / 失败步骤，必要时用 screenshot 看现场",
     }.get(code, "查看 data/mcp.log；如是参数问题请修正后重试")
@@ -2219,6 +2224,208 @@ def _logcat_read(run_id: str, lines: int = 200) -> dict:
             "line_count": (job.get("result") or {}).get("lines", 0)}
 
 
+# ----------------------------------------------------------------------
+# 批次 3.3：性能采集 / tcpdump
+# ----------------------------------------------------------------------
+def _perf_start(package: str, processes: Optional[list] = None,
+                metrics: Optional[list] = None,
+                probes: Optional[list] = None, interval: float = 5.0,
+                duration_minutes: float = 60.0) -> dict:
+    if not package:
+        raise ToolFailure("INTERNAL_ERROR", "package 不能为空")
+    metric_list = list(metrics or list(ALLOWED_METRICS))
+    bad = [m for m in metric_list if m not in ALLOWED_METRICS]
+    if bad:
+        raise ToolFailure("INTERNAL_ERROR", f"不支持的指标：{', '.join(bad)}",
+                          f"可选：{' / '.join(ALLOWED_METRICS)}")
+    probe_list = list(probes or [])
+    bad = [p for p in probe_list if p not in ALLOWED_PROBES]
+    if bad:
+        raise ToolFailure("INTERNAL_ERROR", f"不支持的探针：{', '.join(bad)}",
+                          f"可选：{' / '.join(ALLOWED_PROBES)}")
+    duration_minutes = float(duration_minutes or 0)
+    if not (0 < duration_minutes <= 180):
+        raise ToolFailure("INTERNAL_ERROR",
+                          f"duration_minutes 范围 0~180：{duration_minutes}")
+
+    svc = RUNTIME.ensure_device(RUNTIME.serial)
+    runner = PerfRunner(svc.device, svc.serial, Settings.get_output_dir())
+    job = device_jobs.create(
+        "perf", mode="host",
+        meta={"serial": svc.serial, "package": package,
+              "metrics": metric_list, "probes": probe_list,
+              "interval": interval,
+              "duration_minutes": duration_minutes},
+        deadline_ts=time.time() + duration_minutes * 60 + 120)
+    try:
+        info = runner.start(package, processes, metric_list, probe_list,
+                            interval, duration_minutes)
+    except ValueError as e:
+        device_jobs.finish(job, "failed", error=str(e))
+        code = ("PROCESS_NOT_FOUND" if "未在运行" in str(e)
+                else "INTERNAL_ERROR")
+        raise ToolFailure(code, str(e),
+                          "先启动应用再采集" if code == "PROCESS_NOT_FOUND" else "")
+    except Exception as e:
+        device_jobs.finish(job, "failed", error=str(e))
+        raise ToolFailure("ADB_FAILED", str(e), "确认设备在线且应用可读")
+
+    raw_job = device_jobs.raw(job["run_id"])
+    raw_job["_runner"] = runner
+    device_jobs.update_meta(job["run_id"], {
+        "session_id": info["session_id"], "session_name": info["name"]})
+
+    def _stop(reason: str) -> dict:
+        summary = runner.stop()
+        status = "stopped" if reason == "user" else "finished"
+        device_jobs.finish(raw_job, status, result=summary, stop_reason=reason)
+        return summary
+
+    def _monitor():
+        runner.wait()
+        if raw_job.get("status") != "running":
+            return
+        summary = runner.stop()
+        device_jobs.finish(raw_job, "succeeded", result=summary,
+                           stop_reason=summary.get("stop_reason", ""))
+
+    device_jobs.set_stop(job["run_id"], _stop)
+    threading.Thread(target=_monitor, daemon=True,
+                     name=f"mcp-perf-{job['run_id']}").start()
+    return {"run_id": job["run_id"], "status": "running", **info}
+
+
+def _perf_status(run_id: str) -> dict:
+    job = _job_or_fail(run_id)
+    raw_job = device_jobs.raw(run_id) or {}
+    runner = raw_job.get("_runner")
+    data = {"run_id": run_id, "status": job.get("status"),
+            "session_id": (job.get("meta") or {}).get("session_id", "")}
+    if runner is not None:
+        data.update(runner.status())
+    elif job.get("status") == "stale":
+        data["note"] = "MCP 进程退出导致采集中断，会话可能未落盘"
+    return data
+
+
+def _perf_stop(run_id: str) -> dict:
+    job = _job_or_fail(run_id)
+    raw_job = device_jobs.raw(run_id) or {}
+    if job.get("status") in _ACTIVE_JOB_STATUS and not raw_job.get("_stop_fn"):
+        # MCP 进程退出导致采集中断：没有线程可停，直接标记 stale
+        device_jobs.finish(raw_job, "stale",
+                           error="MCP 进程已退出，性能采集已中断",
+                           stop_reason="mcp_restart")
+        snap = device_jobs.get(run_id) or job
+        return {"run_id": run_id, "status": snap.get("status"),
+                "message": "MCP 进程已退出，采集线程不存在；会话可能未落盘"}
+    if job.get("status") not in _ACTIVE_JOB_STATUS:
+        return {"run_id": run_id, "status": job.get("status"),
+                "summary": job.get("result") or {},
+                "message": "任务已结束，无需停止"}
+    device_jobs.request_stop(run_id, "user")
+    device_jobs.wait(run_id, 60)
+    snap = device_jobs.get(run_id) or job
+    return {"run_id": run_id, "status": snap.get("status"),
+            "summary": snap.get("result") or {},
+            "stop_reason": snap.get("stop_reason", "")}
+
+
+def _default_tcpdump_path() -> str:
+    adb_dir = os.path.dirname(get_adb_path())
+    for path in (os.path.join(adb_dir, "tcpdump"),
+                 os.path.join(os.path.dirname(os.path.dirname(
+                     os.path.abspath(__file__))), "tools", "tcpdump")):
+        if os.path.isfile(path):
+            return path
+    return os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "tools", "tcpdump")
+
+
+def _tcpdump_start(local_tcpdump_path: Optional[str] = None,
+                   filter_expr: str = "", interface: str = "any",
+                   snaplen: int = 0,
+                   max_seconds: int = CAPTURE_MAX_SECONDS,
+                   max_bytes: int = CAPTURE_MAX_BYTES,
+                   max_segments: int = 6,
+                   subdir: str = "capture") -> dict:
+    max_seconds = int(max_seconds if max_seconds is not None
+                      else CAPTURE_MAX_SECONDS)
+    if not (0 <= max_seconds <= 3600):
+        raise ToolFailure("INTERNAL_ERROR", f"max_seconds 范围 0..3600：{max_seconds}")
+    max_bytes = int(max_bytes if max_bytes is not None else CAPTURE_MAX_BYTES)
+    if not (0 <= max_bytes <= 1024 * 1024 * 1024):
+        raise ToolFailure("INTERNAL_ERROR", "max_bytes 范围 0..1GB")
+    max_segments = int(max_segments or 1)
+    if not (1 <= max_segments <= 20):
+        raise ToolFailure("INTERNAL_ERROR", f"max_segments 范围 1..20：{max_segments}")
+    path = local_tcpdump_path or _default_tcpdump_path()
+    if local_tcpdump_path and not os.path.isfile(path):
+        raise ToolFailure("INTERNAL_ERROR", f"本地 tcpdump 不存在：{path}")
+
+    svc = RUNTIME.ensure_device(RUNTIME.serial)
+    runner = TcpdumpRunner(svc.serial, Settings.get_output_dir())
+    job = device_jobs.create(
+        "tcpdump", mode="host",
+        meta={"serial": svc.serial, "filter": filter_expr,
+              "interface": interface, "max_seconds": max_seconds,
+              "max_bytes": max_bytes},
+        deadline_ts=time.time() + (max_seconds or 3600) + 60)
+    try:
+        info = runner.start(path, filter_expr, interface, snaplen,
+                            max_seconds, max_bytes, subdir, max_segments)
+    except Exception as e:
+        device_jobs.finish(job, "failed", error=str(e))
+        code = ("CAPTURE_UNAVAILABLE" if "未 root" in str(e)
+                else "ADB_FAILED")
+        raise ToolFailure(code, str(e), _hint_for(code))
+
+    raw_job = device_jobs.raw(job["run_id"])
+    raw_job["_runner"] = runner
+
+    def _stop(reason: str) -> dict:
+        result = runner.stop()
+        device_jobs.finish(raw_job,
+                           "stopped" if reason == "user" else "finished",
+                           result=result, stop_reason=reason)
+        return result
+
+    def _monitor():
+        runner.wait()
+        if raw_job.get("status") != "running":
+            return
+        result = runner.stop()
+        device_jobs.finish(raw_job, "succeeded", result=result,
+                           stop_reason=result.get("stop_reason", ""))
+
+    device_jobs.set_stop(job["run_id"], _stop)
+    threading.Thread(target=_monitor, daemon=True,
+                     name=f"mcp-tcpdump-{job['run_id']}").start()
+    return {"run_id": job["run_id"], "status": "running", **info}
+
+
+def _tcpdump_stop(run_id: str) -> dict:
+    job = _job_or_fail(run_id)
+    raw_job = device_jobs.raw(run_id) or {}
+    if job.get("status") in _ACTIVE_JOB_STATUS and not raw_job.get("_stop_fn"):
+        device_jobs.finish(raw_job, "stale",
+                           error="MCP 进程已退出，抓包已中断",
+                           stop_reason="mcp_restart")
+        snap = device_jobs.get(run_id) or job
+        return {"run_id": run_id, "status": snap.get("status"),
+                "message": "MCP 进程已退出，抓包线程不存在；已生成的 pcap 仍在输出目录"}
+    if job.get("status") not in _ACTIVE_JOB_STATUS:
+        return {"run_id": run_id, "status": job.get("status"),
+                "result": job.get("result") or {},
+                "message": "任务已结束，无需停止"}
+    device_jobs.request_stop(run_id, "user")
+    device_jobs.wait(run_id, 30)
+    snap = device_jobs.get(run_id) or job
+    return {"run_id": run_id, "status": snap.get("status"),
+            "result": snap.get("result") or {},
+            "stop_reason": snap.get("stop_reason", "")}
+
+
 def _ai_analyze_failure(step: dict, prev_steps: Optional[list] = None,
                         error_msg: str = "", screenshot_path: Optional[str] = None,
                         logcat_snippet: Optional[str] = None) -> dict:
@@ -2772,6 +2979,69 @@ async def logcat_stop(run_id: str) -> str:
 async def logcat_read(run_id: str, lines: int = 200) -> str:
     return await _run("logcat_read", {"run_id": run_id, "lines": lines},
                       lambda: _logcat_read(run_id, lines), hold_lock=False)
+
+
+# ----------------------------------------------------------------------
+# 批次 3.3：性能采集 / tcpdump
+# ----------------------------------------------------------------------
+@server.tool(name="perf_start",
+             description="开始性能采集（默认 60 分钟）；返回 run_id 与 session_id")
+async def perf_start(package: str, processes: Optional[list] = None,
+                     metrics: Optional[list] = None,
+                     probes: Optional[list] = None, interval: float = 5.0,
+                     duration_minutes: float = 60.0) -> str:
+    return await _run("perf_start",
+                      {"package": package, "processes": processes,
+                       "metrics": metrics, "probes": probes,
+                       "interval": interval,
+                       "duration_minutes": duration_minutes},
+                      lambda: _perf_start(package, processes, metrics,
+                                          probes, interval, duration_minutes),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="perf_status",
+             description="查看性能采集进度：样本数、最近一条数据、探针采样数")
+async def perf_status(run_id: str) -> str:
+    return await _run("perf_status", {"run_id": run_id},
+                      lambda: _perf_status(run_id), hold_lock=False)
+
+
+@server.tool(name="perf_stop",
+             description="停止性能采集并落盘会话（返回样本数与统计摘要）")
+async def perf_stop(run_id: str) -> str:
+    return await _run("perf_stop", {"run_id": run_id},
+                      lambda: _perf_stop(run_id),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="tcpdump_start",
+             description="开始抓包（需设备 root；默认 10 分钟或 100MB）")
+async def tcpdump_start(local_tcpdump_path: Optional[str] = None,
+                        filter_expr: str = "", interface: str = "any",
+                        snaplen: int = 0,
+                        max_seconds: int = CAPTURE_MAX_SECONDS,
+                        max_bytes: int = CAPTURE_MAX_BYTES,
+                        max_segments: int = 6,
+                        subdir: str = "capture") -> str:
+    params = {"local_tcpdump_path": local_tcpdump_path,
+              "filter_expr": filter_expr, "interface": interface,
+              "snaplen": snaplen, "max_seconds": max_seconds,
+              "max_bytes": max_bytes, "max_segments": max_segments,
+              "subdir": subdir}
+    return await _run("tcpdump_start", params,
+                      lambda: _tcpdump_start(local_tcpdump_path, filter_expr,
+                                             interface, snaplen, max_seconds,
+                                             max_bytes, max_segments, subdir),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="tcpdump_stop",
+             description="停止抓包（返回 pcap 文件列表与总大小）")
+async def tcpdump_stop(run_id: str) -> str:
+    return await _run("tcpdump_stop", {"run_id": run_id},
+                      lambda: _tcpdump_stop(run_id),
+                      mutating=True, hold_lock=False)
 
 
 def main():

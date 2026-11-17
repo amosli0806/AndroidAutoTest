@@ -30,6 +30,8 @@ hiddenimports = [
     "services.monkey_runner",
     "services.screenrecord_runner",
     "services.logcat_stream",
+    "services.perf_runner",
+    "services.tcpdump_runner",
     "mcp_server.schema",
     "mcp_server.audit",
     "mcp_server.logging_setup",

@@ -570,6 +570,10 @@ class HelpView(QFrame):
                         <code>run_id</code>，到点自动停止；MCP 重启后可按设备 PID 重新接上。
                         Monkey 默认关闭 syskeys；地图类应用没有启动入口时，用
                         <code>use_whitelist=true</code> 并把可启动应用放在第一项。</li>
+                    <li>性能与抓包：<code>perf_start</code> / <code>perf_status</code> /
+                        <code>perf_stop</code> 支持 cpu / mem / fps / traffic 与
+                        sys_mem / netdev / iotop 探针，默认 60 分钟；<code>tcpdump_start</code> /
+                        <code>tcpdump_stop</code> 支持过滤与时长 / 大小上限，需要设备 root。</li>
                 </ul>
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     ⚠ 虫师界面运行时，MCP 自动降级为只读；点击、输入、<code>run_case</code>

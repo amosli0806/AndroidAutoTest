@@ -68,7 +68,9 @@ class MemInfoSysProbe(PerfProbe):
         ok, out = shell_text_checked(
             self.device,
             "dumpsys meminfo | grep -E 'Total RAM|Free RAM|Used RAM|Lost RAM|ZRAM'",
-            timeout=GUI_TIMEOUT_HEAVY,
+            # 6 秒在车机上不够：实测这台 x9 单次 6.5 秒左右，主采样并行时更慢，
+            # 原超时会让 sys_mem 每次都记「通道异常 / 超时」
+            timeout=max(GUI_TIMEOUT_HEAVY, 12.0),
         )
         if not ok or not out.strip():
             raise ProbeError("dumpsys meminfo 执行失败（通道异常 / 超时）")
