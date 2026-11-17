@@ -548,12 +548,24 @@ class HelpView(QFrame):
                     <li>用例：<code>list_cases</code>、<code>run_case</code>、
                         <code>run_case_status</code>、<code>run_case_stop</code>；</li>
                     <li>用例生成：<code>explore_and_draft</code>、<code>draft_status</code>、
-                        <code>save_case</code>、<code>run_suite</code>。</li>
+                        <code>save_case</code>、<code>run_suite</code>；</li>
+                    <li>只读扩展：<code>adb_device_info</code>、<code>adb_logcat_snapshot</code>、
+                        <code>adb_pull</code>、<code>perf_sessions</code>、<code>perf_report</code>、
+                        <code>perf_baselines</code>、<code>voice_list_cases</code>、
+                        <code>api_list</code>、<code>element_list</code>、
+                        <code>report_list</code>、<code>report_read</code>；</li>
+                    <li>可控写：<code>voice_speak</code>、<code>voice_verify</code>、<code>api_run</code>、
+                        <code>element_upsert</code>、<code>suite_save</code> / <code>suite_delete</code>、
+                        <code>case_rename</code> / <code>case_copy</code> / <code>case_delete</code>、
+                        <code>step_move</code> / <code>step_update</code>、<code>adb_push</code>、
+                        <code>ai_analyze_failure</code>。</li>
                 </ul>
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     ⚠ 虫师界面运行时，MCP 自动降级为只读；点击、输入、<code>run_case</code>
                     等写操作需要先完全退出虫师。MCP 只走本机 stdio，不监听端口；每次调用都会写
-                    <code>data/mcp_audit.log</code>。
+                    <code>data/mcp_audit.log</code>。<br>
+                    危险步骤（清空应用数据、安装、卸载）默认拒绝，确认风险后必须显式传
+                    <code>allow_destructive=true</code>；非 GET 接口、删除用例/套件也需要该开关。
                 </div>
                 """
             },

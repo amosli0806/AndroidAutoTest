@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import html
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -12,21 +14,32 @@ import time
 import uuid
 from dataclasses import asdict
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from mcp.server.mcpserver import MCPServer
 
+from models.api_model import ApiModel
+from models.element_model import ElementModel
 from models.execution_model import ExecutionModel
+from models.perf_model import PerfModel
 from models.project_model import ProjectModel
 from models.step_model import Step, StepModel
 from models.suite_model import SuiteModel
+from models.voice_model import VoiceModel
+from services.api_service import ApiService
+from services.ai_service import AIService
 from services.case_runner import CaseRunner
 from services.device_service import DeviceService
+from services.voice_feedback_service import VoiceFeedbackService
+from services.voice_service import get_voice_service
 from utils.adb_path import get_adb_path
 from utils.app_paths import data_path
 from utils.gui_presence import probe_gui
+from utils.perf_report import PerfReportGenerator
 from utils.serial_helper import safe_serial
 from utils.settings import Settings
+from utils.step_params import LOCATION_TYPE_OPTIONS
 from utils.version import APP_VERSION
 
 from mcp_server.audit import write as audit_write
@@ -53,9 +66,13 @@ def _execute(name: str, params: dict, fn, mutating: bool = False) -> str:
     started = time.time()
     try:
         with RUNTIME.lock:
-            if _case_running() and name not in ("device_list", "list_cases",
-                                                "draft_status", "explore_and_draft",
-                                                "run_case_status", "run_case_stop"):
+            if _case_running() and name not in (
+                    "device_list", "list_cases", "draft_status", "explore_and_draft",
+                    "perf_sessions", "perf_baselines", "perf_report",
+                    "voice_list_cases", "voice_verify", "api_list",
+                    "element_list", "suite_list", "report_list", "report_read",
+                    "ai_analyze_failure",
+                    "run_case_status", "run_case_stop"):
                 raise ToolFailure("DEVICE_BUSY", "run_case 正在执行，设备暂时被占用",
                                   "等用例结束，或先调用 run_case_stop")
             if mutating:
@@ -91,6 +108,9 @@ def _hint_for(code: str) -> str:
         "CASE_AMBIGUOUS": "用例名重复，改用 case_id 或在 module 里指定模块",
         "CASE_EXISTS": "换一个 case_name，或传 overwrite=true 覆盖",
         "SUITE_NOT_FOUND": "先在执行页保存套件，或核对套件名 / 用例是否被删除",
+        "DESTRUCTIVE_DENIED": "确认风险后显式传 allow_destructive=true；默认不执行清空/安装/卸载",
+        "PERF_SESSION_NOT_FOUND": "先调用 perf_sessions 查看可用 session_id",
+        "ADB_FAILED": "确认设备在线、路径存在且当前账号有读取权限",
         "DEVICE_BUSY": "run_case / run_suite 正在执行；等它结束或先调用 run_case_stop",
         "ASSERT_FAILED": "查看返回的截图路径 / 失败步骤，必要时用 screenshot 看现场",
     }.get(code, "查看 data/mcp.log；如是参数问题请修正后重试")
@@ -261,13 +281,16 @@ def _resolve_case(case_name: Optional[str], case_id: Optional[str]) -> dict:
 
 def _start_case_job(case_name: Optional[str], case_id: Optional[str],
                     stop_on_failure: bool = False, loop_count: int = 1,
-                    retry_count: int = 0, retry_delay: int = 0) -> dict:
+                    retry_count: int = 0, retry_delay: int = 0,
+                    allow_destructive: bool = False) -> dict:
     if _case_running():
         raise ToolFailure("DEVICE_BUSY", "已有 run_case 正在执行",
                           "先调用 run_case_status 查看，或 run_case_stop 停止")
     target = _resolve_case(case_name, case_id)
     project = ProjectModel()
     step_model = StepModel()
+    found = _destructive_steps(step_model, [target["case_id"]])
+    _ensure_destructive_allowed(found, allow_destructive, "用例")
     exec_model = ExecutionModel()
     abort = threading.Event()
     run_id = uuid.uuid4().hex[:12]
@@ -322,7 +345,8 @@ def _start_case_job(case_name: Optional[str], case_id: Optional[str],
 def _run_case_tool(case_name: Optional[str] = None, case_id: Optional[str] = None,
                    stop_on_failure: bool = False, loop_count: int = 1,
                    retry_count: int = 0, retry_delay: int = 0,
-                   wait: bool = True, timeout_s: float = 60.0) -> str:
+                   wait: bool = True, timeout_s: float = 60.0,
+                   allow_destructive: bool = False) -> str:
     started = time.time()
     try:
         info = probe_gui()
@@ -330,20 +354,24 @@ def _run_case_tool(case_name: Optional[str] = None, case_id: Optional[str] = Non
             raise ToolFailure("PERMISSION_DENIED", "虫师界面正在运行，MCP 当前为只读模式",
                               "请先关闭虫师界面后再执行 run_case")
         job = _start_case_job(case_name, case_id, stop_on_failure,
-                              loop_count, retry_count, retry_delay)
+                              loop_count, retry_count, retry_delay,
+                              allow_destructive)
         if wait and timeout_s and timeout_s > 0:
             job["done"].wait(float(timeout_s))
         snap = _job_snapshot(job)
-        audit_write("run_case", {"case_name": case_name, "case_id": case_id},
+        audit_write("run_case", {"case_name": case_name, "case_id": case_id,
+                                 "allow_destructive": allow_destructive},
                     True, "", int((time.time() - started) * 1000))
         return ok(snap)
     except ToolFailure as e:
-        audit_write("run_case", {"case_name": case_name, "case_id": case_id},
+        audit_write("run_case", {"case_name": case_name, "case_id": case_id,
+                                 "allow_destructive": allow_destructive},
                     False, e.code, int((time.time() - started) * 1000))
         return err(e.code, e.message, e.hint)
     except Exception as e:
         code = classify_error(e)
-        audit_write("run_case", {"case_name": case_name, "case_id": case_id},
+        audit_write("run_case", {"case_name": case_name, "case_id": case_id,
+                                 "allow_destructive": allow_destructive},
                     False, code, int((time.time() - started) * 1000))
         return err(code, str(e), _hint_for(code))
 
@@ -430,6 +458,291 @@ def _device_list() -> dict:
             "is_car": "automotive" in chars.lower(),
         })
     return {"devices": devices, "current": RUNTIME.serial or ""}
+
+
+# ----------------------------------------------------------------------
+# 批次 1：ADB 只读
+# ----------------------------------------------------------------------
+def _adb_device_info() -> dict:
+    svc = RUNTIME.ensure_device(RUNTIME.serial)
+    serial = svc.serial
+    battery = _adb_shell(serial, "dumpsys battery")
+    battery_info = {}
+    for key in ("level", "status", "health", "temperature", "voltage"):
+        m = re.search(rf"{key}:\s*(.+)", battery)
+        if m:
+            battery_info[key] = m.group(1).strip()
+    return {
+        "serial": serial,
+        "model": _adb_shell(serial, "getprop ro.product.model"),
+        "android": _adb_shell(serial, "getprop ro.build.version.release"),
+        "characteristics": _adb_shell(serial, "getprop ro.build.characteristics"),
+        "resolution": _adb_shell(serial, "wm size"),
+        "density": _adb_shell(serial, "wm density"),
+        "battery": battery_info,
+        "storage_data": _adb_shell(serial, "df -h /data"),
+        "network": _adb_shell(serial, "ip -f inet addr show"),
+    }
+
+
+def _adb_logcat_snapshot(tags: Optional[str] = None, lines: int = 200) -> dict:
+    svc = RUNTIME.ensure_device(RUNTIME.serial)
+    serial = svc.serial
+    lines = max(1, min(5000, int(lines or 200)))
+    cmd = [get_adb_path(), "-s", serial, "logcat", "-d", "-v", "time",
+           "-t", str(lines)]
+    tag_list = [t for t in re.split(r"[,，\s]+", tags or "") if t]
+    if tag_list:
+        cmd += ["-s", *tag_list]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15,
+                           encoding="utf-8", errors="replace",
+                           creationflags=subprocess.CREATE_NO_WINDOW
+                           if sys.platform == "win32" else 0)
+    except Exception as e:
+        raise ToolFailure("ADB_FAILED", f"logcat 读取失败：{e}", "确认设备在线")
+    text = r.stdout or r.stderr or ""
+    folder = data_path("mcp_logs")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(
+        folder, f"logcat_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]}.txt")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    tail = "\n".join(text.splitlines()[-100:])
+    return {"path": path, "lines": len(text.splitlines()), "tail": tail}
+
+
+def _adb_pull(remote_path: str, local_name: Optional[str] = None) -> dict:
+    if not remote_path or remote_path.startswith("-"):
+        raise ToolFailure("INTERNAL_ERROR", "remote_path 不能为空或以 - 开头")
+    svc = RUNTIME.ensure_device(RUNTIME.serial)
+    serial = svc.serial
+    folder = os.path.join(Settings.get_output_dir(),
+                          safe_serial(serial or ""), "mcp_pull")
+    os.makedirs(folder, exist_ok=True)
+    name = (local_name or os.path.basename(remote_path.rstrip("/\\")) or "pull.bin")
+    name = re.sub(r"[\\/:*?\"<>|]+", "_", name)
+    local = os.path.join(folder, name)
+    if os.path.exists(local):
+        stem, ext = os.path.splitext(name)
+        local = os.path.join(folder, f"{stem}_{datetime.now().strftime('%H%M%S')}{ext}")
+    try:
+        r = subprocess.run(
+            [get_adb_path(), "-s", serial, "pull", remote_path, local],
+            capture_output=True, text=True, timeout=60,
+            encoding="utf-8", errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW
+            if sys.platform == "win32" else 0)
+    except Exception as e:
+        raise ToolFailure("ADB_FAILED", f"pull 失败：{e}", "确认设备在线")
+    out = (r.stdout or "") + (r.stderr or "")
+    if not os.path.exists(local) and "error" in out.lower():
+        raise ToolFailure("ADB_FAILED", out.strip()[:500], "确认路径存在且可读")
+    return {
+        "remote": remote_path,
+        "path": local,
+        "size": os.path.getsize(local) if os.path.exists(local) else 0,
+        "output": out.strip()[:500],
+    }
+
+
+# ----------------------------------------------------------------------
+# 批次 1：性能 / 语音 / 接口 / 元素库 / 报告（只读）
+# ----------------------------------------------------------------------
+def _perf_sessions(limit: int = 20) -> dict:
+    model = PerfModel()
+    sessions = sorted(model.sessions,
+                      key=lambda s: s.start_time or "", reverse=True)[:max(1, min(100, limit))]
+    out = []
+    for s in sessions:
+        out.append({
+            "session_id": s.id,
+            "name": s.name,
+            "serial": s.device_serial,
+            "package": s.app_package,
+            "processes": list(s.app_processes or []),
+            "start_time": s.start_time,
+            "end_time": s.end_time,
+            "sample_interval": s.sample_interval,
+            "metrics": list(s.metrics or []),
+            "samples": len(s.samples or []),
+            "suite": s.suite_name,
+            "case_names": list(s.case_names or []),
+            "alerts": len(s.alerts or []),
+        })
+    return {"count": len(out), "sessions": out}
+
+
+def _perf_baselines() -> dict:
+    model = PerfModel()
+    out = []
+    for b in model.baselines:
+        out.append({
+            "name": b.name,
+            "session_id": b.session_id,
+            "package": b.app_package,
+            "serial": b.device_serial,
+            "created_at": b.created_at,
+            "metrics": b.metrics,
+        })
+    return {"count": len(out), "baselines": out}
+
+
+def _perf_report(session_id: str, output_dir: Optional[str] = None) -> dict:
+    model = PerfModel()
+    session = model.get_session(session_id)
+    if session is None:
+        raise ToolFailure("PERF_SESSION_NOT_FOUND", f"性能会话不存在：{session_id}",
+                          "先调用 perf_sessions 查看 session_id")
+    base = output_dir or Settings.get_output_dir()
+    folder = os.path.join(base, safe_serial(session.device_serial or ""))
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"perf_report_{session.name}.html")
+    baseline = model.find_baseline_for_package(session.app_package, session.metrics)
+    PerfReportGenerator.generate(session, path, baseline=baseline)
+    return {"path": path, "size": os.path.getsize(path), "session_id": session_id}
+
+
+def _voice_list_cases(group: Optional[str] = None, include_steps: bool = False) -> dict:
+    model = VoiceModel()
+    group_names = {g.id: g.name for g in model.groups}
+    gid = None
+    if group:
+        gid = next((g.id for g in model.groups if group == g.name), None)
+        if gid is None:
+            gid = next((g.id for g in model.groups if group in g.name), None)
+    out = []
+    for case in model.cases:
+        if gid and case.group_id != gid:
+            continue
+        steps = list(case.steps or [])
+        item = {
+            "case_id": case.id,
+            "name": case.name,
+            "group": group_names.get(case.group_id, case.group_id),
+            "step_count": len(steps),
+            "phrase_count": sum(1 for s in steps if s.kind == "phrase"),
+            "verify_count": sum(1 for s in steps if s.kind != "phrase"),
+        }
+        if include_steps:
+            item["steps"] = [asdict(s) for s in steps]
+        out.append(item)
+    return {"count": len(out), "cases": out}
+
+
+def _api_list(group: Optional[str] = None, include_details: bool = False) -> dict:
+    model = ApiModel()
+    group_names = {g.id: g.name for g in model.groups}
+    gid = None
+    if group:
+        gid = next((g.id for g in model.groups if group == g.name), None)
+        if gid is None:
+            gid = next((g.id for g in model.groups if group in g.name), None)
+    out = []
+    for case in model.cases:
+        if gid and case.group_id != gid:
+            continue
+        item = {
+            "case_id": case.id,
+            "name": case.name,
+            "group": group_names.get(case.group_id, case.group_id),
+            "method": case.method,
+            "url": case.url,
+            "assert_count": len(case.asserts or []),
+        }
+        if include_details:
+            item.update({
+                "headers": case.headers,
+                "body_type": case.body_type,
+                "body": case.body[:2000],
+                "asserts": [asdict(a) for a in (case.asserts or [])],
+            })
+        out.append(item)
+    return {
+        "count": len(out),
+        "cases": out,
+        "environments": [
+            {"name": e.name, "base_url": e.base_url,
+             "variables": [v[0] for v in (e.variables or []) if v]}
+            for e in model.envs
+        ],
+        "current_env": getattr(model, "current_env", ""),
+    }
+
+
+def _element_list(app: Optional[str] = None, module: Optional[str] = None,
+                  search: Optional[str] = None, limit: int = 200) -> dict:
+    elements = ElementModel().get_elements()
+    app_v = (app or "").strip()
+    module_v = (module or "").strip()
+    search_v = (search or "").strip().lower()
+    out = []
+    for e in elements:
+        if app_v and e.app != app_v:
+            continue
+        if module_v and e.module != module_v:
+            continue
+        if search_v and search_v not in " ".join(
+                [e.name or "", e.app or "", e.module or "",
+                 e.loc_type or "", e.loc_value or ""]).lower():
+            continue
+        out.append({
+            "element_id": e.id, "name": e.name, "app": e.app,
+            "module": e.module, "loc_type": e.loc_type,
+            "loc_value": e.loc_value, "remark": e.remark,
+        })
+        if len(out) >= max(1, min(500, int(limit or 200))):
+            break
+    return {"count": len(out), "elements": out}
+
+
+def _report_root() -> Path:
+    return Path(Settings.get_output_dir()).resolve()
+
+
+def _report_list(limit: int = 30) -> dict:
+    root = _report_root()
+    out = []
+    if root.exists():
+        for p in root.rglob("*.html"):
+            if not p.name.startswith(("TestReport_", "perf_report_", "ApiReport_")):
+                continue
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            out.append({
+                "path": str(p), "name": p.name, "size": st.st_size,
+                "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+                "type": ("perf" if p.name.startswith("perf_report_")
+                         else "api" if p.name.startswith("ApiReport_")
+                         else "auto"),
+            })
+    out.sort(key=lambda x: x["mtime"], reverse=True)
+    return {"count": len(out[:max(1, min(100, limit))]),
+            "reports": out[:max(1, min(100, limit))]}
+
+
+def _report_read(path: str, max_chars: int = 12000) -> dict:
+    root = _report_root()
+    p = Path(path).resolve()
+    try:
+        if os.path.commonpath([str(root), str(p)]) != str(root):
+            raise ValueError("outside root")
+    except Exception:
+        raise ToolFailure("PERMISSION_DENIED", "只能读取输出目录下的报告",
+                          "先调用 report_list 获取路径")
+    if not p.exists() or p.suffix.lower() != ".html":
+        raise ToolFailure("INTERNAL_ERROR", "报告文件不存在或不是 HTML",
+                          "先调用 report_list 获取路径")
+    raw = p.read_text(encoding="utf-8", errors="ignore")
+    text = re.sub(r"<script[\s\S]*?</script>", " ", raw, flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", html.unescape(text)).strip()
+    limit = max(500, min(50000, int(max_chars or 12000)))
+    return {"path": str(p), "chars": len(text), "text": text[:limit],
+            "truncated": len(text) > limit}
 
 
 def _screenshot(inline: bool = False, region: Optional[str] = None) -> dict:
@@ -777,6 +1090,45 @@ _VALID_STEP_TYPES = {
     "physical_key", "screen_ctrl", "long_press", "flick", "double_click",
     "multi_swipe", "drag_drop", "gesture_zoom", "screenshot", "voice",
 }
+_DESTRUCTIVE_APP_ACTIONS = {"清空应用数据", "安装应用", "卸载应用"}
+
+
+def _destructive_steps(step_model, case_ids) -> list[dict]:
+    found = []
+    for cid in case_ids:
+        for step in step_model.get_steps_for_case(cid) or []:
+            if step.type != "app_mgr":
+                continue
+            action = (step.params or {}).get("action", "")
+            if action in _DESTRUCTIVE_APP_ACTIONS:
+                found.append({
+                    "case_id": cid,
+                    "step": step.name or step.type,
+                    "action": action,
+                })
+    return found
+
+
+def _destructive_clean_steps(clean: list[dict]) -> list[dict]:
+    found = []
+    for item in clean:
+        if item.get("type") != "app_mgr":
+            continue
+        action = (item.get("params") or {}).get("action", "")
+        if action in _DESTRUCTIVE_APP_ACTIONS:
+            found.append({"step": item.get("name", "app_mgr"), "action": action})
+    return found
+
+
+def _ensure_destructive_allowed(found: list[dict], allow: bool, context: str):
+    if not found or allow:
+        return
+    sample = "、".join(f"{x['action']}（{x['step']}）" for x in found[:5])
+    raise ToolFailure(
+        "DESTRUCTIVE_DENIED",
+        f"{context}包含危险步骤：{sample}",
+        "确认风险后显式传 allow_destructive=true 再执行",
+    )
 
 
 def _validate_draft_steps(steps) -> list[dict]:
@@ -828,7 +1180,8 @@ def _draft_status(draft_id: Optional[str] = None) -> dict:
 
 def _save_case(project_name: Optional[str], module: str, case_name: str,
                steps=None, draft_id: Optional[str] = None,
-               overwrite: bool = False) -> dict:
+               overwrite: bool = False,
+               allow_destructive: bool = False) -> dict:
     global _ACTIVE_DRAFT
     module = (module or "").strip()
     case_name = (case_name or "").strip()
@@ -842,6 +1195,8 @@ def _save_case(project_name: Optional[str], module: str, case_name: str,
                                   "先 explore_and_draft 并执行动作")
             steps = draft["steps"]
     clean = _validate_draft_steps(steps)
+    _ensure_destructive_allowed(
+        _destructive_clean_steps(clean), allow_destructive, "保存的用例")
 
     project_model = ProjectModel()
     project = None
@@ -895,7 +1250,8 @@ def _save_case(project_name: Optional[str], module: str, case_name: str,
 
 def _start_suite_job(suite_name: str, stop_on_failure: bool = False,
                      loop_count: int = 1, retry_count: int = 0,
-                     retry_delay: int = 0) -> dict:
+                     retry_delay: int = 0,
+                     allow_destructive: bool = False) -> dict:
     if _case_running():
         raise ToolFailure("DEVICE_BUSY", "已有 run_case / run_suite 正在执行",
                           "先调用 run_case_status 查看，或 run_case_stop 停止")
@@ -913,6 +1269,8 @@ def _start_suite_job(suite_name: str, stop_on_failure: bool = False,
         raise ToolFailure("SUITE_NOT_FOUND", f"套件里没有有效用例：{suite_name}",
                           "检查套件是否引用了已删除的用例")
     step_model = StepModel()
+    found = _destructive_steps(step_model, valid_ids)
+    _ensure_destructive_allowed(found, allow_destructive, "套件")
     exec_model = ExecutionModel()
     abort = threading.Event()
     run_id = uuid.uuid4().hex[:12]
@@ -967,7 +1325,8 @@ def _start_suite_job(suite_name: str, stop_on_failure: bool = False,
 def _run_suite_tool(suite_name: str, stop_on_failure: bool = False,
                     loop_count: int = 1, retry_count: int = 0,
                     retry_delay: int = 0, wait: bool = True,
-                    timeout_s: float = 60.0) -> str:
+                    timeout_s: float = 60.0,
+                    allow_destructive: bool = False) -> str:
     started = time.time()
     try:
         info = probe_gui()
@@ -975,22 +1334,302 @@ def _run_suite_tool(suite_name: str, stop_on_failure: bool = False,
             raise ToolFailure("PERMISSION_DENIED", "虫师界面正在运行，MCP 当前为只读模式",
                               "请先关闭虫师界面后再执行 run_suite")
         job = _start_suite_job(suite_name, stop_on_failure,
-                               loop_count, retry_count, retry_delay)
+                               loop_count, retry_count, retry_delay,
+                               allow_destructive)
         if wait and timeout_s and timeout_s > 0:
             job["done"].wait(float(timeout_s))
         snap = _job_snapshot(job)
-        audit_write("run_suite", {"suite_name": suite_name}, True, "",
-                    int((time.time() - started) * 1000))
+        audit_write("run_suite", {"suite_name": suite_name,
+                                  "allow_destructive": allow_destructive},
+                    True, "", int((time.time() - started) * 1000))
         return ok(snap)
     except ToolFailure as e:
-        audit_write("run_suite", {"suite_name": suite_name}, False, e.code,
-                    int((time.time() - started) * 1000))
+        audit_write("run_suite", {"suite_name": suite_name,
+                                  "allow_destructive": allow_destructive},
+                    False, e.code, int((time.time() - started) * 1000))
         return err(e.code, e.message, e.hint)
     except Exception as e:
         code = classify_error(e)
-        audit_write("run_suite", {"suite_name": suite_name}, False, code,
-                    int((time.time() - started) * 1000))
+        audit_write("run_suite", {"suite_name": suite_name,
+                                  "allow_destructive": allow_destructive},
+                    False, code, int((time.time() - started) * 1000))
         return err(code, str(e), _hint_for(code))
+
+
+# ----------------------------------------------------------------------
+# 批次 2：可控写操作（语音 / 接口 / 元素库 / 套件 / 用例 / 推送 / AI）
+# ----------------------------------------------------------------------
+def _voice_speak(text: str, after_delay: float = 0.0) -> dict:
+    text = (text or "").strip()
+    if not text:
+        raise ToolFailure("INTERNAL_ERROR", "播报文案不能为空")
+    cfg = dict(VoiceModel().settings or {})
+    svc = get_voice_service()
+    try:
+        svc.apply_cfg(cfg)
+    except Exception:
+        pass
+    elapsed = svc.speak(text)
+    delay = max(0.0, float(after_delay or 0))
+    if delay:
+        time.sleep(delay)
+    return {
+        "spoken": True,
+        "chars": len(text),
+        "speak_seconds": round(float(elapsed or 0), 2),
+        "after_delay": delay,
+        "engine": cfg.get("engine", ""),
+        "voice_id": cfg.get("voice_id", ""),
+    }
+
+
+def _voice_verify(tag: Optional[str] = None,
+                  success_keywords: Optional[list] = None,
+                  fail_keywords: Optional[list] = None) -> dict:
+    cfg = dict(VoiceModel().settings or {})
+    verify = dict(cfg.get("verify") or {})
+    tag = tag or verify.get("log_tag", "")
+    success = success_keywords if success_keywords is not None else verify.get(
+        "success_keywords", [])
+    fail = fail_keywords if fail_keywords is not None else verify.get(
+        "fail_keywords", [])
+    svc = VoiceFeedbackService(RUNTIME.serial)
+    lines = svc.capture(tag)
+    result, hits = VoiceFeedbackService.judge(lines, success, fail)
+    return {
+        "result": result,
+        "tag": tag,
+        "line_count": len(lines),
+        "matched": list(hits or [])[:10],
+        "success_keywords": list(success or []),
+        "fail_keywords": list(fail or []),
+    }
+
+
+def _api_run(case_id: Optional[str] = None, case_name: Optional[str] = None,
+             env_name: Optional[str] = None,
+             allow_destructive: bool = False) -> dict:
+    model = ApiModel()
+    case = None
+    if case_id:
+        case = model.get_case(case_id)
+    elif case_name:
+        exact = [c for c in model.cases if c.name == case_name]
+        pool = exact or [c for c in model.cases
+                         if case_name.lower() in c.name.lower()]
+        if len(pool) > 1:
+            raise ToolFailure("CASE_AMBIGUOUS", f"匹配到 {len(pool)} 个接口",
+                              "改用 case_id")
+        case = pool[0] if pool else None
+    if case is None:
+        raise ToolFailure("CASE_NOT_FOUND", "接口不存在",
+                          "先调用 api_list 查看 case_id")
+    method = (case.method or "GET").upper()
+    if method not in ("GET", "HEAD", "OPTIONS") and not allow_destructive:
+        raise ToolFailure(
+            "DESTRUCTIVE_DENIED", f"接口 {method} 可能有副作用：{case.name}",
+            "确认风险后传 allow_destructive=true")
+    env = model.get_env(env_name) if env_name else model.get_env(None)
+    result = ApiService().run_case(case, env)
+    try:
+        data = result.to_dict()
+    except Exception:
+        data = {"ok": result.ok, "status_code": result.status_code,
+                "elapsed_ms": result.elapsed_ms, "error": result.error}
+    return data
+
+
+def _element_upsert(app: str, module: str, name: str, loc_type: str,
+                    loc_value: str, remark: str = "") -> dict:
+    if not all((app, module, name, loc_type, loc_value)):
+        raise ToolFailure("INTERNAL_ERROR", "app/module/name/loc_type/loc_value 不能为空")
+    if loc_type not in LOCATION_TYPE_OPTIONS:
+        raise ToolFailure("INTERNAL_ERROR", f"不支持的定位方式：{loc_type}",
+                          f"可选：{' / '.join(LOCATION_TYPE_OPTIONS)}")
+    stats = ElementModel().upsert_elements([
+        (app.strip(), module.strip(), name.strip(), loc_type,
+         loc_value.strip(), remark or "")
+    ])
+    return {"created": stats["created"], "overwritten": stats["overwritten"],
+            "app": app, "module": module, "name": name}
+
+
+def _suite_list() -> dict:
+    project = ProjectModel()
+    names = {}
+    for node in project.get_all_cases():
+        names[node.id] = node.name
+    out = []
+    for suite in SuiteModel().suites:
+        out.append({
+            "name": suite.name,
+            "case_ids": list(suite.case_ids or []),
+            "cases": [names.get(cid, cid) for cid in (suite.case_ids or [])],
+        })
+    return {"count": len(out), "suites": out}
+
+
+def _suite_save(name: str, case_ids: list, overwrite: bool = False) -> dict:
+    name = (name or "").strip()
+    if not name or not case_ids:
+        raise ToolFailure("INTERNAL_ERROR", "suite_name / case_ids 不能为空")
+    project = ProjectModel()
+    valid = []
+    for cid in case_ids:
+        node = project.get_node_by_id(cid)
+        if node is None or node.type != "case":
+            raise ToolFailure("CASE_NOT_FOUND", f"用例不存在：{cid}",
+                              "先调用 list_cases")
+        valid.append(cid)
+    model = SuiteModel()
+    existing = model.get_suite_by_name(name)
+    if existing and not overwrite:
+        raise ToolFailure("CASE_EXISTS", f"套件已存在：{name}",
+                          "传 overwrite=true 覆盖")
+    if existing:
+        model.update_suite(name, valid)
+        action = "updated"
+    else:
+        model.create_suite(name, valid)
+        action = "created"
+    return {"name": name, "case_ids": valid, "action": action}
+
+
+def _suite_delete(name: str, allow_destructive: bool = False) -> dict:
+    if not allow_destructive:
+        raise ToolFailure("DESTRUCTIVE_DENIED", f"删除套件需要显式授权：{name}",
+                          "确认后传 allow_destructive=true")
+    ok_deleted = SuiteModel().delete_suite(name)
+    if not ok_deleted:
+        raise ToolFailure("SUITE_NOT_FOUND", f"套件不存在：{name}")
+    return {"deleted": True, "name": name}
+
+
+def _case_rename(case_id: str, new_name: str) -> dict:
+    new_name = (new_name or "").strip()
+    if not new_name:
+        raise ToolFailure("INTERNAL_ERROR", "new_name 不能为空")
+    project = ProjectModel()
+    node = project.get_node_by_id(case_id)
+    if node is None or node.type != "case":
+        raise ToolFailure("CASE_NOT_FOUND", f"用例不存在：{case_id}")
+    old = node.name
+    node.name = new_name
+    project.save()
+    return {"case_id": case_id, "old_name": old, "name": new_name}
+
+
+def _case_copy(case_id: str, new_name: Optional[str] = None,
+               target_module: Optional[str] = None) -> dict:
+    project = ProjectModel()
+    node = project.get_node_by_id(case_id)
+    if node is None or node.type != "case":
+        raise ToolFailure("CASE_NOT_FOUND", f"用例不存在：{case_id}")
+    parent, _, _ = project.get_parent_and_index(case_id)
+    if parent is None or parent.type != "folder":
+        raise ToolFailure("INTERNAL_ERROR", "用例不在功能模块下，无法复制")
+    target = parent
+    if target_module:
+        target = next((n for n in parent.children
+                       if n.type == "folder" and n.name == target_module), None)
+        if target is None:
+            # 同项目下找模块
+            project_node = parent
+            while project_node and project_node.type != "project":
+                project_node, _, _ = project.get_parent_and_index(project_node.id)
+            if project_node:
+                target = next((n for n in project_node.children
+                               if n.type == "folder" and n.name == target_module), None)
+        if target is None:
+            raise ToolFailure("INTERNAL_ERROR", f"目标模块不存在：{target_module}")
+    name = (new_name or f"{node.name} 副本").strip()
+    new_case = project.create_case(target.id, name)
+    step_model = StepModel()
+    for step in step_model.get_steps_for_case(case_id):
+        step_model.add_step_to_case(
+            new_case.id, Step(0, step.type, step.name, dict(step.params or {})))
+    return {"case_id": new_case.id, "name": new_case.name,
+            "source": case_id, "steps": len(step_model.get_steps_for_case(new_case.id))}
+
+
+def _case_delete(case_id: str, allow_destructive: bool = False) -> dict:
+    if not allow_destructive:
+        raise ToolFailure("DESTRUCTIVE_DENIED", f"删除用例需要显式授权：{case_id}",
+                          "确认后传 allow_destructive=true")
+    project = ProjectModel()
+    node = project.get_node_by_id(case_id)
+    if node is None or node.type != "case":
+        raise ToolFailure("CASE_NOT_FOUND", f"用例不存在：{case_id}")
+    step_model = StepModel()
+    for sid in list(step_model.case_steps.get(case_id, [])):
+        step_model._steps.pop(sid, None)
+    step_model.case_steps.pop(case_id, None)
+    step_model.save()
+    SuiteModel().remove_case_from_all_suites(case_id)
+    project.delete_node(case_id)
+    return {"deleted": True, "case_id": case_id}
+
+
+def _step_move(case_id: str, from_index: int, to_index: int) -> dict:
+    step_model = StepModel()
+    order = step_model.case_steps.get(case_id, [])
+    if not order:
+        raise ToolFailure("CASE_NOT_FOUND", f"用例没有步骤：{case_id}")
+    if not (0 <= from_index < len(order) and 0 <= to_index < len(order)):
+        raise ToolFailure("INTERNAL_ERROR",
+                          f"索引越界：0..{len(order) - 1}")
+    step_model.move_step(case_id, from_index, to_index)
+    return {"case_id": case_id, "from": from_index, "to": to_index,
+            "count": len(step_model.case_steps.get(case_id, []))}
+
+
+def _step_update(case_id: str, step_index: int, name: Optional[str] = None,
+                 params: Optional[dict] = None) -> dict:
+    step_model = StepModel()
+    steps = step_model.get_steps_for_case(case_id)
+    if not steps:
+        raise ToolFailure("CASE_NOT_FOUND", f"用例没有步骤：{case_id}")
+    if not (1 <= step_index <= len(steps)):
+        raise ToolFailure("INTERNAL_ERROR", f"step_index 范围 1..{len(steps)}")
+    step_model.update_step(steps[step_index - 1].id, name=name, params=params)
+    return {"case_id": case_id, "step_index": step_index, "updated": True}
+
+
+def _adb_push(local_path: str, remote_path: str) -> dict:
+    if not os.path.isfile(local_path):
+        raise ToolFailure("INTERNAL_ERROR", f"本地文件不存在：{local_path}")
+    if not remote_path or remote_path.startswith("-"):
+        raise ToolFailure("INTERNAL_ERROR", "remote_path 不能为空或以 - 开头")
+    svc = RUNTIME.ensure_device(RUNTIME.serial)
+    serial = svc.serial
+    try:
+        r = subprocess.run(
+            [get_adb_path(), "-s", serial, "push", local_path, remote_path],
+            capture_output=True, text=True, timeout=60,
+            encoding="utf-8", errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW
+            if sys.platform == "win32" else 0)
+    except Exception as e:
+        raise ToolFailure("ADB_FAILED", f"push 失败：{e}", "确认设备在线")
+    out = ((r.stdout or "") + (r.stderr or "")).strip()
+    if r.returncode != 0:
+        raise ToolFailure("ADB_FAILED", out[:500], "确认远端目录可写")
+    return {"local": local_path, "remote": remote_path,
+            "size": os.path.getsize(local_path), "output": out[:500]}
+
+
+def _ai_analyze_failure(step: dict, prev_steps: Optional[list] = None,
+                        error_msg: str = "", screenshot_path: Optional[str] = None,
+                        logcat_snippet: Optional[str] = None) -> dict:
+    suggestion = AIService().analyze_failure(
+        step or {}, prev_steps or [], error_msg or "",
+        screenshot_path=screenshot_path, logcat_snippet=logcat_snippet)
+    if suggestion is None:
+        return {"enabled": False, "message": "AI 未启用或调用失败"}
+    try:
+        return asdict(suggestion)
+    except Exception:
+        return {"summary": suggestion.summary, "cause": suggestion.cause}
 
 
 # ----------------------------------------------------------------------
@@ -1130,10 +1769,12 @@ async def list_cases(module: Optional[str] = None) -> str:
 async def run_case(case_name: Optional[str] = None, case_id: Optional[str] = None,
                    stop_on_failure: bool = False, loop_count: int = 1,
                    retry_count: int = 0, retry_delay: int = 0,
-                   wait: bool = True, timeout_s: float = 60.0) -> str:
+                   wait: bool = True, timeout_s: float = 60.0,
+                   allow_destructive: bool = False) -> str:
     return await asyncio.to_thread(
         _run_case_tool, case_name, case_id, stop_on_failure,
-        loop_count, retry_count, retry_delay, wait, timeout_s)
+        loop_count, retry_count, retry_delay, wait, timeout_s,
+        allow_destructive)
 
 
 @server.tool(name="run_case_status", description="查询 run_case 的进度 / 结果 / 最近日志")
@@ -1167,13 +1808,16 @@ async def save_case(module: str, case_name: str,
                     project_name: Optional[str] = None,
                     steps: Optional[list] = None,
                     draft_id: Optional[str] = None,
-                    overwrite: bool = False) -> str:
+                    overwrite: bool = False,
+                    allow_destructive: bool = False) -> str:
     params = {"module": module, "case_name": case_name,
               "project_name": project_name, "draft_id": draft_id,
-              "overwrite": overwrite, "steps": steps}
+              "overwrite": overwrite, "allow_destructive": allow_destructive,
+              "steps": steps}
     return await _run("save_case", params,
                       lambda: _save_case(project_name, module, case_name,
-                                         steps, draft_id, overwrite),
+                                         steps, draft_id, overwrite,
+                                         allow_destructive),
                       mutating=True)
 
 
@@ -1182,10 +1826,213 @@ async def save_case(module: str, case_name: str,
 async def run_suite(suite_name: str, stop_on_failure: bool = False,
                     loop_count: int = 1, retry_count: int = 0,
                     retry_delay: int = 0, wait: bool = True,
-                    timeout_s: float = 60.0) -> str:
+                    timeout_s: float = 60.0,
+                    allow_destructive: bool = False) -> str:
     return await asyncio.to_thread(
         _run_suite_tool, suite_name, stop_on_failure, loop_count,
-        retry_count, retry_delay, wait, timeout_s)
+        retry_count, retry_delay, wait, timeout_s, allow_destructive)
+
+
+# ----------------------------------------------------------------------
+# 批次 1：ADB / 性能 / 语音 / 接口 / 元素库 / 报告（只读）
+# ----------------------------------------------------------------------
+@server.tool(name="adb_device_info", description="读取设备硬件/系统/电池/存储/网络信息（只读）")
+async def adb_device_info() -> str:
+    return await _run("adb_device_info", {}, _adb_device_info)
+
+
+@server.tool(name="adb_logcat_snapshot", description="拉取当前 logcat 快照（-d，不清日志），返回文件路径和尾部")
+async def adb_logcat_snapshot(tags: Optional[str] = None, lines: int = 200) -> str:
+    return await _run("adb_logcat_snapshot", {"tags": tags, "lines": lines},
+                      lambda: _adb_logcat_snapshot(tags, lines))
+
+
+@server.tool(name="adb_pull", description="从设备拉取一个文件到输出目录（只读设备）")
+async def adb_pull(remote_path: str, local_name: Optional[str] = None) -> str:
+    return await _run("adb_pull", {"remote_path": remote_path,
+                                   "local_name": local_name},
+                      lambda: _adb_pull(remote_path, local_name))
+
+
+@server.tool(name="perf_sessions", description="列出性能检测历史会话（只读）")
+async def perf_sessions(limit: int = 20) -> str:
+    return await _run("perf_sessions", {"limit": limit},
+                      lambda: _perf_sessions(limit))
+
+
+@server.tool(name="perf_baselines", description="列出性能基线（只读）")
+async def perf_baselines() -> str:
+    return await _run("perf_baselines", {}, _perf_baselines)
+
+
+@server.tool(name="perf_report", description="为指定性能会话生成 HTML 报告，返回路径")
+async def perf_report(session_id: str, output_dir: Optional[str] = None) -> str:
+    return await _run("perf_report", {"session_id": session_id,
+                                      "output_dir": output_dir},
+                      lambda: _perf_report(session_id, output_dir))
+
+
+@server.tool(name="voice_list_cases", description="列出语音播报用例（只读）")
+async def voice_list_cases(group: Optional[str] = None,
+                           include_steps: bool = False) -> str:
+    return await _run("voice_list_cases", {"group": group,
+                                           "include_steps": include_steps},
+                      lambda: _voice_list_cases(group, include_steps))
+
+
+@server.tool(name="api_list", description="列出接口自动化的分组/接口/环境（只读）")
+async def api_list(group: Optional[str] = None,
+                   include_details: bool = False) -> str:
+    return await _run("api_list", {"group": group,
+                                   "include_details": include_details},
+                      lambda: _api_list(group, include_details))
+
+
+@server.tool(name="element_list", description="列出应用元素库（可按应用/模块/关键字过滤）")
+async def element_list(app: Optional[str] = None, module: Optional[str] = None,
+                       search: Optional[str] = None, limit: int = 200) -> str:
+    return await _run("element_list", {"app": app, "module": module,
+                                       "search": search, "limit": limit},
+                      lambda: _element_list(app, module, search, limit))
+
+
+@server.tool(name="report_list", description="列出输出目录下的测试/性能/接口 HTML 报告")
+async def report_list(limit: int = 30) -> str:
+    return await _run("report_list", {"limit": limit},
+                      lambda: _report_list(limit))
+
+
+@server.tool(name="report_read", description="读取输出目录下报告的文字内容（去掉 HTML 标签）")
+async def report_read(path: str, max_chars: int = 12000) -> str:
+    return await _run("report_read", {"path": path, "max_chars": max_chars},
+                      lambda: _report_read(path, max_chars))
+
+
+# ----------------------------------------------------------------------
+# 批次 2：语音 / 接口 / 元素库 / 套件 / 用例 / 推送 / AI
+# ----------------------------------------------------------------------
+@server.tool(name="voice_speak", description="用本机 TTS 播报一段文字（可控写）")
+async def voice_speak(text: str, after_delay: float = 0.0) -> str:
+    return await _run("voice_speak", {"text": text, "after_delay": after_delay},
+                      lambda: _voice_speak(text, after_delay))
+
+
+@server.tool(name="voice_verify", description="抓 logcat 按关键词做语音回执验证（只读）")
+async def voice_verify(tag: Optional[str] = None,
+                       success_keywords: Optional[list] = None,
+                       fail_keywords: Optional[list] = None) -> str:
+    return await _run("voice_verify", {"tag": tag,
+                                       "success_keywords": success_keywords,
+                                       "fail_keywords": fail_keywords},
+                      lambda: _voice_verify(tag, success_keywords, fail_keywords))
+
+
+@server.tool(name="api_run", description="执行一个已保存接口；非 GET/HEAD/OPTIONS 需 allow_destructive")
+async def api_run(case_id: Optional[str] = None, case_name: Optional[str] = None,
+                  env_name: Optional[str] = None,
+                  allow_destructive: bool = False) -> str:
+    return await _run("api_run", {"case_id": case_id, "case_name": case_name,
+                                  "env_name": env_name,
+                                  "allow_destructive": allow_destructive},
+                      lambda: _api_run(case_id, case_name, env_name,
+                                       allow_destructive))
+
+
+@server.tool(name="element_upsert", description="新增或覆盖一条元素库记录（写 data/）")
+async def element_upsert(app: str, module: str, name: str, loc_type: str,
+                         loc_value: str, remark: str = "") -> str:
+    return await _run("element_upsert", {"app": app, "module": module,
+                                         "name": name, "loc_type": loc_type,
+                                         "loc_value": loc_value, "remark": remark},
+                      lambda: _element_upsert(app, module, name, loc_type,
+                                              loc_value, remark),
+                      mutating=True)
+
+
+@server.tool(name="suite_list", description="列出已保存的自动套件（只读）")
+async def suite_list() -> str:
+    return await _run("suite_list", {}, _suite_list)
+
+
+@server.tool(name="suite_save", description="创建或覆盖自动套件（写 data/）")
+async def suite_save(name: str, case_ids: list, overwrite: bool = False) -> str:
+    return await _run("suite_save", {"name": name, "case_ids": case_ids,
+                                     "overwrite": overwrite},
+                      lambda: _suite_save(name, case_ids, overwrite),
+                      mutating=True)
+
+
+@server.tool(name="suite_delete", description="删除自动套件；需 allow_destructive=true")
+async def suite_delete(name: str, allow_destructive: bool = False) -> str:
+    return await _run("suite_delete", {"name": name,
+                                       "allow_destructive": allow_destructive},
+                      lambda: _suite_delete(name, allow_destructive),
+                      mutating=True)
+
+
+@server.tool(name="case_rename", description="重命名用例（写 data/）")
+async def case_rename(case_id: str, new_name: str) -> str:
+    return await _run("case_rename", {"case_id": case_id, "new_name": new_name},
+                      lambda: _case_rename(case_id, new_name), mutating=True)
+
+
+@server.tool(name="case_copy", description="复制用例及步骤，可指定目标模块/新名称")
+async def case_copy(case_id: str, new_name: Optional[str] = None,
+                    target_module: Optional[str] = None) -> str:
+    return await _run("case_copy", {"case_id": case_id, "new_name": new_name,
+                                    "target_module": target_module},
+                      lambda: _case_copy(case_id, new_name, target_module),
+                      mutating=True)
+
+
+@server.tool(name="case_delete", description="删除用例及步骤；需 allow_destructive=true")
+async def case_delete(case_id: str, allow_destructive: bool = False) -> str:
+    return await _run("case_delete", {"case_id": case_id,
+                                      "allow_destructive": allow_destructive},
+                      lambda: _case_delete(case_id, allow_destructive),
+                      mutating=True)
+
+
+@server.tool(name="step_move", description="调整用例内步骤顺序（0-based）")
+async def step_move(case_id: str, from_index: int, to_index: int) -> str:
+    return await _run("step_move", {"case_id": case_id,
+                                    "from_index": from_index,
+                                    "to_index": to_index},
+                      lambda: _step_move(case_id, from_index, to_index),
+                      mutating=True)
+
+
+@server.tool(name="step_update", description="修改用例某一步的名称/参数（1-based）")
+async def step_update(case_id: str, step_index: int,
+                      name: Optional[str] = None,
+                      params: Optional[dict] = None) -> str:
+    return await _run("step_update", {"case_id": case_id,
+                                      "step_index": step_index,
+                                      "name": name, "params": params},
+                      lambda: _step_update(case_id, step_index, name, params),
+                      mutating=True)
+
+
+@server.tool(name="adb_push", description="把本机文件推送到设备（写设备）")
+async def adb_push(local_path: str, remote_path: str) -> str:
+    return await _run("adb_push", {"local_path": local_path,
+                                   "remote_path": remote_path},
+                      lambda: _adb_push(local_path, remote_path),
+                      mutating=True)
+
+
+@server.tool(name="ai_analyze_failure", description="用已配置的 AI 分析一次失败（只读）")
+async def ai_analyze_failure(step: dict, prev_steps: Optional[list] = None,
+                             error_msg: str = "",
+                             screenshot_path: Optional[str] = None,
+                             logcat_snippet: Optional[str] = None) -> str:
+    return await _run("ai_analyze_failure",
+                      {"step": step, "prev_steps": prev_steps,
+                       "error_msg": error_msg,
+                       "screenshot_path": screenshot_path,
+                       "logcat_snippet": logcat_snippet},
+                      lambda: _ai_analyze_failure(step, prev_steps, error_msg,
+                                                  screenshot_path, logcat_snippet))
 
 
 def main():

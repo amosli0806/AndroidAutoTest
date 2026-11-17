@@ -712,6 +712,14 @@ for loop in 1..循环次数:
 - 用例：`list_cases`、`run_case`、`run_case_status`、`run_case_stop`
 - 用例生成：`explore_and_draft` 开草稿，后续成功的操作自动记录；`draft_status` 查看；
   `save_case` 落库（支持覆盖与定位校验）；`run_suite` 执行已保存套件
+- 只读扩展：`adb_device_info`、`adb_logcat_snapshot`、`adb_pull`；
+  `perf_sessions`、`perf_baselines`、`perf_report`；`voice_list_cases`、`api_list`、
+  `element_list`、`report_list`、`report_read`
+- 可控写扩展：`voice_speak` / `voice_verify`、`api_run`、`element_upsert`、
+  `suite_list` / `suite_save` / `suite_delete`、`case_rename` / `case_copy` / `case_delete`、
+  `step_move` / `step_update`、`adb_push`、`ai_analyze_failure`
+- `run_case` / `run_suite` / `save_case` 默认拒绝 `app_mgr` 的清空数据、安装、卸载步骤；
+  确认风险后必须显式传 `allow_destructive=true`。非 GET 接口、删除用例/套件同样需要该开关
 - `ui_find` 一次 dump、本地搜索；3 秒内复用缓存，`tap` 后自动失效
 - `run_case` / `run_suite` 在后台线程执行，`wait=true` 最多等 `timeout_s`；超时返回 `run_id`，
   用 `run_case_status` 轮询、`run_case_stop` 停止
@@ -741,7 +749,8 @@ Comate 的入口在 **Context → MCP**（个人级 `~/.comate/mcp.json` / 项�
 `.gitignore`，不会把本机绝对路径提交。注册后新开会话加载 `chongshi.*` 工具。
 
 P2 工具已完成并做过真机闭环验收：草稿生成 → `save_case` 覆盖保存 → `run_case` → `run_suite`
-全部通过。网页端接入属于远期扩展（见 `扩展方向.html` 第 3 章第八节），不属于本期。
+全部通过。批次 1 的只读工具与批次 2 的可控写工具已开放；只读部分和打包版
+`虫师-mcp.exe` 已在真实设备上验证。网页端接入属于远期扩展（见 `扩展方向.html` 第 3 章第八节），不属于本期。
 
 ---
 
@@ -754,7 +763,7 @@ main.py              入口：装配模型 / 视图 / 控制器，启动封面�
 main.spec            主程序打包配置（自绘启动封面、DPI 感知清单）
 updater.py/.spec     独立更新器（下载完成后替换文件并重启）
 release.py           发版辅助脚本（改版本号 / 打 tag / 等 CI / 转正）
-mcp_server/          本地 stdio MCP Server（P0/P1/P2：设备、定位、操作、用例、草稿与套件）
+mcp_server/          本地 stdio MCP Server（P0/P1/P2 + ADB/性能/语音/接口/元素库/报告只读）
 models/              数据模型（项目树、步骤、元素、套件、任务、性能、语音、接口、知识库、变量…）
 views/               界面（主窗口、8 个功能页 + 右栏入口、对话框、ADB 面板、性能控件）
 controllers/         控制器（把视图事件转成模型操作与执行流程）
