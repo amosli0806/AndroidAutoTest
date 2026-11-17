@@ -558,14 +558,20 @@ class HelpView(QFrame):
                         <code>element_upsert</code>、<code>suite_save</code> / <code>suite_delete</code>、
                         <code>case_rename</code> / <code>case_copy</code> / <code>case_delete</code>、
                         <code>step_move</code> / <code>step_update</code>、<code>adb_push</code>、
-                        <code>ai_analyze_failure</code>。</li>
+                        <code>ai_analyze_failure</code>；</li>
+                    <li>设备影响：<code>app_install</code>、<code>app_uninstall</code>、
+                        <code>app_clear_data</code>、<code>hprof_dump</code>、
+                        <code>device_reboot</code>（仅 system）。安装/卸载/清数据/重启需
+                        显式传 <code>allow_destructive=true</code>；堆转储免门禁，但有硬超时。</li>
                 </ul>
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     ⚠ 虫师界面运行时，MCP 自动降级为只读；点击、输入、<code>run_case</code>
                     等写操作需要先完全退出虫师。MCP 只走本机 stdio，不监听端口；每次调用都会写
                     <code>data/mcp_audit.log</code>。<br>
                     危险步骤（清空应用数据、安装、卸载）默认拒绝，确认风险后必须显式传
-                    <code>allow_destructive=true</code>；非 GET 接口、删除用例/套件也需要该开关。
+                    <code>allow_destructive=true</code>；非 GET 接口、删除用例/套件、安装/卸载/清数据/
+                    重启设备同样需要该开关。设备影响型操作执行期间，其他工具会返回
+                    <code>DEVICE_BUSY</code>，避免并发抢占设备。
                 </div>
                 """
             },

@@ -689,6 +689,23 @@
         <code>DESTRUCTIVE_DENIED</code>；<code>voice_speak</code> 正常出声；
         <code>api_run</code> 对临时 GET（本机回环 200）返回状态码与响应体正确。
         验收产生的临时用例、套件、元素、接口与本地文件均已清理。</p>
+      <p class="small"><b>批次 3.1 落地</b>（2026-11-17）：新增 <code>mcp_server/device_jobs.py</code>
+        作为设备任务运行时——统一 <code>run_id</code>、状态、耗时与落盘
+        <code>data/mcp_jobs/&lt;run_id&gt;.json</code>，启动时把遗留的 running 任务标记为 stale；
+        单发操作在工作线程执行，外层兜一层超时，避免 adb 卡死拖住 MCP 事件循环。
+        <code>_execute</code> 增加 <code>hold_lock</code> 参数，安装/堆转储只在检查阶段持
+        <code>RUNTIME.lock</code>；设备任务执行期间其他工具返回 <code>DEVICE_BUSY</code>，
+        <code>run_case</code> / <code>run_suite</code> 也拒绝启动。
+        工具侧新增 <code>app_install</code> / <code>app_uninstall</code> / <code>app_clear_data</code> /
+        <code>hprof_dump</code> / <code>device_reboot</code>（仅 system），前者与重启需
+        <code>allow_destructive</code>。真机验收：<code>hprof_dump</code> 在源码运行与打包版
+        <code>虫师-mcp.exe</code> 上均成功（pid 21340，产物约 151 ~ 165 MB，设备端文件自动清理）；
+        <code>app_install</code> 覆盖安装 209 MB 的 6.7.56.1 包通过；<code>app_clear_data</code>
+        返回 Success 且应用仍可被系统拉起；<code>app_uninstall</code> 返回 Success 后
+        <code>com.baidu.naviauto</code> 回退到 <code>/system/product/priv-app</code> 的预置版本
+        （系统应用不会真正消失），随后再次安装恢复 <code>/data/app</code> 更新层；
+        <code>device_reboot</code> 重启后 47 秒回连、<code>sys.boot_completed=1</code>，应用仍在且进程已起。
+        授权门禁、非法包名、非 system 重启均已验证。打包版工具数 44 → 49，stdio 握手通过。</p>
       <p class="small">阶段 1 与 2 可并行；阶段 3 必须等 2；阶段 4 必须等 1 + 2。
         预计总量 7 ~ 9 天（含 CaseRunner 与 GUI lock 的重构成本）。</p>
       <p><b>涉及文件（预计）</b>：</p>
@@ -853,7 +870,7 @@
           <code>element_upsert</code>、<code>suite_save</code> / <code>suite_delete</code>、
           用例重命名/复制/删除/步骤排序、<code>adb_push</code>、<code>ai_analyze_failure</code>
         </td><td>加确认/预览；写 <code>data/</code> 前检查 GUI 是否在运行</td></tr>
-        <tr><td><b>3 设备影响</b></td><td>
+        <tr><td><b>3 设备影响</b><br>3.1 ✅</td><td>
           安装/卸载/清空数据、Monkey、弱网、tcpdump、hprof、screenrecord、reboot/root、
           性能采集 start/stop、实时 logcat
         </td><td>必须 <code>allow_destructive</code> + 工具白名单 + run_id/stop + 审计</td></tr>
@@ -866,6 +883,59 @@
         默认返回 <code>DESTRUCTIVE_DENIED</code>，确认风险后必须显式传
         <code>allow_destructive=true</code>。这样即使 <code>launch_app</code> 只开放启动/停止/重启，
         智能体也不能悄悄通过用例执行危险动作。</div>
+
+      <p style="margin-top:16px"><b>批次 3 策略（2026-11-17 定稿）</b></p>
+      <p class="small"><b>成本不在工具封装</b>：Monkey、弱网、录屏、实时 logcat、tcpdump、性能采集
+        目前都长在 Qt 组件或命令池里（QThread / QObject + pyqtSignal），MCP 进程不能直接用。
+        沿用阶段 1 抽 <code>CaseRunner</code> 的做法，逐项抽成无 Qt 依赖的 runner，GUI 侧保留薄适配器：
+        <code>monkey_panel.py:531</code>、<code>weak_network_panel.py:171</code>、
+        <code>adb_command_pool.py:398/798</code>、<code>packet_capture.py:213</code>、
+        <code>perf_controller.py:23</code>；hprof 与安装/卸载/清数据逻辑简单，
+        可直接写纯函数或复用 <code>device_service.py:1203</code>。</p>
+
+      <p class="small"><b>工具清单与风险分级</b></p>
+      <table>
+        <tr><th style="width:26%">工具</th><th style="width:34%">形态</th><th>授权 / 上限</th></tr>
+        <tr><td><code>app_install</code> / <code>app_uninstall</code> / <code>app_clear_data</code></td>
+            <td>单发，同步</td><td><code>allow_destructive</code>；120 秒超时</td></tr>
+        <tr><td><code>device_reboot</code></td><td>单发</td>
+            <td><code>allow_destructive</code>；<b>仅 system</b></td></tr>
+        <tr><td><code>hprof_dump</code></td><td>单发</td><td>免门禁；dump 60 秒 + pull 120 秒</td></tr>
+        <tr><td><code>monkey_start</code> / <code>monkey_stop</code> / <code>monkey_status</code></td>
+            <td><code>run_id</code>，设备端常驻</td>
+            <td>免门禁；默认 24 小时、最大 72 小时；事件数可另设上限</td></tr>
+        <tr><td><code>screenrecord_start</code> / <code>screenrecord_stop</code></td>
+            <td><code>run_id</code>，主机侧</td><td>免门禁；≤180 秒（Android 硬限制），结束自动 pull</td></tr>
+        <tr><td><code>logcat_start</code> / <code>logcat_stop</code> / <code>logcat_read</code></td>
+            <td><code>run_id</code>，主机侧流式</td><td>免门禁；≤5 分钟或 2 万行</td></tr>
+        <tr><td><code>perf_start</code> / <code>perf_stop</code></td>
+            <td><code>run_id</code>，主机侧采样</td><td>免门禁；默认 60 分钟</td></tr>
+        <tr><td><code>tcpdump_start</code> / <code>tcpdump_stop</code></td>
+            <td><code>run_id</code>，主机侧流式</td><td>免门禁；≤10 分钟或 100 MB</td></tr>
+        <tr><td><code>weak_net_apply</code> / <code>weak_net_clear</code></td><td>单发 + TTL</td>
+            <td><code>allow_destructive</code>；TTL 默认 10 分钟、最大 60 分钟，到期自动清 qdisc</td></tr>
+      </table>
+      <p class="small"><b>不暴露</b>：<code>root</code>、<code>remount</code>、bootloader、recovery、fastboot、
+        分区格式化。这类操作失手就要重插设备，收益低于风险，继续留在工具箱手动执行。</p>
+
+      <p class="small"><b>长任务运行时（<code>mcp_server/device_jobs.py</code>）</b>：
+        统一 <code>run_id</code> / <code>kind</code> / <code>status</code> / <code>deadline</code> /
+        <code>stop_reason</code>；watchdog 到点自动停；stop 走「杀进程树 + 清设备端残留」；
+        产物登记路径与大小。互斥上，设备影响型长任务同一时刻只允许一个，
+        轻量 <code>logcat</code> 可与 <code>perf</code> 并存，录屏 + Monkey、抓包 + 弱网直接拒绝。</p>
+      <p class="small"><b>超长 Monkey 的专门设计</b>：实际场景有 13 ~ 60 小时的长跑，MCP 进程
+        不能是唯一持有者。做法是把 Monkey 发成<b>设备端常驻任务</b>——
+        <code>nohup monkey … &gt; /data/local/tmp/monkey_&lt;run_id&gt;.log 2&gt;&amp;1 &amp;</code> 后立刻返回；
+        运行态落 <code>data/mcp_jobs/&lt;run_id&gt;.json</code>，记录设备端 PID、seed、事件数、启动时间；
+        MCP 或 Comate 重启后，<code>monkey_status</code> 读状态文件 + 设备端 PID 存活校验即可重新接上，
+        <code>monkey_stop</code> 按记录的 PID 或 <code>pgrep -f monkey</code> 兜底终止。
+        长跑期间不抓 logcat，只按需 tail 设备端 monkey 日志，避免把设备打满。
+        主机侧任务（perf / logcat / tcpdump / 录屏）若 MCP 退出则中断，状态文件标记 stale，
+        重连后提示先 <code>stop</code> 做设备端清理。</p>
+
+      <p class="small"><b>实施顺序（每步单独真机验收）</b>：3.1 运行时骨架 + 单发型
+        （安装/卸载/清数据/hprof/reboot）；3.2 可停型（Monkey / 录屏 / 实时 logcat）；
+        3.3 采集型（性能采集 / tcpdump）；3.4 网络型（弱网 + TTL）。</p>
     </div>
 
     <div class="tip">🚫 <b>明确不做</b>：① 不自研 Agent 框架 / 不做模型微调（差异化在执行层，不在模型层）；
@@ -874,7 +944,7 @@
       必须走本机 outbound 中继 + 一次性配对 + 显式授权 + 审计，并单独做安全评审。</div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-15 · v1.5.24</footer>
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-17 · v1.5.24</footer>
 </div>
 </body>
 </html>

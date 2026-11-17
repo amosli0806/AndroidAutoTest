@@ -700,7 +700,7 @@ for loop in 1..循环次数:
 - **快捷键**：7 组共 41 个，全部可在设置里改，留空即禁用（默认表见 `utils/settings.py:DEFAULT_SHORTCUTS`）
 - **检查更新**：启动 4 秒后后台检查（失败静默），有新版在菜单亮红点；见 5.8
 
-### 4.14 MCP 服务（本地 stdio，P0/P1/P2）
+### 4.14 MCP 服务（本地 stdio，P0/P1/P2 + 批次 3.1）
 
 `mcp_server/` + `main.py --mcp`。这是**开发中的能力**：把 `device_service` 薄封装成 MCP 工具，
 让 Comate / Claude Desktop / Cursor / Cline 等支持本地 stdio 的客户端驱动虫师。**不监听端口、不做 HTTP**。
@@ -718,6 +718,11 @@ for loop in 1..循环次数:
 - 可控写扩展：`voice_speak` / `voice_verify`、`api_run`、`element_upsert`、
   `suite_list` / `suite_save` / `suite_delete`、`case_rename` / `case_copy` / `case_delete`、
   `step_move` / `step_update`、`adb_push`、`ai_analyze_failure`
+- 设备影响（批次 3.1）：`app_install`、`app_uninstall`、`app_clear_data`、`hprof_dump`、
+  `device_reboot`（仅 system）。安装/卸载/清数据/重启需要 `allow_destructive=true`；
+  `hprof_dump` 免门禁，dump 60 秒、pull 120 秒硬超时，产物落到输出目录 `<序列号>/hprof/`
+- 设备影响型操作统一生成 `run_id` 并落 `data/mcp_jobs/<run_id>.json`；执行期间其他工具返回
+  `DEVICE_BUSY`（`device_list` / `adb_device_info` 除外），避免安装或堆转储时并发操作设备
 - `run_case` / `run_suite` / `save_case` 默认拒绝 `app_mgr` 的清空数据、安装、卸载步骤；
   确认风险后必须显式传 `allow_destructive=true`。非 GET 接口、删除用例/套件同样需要该开关
 - `ui_find` 一次 dump、本地搜索；3 秒内复用缓存，`tap` 后自动失效
@@ -749,8 +754,10 @@ Comate 的入口在 **Context → MCP**（个人级 `~/.comate/mcp.json` / 项�
 `.gitignore`，不会把本机绝对路径提交。注册后新开会话加载 `chongshi.*` 工具。
 
 P2 工具已完成并做过真机闭环验收：草稿生成 → `save_case` 覆盖保存 → `run_case` → `run_suite`
-全部通过。批次 1 的只读工具与批次 2 的可控写工具已开放；只读部分和打包版
-`虫师-mcp.exe` 已在真实设备上验证。网页端接入属于远期扩展（见 `扩展方向.html` 第 3 章第八节），不属于本期。
+全部通过。批次 1 只读、批次 2 可控写已开放；批次 3.1 的设备影响型单发工具已在真机闭环：
+覆盖安装、清空数据、卸载（回退到系统预置版本）、恢复安装、`hprof_dump`、重启后 47 秒回连
+并确认应用仍在。Monkey、录屏、logcat、性能采集、tcpdump、弱网按 3.2 ~ 3.4 推进
+（见 `扩展方向.html`）。网页端接入属于远期扩展（见 `扩展方向.html` 第 3 章第八节），不属于本期。
 
 ---
 

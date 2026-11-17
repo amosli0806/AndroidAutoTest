@@ -42,6 +42,7 @@ from utils.settings import Settings
 from utils.step_params import LOCATION_TYPE_OPTIONS
 from utils.version import APP_VERSION
 
+from mcp_server import device_jobs
 from mcp_server.audit import write as audit_write
 from mcp_server.logging_setup import setup_stdio_logging
 from mcp_server.runtime import RUNTIME, search_nodes, summary_nodes
@@ -62,10 +63,22 @@ server = MCPServer(
 # ----------------------------------------------------------------------
 # 通用执行包装：GUI 只读保护、错误码、审计
 # ----------------------------------------------------------------------
-def _execute(name: str, params: dict, fn, mutating: bool = False) -> str:
+def _execute(name: str, params: dict, fn, mutating: bool = False,
+             hold_lock: bool = True) -> str:
+    """统一包装。
+
+    hold_lock=False 给安装/堆转储这类可能跑一两分钟的工具：占用
+    RUNTIME.lock 会把 ui_find、device_list 一起堵死，所以只在检查阶段持锁。
+    """
     started = time.time()
     try:
+        data = None
         with RUNTIME.lock:
+            if device_jobs.has_active() and name not in (
+                    "device_list", "adb_device_info"):
+                kinds = "/".join(device_jobs.active_kinds())
+                raise ToolFailure("DEVICE_BUSY", f"设备任务执行中：{kinds}",
+                                  "等任务结束后再操作；安装/堆转储期间不要并发操作设备")
             if _case_running() and name not in (
                     "device_list", "list_cases", "draft_status", "explore_and_draft",
                     "perf_sessions", "perf_baselines", "perf_report",
@@ -84,6 +97,9 @@ def _execute(name: str, params: dict, fn, mutating: bool = False) -> str:
                         "虫师界面正在运行，MCP 当前为只读模式",
                         f"请先关闭虫师界面（PID {pid}）后再执行写操作",
                     )
+            if hold_lock:
+                data = fn() or {}
+        if not hold_lock:
             data = fn() or {}
         audit_write(name, params, True, "", int((time.time() - started) * 1000))
         return ok(data)
@@ -111,6 +127,7 @@ def _hint_for(code: str) -> str:
         "DESTRUCTIVE_DENIED": "确认风险后显式传 allow_destructive=true；默认不执行清空/安装/卸载",
         "PERF_SESSION_NOT_FOUND": "先调用 perf_sessions 查看可用 session_id",
         "ADB_FAILED": "确认设备在线、路径存在且当前账号有读取权限",
+        "PROCESS_NOT_FOUND": "先启动应用（launch_app），再确认包名正确",
         "DEVICE_BUSY": "run_case / run_suite 正在执行；等它结束或先调用 run_case_stop",
         "ASSERT_FAILED": "查看返回的截图路径 / 失败步骤，必要时用 screenshot 看现场",
     }.get(code, "查看 data/mcp.log；如是参数问题请修正后重试")
@@ -286,6 +303,10 @@ def _start_case_job(case_name: Optional[str], case_id: Optional[str],
     if _case_running():
         raise ToolFailure("DEVICE_BUSY", "已有 run_case 正在执行",
                           "先调用 run_case_status 查看，或 run_case_stop 停止")
+    if device_jobs.has_active():
+        kinds = "/".join(device_jobs.active_kinds())
+        raise ToolFailure("DEVICE_BUSY", f"设备任务执行中：{kinds}",
+                          "等安装/堆转储等任务结束后再执行用例")
     target = _resolve_case(case_name, case_id)
     project = ProjectModel()
     step_model = StepModel()
@@ -1255,6 +1276,10 @@ def _start_suite_job(suite_name: str, stop_on_failure: bool = False,
     if _case_running():
         raise ToolFailure("DEVICE_BUSY", "已有 run_case / run_suite 正在执行",
                           "先调用 run_case_status 查看，或 run_case_stop 停止")
+    if device_jobs.has_active():
+        kinds = "/".join(device_jobs.active_kinds())
+        raise ToolFailure("DEVICE_BUSY", f"设备任务执行中：{kinds}",
+                          "等安装/堆转储等任务结束后再执行套件")
     suite = SuiteModel().get_suite_by_name(suite_name)
     if suite is None:
         raise ToolFailure("SUITE_NOT_FOUND", f"套件不存在：{suite_name}",
@@ -1618,6 +1643,207 @@ def _adb_push(local_path: str, remote_path: str) -> dict:
             "size": os.path.getsize(local_path), "output": out[:500]}
 
 
+# ----------------------------------------------------------------------
+# 批次 3.1：设备影响型（安装 / 卸载 / 清数据 / 堆转储 / 重启）
+# ----------------------------------------------------------------------
+_PACKAGE_RE = re.compile(r"^[A-Za-z0-9._]+$")
+
+_INSTALL_HINTS = {
+    "INSTALL_FAILED_ALREADY_EXISTS": "应用已存在；确认后传 replace=true",
+    "INSTALL_FAILED_VERSION_DOWNGRADE": "版本降级被拒绝；确认后传 replace=true",
+    "INSTALL_FAILED_UPDATE_INCOMPATIBLE": "签名不一致；先 app_uninstall 再安装",
+    "INSTALL_FAILED_INSUFFICIENT_STORAGE": "设备存储空间不足",
+    "INSTALL_FAILED_INVALID_APK": "APK 无效或已损坏",
+    "INSTALL_PARSE_FAILED": "APK 解析失败；确认文件完整且架构匹配",
+    "INSTALL_FAILED_TEST_ONLY": "测试包需要 -t，已默认携带",
+}
+
+
+def _validate_package(package: str) -> str:
+    package = (package or "").strip()
+    if not _PACKAGE_RE.match(package):
+        raise ToolFailure("INTERNAL_ERROR", f"包名不合法：{package!r}",
+                          "只允许字母、数字、点和下划线")
+    return package
+
+
+def _adb_run(serial: str, args: list, timeout: float = 60):
+    try:
+        return subprocess.run(
+            [get_adb_path(), "-s", serial, *args],
+            capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8", errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW
+            if sys.platform == "win32" else 0)
+    except subprocess.TimeoutExpired:
+        raise ToolFailure("TIMEOUT", f"adb {' '.join(args[:3])} 超时（{int(timeout)} 秒）",
+                          "确认设备在线；必要时先重启 adb")
+    except Exception as e:
+        raise ToolFailure("ADB_FAILED", f"adb 执行失败：{e}", "确认设备在线")
+
+
+def _jobbed(kind: str, meta: dict, fn, timeout: float) -> dict:
+    wrapped = device_jobs.run_blocking(kind, fn, timeout, meta=meta)
+    if wrapped.get("status") != "succeeded":
+        raise ToolFailure("TIMEOUT", wrapped.get("error") or "任务超时",
+                          "查看 data/mcp_jobs 下的状态文件；确认设备在线")
+    data = dict(wrapped.get("result") or {})
+    data["run_id"] = wrapped.get("run_id")
+    return data
+
+
+def _app_install(apk_path: str, replace: bool = True,
+                 grant_permissions: bool = True,
+                 allow_destructive: bool = False) -> dict:
+    if not allow_destructive:
+        raise ToolFailure("DESTRUCTIVE_DENIED", f"安装应用需要显式授权：{apk_path}",
+                          "确认风险后传 allow_destructive=true")
+    apk_path = os.path.abspath((apk_path or "").strip())
+    if not os.path.isfile(apk_path) or not apk_path.lower().endswith(".apk"):
+        raise ToolFailure("INTERNAL_ERROR", f"APK 不存在：{apk_path}",
+                          "传本机 apk 的绝对路径")
+    serial = RUNTIME.ensure_device(RUNTIME.serial).serial
+    args = ["install"]
+    if replace:
+        args.append("-r")
+    args.extend(["-t", "-d"])
+    if grant_permissions:
+        args.append("-g")
+    args.append(apk_path)
+
+    def run():
+        r = _adb_run(serial, args, timeout=120)
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        if r.returncode != 0 or "Failure" in out:
+            hint = next((h for k, h in _INSTALL_HINTS.items() if k in out),
+                        "确认 APK 与设备架构匹配、签名正常")
+            raise ToolFailure("ADB_FAILED", out[:800] or "安装失败", hint)
+        return {"apk": apk_path, "size": os.path.getsize(apk_path),
+                "replace": replace, "grant_permissions": grant_permissions,
+                "output": out[:500]}
+
+    return _jobbed("app_install", {"apk": apk_path, "serial": serial},
+                   run, timeout=135)
+
+
+def _app_uninstall(package: str, keep_data: bool = False,
+                   allow_destructive: bool = False) -> dict:
+    package = _validate_package(package)
+    if not allow_destructive:
+        raise ToolFailure("DESTRUCTIVE_DENIED", f"卸载应用需要显式授权：{package}",
+                          "确认风险后传 allow_destructive=true")
+    serial = RUNTIME.ensure_device(RUNTIME.serial).serial
+    args = ["uninstall"] + (["-k"] if keep_data else []) + [package]
+
+    def run():
+        r = _adb_run(serial, args, timeout=60)
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        if r.returncode != 0 or "Success" not in out:
+            hint = ("设备上没有该应用" if "not installed" in out.lower()
+                    else "确认包名正确；系统应用可能不允许卸载")
+            raise ToolFailure("ADB_FAILED", out[:500] or "卸载失败", hint)
+        return {"package": package, "keep_data": keep_data, "output": out[:200]}
+
+    return _jobbed("app_uninstall", {"package": package, "serial": serial},
+                   run, timeout=70)
+
+
+def _app_clear_data(package: str, allow_destructive: bool = False) -> dict:
+    package = _validate_package(package)
+    if not allow_destructive:
+        raise ToolFailure("DESTRUCTIVE_DENIED", f"清空应用数据需要显式授权：{package}",
+                          "确认风险后传 allow_destructive=true")
+    serial = RUNTIME.ensure_device(RUNTIME.serial).serial
+
+    def run():
+        r = _adb_run(serial, ["shell", "pm", "clear", package], timeout=30)
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        if r.returncode != 0 or "Success" not in out:
+            raise ToolFailure("ADB_FAILED", out[:300] or "清空失败",
+                              "确认包名正确且应用已安装")
+        return {"package": package, "output": out[:200]}
+
+    return _jobbed("app_clear_data", {"package": package, "serial": serial},
+                   run, timeout=40)
+
+
+def _hprof_dump(package: str, pull_to_host: bool = True) -> dict:
+    package = _validate_package(package)
+    serial = RUNTIME.ensure_device(RUNTIME.serial).serial
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    device_path = f"/data/local/tmp/heap_{package}_{stamp}.hprof"
+
+    def run():
+        pid_out = _adb_run(serial, ["shell", "pidof", package], timeout=10)
+        pids = (pid_out.stdout or "").split()
+        if pid_out.returncode != 0 or not pids:
+            raise ToolFailure("PROCESS_NOT_FOUND", f"进程不存在：{package}",
+                              "先启动应用（launch_app），确认包名正确")
+        pid = pids[0]
+        dump = _adb_run(serial, ["shell", "am", "dumpheap", pid, device_path],
+                        timeout=60)
+        dump_out = ((dump.stdout or "") + (dump.stderr or "")).strip()
+        if dump.returncode != 0:
+            raise ToolFailure("ADB_FAILED", dump_out[:500] or "堆转储失败",
+                              "确认应用可调试；部分系统应用不允许 dumpheap")
+        size = 0
+        for _ in range(20):
+            stat = _adb_run(serial, ["shell", "stat", "-c", "%s", device_path],
+                            timeout=10)
+            text = (stat.stdout or "").strip()
+            if stat.returncode == 0 and text.isdigit() and int(text) > 0:
+                size = int(text)
+                break
+            time.sleep(1)
+        if size <= 0:
+            raise ToolFailure("ADB_FAILED", "堆转储文件未生成",
+                              f"检查设备端 {device_path} 是否有写权限")
+        if not pull_to_host:
+            return {"package": package, "pid": pid, "device_path": device_path,
+                    "size": size, "pulled": False}
+
+        folder = os.path.join(Settings.get_output_dir(), safe_serial(serial),
+                              "hprof")
+        os.makedirs(folder, exist_ok=True)
+        local = os.path.join(folder, f"heap_{package}_{stamp}.hprof")
+        pulled = _adb_run(serial, ["pull", device_path, local], timeout=120)
+        if pulled.returncode != 0 or not os.path.isfile(local):
+            raise ToolFailure(
+                "ADB_FAILED",
+                ((pulled.stdout or "") + (pulled.stderr or "")).strip()[:500],
+                f"文件保留在设备 {device_path}，可稍后用 adb_pull 手动拉取")
+        _adb_run(serial, ["shell", "rm", "-f", device_path], timeout=15)
+        return {"package": package, "pid": pid, "device_path": device_path,
+                "path": local, "size": os.path.getsize(local), "pulled": True}
+
+    return _jobbed("hprof_dump", {"package": package, "serial": serial},
+                   run, timeout=220)
+
+
+def _device_reboot(mode: str = "system",
+                   allow_destructive: bool = False) -> dict:
+    mode = (mode or "system").strip().lower()
+    if mode != "system":
+        raise ToolFailure("INTERNAL_ERROR", f"仅支持 mode=system，收到：{mode}",
+                          "recovery / bootloader 不开放，请用工具箱手动执行")
+    if not allow_destructive:
+        raise ToolFailure("DESTRUCTIVE_DENIED", "重启设备需要显式授权",
+                          "确认风险后传 allow_destructive=true")
+    serial = RUNTIME.ensure_device(RUNTIME.serial).serial
+
+    def run():
+        r = _adb_run(serial, ["reboot"], timeout=15)
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        if r.returncode != 0:
+            raise ToolFailure("ADB_FAILED", out[:300] or "重启命令下发失败",
+                              "确认设备在线且 adb 有权限")
+        return {"serial": serial, "mode": mode, "accepted": True,
+                "note": "设备将在约 30 ~ 60 秒内重启，之后需重新确认 adb 连接"}
+
+    return _jobbed("device_reboot", {"serial": serial, "mode": mode},
+                   run, timeout=25)
+
+
 def _ai_analyze_failure(step: dict, prev_steps: Optional[list] = None,
                         error_msg: str = "", screenshot_path: Optional[str] = None,
                         logcat_snippet: Optional[str] = None) -> dict:
@@ -1635,8 +1861,9 @@ def _ai_analyze_failure(step: dict, prev_steps: Optional[list] = None,
 # ----------------------------------------------------------------------
 # MCP 工具注册（async + to_thread，避免阻塞 asyncio 事件循环）
 # ----------------------------------------------------------------------
-async def _run(name: str, params: dict, fn, mutating: bool = False) -> str:
-    return await asyncio.to_thread(_execute, name, params, fn, mutating)
+async def _run(name: str, params: dict, fn, mutating: bool = False,
+               hold_lock: bool = True) -> str:
+    return await asyncio.to_thread(_execute, name, params, fn, mutating, hold_lock)
 
 
 @server.tool(name="device_list", description="列出已连接设备（序列号 / 型号 / 分辨率 / 是否车机）")
@@ -2035,7 +2262,62 @@ async def ai_analyze_failure(step: dict, prev_steps: Optional[list] = None,
                                                   screenshot_path, logcat_snippet))
 
 
+# ----------------------------------------------------------------------
+# 批次 3.1：设备影响型（安装 / 卸载 / 清数据 / 堆转储 / 重启）
+# ----------------------------------------------------------------------
+@server.tool(name="app_install", description="安装本机 APK；需 allow_destructive=true（GUI 需退出）")
+async def app_install(apk_path: str, replace: bool = True,
+                      grant_permissions: bool = True,
+                      allow_destructive: bool = False) -> str:
+    return await _run("app_install",
+                      {"apk_path": apk_path, "replace": replace,
+                       "grant_permissions": grant_permissions,
+                       "allow_destructive": allow_destructive},
+                      lambda: _app_install(apk_path, replace,
+                                           grant_permissions, allow_destructive),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="app_uninstall", description="卸载应用；需 allow_destructive=true（GUI 需退出）")
+async def app_uninstall(package: str, keep_data: bool = False,
+                        allow_destructive: bool = False) -> str:
+    return await _run("app_uninstall",
+                      {"package": package, "keep_data": keep_data,
+                       "allow_destructive": allow_destructive},
+                      lambda: _app_uninstall(package, keep_data,
+                                             allow_destructive),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="app_clear_data", description="清空应用数据；需 allow_destructive=true（GUI 需退出）")
+async def app_clear_data(package: str,
+                         allow_destructive: bool = False) -> str:
+    return await _run("app_clear_data",
+                      {"package": package,
+                       "allow_destructive": allow_destructive},
+                      lambda: _app_clear_data(package, allow_destructive),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="hprof_dump", description="对指定应用做一次堆转储并拉回本机（免门禁，有硬超时）")
+async def hprof_dump(package: str, pull_to_host: bool = True) -> str:
+    return await _run("hprof_dump",
+                      {"package": package, "pull_to_host": pull_to_host},
+                      lambda: _hprof_dump(package, pull_to_host),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="device_reboot", description="重启设备（仅 system）；需 allow_destructive=true")
+async def device_reboot(mode: str = "system",
+                        allow_destructive: bool = False) -> str:
+    return await _run("device_reboot",
+                      {"mode": mode, "allow_destructive": allow_destructive},
+                      lambda: _device_reboot(mode, allow_destructive),
+                      mutating=True, hold_lock=False)
+
+
 def main():
+    device_jobs.init()
     setup_stdio_logging()
     server.run("stdio")
 

@@ -26,6 +26,7 @@ hiddenimports = [
     "mcp.types",
     "mcp_server.server",
     "mcp_server.runtime",
+    "mcp_server.device_jobs",
     "mcp_server.schema",
     "mcp_server.audit",
     "mcp_server.logging_setup",
