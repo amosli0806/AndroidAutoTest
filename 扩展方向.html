@@ -189,6 +189,7 @@
       <a href="#s2">二、macOS 移植注意事项</a>
       <a href="#s3">三、MCP 服务：把虫师变成智能体的执行层</a>
       <a href="#s4">四、MCP 工具分组与 Token 预算</a>
+      <a href="#s5">五、发版前风险清单（v1.5.24 → v1.6.0）</a>
     </div>
   </nav>
 
@@ -1294,6 +1295,187 @@
       <div class="tip">⚠ <b>兼容性注意</b>：分组只影响 <code>tools/list</code> 的返回值，不影响工具实现。
         已配置好的客户端不用改任何东西 —— 升级后自动看到 16 个工具，需要更多时再改配置。
         但<b>如果有客户端脚本硬编码了某个非 core 工具名</b>，升级后会突然「工具不存在」，需要在变更说明里点出来。</div>
+    </div>
+  </section>
+
+  <!-- ============ 五、v1.6.0 发版前风险清单 ============ -->
+  <section class="chapter" id="s5">
+    <h2><span class="num">5</span>发版前风险清单（v1.5.24 → v1.6.0） <span class="tag part">🚧 2026-11-17 核查 · 4 项待处理</span></h2>
+    <p class="small" style="margin-top:0">
+      本次改动比往常任何一版都大：<b>MCP 全套（73 个工具）+ weditor 下线 + 依赖大改</b>（删
+      <code>PyQt6-WebEngine</code> / <code>weditor</code>，加 <code>mcp==2.3.0</code> 及其 22 个依赖）。
+      下面按「发不出去 / 发出去功能坏 / 升级后异常」三档，逐条给出证据与修法。
+      所有结论都基于对 <code>.github/workflows/release.yml</code>、<code>mcp_server.spec</code>、
+      <code>updater.py</code>、<code>services/update_service.py</code> 的逐行核查。
+    </p>
+
+    <div class="card">
+      <h3>一、结论与优先级</h3>
+      <table>
+        <tr><th style="width:8%">级别</th><th style="width:34%">问题</th><th>后果</th></tr>
+        <tr><td><b>P0</b></td><td><code>release.yml</code> 仍在打包 <code>weditor.spec</code>，并校验 <code>weditor.exe</code> 存在</td>
+            <td><b>CI 必挂</b> —— 一个文件已删除、一个产物已消失，打包或校验两步都过不去</td></tr>
+        <tr><td><b>P0</b></td><td><code>release.yml</code> 没有 <code>mcp_server.spec</code> 的打包步骤</td>
+            <td>发布包里<b>没有 <code>虫师-mcp.exe</code></b>，文档给的客户端配置指向一个不存在的文件</td></tr>
+        <tr><td><b>P1</b></td><td><code>mcp_server.spec</code> 用 <code>console=False</code>，而启动只重定向了 stderr / print，未处理 <code>sys.stdout</code></td>
+            <td>窗口化 exe 下 <code>sys.stdout</code> 为 <code>None</code>，MCP 无法写 JSON-RPC，表现为「连上但工具列表为空 / 超时」</td></tr>
+        <tr><td><b>P2</b></td><td><code>虫师-mcp.exe</code> 若放安装根目录，自动更新不会搬入</td>
+            <td><code>updater</code> 只替换 <code>_internal</code> 整目录 + 根目录两个文件，新增的根目录文件永远缺席</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>二、P0 - 1：CI 配置滞后于 weditor 下线</h3>
+      <table>
+        <tr><th style="width:16%">位置</th><th style="width:42%">现状</th><th>后果</th></tr>
+        <tr><td><code>release.yml:83</code></td>
+            <td><code>pyinstaller weditor.spec --noconfirm ...</code></td>
+            <td><code>weditor.spec</code> 已在本次改动中删除 → 该步骤直接报错退出</td></tr>
+        <tr><td><code>release.yml:105</code></td>
+            <td>产物校验要求存在 <code>dist/虫师/_internal/tools/weditor.exe</code></td>
+            <td>该文件不再产出 → 校验 <code>sys.exit("产物缺失…")</code></td></tr>
+        <tr><td><code>release.yml:170-178</code></td>
+            <td>注释与逻辑都在讨论「不要给 <code>weditor.exe</code> 加 <code>--exclude</code>」</td>
+            <td>死逻辑，留着会误导后续维护（那段注释原本解释补丁为何多背 44MB）</td></tr>
+      </table>
+      <p><b>修法</b>：删掉 weditor 打包步骤（83-84 行）；校验清单里去掉 <code>weditor.exe</code>，
+        改为校验 <code>虫师.exe</code> / <code>_internal</code> / <code>updater.exe</code>（以及新决定的
+        <code>虫师-mcp.exe</code>）；清理 170 行那段针对 weditor 的补丁说明，
+        保留 <code>--exclude updater.exe</code>（那条与 weditor 无关）。</p>
+      <div class="tip">⚠ <b>顺手要确认的一件事</b>：<code>tools/weditor.exe</code> 这个 42MB 的二进制本身
+        是否还需要保留在仓库/打包脚本里。它已经没有任何调用方，继续随包分发纯属浪费体积。</div>
+    </div>
+
+    <div class="card">
+      <h3>三、P0 - 2：MCP 的 exe 没进 CI 流程</h3>
+      <p><code>mcp_server.spec</code> 是本次新增的，产出独立可执行文件 <code>虫师-mcp.exe</code>，
+        但 <code>release.yml</code> 里既没有打包步骤，也没有把它合并进 <code>dist/虫师</code> 或 zip。</p>
+      <p><b>后果</b>：第三章与第四章里写的客户端配置——</p>
+      <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">{
+  "mcpServers": {
+    "chongshi": {
+      "command": "D:\\…\\虫师-mcp.exe",
+      "args": []
+    }
+  }
+}</pre>
+      <p>——<b>在发布包里找不到这个文件</b>。用户按文档配完，客户端会报「无法启动进程」。</p>
+      <p><b>修法（二选一，推荐 A）</b>：</p>
+      <ul>
+        <li><b>A. 把 <code>虫师-mcp.exe</code> 打进 <code>_internal/</code></b>：加一步
+          <code>pyinstaller mcp_server.spec</code>，产物复制到 <code>dist/虫师/_internal/</code>，
+          文档里的配置路径相应改为 <code>_internal\虫师-mcp.exe</code>。
+          这样做还能顺带解决第四节 P2（自动更新能搬进去）。</li>
+        <li><b>B. 不单独出 exe</b>：让用户用主程序 <code>虫师.exe --mcp</code>。
+          代价是主 exe 已含 PyQt6 全套（约 200MB+），启动更慢、且主 exe 是窗口化进程，
+          同样有 stdout 问题（见第四节）。</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>四、P1：<code>console=False</code> 与 stdout（最可能在真机上翻车的一条）</h3>
+      <p><code>mcp_server.spec</code> 明确写了 <code>console=False</code>（不弹黑框），注释理由是
+        「stdio 句柄由 MCP 客户端通过管道提供」。但实际链路是：</p>
+      <ul>
+        <li><code>mcp_server/server.py::main()</code> 只做两件事：
+          <code>device_jobs.init()</code> → <code>setup_stdio_logging()</code> → <code>server.run("stdio")</code></li>
+        <li><code>mcp_server/logging_setup.py::setup_stdio_logging()</code> 接管了
+          <code>sys.stderr</code> 与 <code>builtins.print</code>（把约 200 处 <code>print()</code> 重定向到
+          <code>data/mcp.log</code>），<b>但没有碰 <code>sys.stdout</code></b></li>
+      </ul>
+      <p><b>问题</b>：PyInstaller 的 windowed 构建下，<code>sys.stdout</code> 是 <code>None</code>
+        （不是「管道给过来的流」）。MCP 的 stdio 传输需要向 stdout 写 JSON-RPC 帧，
+        写 <code>None</code> 会抛异常或静默失败，客户端看到的现象是
+        <b>「连上了、但 tools/list 永远是空的 / 超时」</b>——比直接崩更难排查。</p>
+      <p><b>为什么之前冒烟没发现</b>：验证用的是 <code>python main.py --mcp</code>（有控制台，
+        <code>sys.stdout</code> 正常）。这条只在<b>打包后的 exe</b> 上才会暴露。</p>
+      <p><b>验证方法</b>（必须做）：打一次包，用客户端或脚本拉起 <code>虫师-mcp.exe</code>，
+        调一次 <code>tools/list</code>，能返回 16/73 个工具才算过。</p>
+      <p><b>修法（二选一）</b>：</p>
+      <ul>
+        <li><b>改 <code>console=True</code></b>：最稳，代价是客户端拉起时一闪而过一个黑框
+          （多数 MCP 客户端在后台拉进程，用户基本看不到）。</li>
+        <li><b>启动时重开 stdout</b>：在 <code>setup_stdio_logging()</code> 里加
+          <code>sys.stdout = os.fdopen(1, "wb", 0)</code>（并给 <code>sys.stdout</code> 为
+          <code>None</code> 的情况兜底日志），保持无窗口。
+          <b>前提是父进程确实把管道句柄传给了子进程</b>——不同客户端行为不一致，需要实测。</li>
+      </ul>
+      <div class="tip">💡 两种都试过的经验：先用 <code>console=True</code> 打通功能，确认协议层没问题，
+        再单独优化「有没有黑框」这件事。反过来做会同时面对两个变量。</div>
+    </div>
+
+    <div class="card">
+      <h3>五、P2：exe 落位与自动更新</h3>
+      <p><code>updater.py</code> 的替换策略是：<b><code>_internal</code> 整个目录换掉</b>
+        （<code>ROOT_FILES = (虫师.exe, updater.exe)</code> 逐个换）。这意味着：</p>
+      <ul>
+        <li>旧 <code>_internal</code> 里被删掉的 <code>weditor.exe</code>、<code>PyQt6-WebEngine</code>
+          <b>会随目录替换一起消失</b> —— 不会残留，这点是安全的</li>
+        <li>但<b>新增的根目录文件不会被搬进来</b>：如果 <code>虫师-mcp.exe</code> 放在安装根目录，
+          老用户自动更新后它就缺席，只能重新下载全量包</li>
+      </ul>
+      <p><b>修法</b>：把 <code>虫师-mcp.exe</code> 放进 <code>_internal/</code>（与第三节 A 方案一致），
+        或把 <code>ROOT_FILES</code> 扩成三元组并同步改 <code>swap()</code> 的循环与回滚逻辑。
+        前者改动更小，推荐。</p>
+    </div>
+
+    <div class="card">
+      <h3>六、已经确认安全的部分（附依据）</h3>
+      <table>
+        <tr><th style="width:30%">担心的问题</th><th>核查结论</th></tr>
+        <tr><td>升级后旧 QtWebEngine / weditor 残留几百 MB</td>
+            <td><b>不会</b>。<code>apply_patch()</code> 按新 manifest <b>组装一棵全新目录树</b>，
+              旧目录只用于「复制清单里仍存在的文件」；<code>updater</code> 又是整目录替换 <code>_internal</code></td></tr>
+        <tr><td>补丁比全量包还大</td>
+            <td><b>有保护</b>。<code>make_update_patch.py</code> 定义了 <code>PatchTooBig</code>，
+              补丁相对全量没优势时跳过不发，客户端自动回退全量</td></tr>
+        <tr><td>帮助中心出现破图</td>
+            <td><b>已清理</b>。<code>views/help_view.py</code> 里搜不到 <code>weditor_</code> 的图片引用</td></tr>
+        <tr><td>主窗口残留 weditor Dock 代码</td>
+            <td><b>已清理</b>。<code>views/main_window.py</code> 里 <code>visualize_dock</code> 引用数为 0</td></tr>
+        <tr><td>升级时 weditor 进程锁文件导致替换失败</td>
+            <td><b>有专门处理</b>。<code>updater.py::stop_legacy_weditor()</code> 会在替换前先结束残留进程</td></tr>
+        <tr><td>依赖升级破坏原有功能</td>
+            <td><b>已实测</b>。<code>requests</code> / <code>PyQt6</code> / <code>uiautomator2</code> /
+              <code>cv2</code> / <code>openpyxl</code> / <code>qtawesome</code> 均正常导入</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>七、发版前动作清单</h3>
+      <table>
+        <tr><th style="width:6%">#</th><th style="width:52%">动作</th><th>验收方式</th></tr>
+        <tr><td>1</td><td>改 <code>release.yml</code>：删 weditor 打包步骤、删 weditor.exe 校验、清理相关注释</td>
+            <td>本地 <code>act</code> 或直接读 diff 确认无 <code>weditor</code> 残留</td></tr>
+        <tr><td>2</td><td>加 <code>mcp_server.spec</code> 打包，产物放进 <code>_internal/</code></td>
+            <td>本地打包后 <code>_internal/虫师-mcp.exe</code> 存在</td></tr>
+        <tr><td>3</td><td>解决 <code>console=False</code> 的 stdout 问题</td>
+            <td>用 exe 跑通一次 <code>tools/list</code>（返回 16 或 73 个工具）</td></tr>
+        <tr><td>4</td><td>确认 <code>虫师-mcp.exe</code> 落位与 <code>updater</code> 兼容</td>
+            <td>从 1.5.24 装一次、自动更新到新版本，确认 exe 在</td></tr>
+        <tr><td>5</td><td>版本号定 <code>1.6.0</code>（破坏性变更，不建议 1.5.25）</td>
+            <td><code>utils/version.py</code> + CHANGELOG 标题</td></tr>
+        <tr><td>6</td><td>变更说明写明「应用可视化改为内嵌页面、weditor 已下线」</td>
+            <td>CHANGELOG 面向用户的措辞</td></tr>
+        <tr><td>7</td><td>走<b>预发布灰度</b>，本机验证后再转正</td>
+            <td>预发布 Release 拉一次全量 + 一次补丁</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>八、体积与版本号判断</h3>
+      <ul>
+        <li><b>全量包会明显变小</b>：去掉 <code>PyQt6-WebEngine</code>（约 200MB）与
+          <code>weditor.exe</code>（42MB），换入 <code>mcp</code> 依赖（pydantic / starlette /
+          uvicorn 等，估 15~25MB）。净减小可观。</li>
+        <li><b>补丁也会变小</b>：删除的文件不需要进 payload，补丁体积主要取决于新增部分。</li>
+        <li><b>主 exe 可能反而变大</b>：<code>main.spec</code> 里 include 了
+          <code>mcp_server.server</code> / <code>mcp_server.runtime</code>，意味着 pydantic 那套也会打进
+          主程序。若确定只通过独立 exe 提供 MCP，可从 <code>main.spec</code> 摘掉以省 15~25MB
+          ——但主 exe 的 <code>--mcp</code> 分支会随之失效，需保留一处可用入口。</li>
+        <li><b>版本号</b>：weditor 下线属于用户可感知的能力变更，依赖大改也有兼容风险，
+          建议 <code>1.6.0</code>；补丁命名按「上个 tag → 本 tag」自动生成，无需手工处理。</li>
+      </ul>
     </div>
   </section>
 
