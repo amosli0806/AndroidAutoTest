@@ -31,6 +31,9 @@ from services.api_service import ApiService
 from services.ai_service import AIService
 from services.case_runner import CaseRunner
 from services.device_service import DeviceService
+from services.logcat_stream import LogcatStream
+from services.monkey_runner import MonkeyRunner
+from services.screenrecord_runner import ScreenRecordRunner
 from services.voice_feedback_service import VoiceFeedbackService
 from services.voice_service import get_voice_service
 from utils.adb_path import get_adb_path
@@ -63,6 +66,35 @@ server = MCPServer(
 # ----------------------------------------------------------------------
 # 通用执行包装：GUI 只读保护、错误码、审计
 # ----------------------------------------------------------------------
+_DEVICE_JOB_EXEMPT = {
+    "device_list", "adb_device_info",
+    "monkey_status", "monkey_stop",
+    "screenrecord_stop", "logcat_stop", "logcat_read",
+}
+
+_DETACHED_CHECKED = False
+_DETACHED_LOCK = threading.Lock()
+
+
+def _reconcile_detached_jobs() -> None:
+    """MCP 重启后第一次调用时，用设备端 PID 核对遗留的常驻任务。"""
+    global _DETACHED_CHECKED
+    with _DETACHED_LOCK:
+        if _DETACHED_CHECKED:
+            return
+        _DETACHED_CHECKED = True
+    if not device_jobs.has_detached():
+        return
+    try:
+        serial = RUNTIME.ensure_device(RUNTIME.serial).serial
+        runner = MonkeyRunner(serial)
+        device_jobs.reconcile_detached(
+            lambda job: runner.alive((job.get("meta") or {}).get("pid", "")))
+    except Exception:
+        with _DETACHED_LOCK:
+            _DETACHED_CHECKED = False
+
+
 def _execute(name: str, params: dict, fn, mutating: bool = False,
              hold_lock: bool = True) -> str:
     """统一包装。
@@ -74,8 +106,8 @@ def _execute(name: str, params: dict, fn, mutating: bool = False,
     try:
         data = None
         with RUNTIME.lock:
-            if device_jobs.has_active() and name not in (
-                    "device_list", "adb_device_info"):
+            _reconcile_detached_jobs()
+            if device_jobs.has_active() and name not in _DEVICE_JOB_EXEMPT:
                 kinds = "/".join(device_jobs.active_kinds())
                 raise ToolFailure("DEVICE_BUSY", f"设备任务执行中：{kinds}",
                                   "等任务结束后再操作；安装/堆转储期间不要并发操作设备")
@@ -128,6 +160,7 @@ def _hint_for(code: str) -> str:
         "PERF_SESSION_NOT_FOUND": "先调用 perf_sessions 查看可用 session_id",
         "ADB_FAILED": "确认设备在线、路径存在且当前账号有读取权限",
         "PROCESS_NOT_FOUND": "先启动应用（launch_app），再确认包名正确",
+        "JOB_NOT_FOUND": "先调用 monkey_start / screenrecord_start / logcat_start 获取 run_id",
         "DEVICE_BUSY": "run_case / run_suite 正在执行；等它结束或先调用 run_case_stop",
         "ASSERT_FAILED": "查看返回的截图路径 / 失败步骤，必要时用 screenshot 看现场",
     }.get(code, "查看 data/mcp.log；如是参数问题请修正后重试")
@@ -1844,6 +1877,348 @@ def _device_reboot(mode: str = "system",
                    run, timeout=25)
 
 
+# ----------------------------------------------------------------------
+# 批次 3.2：Monkey / 录屏 / 实时 logcat（run_id + stop + 自动收尾）
+# ----------------------------------------------------------------------
+_ACTIVE_JOB_STATUS = ("running", "stopping", "detached")
+
+
+def _job_or_fail(run_id: str) -> dict:
+    job = device_jobs.get((run_id or "").strip())
+    if job is None:
+        raise ToolFailure("JOB_NOT_FOUND", f"任务不存在：{run_id}",
+                          "先调用对应的 start 工具获取 run_id")
+    return job
+
+
+def _runner_for(job: dict, factory):
+    raw_job = device_jobs.raw(job["run_id"]) or {}
+    runner = raw_job.get("_runner")
+    if runner is not None:
+        return runner
+    serial = (job.get("meta") or {}).get("serial") or \
+        RUNTIME.ensure_device(RUNTIME.serial).serial
+    return factory(serial)
+
+
+def _monkey_start(packages: list, events: int = 1000, throttle_ms: int = 800,
+                  seed: Optional[int] = None, duration_h: float = 24.0,
+                  verbose: int = 0, flags: Optional[dict] = None,
+                  pcts: Optional[dict] = None,
+                  use_whitelist: bool = False) -> dict:
+    try:
+        packages = MonkeyRunner.validate_packages(packages or [])
+    except ValueError as e:
+        raise ToolFailure("INTERNAL_ERROR", str(e))
+    events = int(events or 0)
+    if not (1 <= events <= 10_000_000):
+        raise ToolFailure("INTERNAL_ERROR", f"events 范围 1..10000000：{events}")
+    throttle_ms = int(throttle_ms or 0)
+    if not (0 <= throttle_ms <= 10_000):
+        raise ToolFailure("INTERNAL_ERROR", f"throttle_ms 范围 0..10000：{throttle_ms}")
+    verbose = int(verbose or 0)
+    if not (0 <= verbose <= 2):
+        raise ToolFailure("INTERNAL_ERROR", f"verbose 范围 0..2：{verbose}")
+    duration_h = float(duration_h or 24)
+    if not (0.01 <= duration_h <= 72):
+        raise ToolFailure("INTERNAL_ERROR", f"duration_h 范围 0.01..72：{duration_h}")
+    bad = [k for k in (flags or {})
+           if k not in ("ignore_crashes", "ignore_timeouts", "ignore_security",
+                        "ignore_native", "monitor_native")]
+    if bad:
+        raise ToolFailure("INTERNAL_ERROR", f"未知的 flags：{', '.join(bad)}",
+                          "可选：ignore_crashes / ignore_timeouts / "
+                          "ignore_security / ignore_native / monitor_native")
+    bad_pcts = [k for k in (pcts or {}) if k not in MonkeyRunner.DEFAULT_PCTS]
+    if bad_pcts:
+        raise ToolFailure("INTERNAL_ERROR", f"未知的事件比例：{', '.join(bad_pcts)}",
+                          "可选：touch / motion / trackball / nav / majornav / "
+                          "appswitch / flip / anyevent / syskeys")
+    for key, value in (pcts or {}).items():
+        if not (0 <= int(value) <= 100):
+            raise ToolFailure("INTERNAL_ERROR", f"pct {key} 范围 0..100：{value}")
+
+    serial = RUNTIME.ensure_device(RUNTIME.serial).serial
+    duration_s = int(duration_h * 3600)
+    job = device_jobs.create(
+        "monkey", mode="device",
+        meta={"serial": serial, "packages": packages, "events": events,
+              "duration_h": duration_h, "use_whitelist": bool(use_whitelist)},
+        deadline_ts=time.time() + duration_s + 300)
+    runner = MonkeyRunner(serial)
+    try:
+        info = runner.start(packages, events,
+                            int(seed if seed is not None
+                                else int(time.time() * 1000) % 1_000_000),
+                            throttle_ms, verbose, duration_s,
+                            tag=job["run_id"], flags=flags, pcts=pcts,
+                            use_whitelist=use_whitelist)
+    except Exception as e:
+        device_jobs.finish(job, "failed", error=str(e))
+        raise ToolFailure("ADB_FAILED", str(e),
+                          "确认设备在线、包名已安装；Monkey 若已在跑先 monkey_stop")
+
+    pid = info["pid"]
+    whitelist_remote = info.get("whitelist_remote", "")
+    raw_job = device_jobs.raw(job["run_id"])
+    raw_job["_runner"] = runner
+    device_jobs.update_meta(job["run_id"], {
+        "pid": pid, "log_path": info["log_path"],
+        "device_timeout": info["device_timeout"],
+        "whitelist_remote": whitelist_remote})
+
+    def _stop(reason: str) -> dict:
+        res = runner.stop(pid, whitelist_remote)
+        status = "stopped" if reason == "user" else "timeout"
+        device_jobs.finish(raw_job, status, result=res, stop_reason=reason)
+        return res
+
+    device_jobs.set_stop(job["run_id"], _stop)
+    return {"run_id": job["run_id"], "status": "running", "pid": pid,
+            "packages": packages, "events": events,
+            "throttle_ms": throttle_ms, "duration_h": duration_h,
+            "device_timeout": info["device_timeout"],
+            "use_whitelist": bool(use_whitelist),
+            "device_log": info["log_path"],
+            "deadline_s": duration_s}
+
+
+def _monkey_status(run_id: str) -> dict:
+    job = _job_or_fail(run_id)
+    meta = job.get("meta") or {}
+    runner = _runner_for(job, MonkeyRunner)
+    pid = str(meta.get("pid") or "")
+    alive = runner.alive(pid) if pid else bool(runner.running_pid())
+    tail = runner.tail(meta.get("log_path") or "", 20)
+    status = job.get("status")
+    raw_job = device_jobs.raw(job["run_id"])
+    if status == "detached" and alive:
+        device_jobs.mark_running(job["run_id"])
+        status = "running"
+    elif status in ("running", "detached") and not alive:
+        if meta.get("whitelist_remote"):
+            runner.remove_whitelist(meta["whitelist_remote"])
+        device_jobs.finish(raw_job, "finished",
+                           result={"alive": False, "tail": tail},
+                           stop_reason="process_exited")
+        status = "finished"
+    return {"run_id": job["run_id"], "status": status, "alive": alive,
+            "pid": pid, "packages": meta.get("packages", []),
+            "events": meta.get("events"), "tail": tail,
+            "device_log": meta.get("log_path", "")}
+
+
+def _monkey_stop(run_id: str) -> dict:
+    job = _job_or_fail(run_id)
+    if job.get("status") not in _ACTIVE_JOB_STATUS:
+        return {"run_id": job["run_id"], "status": job.get("status"),
+                "message": "任务已结束，无需停止"}
+    raw_job = device_jobs.raw(job["run_id"]) or {}
+    if raw_job.get("_stop_fn"):
+        device_jobs.request_stop(job["run_id"], "user")
+    else:
+        # MCP 重启后重新接上：按 meta 里的设备 PID 停
+        runner = _runner_for(job, MonkeyRunner)
+        meta = job.get("meta") or {}
+        res = runner.stop(str(meta.get("pid") or ""),
+                          meta.get("whitelist_remote") or "")
+        device_jobs.finish(raw_job, "stopped", result=res, stop_reason="user")
+    device_jobs.wait(job["run_id"], 20)
+    snap = device_jobs.get(job["run_id"]) or job
+    return {"run_id": job["run_id"], "status": snap.get("status"),
+            "result": snap.get("result")}
+
+
+def _screenrecord_start(duration_s: int = 180,
+                        bitrate_mbps: float = 8.0) -> dict:
+    duration_s = int(duration_s or 180)
+    if not (5 <= duration_s <= 180):
+        raise ToolFailure("INTERNAL_ERROR", f"duration_s 范围 5..180：{duration_s}")
+    bitrate_mbps = float(bitrate_mbps or 8)
+    if not (0.5 <= bitrate_mbps <= 50):
+        raise ToolFailure("INTERNAL_ERROR", f"bitrate_mbps 范围 0.5..50：{bitrate_mbps}")
+
+    serial = RUNTIME.ensure_device(RUNTIME.serial).serial
+    runner = ScreenRecordRunner(serial, Settings.get_output_dir())
+    job = device_jobs.create(
+        "screenrecord", mode="host",
+        meta={"serial": serial, "duration_s": duration_s,
+              "bitrate_mbps": bitrate_mbps},
+        deadline_ts=time.time() + duration_s + 60)
+    try:
+        info = runner.start(duration_s, bitrate_mbps)
+    except Exception as e:
+        device_jobs.finish(job, "failed", error=str(e))
+        raise ToolFailure("ADB_FAILED", str(e),
+                          "确认设备在线；已有录屏时先 screenrecord_stop")
+
+    raw_job = device_jobs.raw(job["run_id"])
+    raw_job["_runner"] = runner
+    device_jobs.update_meta(job["run_id"], {
+        "path": info["path"], "remote_path": info["remote_path"]})
+
+    def _finish_from_runner(status: str, reason: str = ""):
+        try:
+            art = runner.finalize()
+        except Exception as e:
+            device_jobs.finish(raw_job, "failed", error=str(e),
+                               stop_reason=reason)
+            return {"error": str(e)}
+        device_jobs.finish(raw_job, status, result=art, stop_reason=reason)
+        return art
+
+    def _monitor():
+        rc = runner.wait(duration_s + 60)
+        if raw_job.get("status") != "running":
+            return
+        _finish_from_runner("succeeded" if rc == 0 else "finished")
+
+    def _stop(reason: str) -> dict:
+        try:
+            art = runner.stop()
+        except Exception as e:
+            device_jobs.finish(raw_job, "failed", error=str(e),
+                               stop_reason=reason)
+            return {"error": str(e)}
+        device_jobs.finish(raw_job, "stopped", result=art, stop_reason=reason)
+        return art
+
+    device_jobs.set_stop(job["run_id"], _stop)
+    threading.Thread(target=_monitor, daemon=True,
+                     name=f"mcp-sr-{job['run_id']}").start()
+    return {"run_id": job["run_id"], "status": "running",
+            "path": info["path"], "device_path": info["remote_path"],
+            "duration_s": duration_s, "bitrate_mbps": bitrate_mbps}
+
+
+def _screenrecord_stop(run_id: str) -> dict:
+    job = _job_or_fail(run_id)
+    status = job.get("status")
+    meta = job.get("meta") or {}
+    if status in _ACTIVE_JOB_STATUS:
+        device_jobs.request_stop(run_id, "user")
+        device_jobs.wait(run_id, 90)
+        snap = device_jobs.get(run_id) or job
+    else:
+        snap = job
+    if status == "stale":
+        # MCP 退出导致主机侧中断：清掉设备端可能残留的录屏进程和文件
+        try:
+            runner = ScreenRecordRunner(
+                meta.get("serial") or "", Settings.get_output_dir())
+            for pid in runner.running_pids():
+                runner._adb(["shell", "kill", "-9", pid], timeout=5)
+            if meta.get("remote_path"):
+                runner._adb(["shell", "rm", "-f", meta["remote_path"]],
+                            timeout=15)
+        except Exception:
+            pass
+    return {"run_id": run_id, "status": snap.get("status"),
+            "path": meta.get("path", ""),
+            "size": (snap.get("result") or {}).get("size", 0),
+            "stop_reason": snap.get("stop_reason", "")}
+
+
+def _logcat_start(tags: Optional[list] = None, max_lines: int = 20000,
+                  max_seconds: int = 300,
+                  clear_first: bool = False) -> dict:
+    max_lines = int(max_lines or 20000)
+    if not (100 <= max_lines <= 200000):
+        raise ToolFailure("INTERNAL_ERROR", f"max_lines 范围 100..200000：{max_lines}")
+    max_seconds = int(max_seconds or 300)
+    if not (5 <= max_seconds <= 3600):
+        raise ToolFailure("INTERNAL_ERROR", f"max_seconds 范围 5..3600：{max_seconds}")
+
+    serial = RUNTIME.ensure_device(RUNTIME.serial).serial
+    runner = LogcatStream(serial, Settings.get_output_dir())
+    job = device_jobs.create(
+        "logcat", mode="host",
+        meta={"serial": serial, "tags": list(tags or [])},
+        deadline_ts=time.time() + max_seconds + 30)
+    try:
+        info = runner.start(tags, max_lines, max_seconds, clear_first)
+    except Exception as e:
+        device_jobs.finish(job, "failed", error=str(e))
+        raise ToolFailure("ADB_FAILED", str(e), "确认设备在线且 logcat 可用")
+
+    raw_job = device_jobs.raw(job["run_id"])
+    raw_job["_runner"] = runner
+    device_jobs.update_meta(job["run_id"], {"path": info["path"]})
+
+    def _monitor():
+        runner.wait(max_seconds + 15)
+        if raw_job.get("status") != "running":
+            return
+        try:
+            stats = runner.stop()
+        except Exception as e:
+            device_jobs.finish(raw_job, "failed", error=str(e))
+            return
+        device_jobs.finish(raw_job, "succeeded", result=stats)
+
+    def _stop(reason: str) -> dict:
+        try:
+            stats = runner.stop()
+        except Exception as e:
+            device_jobs.finish(raw_job, "failed", error=str(e),
+                               stop_reason=reason)
+            return {"error": str(e)}
+        device_jobs.finish(raw_job, "stopped", result=stats,
+                           stop_reason=reason)
+        return stats
+
+    device_jobs.set_stop(job["run_id"], _stop)
+    threading.Thread(target=_monitor, daemon=True,
+                     name=f"mcp-logcat-{job['run_id']}").start()
+    return {"run_id": job["run_id"], "status": "running",
+            "path": info["path"], "tags": info["tags"],
+            "max_lines": max_lines, "max_seconds": max_seconds}
+
+
+def _logcat_stop(run_id: str) -> dict:
+    job = _job_or_fail(run_id)
+    status = job.get("status")
+    meta = job.get("meta") or {}
+    if status in _ACTIVE_JOB_STATUS:
+        device_jobs.request_stop(run_id, "user")
+        device_jobs.wait(run_id, 30)
+        snap = device_jobs.get(run_id) or job
+    else:
+        snap = job
+    result = snap.get("result") or {}
+    path = meta.get("path") or result.get("path", "")
+    lines = result.get("lines", 0)
+    reason = result.get("stop_reason") or snap.get("stop_reason", "")
+    if status == "stale" and path:
+        try:
+            runner = LogcatStream(
+                meta.get("serial") or "", Settings.get_output_dir())
+            runner._clean_remote()
+        except Exception:
+            pass
+        if not lines and os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    lines = sum(1 for _ in f)
+            except Exception:
+                lines = 0
+    return {"run_id": run_id, "status": snap.get("status"),
+            "path": path, "lines": lines,
+            "stop_reason": reason}
+
+
+def _logcat_read(run_id: str, lines: int = 200) -> dict:
+    job = _job_or_fail(run_id)
+    meta = job.get("meta") or {}
+    runner = _runner_for(
+        job, lambda serial: LogcatStream(serial, Settings.get_output_dir()))
+    tail = runner.tail(lines)
+    path = meta.get("path") or (job.get("result") or {}).get("path", "")
+    return {"run_id": run_id, "status": job.get("status"),
+            "path": path, "tail": tail,
+            "line_count": (job.get("result") or {}).get("lines", 0)}
+
+
 def _ai_analyze_failure(step: dict, prev_steps: Optional[list] = None,
                         error_msg: str = "", screenshot_path: Optional[str] = None,
                         logcat_snippet: Optional[str] = None) -> dict:
@@ -2314,6 +2689,89 @@ async def device_reboot(mode: str = "system",
                       {"mode": mode, "allow_destructive": allow_destructive},
                       lambda: _device_reboot(mode, allow_destructive),
                       mutating=True, hold_lock=False)
+
+
+# ----------------------------------------------------------------------
+# 批次 3.2：Monkey / 录屏 / 实时 logcat
+# ----------------------------------------------------------------------
+@server.tool(name="monkey_start",
+             description="启动设备端常驻 Monkey，立即返回 run_id；白名单顺序按 packages 传入")
+async def monkey_start(packages: list, events: int = 1000,
+                       throttle_ms: int = 800, seed: Optional[int] = None,
+                       duration_h: float = 24.0, verbose: int = 0,
+                       flags: Optional[dict] = None,
+                       pcts: Optional[dict] = None,
+                       use_whitelist: bool = False) -> str:
+    return await _run("monkey_start",
+                      {"packages": packages, "events": events,
+                       "throttle_ms": throttle_ms, "seed": seed,
+                       "duration_h": duration_h, "verbose": verbose,
+                       "flags": flags, "pcts": pcts,
+                       "use_whitelist": use_whitelist},
+                      lambda: _monkey_start(packages, events, throttle_ms,
+                                            seed, duration_h, verbose, flags,
+                                            pcts, use_whitelist),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="monkey_status",
+             description="查看 Monkey 任务：设备端进程是否存活 + 日志尾部")
+async def monkey_status(run_id: str) -> str:
+    return await _run("monkey_status", {"run_id": run_id},
+                      lambda: _monkey_status(run_id), hold_lock=False)
+
+
+@server.tool(name="monkey_stop", description="停止 Monkey（按 run_id，支持重启后重新接上）")
+async def monkey_stop(run_id: str) -> str:
+    return await _run("monkey_stop", {"run_id": run_id},
+                      lambda: _monkey_stop(run_id),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="screenrecord_start",
+             description="开始录屏（最长 180 秒），返回 run_id；结束自动拉回本机")
+async def screenrecord_start(duration_s: int = 180,
+                             bitrate_mbps: float = 8.0) -> str:
+    return await _run("screenrecord_start",
+                      {"duration_s": duration_s,
+                       "bitrate_mbps": bitrate_mbps},
+                      lambda: _screenrecord_start(duration_s, bitrate_mbps),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="screenrecord_stop",
+             description="停止录屏并拉回文件（返回本地路径与大小）")
+async def screenrecord_stop(run_id: str) -> str:
+    return await _run("screenrecord_stop", {"run_id": run_id},
+                      lambda: _screenrecord_stop(run_id),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="logcat_start",
+             description="开始实时 logcat 落盘，返回 run_id；按行数或秒数自动停止")
+async def logcat_start(tags: Optional[list] = None, max_lines: int = 20000,
+                       max_seconds: int = 300,
+                       clear_first: bool = False) -> str:
+    return await _run("logcat_start",
+                      {"tags": tags, "max_lines": max_lines,
+                       "max_seconds": max_seconds,
+                       "clear_first": clear_first},
+                      lambda: _logcat_start(tags, max_lines, max_seconds,
+                                            clear_first),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="logcat_stop", description="停止实时 logcat（返回文件路径与行数）")
+async def logcat_stop(run_id: str) -> str:
+    return await _run("logcat_stop", {"run_id": run_id},
+                      lambda: _logcat_stop(run_id),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="logcat_read", description="读取实时 logcat 任务的尾部内容")
+async def logcat_read(run_id: str, lines: int = 200) -> str:
+    return await _run("logcat_read", {"run_id": run_id, "lines": lines},
+                      lambda: _logcat_read(run_id, lines), hold_lock=False)
 
 
 def main():

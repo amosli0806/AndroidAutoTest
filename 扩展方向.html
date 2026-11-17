@@ -706,6 +706,27 @@
         （系统应用不会真正消失），随后再次安装恢复 <code>/data/app</code> 更新层；
         <code>device_reboot</code> 重启后 47 秒回连、<code>sys.boot_completed=1</code>，应用仍在且进程已起。
         授权门禁、非法包名、非 system 重启均已验证。打包版工具数 44 → 49，stdio 握手通过。</p>
+      <p class="small"><b>批次 3.2 落地</b>（2026-11-17）：新增
+        <code>services/monkey_runner.py</code>（设备端常驻）、
+        <code>services/screenrecord_runner.py</code>、<code>services/logcat_stream.py</code>；
+        <code>device_jobs</code> 扩展 host / device 两种模式、deadline watchdog、
+        <code>request_stop</code> 与 detached 重连核对；新增 8 个工具，总数 49 → 57。
+        真机验收：logcat 8 秒任务按 5000 行上限自动结束（573 KB），
+        <code>logcat_read</code> / <code>logcat_stop</code> 正常；录屏 8 秒结束自动 pull
+        （1.35 MB）并删除设备端文件、无残留进程；Monkey 的默认启动与
+        <code>use_whitelist=true</code>（白名单文件，可启动应用放第一行）都能注入事件，
+        5000 事件任务中途 stop 能终止 PID 并删除白名单文件，watchdog 到点停止通过。
+        跨进程重连也已验证：独立 MCP 进程启动 Monkey 后退出，新进程
+        <code>monkey_status</code> 能标记 running、<code>monkey_stop</code> 能按 PID 终止。
+        关键坑：这台车机没有物理按键，Monkey 默认 <code>--pct-syskeys 2</code> 会让进程
+        以 rc 251 直接退出（日志只有 <code>VM exiting with result code -5</code>）；
+        现在默认按 GUI 面板的比例传 touch 95% / motion 5% / 其余 0，
+        并用 <code>--pct-syskeys 0</code> 显式关闭。10 分钟量级的压缩验收：白名单
+        <code>[com.baidu.iov.dueros.ktv, com.baidu.naviauto]</code>、throttle 800ms，
+        1600 事件在 577 秒（约 9.6 分钟）内自然跑完，<code>Events injected: 1600</code>，
+        进程退出后白名单文件自动清理；实测约 2.8 事件/秒，按此估算 13 小时约 13 万事件、
+        60 小时约 60 万事件（不要沿用 GUI 的 5000 万默认值，那个量级会跑数百天）。
+        13 ~ 60 小时长跑本次未实际执行，需按业务节奏单独安排一次长时间观察。</p>
       <p class="small">阶段 1 与 2 可并行；阶段 3 必须等 2；阶段 4 必须等 1 + 2。
         预计总量 7 ~ 9 天（含 CaseRunner 与 GUI lock 的重构成本）。</p>
       <p><b>涉及文件（预计）</b>：</p>
@@ -870,7 +891,7 @@
           <code>element_upsert</code>、<code>suite_save</code> / <code>suite_delete</code>、
           用例重命名/复制/删除/步骤排序、<code>adb_push</code>、<code>ai_analyze_failure</code>
         </td><td>加确认/预览；写 <code>data/</code> 前检查 GUI 是否在运行</td></tr>
-        <tr><td><b>3 设备影响</b><br>3.1 ✅</td><td>
+        <tr><td><b>3 设备影响</b><br>3.1 ✅<br>3.2 ✅</td><td>
           安装/卸载/清空数据、Monkey、弱网、tcpdump、hprof、screenrecord、reboot/root、
           性能采集 start/stop、实时 logcat
         </td><td>必须 <code>allow_destructive</code> + 工具白名单 + run_id/stop + 审计</td></tr>

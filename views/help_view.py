@@ -563,6 +563,13 @@ class HelpView(QFrame):
                         <code>app_clear_data</code>、<code>hprof_dump</code>、
                         <code>device_reboot</code>（仅 system）。安装/卸载/清数据/重启需
                         显式传 <code>allow_destructive=true</code>；堆转储免门禁，但有硬超时。</li>
+                    <li>长任务：<code>monkey_start</code> / <code>monkey_status</code> /
+                        <code>monkey_stop</code>、<code>screenrecord_start</code> /
+                        <code>screenrecord_stop</code>、<code>logcat_start</code> /
+                        <code>logcat_stop</code> / <code>logcat_read</code>。启动即返回
+                        <code>run_id</code>，到点自动停止；MCP 重启后可按设备 PID 重新接上。
+                        Monkey 默认关闭 syskeys；地图类应用没有启动入口时，用
+                        <code>use_whitelist=true</code> 并把可启动应用放在第一项。</li>
                 </ul>
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     ⚠ 虫师界面运行时，MCP 自动降级为只读；点击、输入、<code>run_case</code>
