@@ -166,10 +166,10 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-15（v1.5.24）</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-17（v1.5.24）</div>
     <div class="badges">
       <span class="badge">当前版本 v1.5.24</span>
-      <span class="badge">9 项规划 + 1 个新方向</span>
+      <span class="badge">9 项规划 + 2 个新方向</span>
       <span class="badge">车机 / 手机均已实机验证</span>
       <span class="badge">按改动量分 A~D 四档</span>
     </div>
@@ -188,6 +188,7 @@
       <a href="#s1">一、待办与扩展方向（按改动量排序）</a>
       <a href="#s2">二、macOS 移植注意事项</a>
       <a href="#s3">三、MCP 服务：把虫师变成智能体的执行层</a>
+      <a href="#s4">四、MCP 工具分组与 Token 预算</a>
     </div>
   </nav>
 
@@ -1090,6 +1091,210 @@
       ② 不做通用 RPA（Android + 车机语音这条线已经够深，摊薄到 PC/Web 会同时失去深度和场景）；
       ③ 不做<b>无授权</b>的远程控制 / 局域网开放；网页端接入作为远期可选（见第八节），
       必须走本机 outbound 中继 + 一次性配对 + 显式授权 + 审计，并单独做安全评审。</div>
+  </section>
+
+  <!-- ============ 四、MCP 工具分组与 Token 预算 ============ -->
+  <section class="chapter" id="s4">
+    <h2><span class="num">4</span>MCP 工具分组与 Token 预算 <span class="tag plan">📋 2026-11-17 方案 · 待实现</span></h2>
+    <p class="small" style="margin-top:0">
+      第三章把工具从 19 个做到 73 个之后出现一个新问题：<b>工具清单是常驻成本</b>。
+      客户端每次连上来都会把全部工具的 schema 注入上下文，不管这一轮用不用得上。
+      本章给出按需分组、配额与可发现性的完整方案 —— 实测数据全部来自真实的 <code>tools/list</code> 响应，不是估算。
+    </p>
+
+    <div class="card">
+      <h3>一、问题：73 个工具的固定成本</h3>
+      <p>实测（<code>mcp_server/server.py</code>，2026-11-17）：</p>
+      <table>
+        <tr><th style="width:34%">指标</th><th>数值</th></tr>
+        <tr><td>工具数</td><td>73</td></tr>
+        <tr><td>description 总长</td><td>2074 字符（占 8%）</td></tr>
+        <tr><td>inputSchema 总长</td><td>24875 字符（占 <b>92%</b>）</td></tr>
+        <tr><td>合计</td><td>26949 字符 ≈ <b>10800 tokens</b>（按 2.5 字符/token 估）</td></tr>
+      </table>
+      <p><b>两个后果</b>：① 按 token 计费的客户端每轮都在为这 1 万 token 付费；
+        ② 工具越多，模型选错工具的概率越高 —— 面对 <code>run_case</code> / <code>run_suite</code> /
+        <code>explore_and_draft</code> / <code>save_case</code> 这几个名字相近的工具，判断成本是实打实的。</p>
+      <p><b>为什么不能靠压缩 schema 省</b>：92% 的体积来自参数结构，而参数结构由功能决定；
+        改 key 名或省略字段说明会破坏协议兼容性。唯一有效的杠杆是<b>少暴露工具</b>。</p>
+      <p><b>单个体积 Top 6</b>（合计占全量 18%）：<code>perf_start</code> 1111 ·
+        <code>tap</code> 965 · <code>assert</code> 958 · <code>input_text</code> 917 ·
+        <code>monkey_start</code> 911 · <code>run_case</code> 845（字符）。</p>
+      <div class="tip">💡 <b>一个容易被忽略的点</b>：Anthropic 系客户端支持 prompt caching，
+        工具清单这种固定前缀会被缓存（约 5 分钟 TTL），重复调用时成本会显著下降。
+        所以省 token 的收益取决于客户端 —— 但<b>「工具太多导致选错」是缓存解决不了的</b>，
+        这一半收益是确定的。</div>
+    </div>
+
+    <div class="card">
+      <h3>二、分组方案（四组，实测配比接近 1:1:1）</h3>
+      <table>
+        <tr><th style="width:12%">组</th><th style="width:8%">数量</th><th style="width:12%">字符</th>
+            <th style="width:10%">≈tokens</th><th>包含工具</th></tr>
+        <tr>
+          <td><b>core</b><br><span class="small">默认</span></td><td>16</td><td>8069</td><td><b>3230</b></td>
+          <td><code>device_list</code> <code>screenshot</code> <code>ui_find</code> <code>ui_dump</code>
+              <code>tap</code> <code>input_text</code> <code>swipe</code> <code>press_key</code>
+              <code>launch_app</code> <code>wait_until</code> <code>assert</code>
+              <code>list_cases</code> <code>run_case</code> <code>run_case_status</code>
+              <code>run_case_stop</code> <code>run_suite</code></td>
+        </tr>
+        <tr>
+          <td><b>gen</b><br><span class="small">按需</span></td><td>3</td><td>1173</td><td>470</td>
+          <td><code>explore_and_draft</code> <code>draft_status</code> <code>save_case</code></td>
+        </tr>
+        <tr>
+          <td><b>ops</b><br><span class="small">按需</span></td><td>30</td><td>9415</td><td>3770</td>
+          <td><code>adb_pull</code> <code>adb_push</code> <code>adb_device_info</code> <code>adb_logcat_snapshot</code>
+              <code>logcat_start</code> <code>logcat_read</code> <code>logcat_stop</code>
+              <code>perf_start</code> <code>perf_stop</code> <code>perf_status</code> <code>perf_sessions</code>
+              <code>perf_report</code> <code>perf_compare</code> <code>perf_baseline_save</code>
+              <code>perf_baseline_delete</code> <code>perf_baselines</code>
+              <code>monkey_start</code> <code>monkey_status</code> <code>monkey_stop</code>
+              <code>tcpdump_start</code> <code>tcpdump_stop</code>
+              <code>screenrecord_start</code> <code>screenrecord_stop</code>
+              <code>weak_net_apply</code> <code>weak_net_clear</code> <code>hprof_dump</code>
+              <code>device_reboot</code> <code>app_install</code> <code>app_uninstall</code>
+              <code>app_clear_data</code></td>
+        </tr>
+        <tr>
+          <td><b>content</b><br><span class="small">按需</span></td><td>24</td><td>8292</td><td>3320</td>
+          <td><code>case_copy</code> <code>case_rename</code> <code>case_delete</code>
+              <code>step_update</code> <code>step_move</code>
+              <code>suite_save</code> <code>suite_delete</code> <code>suite_list</code>
+              <code>element_upsert</code> <code>element_list</code>
+              <code>api_run</code> <code>api_list</code>
+              <code>knowledge_list</code> <code>knowledge_read</code> <code>knowledge_upsert_note</code>
+              <code>knowledge_delete_note</code>
+              <code>report_list</code> <code>report_read</code>
+              <code>voice_list_cases</code> <code>voice_speak</code> <code>voice_verify</code>
+              <code>voice_settings_get</code> <code>voice_settings_update</code>
+              <code>ai_analyze_failure</code></td>
+        </tr>
+        <tr><td colspan="2"><b>合计</b></td><td>73</td><td>26949</td><td>10800</td></tr>
+      </table>
+      <p style="margin-top:12px"><b>各档位的实际预算</b></p>
+      <table>
+        <tr><th style="width:30%">档位</th><th style="width:14%">工具数</th><th style="width:14%">≈tokens</th><th>相对 full</th></tr>
+        <tr><td><code>core</code>（默认）</td><td>16</td><td><b>3230</b></td><td><b>−70%</b></td></tr>
+        <tr><td><code>core,gen</code></td><td>19</td><td>3700</td><td>−66%</td></tr>
+        <tr><td><code>core,ops</code></td><td>46</td><td>7000</td><td>−35%</td></tr>
+        <tr><td><code>core,content</code></td><td>40</td><td>6550</td><td>−39%</td></tr>
+        <tr><td><code>full</code></td><td>73</td><td>10800</td><td>—</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>三、配置方式与优先级</h3>
+      <p>命令行参数写在客户端的 <code>mcpServers</code> 里，改一次要重开客户端，很别扭。
+        所以主入口放在虫师自己的配置文件里，命令行只做临时覆盖。</p>
+      <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">// data/mcp_config.json
+{
+  "tools": {
+    "profile": "core",          // core | standard | full
+    "add": ["gen", "ops"],      // 在 profile 基础上追加的组
+    "remove": ["monkey_start"]  // 从结果里摘掉的单工具（组名也可）
+  }
+}</pre>
+      <p><b>优先级</b>：命令行 <code>--tools=</code> &gt; 配置文件 &gt; 默认 <code>core</code>。
+        这样三种人都照顾到了：</p>
+      <ul>
+        <li><b>不配的人</b>：什么都不用管，就是 core</li>
+        <li><b>阶段性调整的人</b>：在 <code>data/</code> 里改一行，下次连接生效，<b>不碰客户端配置</b></li>
+        <li><b>临时覆盖的人</b>：命令行 <code>--tools=core,gen,-save_case</code></li>
+      </ul>
+      <p><b>命令行语法</b>（与配置文件等价）：
+        <code>--tools=core,gen,ops</code>（组叠加）、<code>--tools=-monkey_start</code>（单工具排除）、
+        <code>--tools=full</code>（全开）。启动时打一行日志让人确认：
+        <code>MCP 工具：core + gen + ops，排除 monkey_start，共 48 个</code>。</p>
+      <p><b>预设定义</b>：<code>core</code> = core；<code>standard</code> = core + content；
+        <code>full</code> = 全部。<code>standard</code> 是给「既要执行、也要维护用例」的场景用的。</p>
+    </div>
+
+    <div class="card">
+      <h3>四、可发现性：gen 不在默认里，怎么让人找得到</h3>
+      <p><b>先讲清机制</b>：MCP 客户端在连接时向 server 要一次工具清单，把清单连同参数说明注入模型上下文。
+        模型能用的<b>只有清单上的东西</b>；不在清单上的，它不但调不了，而且<b>根本不知道存在</b> ——
+        这不是「没权限」（会说需要授权），而是「不知道」（会让用户手动操作）。</p>
+      <p>所以把 <code>gen</code> 移出默认后，模型遇到「帮我建个用例」的请求，会回答
+        「我无法直接创建用例」——能力还在，但没人知道有这条路。<b>补偿办法是两条低成本设计</b>：</p>
+      <ul>
+        <li><b>在必经之路上贴便条</b>：<code>list_cases</code> 与 <code>run_case</code> 的 description 里加一句
+          「没有匹配的用例 / 需要把本次执行存成用例时，提示用户开启 gen 组」。
+          这两个工具是模型每次找用例、跑用例都会读到的，等于每次路过都能看见提示。</li>
+        <li><b>组名就用 <code>gen</code></b>（generate 的缩写）：用户配置时加一个词，不用记复杂参数；
+          帮助中心里用「现场生成」这个说法对应它。</li>
+      </ul>
+      <div class="example">💡 <b>打个比方：</b>工具清单就是工作台面上摆出来的工具。把这三件收进抽屉没问题，
+        但抽屉上得贴张字条 —— 不然模型连抽屉存在都不知道。</div>
+    </div>
+
+    <div class="card">
+      <h3>五、设计决策记录（为什么这样，为什么不那样）</h3>
+      <p><b>① 为什么 <code>gen</code> 不进默认</b>：测试用例总量有上限，且集中在项目初期；
+        中后期以执行回归和零星补充为主。拿 core 的 11% 预算（1173 字符）换一个「阶段性密集使用」的能力不划算。
+        注意这是<b>按当前产品定位（回归测试工具）</b>得出的结论 —— 若将来增加「一次性任务」模式
+        （说一句话现场跑一遍、跑完不存档），这条默认值需要重新评估。</p>
+      <p><b>② 为什么不按工具名前缀自动分组</b>：现有命名是动词开头
+        （<code>list_cases</code> / <code>save_case</code> / <code>run_case</code> /
+        <code>explore_and_draft</code> / <code>press_key</code> / <code>launch_app</code>），
+        按 <code>_</code> 前缀分会碎成 26 个组、其中 13 个各只有 1 个工具。
+        所以必须<b>显式标注组</b>（注册处加 <code>group</code> 参数，或维护一张映射表）。
+        两个兜底防烂：未标注的工具默认进 <code>core</code>（不会变成「找不到」）；
+        启动日志列出「N 个工具未标注组」。</p>
+      <p><b>③ 为什么不做运行时动态增删</b>（<code>notifications/tools/list_changed</code>）：
+        协议支持，但客户端实现参差，常见「列表刷新了、模型还在用旧的」；收益远小于麻烦，
+        改配置后重连一次反而确定。</p>
+      <p><b>④ 为什么不做懒加载</b>（先给 8 个，模型需要时调 <code>request_tools</code> 加载更多）：
+        多一轮往返，且多数模型不会主动去加载，「不知道自己不知道」的问题反而更严重。</p>
+    </div>
+
+    <div class="card">
+      <h3>六、由此发现的一个新能力：跑完回存</h3>
+      <p>讨论「横展」时发现一个比 <code>explore_and_draft</code> 更贴合真实动作的工具：</p>
+      <p><b><code>save_run_as_case</code></b> —— 把一次 <code>run_case</code> 实际执行过的步骤（含每次点击命中的
+        控件与定位值）存成新用例。</p>
+      <div class="example">💡 <b>为什么它比「边探索边记」更实用：</b>横展到新车型时的真实动作是
+        「先在这个界面上手点一遍看能不能跑通」，跑通了才想「这套步骤存下来」。
+        <code>explore_and_draft</code> 适合全新流程，而这个适合<b>验证成功后回存</b>。
+        横展到别的项目时，这套已存的用例还能用 <code>case_copy</code>（content 组）直接复制。</div>      <p><b>归属</b>：<code>gen</code> 组；触发提示挂在 <code>run_case</code> 的返回里
+        （「本次执行 8 步，如需存为新用例，开启 gen 组后用 <code>save_run_as_case</code>」）。</p>
+      <p><b>横展的两种情况要分开</b>：<br>
+        ① <b>同构横展</b>（新车型界面一致）→ 复制已有用例改定位，<code>case_copy</code> + <code>element_upsert</code> 就够，
+        不需要 <code>gen</code>；<br>
+        ② <b>异构横展</b>（界面不同、旧用例全废）→ 才需要重新探索/回存，走 <code>gen</code>。</p>
+    </div>
+
+    <div class="card">
+      <h3>七、实施清单与验收</h3>
+      <table>
+        <tr><th style="width:30%">改动点</th><th>内容</th><th style="width:14%">预计</th></tr>
+        <tr><td><code>mcp_server/tool_groups.py</code>（新建）</td>
+            <td>组定义 + 73 个工具的映射表 + 解析 <code>--tools=</code> 语法（组叠加、<code>-</code> 排除）</td>
+            <td>~120 行</td></tr>
+        <tr><td><code>mcp_server/server.py</code></td>
+            <td>注册处按组过滤；启动日志打印实际暴露数量；<code>list_cases</code> / <code>run_case</code> 的
+              description 加 gen 提示便条</td><td>~60 行</td></tr>
+        <tr><td><code>data/mcp_config.json</code>（新建，首次启动生成）</td>
+            <td><code>profile</code> / <code>add</code> / <code>remove</code> 三字段，带注释说明</td><td>~20 行</td></tr>
+        <tr><td><code>mcp_server/server.py</code> 签名</td>
+            <td>新增 <code>save_run_as_case(run_id, module, case_name)</code>（复用 <code>run_case</code> 已记录的步骤）</td>
+            <td>~50 行</td></tr>
+        <tr><td>帮助中心 / README</td>
+            <td>四种档位的说明与配置示例；说明 gen 组什么时候开</td><td>—</td></tr>
+      </table>
+      <p><b>验收标准</b></p>
+      <ul>
+        <li>默认启动后 <code>tools/list</code> 返回 <b>16 个</b>工具，schema 总量 ≤ 8500 字符</li>
+        <li><code>--tools=core,gen</code> 返回 19 个；<code>--tools=-monkey_start</code> 时该工具不在列表里</li>
+        <li>配置文件写 <code>"add": ["ops"]</code> 后重连生效，且启动日志能读出「core + ops，共 46 个」</li>
+        <li>在 <code>list_cases</code> 找不到用例时，返回的 hint 里出现 gen 组的引导语</li>
+        <li>未标注组的新工具自动进 core，并在启动日志里被点名</li>
+      </ul>
+      <div class="tip">⚠ <b>兼容性注意</b>：分组只影响 <code>tools/list</code> 的返回值，不影响工具实现。
+        已配置好的客户端不用改任何东西 —— 升级后自动看到 16 个工具，需要更多时再改配置。
+        但<b>如果有客户端脚本硬编码了某个非 core 工具名</b>，升级后会突然「工具不存在」，需要在变更说明里点出来。</div>
+    </div>
   </section>
 
   <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-17 · v1.5.24</footer>
