@@ -700,7 +700,7 @@ for loop in 1..循环次数:
 - **快捷键**：7 组共 41 个，全部可在设置里改，留空即禁用（默认表见 `utils/settings.py:DEFAULT_SHORTCUTS`）
 - **检查更新**：启动 4 秒后后台检查（失败静默），有新版在菜单亮红点；见 5.8
 
-### 4.14 MCP 服务（本地 stdio，P0/P1/P2 + 批次 3.1 ~ 3.4）
+### 4.14 MCP 服务（本地 stdio，P0/P1/P2 + 批次 3.1 ~ 3.4 / 4.1 ~ 4.3）
 
 `mcp_server/` + `main.py --mcp`。这是**开发中的能力**：把 `device_service` 薄封装成 MCP 工具，
 让 Comate / Claude Desktop / Cursor / Cline 等支持本地 stdio 的客户端驱动虫师。**不监听端口、不做 HTTP**。
@@ -738,6 +738,15 @@ for loop in 1..循环次数:
 - 设备影响（批次 3.4）：`weak_net_apply` / `weak_net_clear` 支持延迟、丢包与带宽限制，
   需 `allow_destructive=true` 且设备已 root；TTL 默认 600 秒、最大 3600 秒，
   设备端 `sleep + tc qdisc del` 兜底，MCP 退出也会按时自动清除
+- 性能场景化（4.1）：`perf_start` 支持 `suite_name` / `case_ids` / `loop` /
+  `stop_on_failure`，采集期间同步执行用例；`perf_status` / `perf_stop` 会返回场景执行结果
+- 性能基线（4.2）：`perf_baseline_save`（同名需 `overwrite=true`）、
+  `perf_baseline_delete`（需 `allow_destructive=true`）、`perf_compare`
+  （逐项变化与 worse / better / stable 统计）
+- 知识库（4.3）：`knowledge_list`、`knowledge_read`、`knowledge_upsert_note`（新建/更新）、
+  `knowledge_delete_note`（删除需授权）
+- 语音设置：`voice_settings_get` / `voice_settings_update`，覆盖引擎、音色、输出设备、
+  语速、循环次数、唤醒词与回执验证；只写传入字段，`verify` 为浅合并
 - 设备影响型操作统一生成 `run_id` 并落 `data/mcp_jobs/<run_id>.json`；执行期间其他工具返回
   `DEVICE_BUSY`（`device_list` / `adb_device_info` 与任务查询/停止工具除外），避免并发抢占设备
 - `run_case` / `run_suite` / `save_case` 默认拒绝 `app_mgr` 的清空数据、安装、卸载步骤；
@@ -779,7 +788,9 @@ logcat 按行数自动停、Monkey 的默认启动与白名单启动都能注入
 cpu / mem 主采样、sys_mem / sys_cpu / threads 探针、手动停止与到点自然结束、会话落库与
 `perf_report` 出报告都已在真机验证。批次 3.4 在临时 `adb root` 下完成验证：弱网延迟 / 丢包
 下发与 TTL 自动清除、带宽限制与手动清除、`tcpdump` 真实抓包（720 字节 ICMP）均通过，
-验证后已 `adb unroot` 并确认回到 `uid=2000(shell)`、设备与 u2 会话正常。网页端接入属于
+验证后已 `adb unroot` 并确认回到 `uid=2000(shell)`、设备与 u2 会话正常。批次 4.1 ~ 4.3
+已在 30EA 车机上验证：采集期间跑套件（会话记录套件名与用例结果）、基线保存 / 自身对比 /
+删除门禁、知识库笔记增删改查、语音设置读取与写入（改后已还原）。网页端接入属于
 远期扩展（见 `扩展方向.html` 第 3 章第八节），不属于本期。
 
 ---

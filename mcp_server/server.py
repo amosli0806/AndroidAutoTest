@@ -22,7 +22,8 @@ from mcp.server.mcpserver import MCPServer
 from models.api_model import ApiModel
 from models.element_model import ElementModel
 from models.execution_model import ExecutionModel
-from models.perf_model import PerfModel
+from models.knowledge_model import CATEGORIES, KnowledgeModel
+from models.perf_model import PerfBaseline, PerfModel, compare_stats
 from models.project_model import ProjectModel
 from models.step_model import Step, StepModel
 from models.suite_model import SuiteModel
@@ -74,6 +75,9 @@ _DEVICE_JOB_EXEMPT = {
     "monkey_status", "monkey_stop",
     "screenrecord_stop", "logcat_stop", "logcat_read",
     "perf_status", "perf_stop", "tcpdump_stop",
+    "perf_baseline_save", "perf_baseline_delete", "perf_compare",
+    "knowledge_list", "knowledge_read", "knowledge_upsert_note",
+    "knowledge_delete_note", "voice_settings_get", "voice_settings_update",
 }
 
 _DETACHED_CHECKED = False
@@ -168,6 +172,10 @@ def _hint_for(code: str) -> str:
         "JOB_NOT_FOUND": "先调用 monkey_start / screenrecord_start / logcat_start 获取 run_id",
         "CAPTURE_UNAVAILABLE": "tcpdump 需要 root；未 root 的设备无法抓包，可换已 root 设备或先 adb root",
         "WEAK_NET_UNAVAILABLE": "弱网模拟需要 root 与 tc；先 adb root，再确认设备有 tc / netem 支持",
+        "BASELINE_EXISTS": "同名基线已存在；确认后传 overwrite=true 覆盖",
+        "BASELINE_NOT_FOUND": "先调用 perf_baselines 查看已有基线",
+        "PROJECT_NOT_FOUND": "先调用 knowledge_list 查看知识库项目",
+        "NOTE_NOT_FOUND": "先调用 knowledge_list 或 knowledge_read 确认笔记 id",
         "DEVICE_BUSY": "run_case / run_suite 正在执行；等它结束或先调用 run_case_stop",
         "ASSERT_FAILED": "查看返回的截图路径 / 失败步骤，必要时用 screenshot 看现场",
     }.get(code, "查看 data/mcp.log；如是参数问题请修正后重试")
@@ -2232,7 +2240,11 @@ def _logcat_read(run_id: str, lines: int = 200) -> dict:
 def _perf_start(package: str, processes: Optional[list] = None,
                 metrics: Optional[list] = None,
                 probes: Optional[list] = None, interval: float = 5.0,
-                duration_minutes: float = 60.0) -> dict:
+                duration_minutes: float = 60.0,
+                suite_name: Optional[str] = None,
+                case_ids: Optional[list] = None,
+                loop: int = 1,
+                stop_on_failure: bool = False) -> dict:
     if not package:
         raise ToolFailure("INTERNAL_ERROR", "package 不能为空")
     metric_list = list(metrics or list(ALLOWED_METRICS))
@@ -2251,17 +2263,42 @@ def _perf_start(package: str, processes: Optional[list] = None,
                           f"duration_minutes 范围 0~180：{duration_minutes}")
 
     svc = RUNTIME.ensure_device(RUNTIME.serial)
-    runner = PerfRunner(svc.device, svc.serial, Settings.get_output_dir())
+    scenario = None
+    target_ids = [c for c in (case_ids or []) if c]
+    if suite_name or target_ids:
+        if suite_name:
+            suite = SuiteModel().get_suite_by_name(suite_name)
+            if suite is None:
+                raise ToolFailure("SUITE_NOT_FOUND", f"套件不存在：{suite_name}",
+                                  "先在执行页保存套件，或检查套件名")
+            target_ids = list(suite.case_ids or [])
+        project = ProjectModel()
+        valid = [cid for cid in target_ids
+                 if (project.get_node_by_id(cid) is not None
+                     and project.get_node_by_id(cid).type == "case")]
+        if not valid:
+            raise ToolFailure("SUITE_NOT_FOUND", "场景里没有有效用例",
+                              "检查套件引用的用例是否已被删除")
+        loop = int(loop or 1)
+        if not (1 <= loop <= 99):
+            raise ToolFailure("INTERNAL_ERROR", f"loop 范围 1..99：{loop}")
+        scenario = {"suite_name": suite_name or "",
+                    "case_ids": valid, "loop": loop,
+                    "stop_on_failure": bool(stop_on_failure)}
+
+    runner = PerfRunner(svc.device, svc.serial, Settings.get_output_dir(),
+                        device_service=svc)
     job = device_jobs.create(
         "perf", mode="host",
         meta={"serial": svc.serial, "package": package,
               "metrics": metric_list, "probes": probe_list,
               "interval": interval,
-              "duration_minutes": duration_minutes},
+              "duration_minutes": duration_minutes,
+              "suite_name": suite_name or ""},
         deadline_ts=time.time() + duration_minutes * 60 + 120)
     try:
         info = runner.start(package, processes, metric_list, probe_list,
-                            interval, duration_minutes)
+                            interval, duration_minutes, scenario)
     except ValueError as e:
         device_jobs.finish(job, "failed", error=str(e))
         code = ("PROCESS_NOT_FOUND" if "未在运行" in str(e)
@@ -2510,6 +2547,275 @@ def _weak_net_clear(interface: str = "wlan0") -> dict:
         raise
     except Exception as e:
         raise _weak_net_error(e)
+
+
+# ----------------------------------------------------------------------
+# 批次 4.2：性能基线写入与对比
+# ----------------------------------------------------------------------
+def _perf_baseline_save(session_id: str, name: str,
+                        overwrite: bool = False) -> dict:
+    name = (name or "").strip()
+    if not name:
+        raise ToolFailure("INTERNAL_ERROR", "基线名称不能为空")
+    model = PerfModel()
+    session = model.get_session((session_id or "").strip())
+    if session is None:
+        raise ToolFailure("PERF_SESSION_NOT_FOUND", f"会话不存在：{session_id}",
+                          "先调用 perf_sessions")
+    stats = session.get_stats()
+    if not stats:
+        raise ToolFailure("INTERNAL_ERROR", "该会话没有可用的统计数据")
+    existing = model.get_baseline(name)
+    if existing is not None and not overwrite:
+        raise ToolFailure("BASELINE_EXISTS", f"基线已存在：{name}",
+                          "传 overwrite=true 覆盖")
+    if existing is None:
+        baseline = PerfBaseline(
+            name=name, session_id=session.id,
+            app_package=session.app_package,
+            device_serial=session.device_serial,
+            metrics=stats,
+            created_at=datetime.now().isoformat(),
+            scopes=dict(getattr(session, "scopes", {}) or {}))
+        model.baselines.append(baseline)
+        action = "created"
+    else:
+        existing.session_id = session.id
+        existing.app_package = session.app_package
+        existing.device_serial = session.device_serial
+        existing.metrics = stats
+        existing.scopes = dict(getattr(session, "scopes", {}) or {})
+        existing.created_at = datetime.now().isoformat()
+        action = "updated"
+    model.save_baselines()
+    return {"name": name, "session_id": session.id, "action": action,
+            "app_package": session.app_package,
+            "metric_keys": sorted(stats.keys())}
+
+
+def _perf_baseline_delete(name: str, allow_destructive: bool = False) -> dict:
+    name = (name or "").strip()
+    if not allow_destructive:
+        raise ToolFailure("DESTRUCTIVE_DENIED", f"删除基线需要显式授权：{name}",
+                          "确认后传 allow_destructive=true")
+    model = PerfModel()
+    if model.get_baseline(name) is None:
+        raise ToolFailure("BASELINE_NOT_FOUND", f"基线不存在：{name}",
+                          "先调用 perf_baselines")
+    model.remove_baseline(name)
+    return {"deleted": True, "name": name}
+
+
+def _perf_compare(session_id: str, baseline_name: str,
+                  threshold_pct: float = 0.1) -> dict:
+    threshold_pct = float(threshold_pct or 0.1)
+    if not (0 <= threshold_pct <= 1):
+        raise ToolFailure("INTERNAL_ERROR",
+                          f"threshold_pct 范围 0..1：{threshold_pct}")
+    model = PerfModel()
+    baseline = model.get_baseline((baseline_name or "").strip())
+    if baseline is None:
+        raise ToolFailure("BASELINE_NOT_FOUND", f"基线不存在：{baseline_name}",
+                          "先调用 perf_baselines")
+    session = model.get_session((session_id or "").strip())
+    if session is None:
+        raise ToolFailure("PERF_SESSION_NOT_FOUND", f"会话不存在：{session_id}",
+                          "先调用 perf_sessions")
+    rows = compare_stats(baseline.metrics, session.get_stats(), threshold_pct)
+    counts = {"worse": 0, "better": 0, "stable": 0}
+    for row in rows:
+        counts[row.get("status", "stable")] = counts.get(
+            row.get("status", "stable"), 0) + 1
+    return {"session_id": session.id, "baseline": baseline.name,
+            "threshold_pct": threshold_pct, "rows": rows,
+            "summary": counts,
+            "session_package": session.app_package,
+            "baseline_package": baseline.app_package}
+
+
+# ----------------------------------------------------------------------
+# 批次 4.3：知识库读写
+# ----------------------------------------------------------------------
+def _kb_project(model: KnowledgeModel, project: Optional[str]):
+    project = (project or "").strip()
+    if not project:
+        return None
+    found = model.get_project(project)
+    if found is not None:
+        return found
+    return next((p for p in model.get_projects() if p.name == project), None)
+
+
+def _knowledge_list(project: Optional[str] = None,
+                    category: Optional[str] = None,
+                    search: Optional[str] = None) -> dict:
+    model = KnowledgeModel()
+    target = _kb_project(model, project)
+    if project and target is None:
+        raise ToolFailure("PROJECT_NOT_FOUND", f"知识库项目不存在：{project}",
+                          "先调用 knowledge_list 查看现有项目")
+    project_id = target.id if target is not None else None
+    notes = model.get_notes(project_id, category or None)
+    keyword = (search or "").strip().lower()
+    if keyword:
+        notes = [n for n in notes
+                 if keyword in f"{n.title} {n.body} {' '.join(n.tags)}".lower()]
+    names = {p.id: p.name for p in model.get_projects()}
+    return {
+        "projects": [{"project_id": p.id, "name": p.name,
+                      "note_count": model.count_notes(p.id)}
+                     for p in model.get_projects()],
+        "count": len(notes),
+        "notes": [{
+            "note_id": n.id, "project_id": n.project_id,
+            "project_name": names.get(n.project_id, ""),
+            "category": n.category, "title": n.title,
+            "tags": list(n.tags), "updated": n.updated,
+            "preview": (n.body or "").strip().replace("\n", " ")[:160],
+        } for n in notes],
+        "categories": list(CATEGORIES),
+    }
+
+
+def _knowledge_read(note_id: str) -> dict:
+    model = KnowledgeModel()
+    note = model.get_note((note_id or "").strip())
+    if note is None:
+        raise ToolFailure("NOTE_NOT_FOUND", f"笔记不存在：{note_id}",
+                          "先调用 knowledge_list")
+    project = model.get_project(note.project_id)
+    data = note.to_dict()
+    data["note_id"] = note.id
+    data["project_name"] = project.name if project is not None else ""
+    return data
+
+
+def _knowledge_upsert_note(project: Optional[str] = None,
+                           category: Optional[str] = None,
+                           title: Optional[str] = None,
+                           body: Optional[str] = None,
+                           tags: Optional[list] = None,
+                           note_id: Optional[str] = None) -> dict:
+    model = KnowledgeModel()
+    if note_id:
+        note = model.get_note((note_id or "").strip())
+        if note is None:
+            raise ToolFailure("NOTE_NOT_FOUND", f"笔记不存在：{note_id}",
+                              "新建时不要传 note_id")
+        changes = {}
+        if category:
+            changes["category"] = category
+        if title is not None:
+            changes["title"] = title
+        if body is not None:
+            changes["body"] = body
+        if tags is not None:
+            changes["tags"] = list(tags)
+        if project:
+            target = _kb_project(model, project)
+            if target is None:
+                raise ToolFailure("PROJECT_NOT_FOUND",
+                                  f"知识库项目不存在：{project}")
+            changes["project_id"] = target.id
+        if not model.update_note(note.id, **changes):
+            raise ToolFailure("INTERNAL_ERROR", "更新笔记失败")
+        action = "updated"
+    else:
+        if not project:
+            raise ToolFailure("INTERNAL_ERROR", "新建笔记需要 project")
+        target = _kb_project(model, project)
+        if target is None:
+            target = model.add_project(str(project).strip())
+        note = model.add_note(target.id, category or CATEGORIES[1],
+                              title or "", body or "", tags or [])
+        if note is None:
+            raise ToolFailure("INTERNAL_ERROR", "创建笔记失败")
+        action = "created"
+    note = model.get_note(note.id)
+    project = model.get_project(note.project_id)
+    data = note.to_dict()
+    data["note_id"] = note.id
+    data["project_name"] = project.name if project is not None else ""
+    data["action"] = action
+    return data
+
+
+def _knowledge_delete_note(note_id: str,
+                           allow_destructive: bool = False) -> dict:
+    note_id = (note_id or "").strip()
+    if not allow_destructive:
+        raise ToolFailure("DESTRUCTIVE_DENIED", f"删除笔记需要显式授权：{note_id}",
+                          "确认后传 allow_destructive=true")
+    model = KnowledgeModel()
+    if model.get_note(note_id) is None:
+        raise ToolFailure("NOTE_NOT_FOUND", f"笔记不存在：{note_id}")
+    model.delete_note(note_id)
+    return {"deleted": True, "note_id": note_id}
+
+
+# ----------------------------------------------------------------------
+# 设置页：语音播报配置
+# ----------------------------------------------------------------------
+def _voice_settings_snapshot() -> dict:
+    vm = VoiceModel()
+    settings = dict(vm.settings or {})
+    return {
+        "engine": settings.get("engine", ""),
+        "voice_id": settings.get("voice_id", ""),
+        "device_id": settings.get("device_id", ""),
+        "rate": settings.get("rate", 0),
+        "loop": settings.get("loop", 1),
+        "wake_word": settings.get("wake_word", ""),
+        "verify": dict(settings.get("verify") or {}),
+        "car_profile": getattr(vm, "current_car_profile", ""),
+    }
+
+
+def _voice_settings_get() -> dict:
+    return _voice_settings_snapshot()
+
+
+def _voice_settings_update(engine: Optional[str] = None,
+                           voice_id: Optional[str] = None,
+                           device_id: Optional[str] = None,
+                           rate: Optional[int] = None,
+                           loop: Optional[int] = None,
+                           wake_word: Optional[str] = None,
+                           verify: Optional[dict] = None) -> dict:
+    changes = {}
+    if engine is not None:
+        changes["engine"] = str(engine)
+    if voice_id is not None:
+        changes["voice_id"] = str(voice_id)
+    if device_id is not None:
+        changes["device_id"] = str(device_id)
+    if rate is not None:
+        rate = int(rate)
+        if not (-10 <= rate <= 10):
+            raise ToolFailure("INTERNAL_ERROR", f"rate 范围 -10..10：{rate}")
+        changes["rate"] = rate
+    if loop is not None:
+        loop = int(loop)
+        if not (1 <= loop <= 99):
+            raise ToolFailure("INTERNAL_ERROR", f"loop 范围 1..99：{loop}")
+        changes["loop"] = loop
+    if wake_word is not None:
+        changes["wake_word"] = str(wake_word).strip()
+    if verify is not None:
+        if not isinstance(verify, dict):
+            raise ToolFailure("INTERNAL_ERROR", "verify 必须是对象")
+        allowed = {"enabled", "log_tag", "success_keywords",
+                   "fail_keywords", "wake"}
+        bad = [k for k in verify if k not in allowed]
+        if bad:
+            raise ToolFailure("INTERNAL_ERROR", f"verify 不支持的键：{', '.join(bad)}")
+        current = dict(VoiceModel().settings.get("verify") or {})
+        current.update(verify)
+        changes["verify"] = current
+    if not changes:
+        return _voice_settings_snapshot()
+    VoiceModel().set_settings(**changes)
+    return _voice_settings_snapshot()
 
 
 def _ai_analyze_failure(step: dict, prev_steps: Optional[list] = None,
@@ -3071,18 +3377,26 @@ async def logcat_read(run_id: str, lines: int = 200) -> str:
 # 批次 3.3：性能采集 / tcpdump
 # ----------------------------------------------------------------------
 @server.tool(name="perf_start",
-             description="开始性能采集（默认 60 分钟）；返回 run_id 与 session_id")
+             description="开始性能采集（默认 60 分钟）；可传 suite_name 在采集期间跑套件")
 async def perf_start(package: str, processes: Optional[list] = None,
                      metrics: Optional[list] = None,
                      probes: Optional[list] = None, interval: float = 5.0,
-                     duration_minutes: float = 60.0) -> str:
+                     duration_minutes: float = 60.0,
+                     suite_name: Optional[str] = None,
+                     case_ids: Optional[list] = None,
+                     loop: int = 1,
+                     stop_on_failure: bool = False) -> str:
     return await _run("perf_start",
                       {"package": package, "processes": processes,
                        "metrics": metrics, "probes": probes,
                        "interval": interval,
-                       "duration_minutes": duration_minutes},
+                       "duration_minutes": duration_minutes,
+                       "suite_name": suite_name, "case_ids": case_ids,
+                       "loop": loop, "stop_on_failure": stop_on_failure},
                       lambda: _perf_start(package, processes, metrics,
-                                          probes, interval, duration_minutes),
+                                          probes, interval, duration_minutes,
+                                          suite_name, case_ids, loop,
+                                          stop_on_failure),
                       mutating=True, hold_lock=False)
 
 
@@ -3153,6 +3467,113 @@ async def weak_net_clear(interface: str = "wlan0") -> str:
     return await _run("weak_net_clear", {"interface": interface},
                       lambda: _weak_net_clear(interface),
                       mutating=True, hold_lock=False)
+
+
+# ----------------------------------------------------------------------
+# 批次 4.2 / 4.3 / 设置页语音配置
+# ----------------------------------------------------------------------
+@server.tool(name="perf_baseline_save",
+             description="把一次性能会话保存为基线（同名需 overwrite=true）")
+async def perf_baseline_save(session_id: str, name: str,
+                             overwrite: bool = False) -> str:
+    return await _run("perf_baseline_save",
+                      {"session_id": session_id, "name": name,
+                       "overwrite": overwrite},
+                      lambda: _perf_baseline_save(session_id, name, overwrite),
+                      mutating=True)
+
+
+@server.tool(name="perf_baseline_delete",
+             description="删除性能基线；需 allow_destructive=true")
+async def perf_baseline_delete(name: str,
+                               allow_destructive: bool = False) -> str:
+    return await _run("perf_baseline_delete",
+                      {"name": name, "allow_destructive": allow_destructive},
+                      lambda: _perf_baseline_delete(name, allow_destructive),
+                      mutating=True)
+
+
+@server.tool(name="perf_compare",
+             description="把指定会话与基线对比，返回逐项变化与 worse/better 统计")
+async def perf_compare(session_id: str, baseline_name: str,
+                       threshold_pct: float = 0.1) -> str:
+    return await _run("perf_compare",
+                      {"session_id": session_id,
+                       "baseline_name": baseline_name,
+                       "threshold_pct": threshold_pct},
+                      lambda: _perf_compare(session_id, baseline_name,
+                                            threshold_pct))
+
+
+@server.tool(name="knowledge_list",
+             description="列出知识库项目与笔记（可按项目/分类/关键字过滤）")
+async def knowledge_list(project: Optional[str] = None,
+                         category: Optional[str] = None,
+                         search: Optional[str] = None) -> str:
+    return await _run("knowledge_list",
+                      {"project": project, "category": category,
+                       "search": search},
+                      lambda: _knowledge_list(project, category, search))
+
+
+@server.tool(name="knowledge_read", description="读取一条知识库笔记的完整正文")
+async def knowledge_read(note_id: str) -> str:
+    return await _run("knowledge_read", {"note_id": note_id},
+                      lambda: _knowledge_read(note_id))
+
+
+@server.tool(name="knowledge_upsert_note",
+             description="新建或更新知识库笔记（不传 note_id 即新建）")
+async def knowledge_upsert_note(project: Optional[str] = None,
+                                category: Optional[str] = None,
+                                title: Optional[str] = None,
+                                body: Optional[str] = None,
+                                tags: Optional[list] = None,
+                                note_id: Optional[str] = None) -> str:
+    return await _run("knowledge_upsert_note",
+                      {"project": project, "category": category,
+                       "title": title, "body": body, "tags": tags,
+                       "note_id": note_id},
+                      lambda: _knowledge_upsert_note(project, category, title,
+                                                     body, tags, note_id),
+                      mutating=True)
+
+
+@server.tool(name="knowledge_delete_note",
+             description="删除知识库笔记；需 allow_destructive=true")
+async def knowledge_delete_note(note_id: str,
+                                allow_destructive: bool = False) -> str:
+    return await _run("knowledge_delete_note",
+                      {"note_id": note_id,
+                       "allow_destructive": allow_destructive},
+                      lambda: _knowledge_delete_note(note_id,
+                                                     allow_destructive),
+                      mutating=True)
+
+
+@server.tool(name="voice_settings_get",
+             description="读取设置页的语音播报配置（引擎/音色/语速/唤醒词/回执验证）")
+async def voice_settings_get() -> str:
+    return await _run("voice_settings_get", {}, _voice_settings_get)
+
+
+@server.tool(name="voice_settings_update",
+             description="更新语音播报配置（只写传入的字段；GUI 需退出）")
+async def voice_settings_update(engine: Optional[str] = None,
+                                voice_id: Optional[str] = None,
+                                device_id: Optional[str] = None,
+                                rate: Optional[int] = None,
+                                loop: Optional[int] = None,
+                                wake_word: Optional[str] = None,
+                                verify: Optional[dict] = None) -> str:
+    return await _run("voice_settings_update",
+                      {"engine": engine, "voice_id": voice_id,
+                       "device_id": device_id, "rate": rate, "loop": loop,
+                       "wake_word": wake_word, "verify": verify},
+                      lambda: _voice_settings_update(engine, voice_id,
+                                                     device_id, rate, loop,
+                                                     wake_word, verify),
+                      mutating=True)
 
 
 def main():

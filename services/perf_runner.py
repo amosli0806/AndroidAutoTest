@@ -34,10 +34,12 @@ MAX_DURATION_MINUTES = 180
 
 
 class PerfRunner:
-    def __init__(self, device, serial: str, output_dir: str):
+    def __init__(self, device, serial: str, output_dir: str,
+                 device_service=None):
         self.device = device
         self.serial = serial or ""
         self.output_dir = output_dir
+        self.device_service = device_service
         self.session: Optional[PerfSession] = None
         self.metrics: list = []
         self.probes: dict = {}
@@ -56,11 +58,16 @@ class PerfRunner:
         self._last_save = 0.0
         self._finalized = False
         self._summary_cache: dict = {}
+        self._scenario_thread: Optional[threading.Thread] = None
+        self._scenario_abort: Optional[threading.Event] = None
+        self._scenario_state = ""
+        self._scenario_result: dict = {}
 
     # ---------- 启动 ----------
     def start(self, package: str, processes: Optional[list],
               metrics: Optional[list], probes: Optional[list],
-              interval: float = 5.0, duration_minutes: float = 60.0) -> dict:
+              interval: float = 5.0, duration_minutes: float = 60.0,
+              scenario: Optional[dict] = None) -> dict:
         metrics = [m for m in (metrics or ALLOWED_METRICS)
                    if m in ALLOWED_METRICS]
         if not metrics:
@@ -105,6 +112,21 @@ class PerfRunner:
         except Exception:
             pass
 
+        scenario = dict(scenario or {})
+        case_ids = [c for c in (scenario.get("case_ids") or []) if c]
+        if case_ids:
+            from models.project_model import ProjectModel
+            project = ProjectModel()
+            names = []
+            for cid in case_ids:
+                node = project.get_node_by_id(cid)
+                if node is not None and node.type == "case":
+                    names.append(node.name)
+            scenario["case_ids"] = case_ids
+            session.suite_name = str(scenario.get("suite_name") or "")
+            session.case_ids = case_ids
+            session.case_names = names
+
         self.session = session
         self.metrics = metrics
         self.packages = normalized
@@ -119,6 +141,8 @@ class PerfRunner:
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                         name="mcp-perf-runner")
         self._thread.start()
+        if scenario.get("case_ids"):
+            self._start_scenario(scenario)
         return {
             "session_id": session.id,
             "name": session.name,
@@ -129,7 +153,56 @@ class PerfRunner:
             "interval": interval,
             "duration_minutes": duration_minutes,
             "started_at": session.start_time,
+            "scenario": {
+                "suite_name": session.suite_name,
+                "case_ids": session.case_ids,
+                "case_names": session.case_names,
+                "loop": int(scenario.get("loop") or 1),
+                "stop_on_failure": bool(scenario.get("stop_on_failure")),
+            } if session.case_ids else None,
         }
+
+    # ---------- 场景化：采集期间跑用例 ----------
+    def _start_scenario(self, scenario: dict) -> None:
+        if self.device_service is None:
+            raise ValueError("场景化模式需要 device_service")
+        from models.execution_model import ExecutionModel
+        from models.project_model import ProjectModel
+        from models.step_model import StepModel
+        from services.case_runner import CaseRunner
+
+        case_ids = list(scenario.get("case_ids") or [])
+        loop = max(1, int(scenario.get("loop") or 1))
+        stop_on_fail = bool(scenario.get("stop_on_failure"))
+        self._scenario_abort = threading.Event()
+        self._scenario_state = "running"
+        self._scenario_result = {}
+
+        def work():
+            try:
+                runner = CaseRunner(
+                    case_ids, ProjectModel(), StepModel(), self.device_service,
+                    ExecutionModel(), loop_count=loop, stop_on_fail=stop_on_fail,
+                    abort_event=self._scenario_abort)
+                result = runner.run()
+                self._scenario_result = {
+                    "cases": [
+                        {"case_id": c.case_id, "case_name": c.case_name,
+                         "ok": c.ok, "error": c.error,
+                         "duration_ms": c.duration_ms}
+                        for c in result.cases
+                    ],
+                    "aborted": bool(result.aborted),
+                }
+                self._scenario_state = ("aborted" if result.aborted
+                                        else "finished")
+            except Exception as e:
+                self._scenario_result = {"error": str(e)}
+                self._scenario_state = "error"
+
+        self._scenario_thread = threading.Thread(
+            target=work, daemon=True, name="mcp-perf-scenario")
+        self._scenario_thread.start()
 
     def _start_probes(self, wanted: list) -> None:
         def _interval() -> float:
@@ -268,11 +341,26 @@ class PerfRunner:
                        if k in latest},
             "probe_samples": probes,
             "stop_reason": self.stop_reason,
+            "scenario": self._scenario_status(),
+        }
+
+    def _scenario_status(self) -> Optional[dict]:
+        if self._scenario_thread is None and not self._scenario_state:
+            return None
+        return {
+            "state": self._scenario_state,
+            "running": bool(self._scenario_thread
+                            and self._scenario_thread.is_alive()),
+            "result": self._scenario_result,
         }
 
     # ---------- 停止 ----------
     def stop(self) -> dict:
         self._stop_evt.set()
+        if self._scenario_abort is not None:
+            self._scenario_abort.set()
+        if self._scenario_thread is not None:
+            self._scenario_thread.join(timeout=20)
         if self._thread is not None:
             self._thread.join(timeout=20)
             self._thread = None
@@ -340,6 +428,7 @@ class PerfRunner:
             "stop_reason": self.stop_reason or "user",
             "probe_samples": probes,
             "artifacts": {},
+            "scenario": self._scenario_status(),
         }
         return self._summary()
 

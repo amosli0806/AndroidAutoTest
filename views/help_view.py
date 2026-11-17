@@ -577,6 +577,15 @@ class HelpView(QFrame):
                     <li>弱网：<code>weak_net_apply</code> / <code>weak_net_clear</code> 支持延迟、
                         丢包与带宽限制；需要 root 和 <code>allow_destructive=true</code>，
                         TTL 到期会在设备端自动清除。</li>
+                    <li>场景化与基线：<code>perf_start</code> 可带 <code>suite_name</code>
+                        在采集期间跑用例；<code>perf_baseline_save</code> /
+                        <code>perf_baseline_delete</code> / <code>perf_compare</code>
+                        负责基线保存、删除与对比。</li>
+                    <li>知识库与语音设置：<code>knowledge_list</code> /
+                        <code>knowledge_read</code> / <code>knowledge_upsert_note</code> /
+                        <code>knowledge_delete_note</code>；<code>voice_settings_get</code> /
+                        <code>voice_settings_update</code> 读写引擎、音色、语速、循环、
+                        唤醒词与回执验证。</li>
                 </ul>
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     ⚠ 虫师界面运行时，MCP 自动降级为只读；点击、输入、<code>run_case</code>

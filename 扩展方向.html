@@ -755,6 +755,27 @@
         顺带修复：<code>weak_net_clear</code> 在「本来就没有规则」时，错误输出被
         <code>2&gt;/dev/null</code> 吞掉导致误报 <code>RuntimeError</code>，
         现在改为保留 stderr 并把 <code>No such file</code> 视为已清除。</p>
+      <p class="small"><b>批次 4.1 ~ 4.3 落地</b>（2026-11-17）：按价值重排后跳过定时任务与消息中心，
+        保留场景化、基线、知识库，并额外开放语音播报设置。工具总数 64 → 73。</p>
+      <ul class="small">
+        <li><b>4.1 性能场景化</b>：<code>PerfRunner</code> 接入 <code>CaseRunner</code>，
+          <code>perf_start</code> 支持 <code>suite_name</code> / <code>case_ids</code> /
+          <code>loop</code> / <code>stop_on_failure</code>；会话记录套件名与用例名，
+          <code>perf_status</code> / <code>perf_stop</code> 返回场景执行结果。</li>
+        <li><b>4.2 基线</b>：<code>perf_baseline_save</code> / <code>perf_baseline_delete</code> /
+          <code>perf_compare</code>，复用 <code>PerfBaseline</code> 与 <code>compare_stats</code>，
+          删除基线需 <code>allow_destructive</code>。</li>
+        <li><b>4.3 知识库</b>：<code>knowledge_list</code> / <code>knowledge_read</code> /
+          <code>knowledge_upsert_note</code> / <code>knowledge_delete_note</code>，
+          项目可按名称或 id 定位，删除笔记需授权。</li>
+        <li><b>语音设置</b>：<code>voice_settings_get</code> / <code>voice_settings_update</code>，
+          覆盖引擎、音色、输出设备、语速、循环、唤醒词与 <code>verify</code>（浅合并）。</li>
+      </ul>
+      <p class="small">真机验证（30EA 车机，序列号 105A04314B7，Android 10 / 1920×720）：
+        场景化采集期间用例执行完成，会话保存 3 个样本并记录套件与用例名（该机分辨率与原用例不同，
+        旧断言失败属预期，链路正常）；基线保存、与自身对比（3 项 stable）、删除门禁均通过；
+        知识库在「30EA」项目下完成新建、读取、修改、删除，笔记数恢复为 3；
+        语音 <code>wake_word</code> 改写后能读回，已还原原值。测试会话、产物与 job 记录均已清理。</p>
       <p class="small">阶段 1 与 2 可并行；阶段 3 必须等 2；阶段 4 必须等 1 + 2。
         预计总量 7 ~ 9 天（含 CaseRunner 与 GUI lock 的重构成本）。</p>
       <p><b>涉及文件（预计）</b>：</p>
@@ -923,9 +944,10 @@
           安装/卸载/清空数据、Monkey、弱网、tcpdump、hprof、screenrecord、reboot/root、
           性能采集 start/stop、实时 logcat
         </td><td>必须 <code>allow_destructive</code> + 工具白名单 + run_id/stop + 审计</td></tr>
-        <tr><td><b>4 运维 / 内存态</b></td><td>
-          定时任务 CRUD/立即执行、消息中心读取、设置读写、知识库检索/编辑
-        </td><td>先解决 MCP 与 GUI 的共享状态问题（持久化或 MCP 自维护）</td></tr>
+        <tr><td><b>4 场景 / 基线 / 知识库</b><br>4.1 ~ 4.3 ✅</td><td>
+          采集期间跑套件（性能场景化）、基线保存 / 删除 / 对比、知识库读写、语音播报设置读写。
+          原计划的定时任务与消息中心暂不做（GUI 内存态、收益低）
+        </td><td>数据文件型能力优先；消息中心/定时任务需先解决 MCP 与 GUI 共享状态</td></tr>
       </table>
       <div class="tip">✅ <b>已补的安全门禁</b>：<code>run_case</code> / <code>run_suite</code> /
         <code>save_case</code> 会扫描 <code>app_mgr</code> 的清空数据、安装、卸载步骤；
