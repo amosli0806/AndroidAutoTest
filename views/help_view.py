@@ -592,10 +592,12 @@ class HelpView(QFrame):
                     ⚠ 虫师界面运行时，MCP 自动降级为只读；点击、输入、<code>run_case</code>
                     等写操作需要先完全退出虫师。MCP 只走本机 stdio，不监听端口；每次调用都会写
                     <code>data/mcp_audit.log</code>。<br>
-                    危险步骤（清空应用数据、安装、卸载）默认拒绝，确认风险后必须显式传
-                    <code>allow_destructive=true</code>；非 GET 接口、删除用例/套件、安装/卸载/清数据/
-                    重启设备同样需要该开关。设备影响型操作执行期间，其他工具会返回
-                    <code>DEVICE_BUSY</code>，避免并发抢占设备。
+                    危险步骤（清空应用数据、安装、卸载、停止/重启应用、电源键、熄屏/改方向）
+                    默认拒绝，确认风险后必须显式传 <code>allow_destructive=true</code>；
+                    直接调用 <code>press_key("power")</code> 也需要该开关。非 GET 接口、删除用例/套件、
+                    安装/卸载/清数据/重启设备同样需要该开关。
+                    设备影响型操作执行期间，其他工具会返回 <code>DEVICE_BUSY</code>，
+                    避免并发抢占设备。
                 </div>
                 """
             },

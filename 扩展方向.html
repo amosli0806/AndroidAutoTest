@@ -951,8 +951,9 @@
         </td><td>数据文件型能力优先；语音场景复用 <code>VoicePlaybackRunner</code></td></tr>
       </table>
       <div class="tip">✅ <b>已补的安全门禁</b>：<code>run_case</code> / <code>run_suite</code> /
-        <code>save_case</code> 会扫描 <code>app_mgr</code> 的清空数据、安装、卸载步骤；
-        默认返回 <code>DESTRUCTIVE_DENIED</code>，确认风险后必须显式传
+        <code>save_case</code> 会扫描危险步骤——<code>app_mgr</code> 的清空数据、安装、卸载、
+        停止/重启应用，<code>physical_key</code> 的电源键，<code>screen_ctrl</code> 的
+        熄灭屏幕、旋转/固定方向；默认返回 <code>DESTRUCTIVE_DENIED</code>，确认风险后必须显式传
         <code>allow_destructive=true</code>。这样即使 <code>launch_app</code> 只开放启动/停止/重启，
         智能体也不能悄悄通过用例执行危险动作。</div>
 

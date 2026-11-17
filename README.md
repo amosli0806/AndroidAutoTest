@@ -750,8 +750,10 @@ for loop in 1..循环次数:
   语速、循环次数、唤醒词与回执验证；只写传入字段，`verify` 为浅合并
 - 设备影响型操作统一生成 `run_id` 并落 `data/mcp_jobs/<run_id>.json`；执行期间其他工具返回
   `DEVICE_BUSY`（`device_list` / `adb_device_info` 与任务查询/停止工具除外），避免并发抢占设备
-- `run_case` / `run_suite` / `save_case` 默认拒绝 `app_mgr` 的清空数据、安装、卸载步骤；
-  确认风险后必须显式传 `allow_destructive=true`。非 GET 接口、删除用例/套件同样需要该开关
+- `run_case` / `run_suite` / `save_case` 默认拒绝危险步骤：`app_mgr` 的清空数据、安装、卸载、
+  停止/重启应用；`physical_key` 的电源键；`screen_ctrl` 的熄灭屏幕、旋转/固定方向。
+  确认风险后必须显式传 `allow_destructive=true`。直接调用 `press_key("power")` 同样需要该开关；
+  非 GET 接口、删除用例/套件同样需要该开关
 - `ui_find` 一次 dump、本地搜索；3 秒内复用缓存，`tap` 后自动失效
 - `run_case` / `run_suite` 在后台线程执行，`wait=true` 最多等 `timeout_s`；超时返回 `run_id`，
   用 `run_case_status` 轮询、`run_case_stop` 停止

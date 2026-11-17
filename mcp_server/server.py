@@ -165,7 +165,7 @@ def _hint_for(code: str) -> str:
         "CASE_AMBIGUOUS": "用例名重复，改用 case_id 或在 module 里指定模块",
         "CASE_EXISTS": "换一个 case_name，或传 overwrite=true 覆盖",
         "SUITE_NOT_FOUND": "先在执行页保存套件，或核对套件名 / 用例是否被删除",
-        "DESTRUCTIVE_DENIED": "确认风险后显式传 allow_destructive=true；默认不执行清空/安装/卸载",
+        "DESTRUCTIVE_DENIED": "确认风险后显式传 allow_destructive=true；默认不执行清空/安装/卸载、电源键、熄屏/改方向、停止/重启应用",
         "PERF_SESSION_NOT_FOUND": "先调用 perf_sessions 查看可用 session_id",
         "ADB_FAILED": "确认设备在线、路径存在且当前账号有读取权限",
         "PROCESS_NOT_FOUND": "先启动应用（launch_app），再确认包名正确",
@@ -1091,11 +1091,14 @@ _KEY_MAP = {
 }
 
 
-def _press_key(key: str) -> dict:
+def _press_key(key: str, allow_destructive: bool = False) -> dict:
     key_name = _KEY_MAP.get((key or "").lower())
     if not key_name:
         raise ToolFailure("INTERNAL_ERROR", f"未知按键: {key}",
                           "key 用 back/home/menu/volume_up/volume_down/power/camera")
+    if key_name in _HIGH_RISK_KEYS and not allow_destructive:
+        raise ToolFailure("DESTRUCTIVE_DENIED", "电源键会熄屏或弹出电源菜单",
+                          "确认风险后传 allow_destructive=true")
     svc = RUNTIME.ensure_device(RUNTIME.serial)
     svc.perform(_step("physical_key", keyName=key_name))
     RUNTIME.invalidate()
@@ -1160,20 +1163,44 @@ _VALID_STEP_TYPES = {
     "multi_swipe", "drag_drop", "gesture_zoom", "screenshot", "voice",
 }
 _DESTRUCTIVE_APP_ACTIONS = {"清空应用数据", "安装应用", "卸载应用"}
+# 不可逆或会明显打断执行环境的步骤：
+#   停止/重启应用会中断当前界面；电源键、熄屏、改方向会让后续步骤整体失效
+_DISRUPTIVE_APP_ACTIONS = {"停止应用", "重启应用"}
+_HIGH_RISK_KEYS = {"电源"}
+_HIGH_RISK_SCREEN_ACTIONS = {"熄灭屏幕", "旋转屏幕",
+                             "固定方向(竖屏)", "固定方向(横屏)"}
+
+
+def _high_risk_reason(step_type: str, params: dict) -> str:
+    """返回该步骤的风险说明；空串表示无需授权。"""
+    params = params or {}
+    if step_type == "app_mgr":
+        action = str(params.get("action") or "")
+        if action in _DESTRUCTIVE_APP_ACTIONS:
+            return action
+        if action in _DISRUPTIVE_APP_ACTIONS:
+            return action
+    elif step_type == "physical_key":
+        key_name = str(params.get("keyName") or "")
+        if key_name in _HIGH_RISK_KEYS:
+            return f"{key_name}键"
+    elif step_type == "screen_ctrl":
+        action = str(params.get("action") or "")
+        if action in _HIGH_RISK_SCREEN_ACTIONS:
+            return action
+    return ""
 
 
 def _destructive_steps(step_model, case_ids) -> list[dict]:
     found = []
     for cid in case_ids:
         for step in step_model.get_steps_for_case(cid) or []:
-            if step.type != "app_mgr":
-                continue
-            action = (step.params or {}).get("action", "")
-            if action in _DESTRUCTIVE_APP_ACTIONS:
+            reason = _high_risk_reason(step.type, step.params or {})
+            if reason:
                 found.append({
                     "case_id": cid,
                     "step": step.name or step.type,
-                    "action": action,
+                    "action": reason,
                 })
     return found
 
@@ -1181,11 +1208,11 @@ def _destructive_steps(step_model, case_ids) -> list[dict]:
 def _destructive_clean_steps(clean: list[dict]) -> list[dict]:
     found = []
     for item in clean:
-        if item.get("type") != "app_mgr":
-            continue
-        action = (item.get("params") or {}).get("action", "")
-        if action in _DESTRUCTIVE_APP_ACTIONS:
-            found.append({"step": item.get("name", "app_mgr"), "action": action})
+        reason = _high_risk_reason(item.get("type"),
+                                   item.get("params") or {})
+        if reason:
+            found.append({"step": item.get("name", "step"),
+                          "action": reason})
     return found
 
 
@@ -2968,10 +2995,13 @@ async def ui_dump(mode: str = "summary", max_nodes: int = 200) -> str:
                       lambda: _ui_dump(mode, max_nodes))
 
 
-@server.tool(name="press_key", description="按系统键：back/home/menu/volume_up/volume_down/power/camera")
-async def press_key(key: str) -> str:
-    return await _run("press_key", {"key": key},
-                      lambda: _press_key(key), mutating=True)
+@server.tool(name="press_key",
+             description="按系统键：back/home/menu/volume_up/volume_down/power/camera；power 需授权")
+async def press_key(key: str, allow_destructive: bool = False) -> str:
+    return await _run("press_key", {"key": key,
+                                    "allow_destructive": allow_destructive},
+                      lambda: _press_key(key, allow_destructive),
+                      mutating=True)
 
 
 @server.tool(name="launch_app", description="启动/停止/重启应用（不提供清空数据、卸载）")
