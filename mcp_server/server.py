@@ -36,6 +36,7 @@ from services.monkey_runner import MonkeyRunner
 from services.perf_runner import ALLOWED_METRICS, ALLOWED_PROBES, PerfRunner
 from services.screenrecord_runner import ScreenRecordRunner
 from services.tcpdump_runner import CAPTURE_MAX_BYTES, CAPTURE_MAX_SECONDS, TcpdumpRunner
+from services.weak_net import WeakNetRunner
 from services.voice_feedback_service import VoiceFeedbackService
 from services.voice_service import get_voice_service
 from utils.adb_path import get_adb_path
@@ -166,6 +167,7 @@ def _hint_for(code: str) -> str:
         "PROCESS_NOT_FOUND": "先启动应用（launch_app），再确认包名正确",
         "JOB_NOT_FOUND": "先调用 monkey_start / screenrecord_start / logcat_start 获取 run_id",
         "CAPTURE_UNAVAILABLE": "tcpdump 需要 root；未 root 的设备无法抓包，可换已 root 设备或先 adb root",
+        "WEAK_NET_UNAVAILABLE": "弱网模拟需要 root 与 tc；先 adb root，再确认设备有 tc / netem 支持",
         "DEVICE_BUSY": "run_case / run_suite 正在执行；等它结束或先调用 run_case_stop",
         "ASSERT_FAILED": "查看返回的截图路径 / 失败步骤，必要时用 screenshot 看现场",
     }.get(code, "查看 data/mcp.log；如是参数问题请修正后重试")
@@ -2426,6 +2428,90 @@ def _tcpdump_stop(run_id: str) -> dict:
             "stop_reason": snap.get("stop_reason", "")}
 
 
+# ----------------------------------------------------------------------
+# 批次 3.4：弱网模拟
+# ----------------------------------------------------------------------
+_WEAK_IFACE_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+
+
+def _weak_net_error(e: Exception) -> ToolFailure:
+    text = str(e) or e.__class__.__name__
+    code = "WEAK_NET_UNAVAILABLE" if (
+        isinstance(e, PermissionError) or "root" in text.lower()
+        or "tc " in text.lower() or "netem" in text.lower()
+        or "rtnetlink" in text.lower()) else "ADB_FAILED"
+    return ToolFailure(code, text, _hint_for(code))
+
+
+def _weak_net_apply(delay_ms: int = 0, loss_pct: float = 0.0,
+                    rate_kbps: int = 0, interface: str = "wlan0",
+                    ttl_s: int = 600,
+                    allow_destructive: bool = False) -> dict:
+    if not allow_destructive:
+        raise ToolFailure("DESTRUCTIVE_DENIED",
+                          f"弱网模拟会改变设备网络状态：{interface}",
+                          "确认风险后传 allow_destructive=true")
+    interface = (interface or "").strip()
+    if not _WEAK_IFACE_RE.match(interface):
+        raise ToolFailure("INTERNAL_ERROR", f"网卡名不合法：{interface!r}")
+    delay_ms = int(delay_ms or 0)
+    loss_pct = float(loss_pct or 0)
+    rate_kbps = int(rate_kbps or 0)
+    ttl_s = int(ttl_s or 0)
+    if not (0 <= delay_ms <= 5000):
+        raise ToolFailure("INTERNAL_ERROR", f"delay_ms 范围 0..5000：{delay_ms}")
+    if not (0 <= loss_pct <= 100):
+        raise ToolFailure("INTERNAL_ERROR", f"loss_pct 范围 0..100：{loss_pct}")
+    if not (0 <= rate_kbps <= 1_000_000):
+        raise ToolFailure("INTERNAL_ERROR", f"rate_kbps 范围 0..1000000：{rate_kbps}")
+    if not (30 <= ttl_s <= 3600):
+        raise ToolFailure("INTERNAL_ERROR", f"ttl_s 范围 30..3600：{ttl_s}")
+    if delay_ms == 0 and loss_pct == 0 and rate_kbps == 0:
+        raise ToolFailure("INTERNAL_ERROR",
+                          "至少填一项：delay_ms / loss_pct / rate_kbps")
+
+    serial = RUNTIME.ensure_device(RUNTIME.serial).serial
+    runner = WeakNetRunner(serial)
+
+    def run():
+        result = runner.apply(interface, delay_ms, loss_pct, rate_kbps, ttl_s)
+        result["qdisc"] = runner.show(interface)
+        return result
+
+    try:
+        return _jobbed("weak_net_apply",
+                       {"serial": serial, "interface": interface,
+                        "delay_ms": delay_ms, "loss_pct": loss_pct,
+                        "rate_kbps": rate_kbps, "ttl_s": ttl_s},
+                       run, timeout=90)
+    except ToolFailure:
+        raise
+    except Exception as e:
+        raise _weak_net_error(e)
+
+
+def _weak_net_clear(interface: str = "wlan0") -> dict:
+    interface = (interface or "").strip()
+    if not _WEAK_IFACE_RE.match(interface):
+        raise ToolFailure("INTERNAL_ERROR", f"网卡名不合法：{interface!r}")
+    serial = RUNTIME.ensure_device(RUNTIME.serial).serial
+    runner = WeakNetRunner(serial)
+
+    def run():
+        result = runner.clear(interface)
+        result["qdisc"] = runner.show(interface)
+        return result
+
+    try:
+        return _jobbed("weak_net_clear",
+                       {"serial": serial, "interface": interface},
+                       run, timeout=60)
+    except ToolFailure:
+        raise
+    except Exception as e:
+        raise _weak_net_error(e)
+
+
 def _ai_analyze_failure(step: dict, prev_steps: Optional[list] = None,
                         error_msg: str = "", screenshot_path: Optional[str] = None,
                         logcat_snippet: Optional[str] = None) -> dict:
@@ -3041,6 +3127,31 @@ async def tcpdump_start(local_tcpdump_path: Optional[str] = None,
 async def tcpdump_stop(run_id: str) -> str:
     return await _run("tcpdump_stop", {"run_id": run_id},
                       lambda: _tcpdump_stop(run_id),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="weak_net_apply",
+             description="下发弱网规则（延迟/丢包/带宽，需 root）；带 TTL 自动清除")
+async def weak_net_apply(delay_ms: int = 0, loss_pct: float = 0.0,
+                         rate_kbps: int = 0, interface: str = "wlan0",
+                         ttl_s: int = 600,
+                         allow_destructive: bool = False) -> str:
+    return await _run("weak_net_apply",
+                      {"delay_ms": delay_ms, "loss_pct": loss_pct,
+                       "rate_kbps": rate_kbps, "interface": interface,
+                       "ttl_s": ttl_s,
+                       "allow_destructive": allow_destructive},
+                      lambda: _weak_net_apply(delay_ms, loss_pct, rate_kbps,
+                                              interface, ttl_s,
+                                              allow_destructive),
+                      mutating=True, hold_lock=False)
+
+
+@server.tool(name="weak_net_clear",
+             description="清除弱网规则（恢复该网卡的默认队列）")
+async def weak_net_clear(interface: str = "wlan0") -> str:
+    return await _run("weak_net_clear", {"interface": interface},
+                      lambda: _weak_net_clear(interface),
                       mutating=True, hold_lock=False)
 
 

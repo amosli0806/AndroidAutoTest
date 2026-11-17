@@ -32,6 +32,7 @@ hiddenimports = [
     "services.logcat_stream",
     "services.perf_runner",
     "services.tcpdump_runner",
+    "services.weak_net",
     "mcp_server.schema",
     "mcp_server.audit",
     "mcp_server.logging_setup",

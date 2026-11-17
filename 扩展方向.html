@@ -742,6 +742,19 @@
         <code>tcpdump</code> 因测试车机未 root（<code>uid=2000(shell)</code>），
         只验证了 <code>CAPTURE_UNAVAILABLE</code> 前置拦截与参数校验，
         真实抓包需在已 root 设备上补验。</p>
+      <p class="small"><b>批次 3.4 落地</b>（2026-11-17）：新增
+        <code>services/weak_net.py</code>（tc netem / htb 命令组装与下发、能力探测、
+        TTL 设备端兜底）与 <code>weak_net_apply</code> / <code>weak_net_clear</code>
+        两个工具，总数 62 → 64。临时 <code>adb root</code> 后真机验收
+        （root / tc / netem 均可用）：eth0 下发 <code>delay 100ms + loss 5%</code>，
+        <code>tc qdisc</code> 显示 netem；45 秒 TTL 到点后自动恢复 mq / pfifo_fast；
+        htb 限速 2000kbit 下发成功，<code>weak_net_clear</code> 后规则消失；
+        <code>tcpdump</code> 在 root 下使用设备自带 <code>/system/bin/tcpdump</code>，
+        抓 ICMP 8 秒得到 720 字节 pcap、无残留进程。验证后 <code>adb unroot</code>，
+        <code>id</code> 回到 <code>uid=2000(shell)</code>，qdisc 已恢复默认，u2 会话正常。
+        顺带修复：<code>weak_net_clear</code> 在「本来就没有规则」时，错误输出被
+        <code>2&gt;/dev/null</code> 吞掉导致误报 <code>RuntimeError</code>，
+        现在改为保留 stderr 并把 <code>No such file</code> 视为已清除。</p>
       <p class="small">阶段 1 与 2 可并行；阶段 3 必须等 2；阶段 4 必须等 1 + 2。
         预计总量 7 ~ 9 天（含 CaseRunner 与 GUI lock 的重构成本）。</p>
       <p><b>涉及文件（预计）</b>：</p>
@@ -906,7 +919,7 @@
           <code>element_upsert</code>、<code>suite_save</code> / <code>suite_delete</code>、
           用例重命名/复制/删除/步骤排序、<code>adb_push</code>、<code>ai_analyze_failure</code>
         </td><td>加确认/预览；写 <code>data/</code> 前检查 GUI 是否在运行</td></tr>
-        <tr><td><b>3 设备影响</b><br>3.1 ✅<br>3.2 ✅<br>3.3 ✅</td><td>
+        <tr><td><b>3 设备影响</b><br>3.1 ✅<br>3.2 ✅<br>3.3 ✅<br>3.4 ✅</td><td>
           安装/卸载/清空数据、Monkey、弱网、tcpdump、hprof、screenrecord、reboot/root、
           性能采集 start/stop、实时 logcat
         </td><td>必须 <code>allow_destructive</code> + 工具白名单 + run_id/stop + 审计</td></tr>

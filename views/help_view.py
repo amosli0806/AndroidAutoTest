@@ -574,6 +574,9 @@ class HelpView(QFrame):
                         <code>perf_stop</code> 支持 cpu / mem / fps / traffic 与
                         sys_mem / netdev / iotop 探针，默认 60 分钟；<code>tcpdump_start</code> /
                         <code>tcpdump_stop</code> 支持过滤与时长 / 大小上限，需要设备 root。</li>
+                    <li>弱网：<code>weak_net_apply</code> / <code>weak_net_clear</code> 支持延迟、
+                        丢包与带宽限制；需要 root 和 <code>allow_destructive=true</code>，
+                        TTL 到期会在设备端自动清除。</li>
                 </ul>
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     ⚠ 虫师界面运行时，MCP 自动降级为只读；点击、输入、<code>run_case</code>

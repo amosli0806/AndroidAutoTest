@@ -700,7 +700,7 @@ for loop in 1..循环次数:
 - **快捷键**：7 组共 41 个，全部可在设置里改，留空即禁用（默认表见 `utils/settings.py:DEFAULT_SHORTCUTS`）
 - **检查更新**：启动 4 秒后后台检查（失败静默），有新版在菜单亮红点；见 5.8
 
-### 4.14 MCP 服务（本地 stdio，P0/P1/P2 + 批次 3.1/3.2/3.3）
+### 4.14 MCP 服务（本地 stdio，P0/P1/P2 + 批次 3.1 ~ 3.4）
 
 `mcp_server/` + `main.py --mcp`。这是**开发中的能力**：把 `device_service` 薄封装成 MCP 工具，
 让 Comate / Claude Desktop / Cursor / Cline 等支持本地 stdio 的客户端驱动虫师。**不监听端口、不做 HTTP**。
@@ -735,6 +735,9 @@ for loop in 1..循环次数:
   fps_display 按 GUI 规则自动跟随。默认 60 分钟、最长 180 分钟；会话写入
   `data/perf_data.json`，可直接用 `perf_report` 生成报告。`tcpdump_start` /
   `tcpdump_stop` 支持 BPF 过滤与时长 / 大小 / 分段上限，**需设备 root**
+- 设备影响（批次 3.4）：`weak_net_apply` / `weak_net_clear` 支持延迟、丢包与带宽限制，
+  需 `allow_destructive=true` 且设备已 root；TTL 默认 600 秒、最大 3600 秒，
+  设备端 `sleep + tc qdisc del` 兜底，MCP 退出也会按时自动清除
 - 设备影响型操作统一生成 `run_id` 并落 `data/mcp_jobs/<run_id>.json`；执行期间其他工具返回
   `DEVICE_BUSY`（`device_list` / `adb_device_info` 与任务查询/停止工具除外），避免并发抢占设备
 - `run_case` / `run_suite` / `save_case` 默认拒绝 `app_mgr` 的清空数据、安装、卸载步骤；
@@ -774,9 +777,10 @@ P2 工具已完成并做过真机闭环验收：草稿生成 → `save_case` 覆
 logcat 按行数自动停、Monkey 的默认启动与白名单启动都能注入事件，中途 stop 与跨进程重连也已通过；
 13 ~ 60 小时长跑未实际执行（耗时），能力链路已完整验证。批次 3.3 的性能采集已闭环：
 cpu / mem 主采样、sys_mem / sys_cpu / threads 探针、手动停止与到点自然结束、会话落库与
-`perf_report` 出报告都已在真机验证；`tcpdump` 因测试车机未 root，只验证了前置拦截与参数校验。
-3.4 按计划推进（见 `扩展方向.html`）。网页端接入属于远期扩展
-（见 `扩展方向.html` 第 3 章第八节），不属于本期。
+`perf_report` 出报告都已在真机验证。批次 3.4 在临时 `adb root` 下完成验证：弱网延迟 / 丢包
+下发与 TTL 自动清除、带宽限制与手动清除、`tcpdump` 真实抓包（720 字节 ICMP）均通过，
+验证后已 `adb unroot` 并确认回到 `uid=2000(shell)`、设备与 u2 会话正常。网页端接入属于
+远期扩展（见 `扩展方向.html` 第 3 章第八节），不属于本期。
 
 ---
 
