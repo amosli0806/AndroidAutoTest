@@ -438,13 +438,14 @@
 
   <!-- ============ 三、MCP 服务：把虫师变成智能体的执行层 ============ -->
   <section class="chapter" id="s3">
-    <h2><span class="num">3</span>MCP 服务：把虫师变成智能体的执行层 <span class="tag plan">📋 阶段 0-5 完成 · 批次 1-2 已开放</span></h2>
+    <h2><span class="num">3</span>MCP 服务：把虫师变成智能体的执行层 <span class="tag done">✅ 阶段 0-5 + 批次 1~4.3 已完成 · 73 个工具</span></h2>
     <p class="small" style="margin-top:0">
       起因：2026-11-12 百度世界主题是「智能组织」——打破岗位边界、沉淀隐性知识、设计流程闭环，
       公式「可衡量 + Looping = 持续进化」；同场百度搭子开放了 Harness 引擎与 Agent API，
       文心 5.5 Flash 也把 <b>AutomationBench</b>（自动化任务基准）当成卖点。
       大厂在做「让智能体真正进业务」，而落到真机上，<b>最缺的那一层正好是虫师已经做了三年的东西</b>。
-      本章只讲一件事：加一个 MCP server，把现有能力暴露给智能体，GUI 一行不改。
+      本章只讲一件事：加一个 MCP server，把现有能力暴露给智能体。GUI 主体结构不动
+      （右栏旧的「应用可视化」已在 1.5.24 下线），MCP 作为独立进程运行。
     </p>
 
     <div class="card">
@@ -464,7 +465,7 @@
         <tr><td>输入法挡住了目标控件，点了没反应</td>
             <td>输入前收键盘、失败后现场反查（<code>_diagnose_*</code> 那一套）</td></tr>
         <tr><td>图标按钮没有文字、没有 ID，只能靠图像匹配</td>
-            <td><code>utils/image_match.py</code>（OpenCV 模板匹配）＋ 应用可视化里框选生成模板</td></tr>
+            <td><code>utils/image_match.py</code>（OpenCV 模板匹配）＋ 元素库里的图像定位</td></tr>
       </table>
       <div class="example">💡 <b>打个比方：</b>智能体是刚空降的工程师，虫师是干了三年的老师傅。
         工程师说「我要点播放」——老师傅知道那个按钮在哪一屏、要不要先滑一下、等它加载多久、
@@ -475,11 +476,11 @@
 
     <div class="card">
       <h3>二、目标形态与进程共存</h3>
-      <p>一句话：<b>加一个独立的 MCP server 进程，把 <code>services/device_service.py</code> 的能力暴露成工具；
-        现有 GUI、数据结构、打包产物都不动。</b></p>
+      <p>一句话：<b>加一个独立的 MCP server 进程，把 device_service 以及性能 / 语音 / 用例 / 知识库等能力
+        暴露成工具；GUI 与数据结构保持兼容，写类工具要求先退出 GUI。</b></p>
       <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">┌──────────────────┐   stdio / JSON-RPC   ┌───────────────────┐   adb / u2   ┌───────────┐
-│ 任意 MCP 客户端   │ ◄──────────────────► │ mcp_server.py     │ ◄──────────► │ 手机/车机  │
-│ Claude/Cursor/扣子│                      │ 薄封装 device_service │            │           │
+│ 任意 MCP 客户端   │ ◄──────────────────► │ mcp_server        │ ◄──────────► │ 手机/车机  │
+│ Claude/Cursor/扣子│                      │ 设备/用例/性能工具  │            │           │
 └──────────────────┘                      └───────────────────┘              └───────────┘
                                                     │
                                           data/ 共享：元素库 / 用例 / 执行记录</pre>
@@ -515,9 +516,10 @@
       </div>
       <table>
         <tr><th style="width:34%">场景</th><th>约定</th></tr>
-        <tr><td>只开 MCP，GUI 没开</td><td>正常，独占设备；只在 <code>data/mcp_runs/</code> 写执行记录，<b>不碰</b> <code>steps_data / voice_data</code></td></tr>
+        <tr><td>只开 MCP，GUI 没开</td><td>正常，独占设备；写类工具可修改 <code>data/</code>（用例 / 套件 / 元素库 / 知识库 / 语音设置等），
+          每次调用写 <code>data/mcp_audit.log</code>，长任务状态写 <code>data/mcp_jobs/</code></td></tr>
         <tr><td>GUI 与 MCP 同时开</td><td>MCP 检测 <code>data/gui.lock</code>（GUI 启动即有单实例锁），自动降级为<b>只读</b>：dump / 截图 / 查询可用，操作类工具返回 <code>PERMISSION_DENIED</code> 并提示「先关闭虫师界面」</td></tr>
-        <tr><td>多个客户端连同一个 server</td><td>允许；server 内部串行化（一把 asyncio.Lock），避免两条指令同时发给设备</td></tr>
+        <tr><td>多个客户端连同一个 server</td><td>允许；工具调用经 <code>RUNTIME.lock</code> 串行化，设备影响型任务再由 <code>device_jobs</code> 做互斥，避免两条指令同时发给设备</td></tr>
         <tr><td>不做 HTTP 端口</td><td>stdio 不监听网络，天然只限本机；生命周期跟随客户端，退出即结束，不留后台服务</td></tr>
       </table>
       <div class="tip">⚠ <b>最容易踩的坑（先写在这里）：</b><code>stdout</code> 是协议通道，任何
@@ -528,7 +530,9 @@
     </div>
 
     <div class="card">
-      <h3>三、工具清单</h3>
+      <h3>三、工具清单 <span class="tag done">✅ 当前 73 个</span></h3>
+      <p class="small" style="margin-top:0">下面的 P0 / P1 / P2 是最早的最小闭环设计（阶段 3~5 的历史记录）；
+        当前实际已开放 73 个工具，按能力分组见本节末尾的「当前工具总览」。</p>
       <p><b>P0 —— 八个工具构成「看 → 找 → 点 → 验」最小闭环（先只做这些就能跑通真实任务）</b></p>
       <table>
         <tr><th style="width:20%">工具</th><th style="width:38%">入参</th><th>用途</th></tr>
@@ -548,7 +552,7 @@
         <tr><td><code>ui_dump</code></td><td><code>{ mode: summary|full, max_nodes? }</code></td><td><code>summary</code> 只返回可点击/有文本的节点（token 友好）；<code>full</code> 返回原始 XML 路径</td></tr>
         <tr><td><code>press_key</code></td><td><code>{ key: back|home|menu|volume_up|... }</code></td><td>物理/系统按键</td></tr>
         <tr><td><code>launch_app</code></td><td><code>{ package, activity? }</code></td><td>启动/停止/重启应用（不提供清空数据、卸载——见安全边界）</td></tr>
-        <tr><td><code>run_case</code></td><td><code>{ case_name | case_id, stop_on_failure? }</code></td><td>跑一条虫师用例，返回逐步结果；<b>这是把「手写用例」和「Agent 执行」接起来的关键</b></td></tr>
+        <tr><td><code>run_case</code></td><td><code>{ case_name | case_id, stop_on_failure?, loop_count?, retry_count?, allow_destructive? }</code></td><td>跑一条虫师用例，返回逐步结果；<b>这是把「手写用例」和「Agent 执行」接起来的关键</b></td></tr>
         <tr><td><code>list_cases</code></td><td><code>{ module? }</code></td><td>列出用例树，让 Agent 知道有哪些现成的可复用</td></tr>
       </table>
 
@@ -559,6 +563,50 @@
         <tr><td><code>save_case</code></td><td><code>{ module, case_name, steps[], overwrite? }</code></td><td>把草稿存成正式用例（走与表格导入同一套校验，定位缺失的步骤会被标红拒绝）</td></tr>
         <tr><td><code>run_suite</code></td><td><code>{ suite_name }</code></td><td>跑整套并返回聚合结果（通过率 / 失败步骤 / 耗时）</td></tr>
       </table>
+
+      <p style="margin-top:16px"><b>当前工具总览（73 个，均为已实现并验收）</b></p>
+      <table>
+        <tr><th style="width:20%">分组</th><th>工具</th></tr>
+        <tr><td><b>设备 / 定位 / 操作</b><br>11 个</td><td>
+          <code>device_list</code>、<code>screenshot</code>、<code>ui_find</code>、<code>ui_dump</code>、
+          <code>tap</code>、<code>input_text</code>、<code>swipe</code>、<code>wait_until</code>、
+          <code>assert</code>、<code>press_key</code>、<code>launch_app</code></td></tr>
+        <tr><td><b>用例 / 套件</b><br>16 个</td><td>
+          <code>list_cases</code>、<code>run_case</code>、<code>run_case_status</code>、
+          <code>run_case_stop</code>、<code>explore_and_draft</code>、<code>draft_status</code>、
+          <code>save_case</code>、<code>run_suite</code>、<code>suite_list</code>、
+          <code>suite_save</code>、<code>suite_delete</code>、<code>case_rename</code>、
+          <code>case_copy</code>、<code>case_delete</code>、<code>step_move</code>、<code>step_update</code></td></tr>
+        <tr><td><b>只读扩展</b><br>11 个</td><td>
+          <code>adb_device_info</code>、<code>adb_logcat_snapshot</code>、<code>adb_pull</code>、
+          <code>perf_sessions</code>、<code>perf_baselines</code>、<code>perf_report</code>、
+          <code>voice_list_cases</code>、<code>api_list</code>、<code>element_list</code>、
+          <code>report_list</code>、<code>report_read</code></td></tr>
+        <tr><td><b>其它可控写</b><br>6 个</td><td>
+          <code>voice_speak</code>、<code>voice_verify</code>、<code>api_run</code>、
+          <code>element_upsert</code>、<code>adb_push</code>、<code>ai_analyze_failure</code></td></tr>
+        <tr><td><b>设备影响 3.1</b><br>5 个</td><td>
+          <code>app_install</code>、<code>app_uninstall</code>、<code>app_clear_data</code>、
+          <code>hprof_dump</code>、<code>device_reboot</code>（仅 system）</td></tr>
+        <tr><td><b>可停型长任务 3.2</b><br>8 个</td><td>
+          <code>monkey_start</code>、<code>monkey_status</code>、<code>monkey_stop</code>、
+          <code>screenrecord_start</code>、<code>screenrecord_stop</code>、
+          <code>logcat_start</code>、<code>logcat_stop</code>、<code>logcat_read</code></td></tr>
+        <tr><td><b>采集型 3.3</b><br>5 个</td><td>
+          <code>perf_start</code>、<code>perf_status</code>、<code>perf_stop</code>、
+          <code>tcpdump_start</code>、<code>tcpdump_stop</code></td></tr>
+        <tr><td><b>网络型 3.4</b><br>2 个</td><td>
+          <code>weak_net_apply</code>、<code>weak_net_clear</code></td></tr>
+        <tr><td><b>批次 4</b><br>9 个</td><td>
+          <code>perf_baseline_save</code>、<code>perf_baseline_delete</code>、<code>perf_compare</code>、
+          <code>knowledge_list</code>、<code>knowledge_read</code>、<code>knowledge_upsert_note</code>、
+          <code>knowledge_delete_note</code>、<code>voice_settings_get</code>、<code>voice_settings_update</code>
+          （性能场景化通过 <code>perf_start</code> 的 <code>suite_name</code> / <code>suite_type</code> 参数实现，不另占工具）</td></tr>
+      </table>
+      <p class="small">安全门禁：<code>run_case</code> / <code>run_suite</code> / <code>save_case</code> 会扫描
+        <code>app_mgr</code> 的清空/安装/卸载/停止/重启、<code>physical_key</code> 的电源键、
+        <code>screen_ctrl</code> 的熄灭/旋转/固定方向；删除类工具、非 GET 接口、安装/卸载/清数据、
+        弱网与重启均需显式 <code>allow_destructive=true</code>。</p>
     </div>
 
     <div class="card">
@@ -602,12 +650,23 @@
         <tr><td><code>ELEMENT_AMBIGUOUS</code></td><td>命中多个：返回候选列表让 Agent 选 <code>index</code>，别自己猜</td></tr>
         <tr><td><code>TIMEOUT</code></td><td>超时：附已等待时长与最后一次截图路径</td></tr>
         <tr><td><code>ASSET_MISSING</code></td><td>图像模板不存在（历史坑：只存了文件名）：hint 指向 <code>data/element_images/</code></td></tr>
-        <tr><td><code>PERMISSION_DENIED</code></td><td>GUI 正在运行 / 危险动作未授权</td></tr>
+        <tr><td><code>PERMISSION_DENIED</code></td><td>GUI 正在运行（MCP 降级只读）；写操作需先退出虫师</td></tr>
+        <tr><td><code>DESTRUCTIVE_DENIED</code></td><td>危险动作未授权：确认风险后显式传 <code>allow_destructive=true</code></td></tr>
+        <tr><td><code>DEVICE_BUSY</code></td><td>设备任务或 <code>run_case</code> 正在执行；等结束或先 stop</td></tr>
+        <tr><td><code>JOB_NOT_FOUND</code></td><td><code>run_id</code> 不存在：先调对应的 start 工具</td></tr>
+        <tr><td><code>PROCESS_NOT_FOUND</code></td><td>目标应用未运行：先 <code>launch_app</code> 或人工启动</td></tr>
+        <tr><td><code>CAPTURE_UNAVAILABLE</code></td><td>抓包前置不满足（通常是设备未 root）</td></tr>
+        <tr><td><code>WEAK_NET_UNAVAILABLE</code></td><td>弱网需要 root + tc + netem，能力探测未通过</td></tr>
+        <tr><td><code>BASELINE_EXISTS / BASELINE_NOT_FOUND</code></td><td>基线重名或不存在：用 <code>overwrite</code> / 先 <code>perf_baselines</code></td></tr>
+        <tr><td><code>PROJECT_NOT_FOUND / NOTE_NOT_FOUND</code></td><td>知识库项目或笔记不存在：先 <code>knowledge_list</code></td></tr>
       </table>
       <p><b>3. 超时默认值</b>（不用 Agent 传，除非它明确要覆盖）：
         <code>ui_find</code> / <code>ui_dump</code> 20 秒（车机 dump 8~12 秒，留足余量）；
         <code>tap</code> / <code>input_text</code> 10 秒；<code>wait_until</code> 默认 10 秒、上限 120 秒；
-        <code>run_case</code> 按用例步数 × 单步上限动态计算，最长 30 分钟。</p>
+        <code>run_case</code> / <code>run_suite</code> 的 <code>wait=true</code> 默认最多等 60 秒，
+        超时返回 <code>run_id</code>，任务仍在后台执行，用 <code>run_case_status</code> 轮询、
+        <code>run_case_stop</code> 停止。长任务（Monkey / 录屏 / logcat / 性能 / 抓包）启动即返回
+        <code>run_id</code>，由各自的 status / stop 工具管理。</p>
       <p><b>4. 缓存策略</b>：<code>ui_find</code> 用「最近一次 dump」，默认不重复 dump；
         但距上次超过 <b>3 秒</b>或界面已变（<code>tap</code> 之后）必须重新 dump。
         Agent 连续点同一个界面时不会退化成「每点一次等 8 秒」。</p>
@@ -617,21 +676,30 @@
       <h3>五、安全边界（本地工具，也要有边界）</h3>
       <ul>
         <li><b>只走 stdio</b>：不监听端口、不做 HTTP，天然只有本机进程能连。要开放给局域网？不做。</li>
-        <li><b>工具白名单</b>：不提供 <code>adb shell</code> 透传、不提供文件读写、不提供安装/卸载/清空数据。
-          需要这类的场景请用 GUI 的 ADB 工具箱，人工确认。</li>
-        <li><b>危险动作需显式授权</b>：<code>launch_app</code> 的 <code>clear_data</code> / <code>uninstall</code>
-          默认拒绝，除非启动参数带 <code>--allow-destructive</code>。</li>
-        <li><b>审计日志</b>：每次工具调用写 <code>data/mcp_audit.log</code>（时间 / 客户端 / 工具 / 参数摘要 / 结果 / 耗时）。
-          出问题能复盘「到底是人点的还是 AI 点的」。</li>
-        <li><b>不写用户数据</b>：MCP 不修改 <code>steps_data.json</code> / <code>voice_data.json</code>，
-          只有 <code>save_case</code>（P2）会写用例，且必须显式调用、可预览草稿。</li>
-        <li><b>端口/进程卫生</b>：uiautomator2 首次连接会装 atx-agent，MCP 进程应<b>常驻</b>而不是每次重连；
+        <li><b>工具白名单</b>：不提供任意 <code>adb shell</code> 透传，不提供 <code>root</code> /
+          <code>remount</code> / bootloader / recovery / fastboot。文件 push / pull 只接受明确的本地与
+          远端路径；安装 / 卸载 / 清数据 / 重启是独立工具，必须显式授权。</li>
+        <li><b>危险动作需显式授权</b>（<code>allow_destructive=true</code>）：安装 / 卸载 / 清空应用数据、
+          重启设备、弱网下发、删除用例 / 套件 / 基线 / 笔记、非 GET 接口执行；
+          用例里的清空/安装/卸载/停止/重启应用、电源键、熄屏/改方向同样默认拒绝，
+          <code>run_case</code> / <code>run_suite</code> / <code>save_case</code> 都会扫描。</li>
+        <li><b>审计日志</b>：每次工具调用写 <code>data/mcp_audit.log</code>
+          （时间 / 工具 / 参数摘要 / 结果 / 耗时）；长任务另写
+          <code>data/mcp_jobs/&lt;run_id&gt;.json</code>。出问题能复盘「到底是人点的还是 AI 点的」。</li>
+        <li><b>用户数据写入</b>：MCP 可以写 <code>data/</code>（用例、套件、元素库、知识库、
+          语音设置等），但必须通过明确的写工具、且 GUI 未运行；<code>save_case</code>
+          支持草稿预览与覆盖确认，不做隐式批量改写。</li>
+        <li><b>设备任务互斥与清理</b>：<code>device_jobs</code> 统一 <code>run_id</code> / watchdog /
+          stop；设备影响型长任务互斥，任务进行中其他工具返回 <code>DEVICE_BUSY</code>。
+          主机侧任务随 MCP 退出而中断并标记 <code>stale</code>；设备端常驻的 Monkey 标记
+          <code>detached</code>，可按 PID 重新接上。弱网规则带设备端 TTL 兜底自动清除。</li>
+        <li><b>端口/进程卫生</b>：uiautomator2 首次连接会装 atx-agent，MCP 进程<b>常驻</b>而不是每次重连；
           进程退出时清理自己拉起的 adb 子进程（复用 <code>utils/win_job.py</code> 那套）。</li>
       </ul>
     </div>
 
     <div class="card">
-      <h3>六、实施节奏与任务（已定稿）</h3>
+      <h3>六、实施节奏与结果（已完成）</h3>
       <p><b>原则</b>：质量优先、一步一步；每阶段可独立提交、独立回滚。GUI 共存采用
         <b>跨平台文件锁</b>（方案 B：<code>data/gui.lock</code> + <code>gui.info.json</code>），
         Windows 命名互斥量暂时保留做单实例兜底；<code>run_case</code> 先抽
@@ -640,7 +708,7 @@
       <table>
         <tr><th style="width:16%">阶段</th><th style="width:12%">工作量</th><th style="width:10%">依赖</th><th>内容与验收</th></tr>
         <tr><td><b>0 冻结接口</b> ✅</td><td>0.5 天</td><td>—</td><td>
-          <code>run_cases</code> 签名、<code>CaseResult/StepResult</code>、
+          <code>run_case</code> 签名、<code>CaseResult/StepResult</code>、
           <code>GuiPresence.acquire/probe</code>、统一错误码；长任务 progress vs
           <code>start/status</code> 策略先定死
         </td></tr>
@@ -666,20 +734,17 @@
         <tr><td><b>5 P2 + 交付</b> ✅</td><td>2 ~ 3 天</td><td>4</td><td>
           <code>explore_and_draft</code> / <code>save_case</code> /
           <code>run_suite</code> 已实现并真机验收；<code>虫师-mcp.exe</code> 已打包
-          （约 93 MB，无控制台）并通过 stdio 握手；帮助中心 / README / CHANGELOG 已更新
+          （约 94 MB，无控制台）并通过 stdio 握手；帮助中心 / README / CHANGELOG 已更新
         </td></tr>
       </table>
-      <p class="small"><b>当前进度</b>：阶段 0-5 已完成并通过真机闭环。Comate 项目级
-        <code>.comate/mcp.json</code> 注册成功；P0/P1/P2 工具已真机验证；
-        <code>虫师-mcp.exe</code> 已打包（onefile，约 93 MB，无控制台），stdio 握手与
-        44 个工具列表通过。<b>批次 1 只读</b>与<b>批次 2 可控写</b>已开放：
-        只读覆盖 ADB/性能/语音/接口/元素库/报告；可控写覆盖语音播报/回执、
-        接口执行、元素写入、套件/用例管理、文件推送与 AI 失败分析。
-        <code>run_case</code> / <code>run_suite</code> / <code>save_case</code> 已加危险步骤门禁：
-        清空数据、安装、卸载默认拒绝，必须显式 <code>allow_destructive=true</code>；
-        非 GET 接口、删除用例/套件同样需要该开关。
-        GUI 与 MCP 可共存，GUI 开着时 MCP 自动只读；写操作和 <code>run_case</code>
-        需退出虫师界面。</p>
+      <p class="small"><b>当前进度（2026-11-17）</b>：阶段 0~5 与批次 1~4.3 全部完成，工具总数
+        <b>73 个</b>；<code>虫师-mcp.exe</code> 已打包（onefile，约 94 MB，无控制台），stdio 握手与
+        73 个工具列表通过。能力覆盖：设备执行层、用例/套件、ADB 读写、性能采集与基线、
+        语音播报/语音场景、Monkey/录屏/logcat/tcpdump/弱网/hprof/重启、知识库与语音设置。
+        <code>device_jobs</code> 统一长任务 <code>run_id</code> / watchdog / stop / 落盘；
+        GUI 开着时 MCP 自动只读，写操作和 <code>run_case</code> 需退出虫师界面。
+        危险步骤门禁已覆盖 <code>app_mgr</code>、电源键、熄屏/改方向等（详见第五节）。
+        批次 1~4 的真机验收记录见下方。</p>
       <p class="small"><b>批次 2 真机验收</b>（2026-11-17，设备 120D323847463301）：<code>adb_push</code>
         推 <code>/data/local/tmp</code> 后 <code>adb_pull</code> 回读 md5 一致；<code>element_upsert</code>
         新增/覆盖均成功且验收后还原元素库；<code>case_copy</code>/<code>case_rename</code>/
@@ -779,47 +844,46 @@
         语音 <code>wake_word</code> 改写后能读回，已还原原值。语音场景另在 honda_3ya 车机
         （0910323847463301）验证：临时语音套件「MCP验证语音套件」播放 2 条文案 / 1 轮，
         采集到 7 个样本，会话记录「语音 · 套件名」与语音用例名；测试套件、会话与产物均已清理。</p>
-      <p class="small">阶段 1 与 2 可并行；阶段 3 必须等 2；阶段 4 必须等 1 + 2。
-        预计总量 7 ~ 9 天（含 CaseRunner 与 GUI lock 的重构成本）。</p>
-      <p><b>涉及文件（预计）</b>：</p>
+      <p class="small">依赖关系按原计划执行：阶段 1 / 2 可并行、3 等 2、4 等 1 + 2；以上均已完成。</p>
+      <p><b>实际涉及文件</b>：</p>
       <ul>
         <li><code>services/case_runner.py</code>：纯执行器（循环 / 重试 / 数据驱动 / 失败上下文），
           GUI 与 MCP 共用</li>
         <li><code>utils/gui_presence.py</code>：跨平台文件锁 + 元数据探测，
           Windows <code>msvcrt</code> / POSIX <code>fcntl</code></li>
-        <li><code>mcp_server/__init__.py</code>、<code>server.py</code>（协议与注册）、
-          <code>tools.py</code>（薄封装 <code>device_service</code>，不复制业务逻辑）、
-          <code>schema.py</code>（入参校验与返回结构）、<code>gui_guard.py</code>、
-          <code>audit.py</code>、<code>logging_setup.py</code></li>
-        <li><code>main.py</code>：加 <code>--mcp</code> 启动分支（在任何 PyQt6 / views import
+        <li><code>mcp_server/server.py</code>（协议与 73 个工具注册）、<code>runtime.py</code>（设备与 dump 缓存）、
+          <code>schema.py</code>（返回结构与错误码）、<code>audit.py</code>、<code>logging_setup.py</code>、
+          <code>device_jobs.py</code>（长任务运行时）</li>
+        <li>无 Qt 依赖的 runner：<code>services/monkey_runner.py</code>、
+          <code>screenrecord_runner.py</code>、<code>logcat_stream.py</code>、<code>perf_runner.py</code>、
+          <code>tcpdump_runner.py</code>、<code>weak_net.py</code>、<code>voice_playback.py</code></li>
+        <li><code>main.py</code>：<code>--mcp</code> 启动分支（在任何 PyQt6 / views import
           之前分流，不建 QApplication，直接跑 server）</li>
-        <li><code>requirements.txt</code>：加官方 <code>mcp</code> SDK（纯 Python，无平台依赖）；
-          <b>写死版本</b>（<code>mcp==x.y.z</code>），原因见第二章的「接入前必须确认的两件事」</li>
-        <li><code>views/help_view.py</code>：新增一节「在 Comate / Claude / Cline 里连虫师」的配置示例</li>
-        <li><code>README.md</code>：一段 JSON 配置样例（客户端侧 <code>mcpServers</code>）</li>
+        <li><code>mcp_server.spec</code>：独立打包 <code>虫师-mcp.exe</code>（<code>console=False</code>）</li>
+        <li><code>requirements.txt</code>：官方 <code>mcp</code> SDK，<b>版本写死</b>（原因见第二节）</li>
+        <li><code>views/help_view.py</code>、<code>README.md</code>、<code>CHANGELOG.md</code>：接入说明与更新记录</li>
       </ul>
-      <div class="tip">⚠ <b>三个前置依赖</b>：① <code>device_service</code> 现在是同步阻塞的，
-        MCP 用 asyncio，包一层 <code>asyncio.to_thread</code> 即可（别改成 async 大改）；
-        ② 打包版要用 stdio 起 server，<b>不能在 exe 里弹控制台窗口</b>，得沿用
-        <code>_PopenNoConsole</code> 那套思路或单独出一个 <code>虫师-mcp.exe</code>；
-        ③ <code>--mcp</code> 必须在任何 PyQt6 / views import 之前分流，并把 stdout 留给协议、
-        stderr/logging 指向 <code>data/mcp.log</code>。</div>
+      <div class="tip">✅ <b>三个前置依赖（已解决）</b>：① <code>device_service</code> 是同步阻塞的，
+        统一用 <code>asyncio.to_thread</code> 包一层，没有改成 async 大改；
+        ② 打包版单独出 <code>虫师-mcp.exe</code>，<code>console=False</code>，不弹控制台；
+        ③ <code>--mcp</code> 在任何 PyQt6 / views import 之前分流，stdout 只留给协议，
+        stderr / logging 指向 <code>data/mcp.log</code>。</div>
       <p><b>客户端侧配置示例</b>（Claude Desktop / Cursor / Cline / Cherry Studio 通用，改路径即可）：</p>
       <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">{
   "mcpServers": {
     "chongshi": {
-      "command": "D:\\AndroidAutoTest\\dist\\虫师-mcp.exe",
+      "command": "D:\\AndroidAutoTest\\dist_mcp\\虫师-mcp.exe",
       "args": [],
-      "env": { "CHONGSHI_MCP_AUDIT": "1" }
+      "env": { "CHONGSHI_APP_DIR": "D:\\AndroidAutoTest" }
     }
   }
 }</pre>
       <p class="small">开发期不用打包，直接 <code>"command": "D:\\AndroidAutoTest\\.venv\\Scripts\\python.exe",
         "args": ["D:\\AndroidAutoTest\\main.py", "--mcp"]</code> 即可。</p>
-      <p><b>与现有 AI 能力的关系</b>：<code>services/ai_service.py</code> 已经会做失败归因，
-        MCP 的 <code>hint</code> 可以复用它 —— 元素找不到时先把「相近元素 + 最近 3 步」喂给模型，
-        返回一句「是不是定位值改版了」这种可执行建议，而不是干巴巴的 <code>ELEMENT_NOT_FOUND</code>。
-        <b>但要设开关并限流</b>：每次失败都调模型既慢又花钱，默认只做本地启发式。</p>
+      <p><b>与现有 AI 能力的关系</b>：<code>services/ai_service.py</code> 的失败归因已作为
+        <code>ai_analyze_failure</code> 工具开放（只读，AI 未配置时返回 <code>enabled=false</code>）。
+        普通工具返回的 <code>hint</code> 仍走本地启发式，不会每次失败都调模型；
+        需要更深的归因时由 Agent 显式调用 <code>ai_analyze_failure</code>。</p>
     </div>
 
     <div class="card">
@@ -879,7 +943,7 @@
           默认只回传必要片段，截图 / 文本先做遮罩或让用户预览，不把整份 dump 直接发给网页模型。</li>
         <li><b>不做多租户共享</b>：一个配对码只绑定一个用户 / 一台设备；不做公共池、不做共享账号。</li>
       </ul>
-      <p><b>建议实施顺序（等 MCP P2 稳定后再评估）</b>：</p>
+      <p><b>建议实施顺序（MCP P0~P2 与批次 1~4 已完成，网页端仍单独立项后再评估）</b>：</p>
       <table>
         <tr><th style="width:42%">步骤</th><th style="width:14%">工作量</th><th>说明</th></tr>
         <tr><td>A. 本地 Web 控制台（127.0.0.1）</td><td>2 ~ 3 天</td><td>验证网页交互与工具调用的最小闭环，不碰公网</td></tr>
@@ -893,46 +957,33 @@
     </div>
 
     <div class="card">
-      <h3>九、后续能力开放清单（待逐步接入）</h3>
-      <p><b>当前已开放的是「设备执行层 + 用例层」，不是整个虫师。</b>MCP Server 是独立进程，
-        能共享 <code>data/</code> 和设备，但看不到 GUI 进程里的内存状态（如性能采集运行态等）。
-        下面这些能力还没有对应的 MCP 工具，按风险分批开放。</p>
+      <h3>九、能力开放总览（批次 1~4.3 已完成）</h3>
+      <p><b>当前 MCP 已覆盖设备执行层、用例层、性能、语音、知识库与部分设置。</b>
+        Server 是独立进程，能共享 <code>data/</code> 和设备；GUI 进程内的运行态不共享，
+        需要落盘的能力都已改为文件型实现。下面只列「仍未暴露」的部分，
+        已开放能力按批次见下方表格。</p>
       <table>
-        <tr><th style="width:18%">模块</th><th>未暴露能力</th><th style="width:28%">风险 / 依赖</th></tr>
-        <tr><td><b>ADB 只读</b></td><td>系统属性、电池、存储、网络信息、logcat 快照、文件 pull、硬件信息汇总</td>
-            <td>低风险，优先开放</td></tr>
-        <tr><td><b>ADB 写操作</b></td><td>push 文件、安装 / 卸载 APK、清空数据、force-stop、广播、权限授予、进程 kill</td>
-            <td>中高风险，需显式授权</td></tr>
-        <tr><td><b>ADB 长任务 / 系统控制</b></td><td>实时 logcat、Monkey、弱网 tc/netem、tcpdump、hprof、screenrecord、reboot、root/remount、无线调试配对</td>
-            <td>高影响，需要任务管理 + 停止/超时 + 独立开关</td></tr>
-        <tr><td><b>性能检测-读取</b></td><td>历史会话、报告、CSV、基线对比、阈值配置读取</td>
-            <td>低风险，直接读 <code>perf_data.json</code></td></tr>
-        <tr><td><b>性能检测-采集</b></td><td>start/stop/status、CPU/内存/FPS/流量、整机探针、留证、告警</td>
-            <td><code>PerfController</code> 依赖 Qt 信号，需要先抽 headless 层</td></tr>
-        <tr><td><b>语音播报</b></td><td>直接 TTS 播报、引擎/音色/语速/输出设备、播后等待</td>
-            <td><code>VoiceService</code> 可复用；回执验证要另接 logcat</td></tr>
-        <tr><td><b>语音用例</b></td><td>语音用例列表/执行、检测行、唤醒确认、车型模板、语音套件</td>
-            <td>需要 VoiceController / 回执逻辑 headless 化</td></tr>
-        <tr><td><b>接口自动化</b></td><td>接口/分组/环境 CRUD、断言、单接口/批量执行、接口报告</td>
-            <td><code>ApiService</code> 纯 HTTP，较容易</td></tr>
-        <tr><td><b>应用元素库</b></td><td>元素 CRUD、验证、抓取界面、图像模板管理、引用检查</td>
-            <td>写数据需 GUI 关闭或加锁</td></tr>
-        <tr><td><b>项目 / 用例管理</b></td><td>项目/模块/用例增删改、复制、重命名、步骤排序、批量改参数、数据绑定、导入导出</td>
-            <td>目前只暴露 <code>save_case</code> 创建/覆盖；其余需确认</td></tr>
-        <tr><td><b>套件管理</b></td><td>套件创建/编辑/删除/查列表</td>
-            <td><code>run_suite</code> 已有；CRUD 容易</td></tr>
-        <tr><td><b>报告 / AI</b></td><td>测试报告、性能报告、接口报告生成/读取、AI 失败分析</td>
-            <td>生成器多为纯 Python；AI 是 HTTP</td></tr>
-        <tr><td><b>图像能力</b></td><td>框选生成图像模板、模板管理、图像对比调试</td>
-            <td>截图已有；模板落库还没暴露</td></tr>
+        <tr><th style="width:18%">模块</th><th>仍未暴露的能力</th><th style="width:28%">说明</th></tr>
+        <tr><td><b>图像模板</b></td><td>框选生成图像模板、模板管理、图像对比调试</td>
+            <td>截图与图像断言已有；模板落库还没暴露</td></tr>
+        <tr><td><b>项目 / 模块</b></td><td>项目与模块 CRUD、用例导入导出、批量改参数、数据绑定</td>
+            <td>用例级增删改 / 复制 / 重命名 / 步骤排序已开放</td></tr>
+        <tr><td><b>接口自动化</b></td><td>分组 / 环境 CRUD、断言编辑、批量执行</td>
+            <td>单接口执行与列表已开放</td></tr>
+        <tr><td><b>性能</b></td><td>smaps、周期截图、阈值告警配置、CSV 导出、报告对比写操作</td>
+            <td>采集 / 基线 / 报告主链路已开放</td></tr>
+        <tr><td><b>语音</b></td><td>回执验证与唤醒重试的 headless 化、车型模板、语音用例 CRUD</td>
+            <td>播报、语音场景、设置读写已开放</td></tr>
+        <tr><td><b>设备控制</b></td><td>root / remount、bootloader、recovery、fastboot、无线调试配对</td>
+            <td>明确不开放，留在工具箱手动执行</td></tr>
       </table>
 
-      <p style="margin-top:14px"><b>建议分 4 批开放</b></p>
+      <p style="margin-top:14px"><b>批次开放结果（全部完成）</b></p>
       <table>
         <tr><th style="width:10%">批次</th><th style="width:52%">内容</th><th>前置 / 注意</th></tr>
         <tr><td><b>1 只读</b> ✅</td><td>
           <code>adb_device_info</code>、<code>adb_logcat_snapshot</code>、<code>adb_pull</code>、
-          <code>perf_sessions</code> / <code>perf_report</code> / <code>perf_baseline</code>、
+          <code>perf_sessions</code> / <code>perf_report</code> / <code>perf_baselines</code>、
           <code>voice_list_cases</code>、<code>api_list</code>、<code>element_list</code>、
           <code>report_list</code> / <code>report_read</code>
         </td><td>不碰设备写操作、不改用户数据，适合先让智能体“看得见”</td></tr>
@@ -942,7 +993,7 @@
           用例重命名/复制/删除/步骤排序、<code>adb_push</code>、<code>ai_analyze_failure</code>
         </td><td>加确认/预览；写 <code>data/</code> 前检查 GUI 是否在运行</td></tr>
         <tr><td><b>3 设备影响</b><br>3.1 ✅<br>3.2 ✅<br>3.3 ✅<br>3.4 ✅</td><td>
-          安装/卸载/清空数据、Monkey、弱网、tcpdump、hprof、screenrecord、reboot/root、
+          安装/卸载/清空数据、Monkey、弱网、tcpdump、hprof、screenrecord、reboot（仅 system）、
           性能采集 start/stop、实时 logcat
         </td><td>必须 <code>allow_destructive</code> + 工具白名单 + run_id/stop + 审计</td></tr>
         <tr><td><b>4 场景 / 基线 / 知识库</b><br>4.1 ~ 4.3 ✅</td><td>
@@ -957,10 +1008,11 @@
         <code>allow_destructive=true</code>。这样即使 <code>launch_app</code> 只开放启动/停止/重启，
         智能体也不能悄悄通过用例执行危险动作。</div>
 
-      <p style="margin-top:16px"><b>批次 3 策略（2026-11-17 定稿）</b></p>
+      <p style="margin-top:16px"><b>批次 3 策略与落地（已完成）</b></p>
+      <p class="small">以下工具、形态与上限均已实现并通过真机验收；验收记录见第六节。</p>
       <p class="small"><b>成本不在工具封装</b>：Monkey、弱网、录屏、实时 logcat、tcpdump、性能采集
-        目前都长在 Qt 组件或命令池里（QThread / QObject + pyqtSignal），MCP 进程不能直接用。
-        沿用阶段 1 抽 <code>CaseRunner</code> 的做法，逐项抽成无 Qt 依赖的 runner，GUI 侧保留薄适配器：
+        原先都长在 Qt 组件或命令池里（QThread / QObject + pyqtSignal），MCP 进程不能直接用；
+        已沿用阶段 1 抽 <code>CaseRunner</code> 的做法，逐项抽成无 Qt 依赖的 runner，GUI 侧保留薄适配器：
         <code>monkey_panel.py:531</code>、<code>weak_network_panel.py:171</code>、
         <code>adb_command_pool.py:398/798</code>、<code>packet_capture.py:213</code>、
         <code>perf_controller.py:23</code>；hprof 与安装/卸载/清数据逻辑简单，
@@ -981,12 +1033,12 @@
             <td><code>run_id</code>，主机侧</td><td>免门禁；≤180 秒（Android 硬限制），结束自动 pull</td></tr>
         <tr><td><code>logcat_start</code> / <code>logcat_stop</code> / <code>logcat_read</code></td>
             <td><code>run_id</code>，主机侧流式</td><td>免门禁；≤5 分钟或 2 万行</td></tr>
-        <tr><td><code>perf_start</code> / <code>perf_stop</code></td>
+        <tr><td><code>perf_start</code> / <code>perf_status</code> / <code>perf_stop</code></td>
             <td><code>run_id</code>，主机侧采样</td><td>免门禁；默认 60 分钟</td></tr>
         <tr><td><code>tcpdump_start</code> / <code>tcpdump_stop</code></td>
-            <td><code>run_id</code>，主机侧流式</td><td>免门禁；≤10 分钟或 100 MB</td></tr>
+            <td><code>run_id</code>，主机侧流式</td><td>免门禁；<b>需设备 root</b>；≤10 分钟或 100 MB</td></tr>
         <tr><td><code>weak_net_apply</code> / <code>weak_net_clear</code></td><td>单发 + TTL</td>
-            <td><code>allow_destructive</code>；TTL 默认 10 分钟、最大 60 分钟，到期自动清 qdisc</td></tr>
+            <td><b>需 root</b>；<code>allow_destructive</code>；TTL 默认 10 分钟、最大 60 分钟，到期自动清 qdisc</td></tr>
       </table>
       <p class="small"><b>不暴露</b>：<code>root</code>、<code>remount</code>、bootloader、recovery、fastboot、
         分区格式化。这类操作失手就要重插设备，收益低于风险，继续留在工具箱手动执行。</p>
@@ -1006,9 +1058,9 @@
         主机侧任务（perf / logcat / tcpdump / 录屏）若 MCP 退出则中断，状态文件标记 stale，
         重连后提示先 <code>stop</code> 做设备端清理。</p>
 
-      <p class="small"><b>实施顺序（每步单独真机验收）</b>：3.1 运行时骨架 + 单发型
-        （安装/卸载/清数据/hprof/reboot）；3.2 可停型（Monkey / 录屏 / 实时 logcat）；
-        3.3 采集型（性能采集 / tcpdump）；3.4 网络型（弱网 + TTL）。</p>
+      <p class="small"><b>实施顺序（每步单独真机验收）</b>：3.1 ✅ 运行时骨架 + 单发型
+        （安装/卸载/清数据/hprof/reboot）；3.2 ✅ 可停型（Monkey / 录屏 / 实时 logcat）；
+        3.3 ✅ 采集型（性能采集 / tcpdump）；3.4 ✅ 网络型（弱网 + TTL）。</p>
     </div>
 
     <div class="tip">🚫 <b>明确不做</b>：① 不自研 Agent 框架 / 不做模型微调（差异化在执行层，不在模型层）；
