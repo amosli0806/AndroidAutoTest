@@ -15,6 +15,8 @@
     （见 utils/fx.py 里 scale_in 的同类问题）；
   * 进度条在底图左下留白处自绘，版本号在右上角自绘，都不依赖外部素材。
 """
+import time
+
 from PyQt6.QtCore import (Qt, QTimer, QPropertyAnimation, QEasingCurve, QPointF,
                           QRectF)
 from PyQt6.QtGui import (QPainter, QColor, QFont, QPixmap, QLinearGradient,
@@ -59,8 +61,10 @@ _COUNT_COLOR = QColor('#3B82F6')
 # 不设下限的话用户只看得到最后一句（其余都被覆盖）。这个值让每句都有存在感，
 # 又不至于把启动拖慢 —— 5 个阶段满打满算也就多等 1 秒出头。
 _MIN_DWELL_MS = 260
-# 收尾模式下每句的停留时间（略短于正常，让剩余阶段快速但看得清地闪完）
-_FINISH_DWELL_MS = 180
+# 收尾模式下每句的停留时间（略短于正常，但要看清节点一个个亮起来）
+_FINISH_DWELL_MS = 170
+# 收尾时节点全部走完后，再停多久才淡出（让「6/6」有存在感）
+_FINISH_HOLD_MS = 200
 
 # 阶段文案（进度值, 文字）。
 # 这 5 句对应真实启动阶段，**不要出现重复文案**——重复的会被后一句覆盖，
@@ -120,10 +124,11 @@ class SplashWindow(QWidget):
 
         self._progress = 0.0        # 0.0 ~ 1.0
         self._target = 0.0          # 目标值，主程序只调 set_stage，这里平滑追上去
-        # 初值留空：第一句阶段文案（'正在加载数据…'）要靠 set_stage 排进队列正常显示。
-        # 若这里就设成 _STAGES[0][1]，set_stage 会因「和当前一样」判定为重复而跳过，
-        # 用户就永远看不到第一句（曾踩过这个坑）。
-        self._label = ''
+        # 起点先给一句占位文案，并让它停留一个正常阶段的时长：否则封面刚出现
+        # 就被第一句阶段顶成 2/6，用户永远看不到轨迹的第一格（2026-11-18 反馈）。
+        # 注意别写成 _STAGES[0][1]：那样 set_stage 会判定「和当前一样」而跳过，
+        # 真正的第一句就永远显示不出来（老坑）。
+        self._label = '正在启动…'
         self._closing = False
         # finish() 用：完成回调 + 已等待毫秒（见 _poll_finish）
         self._finish_cb = None
@@ -134,8 +139,9 @@ class SplashWindow(QWidget):
         # 直接设上去后面的会盖掉前面的、用户只看得到最后一句。这里改成队列，
         # 每句至少显示 _MIN_DWELL_MS 再换下一句。
         self._pending = []          # [(text, progress), ...]
-        self._shown_at = 0          # 当前这句是什么时候显示上去的（单调时钟 ms）
+        self._shown_at = time.monotonic() * 1000.0   # 占位文案「正在启动…」的显示时刻
         self._finishing = False     # finish() 已调用（收尾模式：加快阶段切换）
+        self._drained_at = 0.0      # 收尾时节点全部亮完的时刻（再停一段才淡出）
         self._pump = QTimer(self)
         self._pump.setInterval(30)
         self._pump.timeout.connect(self._pump_stage)
@@ -245,11 +251,15 @@ class SplashWindow(QWidget):
         self._reveal_cb = on_reveal
         self._finishing = True
         self._target = 1.0
-        # 丢掉队列里还没轮到的阶段，直接显示末句 + 满进度
-        self._pending.clear()
-        self._progress = 1.0
-        self._label = _STAGES[-1][1]
-        self._shown_at = 0
+        # 不再直接跳到满进度：没走到的节点按收尾节奏一句句点亮，走完才淡出。
+        # 之前这里 clear 队列 + _progress=1.0，表现为「2/6 瞬间变 6/6」（2026-11-18 反馈）。
+        if not self._pending:
+            self._pending = [(t, p) for p, t in _STAGES
+                             if p > self._progress + 1e-6]
+        # 注意**不要**把 _shown_at 清零：清了会让当前这句立刻被下一句顶掉，
+        # 表现为「2/6 只闪 30ms」（实测过）。保留原值，当前句走完它的停留时间
+        # 再换下一句，节奏才均匀。
+        self._drained_at = 0.0
         self.update()
 
         # 主窗口立即显示。封面是置顶且不透明的窗口，会一直盖在上面，用户看不到
@@ -274,11 +284,20 @@ class SplashWindow(QWidget):
                 pass
 
     def _poll_finish(self) -> None:
-        """停 200ms 让用户看清「即将就绪」，然后淡出（主窗口已在 finish 中显示）。"""
-        self._progress = 1.0
-        self._label = _STAGES[-1][1]
-        self._finish_waited_ms += 30
-        if self._finish_waited_ms < 200:
+        """等剩余节点走完，再停 _FINISH_HOLD_MS 让用户看清「即将就绪」，然后淡出。
+
+        主窗口在 finish() 里已同步显示，封面置顶盖着，用户看不到底下的切换。
+        """
+        if self._pending:
+            return                      # 队列还没走完，继续一个个点亮
+        if self._progress < 1.0:
+            self._progress = 1.0
+            self._label = _STAGES[-1][1]
+            self.update()
+        if not self._drained_at:
+            self._drained_at = time.monotonic()
+            return
+        if (time.monotonic() - self._drained_at) * 1000.0 < _FINISH_HOLD_MS:
             return
         self._finish_timer.stop()
         # 兜底：若 finish 里的同步显示没有执行（例如对象状态异常），这里补一次
