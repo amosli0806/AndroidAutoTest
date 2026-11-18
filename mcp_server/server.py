@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import logging
 import os
 import re
 import subprocess
@@ -50,6 +51,7 @@ from utils.step_params import LOCATION_TYPE_OPTIONS
 from utils.version import APP_VERSION
 
 from mcp_server import device_jobs
+from mcp_server import tool_groups
 from mcp_server.audit import write as audit_write
 from mcp_server.logging_setup import setup_stdio_logging
 from mcp_server.runtime import RUNTIME, search_nodes, summary_nodes
@@ -3632,9 +3634,22 @@ async def voice_settings_update(engine: Optional[str] = None,
                       mutating=True)
 
 
+def _apply_tool_groups() -> None:
+    """按 `--tools=` / 配置文件过滤 tools/list；默认 full，行为不变。"""
+    known = set(server._tool_manager._tools)
+    enabled, source, warnings = tool_groups.resolve(sys.argv[1:], known)
+    for name in sorted(known - enabled):
+        server.remove_tool(name)
+    logging.getLogger("mcp_server").info(
+        "MCP 工具：%s，暴露 %d/%d 个", source, len(enabled), len(known))
+    for warning in warnings:
+        logging.getLogger("mcp_server").warning("MCP 工具分组：%s", warning)
+
+
 def main():
     device_jobs.init()
     setup_stdio_logging()
+    _apply_tool_groups()
     server.run("stdio")
 
 

@@ -748,6 +748,10 @@ for loop in 1..循环次数:
   `knowledge_delete_note`（删除需授权）
 - 语音设置：`voice_settings_get` / `voice_settings_update`，覆盖引擎、音色、输出设备、
   语速、循环次数、唤醒词与回执验证；只写传入字段，`verify` 为浅合并
+- 工具分组（opt-in）：默认仍暴露全部 73 个；需要省 token 时用 `--tools=core`（16 个）/
+  `--tools=core,gen`，或在 `data/mcp_config.json` 写
+  `{"tools": {"profile": "core", "add": [], "remove": []}}`。组分为 core / gen / ops / content，
+  优先级 `--tools=` > 配置文件 > 默认 full；未标注组的新工具自动归 core
 - 设备影响型操作统一生成 `run_id` 并落 `data/mcp_jobs/<run_id>.json`；执行期间其他工具返回
   `DEVICE_BUSY`（`device_list` / `adb_device_info` 与任务查询/停止工具除外），避免并发抢占设备
 - `run_case` / `run_suite` / `save_case` 默认拒绝危险步骤：`app_mgr` 的清空数据、安装、卸载、

@@ -27,6 +27,7 @@ hiddenimports = [
     "mcp_server.server",
     "mcp_server.runtime",
     "mcp_server.device_jobs",
+    "mcp_server.tool_groups",
     "services.monkey_runner",
     "services.screenrecord_runner",
     "services.logcat_stream",

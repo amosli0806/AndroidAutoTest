@@ -1099,11 +1099,13 @@
 
   <!-- ============ 四、MCP 工具分组与 Token 预算 ============ -->
   <section class="chapter" id="s4">
-    <h2><span class="num">4</span>MCP 工具分组与 Token 预算 <span class="tag plan">📋 2026-11-17 方案 · 待实现</span></h2>
+    <h2><span class="num">4</span>MCP 工具分组与 Token 预算 <span class="tag done">✅ B 方案已实现（opt-in，默认 full）</span></h2>
     <p class="small" style="margin-top:0">
       第三章把工具从最早的 16 个最小闭环做到 73 个之后出现一个新问题：<b>工具清单是常驻成本</b>。
       客户端每次连上来都会把全部工具的 schema 注入上下文，不管这一轮用不用得上。
       本章给出按需分组、配额与可发现性的完整方案 —— 实测数据全部来自真实的 <code>tools/list</code> 响应，不是估算。
+      <b>落地采用 B</b>：默认仍暴露 73 个（与升级前一致），需要省 token 的用户主动用
+      <code>--tools=core</code> 或配置文件收窄；先收集真实使用数据，再决定是否把 <code>core</code> 设为默认。
     </p>
 
     <div class="card">
@@ -1136,7 +1138,7 @@
         <tr><th style="width:12%">组</th><th style="width:8%">数量</th><th style="width:12%">字符</th>
             <th style="width:10%">≈tokens</th><th>包含工具</th></tr>
         <tr>
-          <td><b>core</b><br><span class="small">默认</span></td><td>16</td><td>8069</td><td><b>3230</b></td>
+          <td><b>core</b><br><span class="small">opt-in 常用</span></td><td>16</td><td>8069</td><td><b>3230</b></td>
           <td><code>device_list</code> <code>screenshot</code> <code>ui_find</code> <code>ui_dump</code>
               <code>tap</code> <code>input_text</code> <code>swipe</code> <code>press_key</code>
               <code>launch_app</code> <code>wait_until</code> <code>assert</code>
@@ -1180,7 +1182,7 @@
       <p style="margin-top:12px"><b>各档位的实际预算</b></p>
       <table>
         <tr><th style="width:30%">档位</th><th style="width:14%">工具数</th><th style="width:14%">≈tokens</th><th>相对 full</th></tr>
-        <tr><td><code>core</code>（默认）</td><td>16</td><td><b>3230</b></td><td><b>−70%</b></td></tr>
+        <tr><td><code>core</code>（opt-in）</td><td>16</td><td><b>3230</b></td><td><b>−70%</b></td></tr>
         <tr><td><code>core,gen</code></td><td>19</td><td>3700</td><td>−66%</td></tr>
         <tr><td><code>core,ops</code></td><td>46</td><td>7000</td><td>−35%</td></tr>
         <tr><td><code>core,content</code></td><td>40</td><td>6550</td><td>−39%</td></tr>
@@ -1192,7 +1194,7 @@
       <h3>三、配置方式与优先级</h3>
       <p>命令行参数写在客户端的 <code>mcpServers</code> 里，改一次要重开客户端，很别扭。
         所以主入口放在虫师自己的配置文件里，命令行只做临时覆盖。</p>
-      <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">// data/mcp_config.json
+      <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">// data/mcp_config.json（可选；不写 = full）
 {
   "tools": {
     "profile": "core",          // core | standard | full
@@ -1200,53 +1202,59 @@
     "remove": ["monkey_start"]  // 从结果里摘掉的单工具（组名也可）
   }
 }</pre>
-      <p><b>优先级</b>：命令行 <code>--tools=</code> &gt; 配置文件 &gt; 默认 <code>core</code>。
+      <p><b>优先级</b>：命令行 <code>--tools=</code> &gt; 配置文件 &gt; 默认 <code>full</code>。
         这样三种人都照顾到了：</p>
       <ul>
-        <li><b>不配的人</b>：什么都不用管，就是 core</li>
-        <li><b>阶段性调整的人</b>：在 <code>data/</code> 里改一行，下次连接生效，<b>不碰客户端配置</b></li>
+        <li><b>不配的人</b>：什么都不用管，就是 <code>full</code>（73 个，与升级前一致）</li>
+        <li><b>阶段性调整的人</b>：在 <code>data/mcp_config.json</code> 里改一行，下次连接生效，<b>不碰客户端配置</b></li>
         <li><b>临时覆盖的人</b>：命令行 <code>--tools=core,gen,-save_case</code></li>
       </ul>
       <p><b>命令行语法</b>（与配置文件等价）：
-        <code>--tools=core,gen,ops</code>（组叠加）、<code>--tools=-monkey_start</code>（单工具排除）、
-        <code>--tools=full</code>（全开）。启动时打一行日志让人确认：
-        <code>MCP 工具：core + gen + ops，排除 monkey_start，共 48 个</code>。</p>
+        <code>--tools=core,gen,ops</code>（组叠加）、<code>--tools=-monkey_start</code>（从 full 排除单工具）、
+        <code>--tools=full</code>（全开）。启动日志会打印实际暴露数量，例如
+        <code>MCP 工具：命令行 --tools=core，暴露 16/73 个</code>。</p>
       <p><b>预设定义</b>：<code>core</code> = core；<code>standard</code> = core + content；
-        <code>full</code> = 全部。<code>standard</code> 是给「既要执行、也要维护用例」的场景用的。</p>
+        <code>full</code> = 全部（默认）。<code>standard</code> 是给「既要执行、也要维护用例」的场景用的。</p>
+      <p class="small">配置文件是<b>可选</b>的：不存在时按默认 <code>full</code>；不会在启动时自动生成，
+        需要收窄时手工创建 <code>data/mcp_config.json</code> 即可。</p>
     </div>
 
     <div class="card">
-      <h3>四、可发现性：gen 不在默认里，怎么让人找得到</h3>
+      <h3>四、可发现性：主动收窄后，怎么让人找得到</h3>
       <p><b>先讲清机制</b>：MCP 客户端在连接时向 server 要一次工具清单，把清单连同参数说明注入模型上下文。
         模型能用的<b>只有清单上的东西</b>；不在清单上的，它不但调不了，而且<b>根本不知道存在</b> ——
         这不是「没权限」（会说需要授权），而是「不知道」（会让用户手动操作）。</p>
-      <p>所以把 <code>gen</code> 移出默认后，模型遇到「帮我建个用例」的请求，会回答
-        「我无法直接创建用例」——能力还在，但没人知道有这条路。<b>补偿办法是两条低成本设计</b>：</p>
+      <p><b>B 方案下默认是 full</b>，<code>gen</code> 一直在清单里，不存在「找不到」的问题；
+        只有用户主动切到 <code>core</code> 且没有 <code>add: ["gen"]</code> 时才会遇到。
+        对这类用户，当前补偿方式是<b>文档 + 启动日志</b>：</p>
       <ul>
-        <li><b>在必经之路上贴便条</b>：<code>list_cases</code> 与 <code>run_case</code> 的 description 里加一句
-          「没有匹配的用例 / 需要把本次执行存成用例时，提示用户开启 gen 组」。
-          这两个工具是模型每次找用例、跑用例都会读到的，等于每次路过都能看见提示。</li>
-        <li><b>组名就用 <code>gen</code></b>（generate 的缩写）：用户配置时加一个词，不用记复杂参数；
-          帮助中心里用「现场生成」这个说法对应它。</li>
+        <li>README / 帮助中心写明四个组分别包含什么，以及「需要现场生成用例时加 <code>gen</code>」；</li>
+        <li>启动日志打印 <code>MCP 工具：配置 profile=core，暴露 16/73 个</code>，
+          用户能立刻看出自己收窄了哪些能力。</li>
       </ul>
-      <div class="example">💡 <b>打个比方：</b>工具清单就是工作台面上摆出来的工具。把这三件收进抽屉没问题，
-        但抽屉上得贴张字条 —— 不然模型连抽屉存在都不知道。</div>
+      <p class="small">没有往 <code>list_cases</code> / <code>run_case</code> 的 description 里加提示：
+        那会改变已实测的 schema 预算，而且默认 full 时并不需要。如果以后把 <code>core</code> 改成默认，
+        再把「缺少用例时提示开启 gen」补进 description。</p>
+      <div class="example">💡 <b>打个比方：</b>工具清单就是工作台面上摆出来的工具。默认全摆在台面上；
+        用户自己把三件收进抽屉时，我们至少在抽屉上贴张字条（文档 + 启动日志）。</div>
     </div>
 
     <div class="card">
       <h3>五、设计决策记录（为什么这样，为什么不那样）</h3>
-      <p><b>① 为什么 <code>gen</code> 不进默认</b>：测试用例总量有上限，且集中在项目初期；
-        中后期以执行回归和零星补充为主。拿全量 11% 的预算（1173 字符，相当于 core 的 14.5%）
-        换一个「阶段性密集使用」的能力不划算。
-        注意这是<b>按当前产品定位（回归测试工具）</b>得出的结论 —— 若将来增加「一次性任务」模式
-        （说一句话现场跑一遍、跑完不存档），这条默认值需要重新评估。</p>
+      <p><b>① 为什么 B 保留 <code>full</code> 默认</b>：不在清单里的工具对模型是<b>静默消失</b>
+        （既不能调，也不知道存在），而 1.6.0 本身已经有 MCP 接入、weditor 下线、依赖大改等变更；
+        默认切 core 会把「省 token」与「工具突然不见了」混在一起，很难归因。
+        先用 opt-in 收集真实使用数据，再决定是否改默认。
+        至于 <code>core</code> 本身为什么不含 <code>gen</code>：用例总量有上限、集中在项目初期，
+        中后期以回归和零星补充为主；1173 字符（全量 11%）换一个阶段性能力不划算 —— 这是
+        「切 core 时」的取舍，不是当前默认。</p>
       <p><b>② 为什么不按工具名前缀自动分组</b>：现有命名是动词开头
         （<code>list_cases</code> / <code>save_case</code> / <code>run_case</code> /
         <code>explore_and_draft</code> / <code>press_key</code> / <code>launch_app</code>），
         按 <code>_</code> 前缀分会碎成 26 个组、其中 13 个各只有 1 个工具。
-        所以必须<b>显式标注组</b>（注册处加 <code>group</code> 参数，或维护一张映射表）。
-        两个兜底防烂：未标注的工具默认进 <code>core</code>（不会变成「找不到」）；
-        启动日志列出「N 个工具未标注组」。</p>
+        所以必须<b>显式标注组</b>（当前维护一张 <code>mcp_server/tool_groups.py</code> 映射表）。
+        兜底防烂：未标注的工具自动进 <code>core</code>，不会变成「找不到」；
+        当前 73 个工具均已标注，启动日志会打印实际暴露数量。</p>
       <p><b>③ 为什么不做运行时动态增删</b>（<code>notifications/tools/list_changed</code>）：
         协议支持，但客户端实现参差，常见「列表刷新了、模型还在用旧的」；收益远小于麻烦，
         改配置后重连一次反而确定。</p>
@@ -1277,34 +1285,37 @@
     </div>
 
     <div class="card">
-      <h3>七、实施清单与验收</h3>
+      <h3>七、实施清单与验收（B 已落地）</h3>
       <table>
-        <tr><th style="width:30%">改动点</th><th>内容</th><th style="width:14%">预计</th></tr>
+        <tr><th style="width:30%">改动点</th><th>内容</th><th style="width:14%">状态</th></tr>
         <tr><td><code>mcp_server/tool_groups.py</code>（新建）</td>
-            <td>组定义 + 73 个工具的映射表 + 解析 <code>--tools=</code> 语法（组叠加、<code>-</code> 排除）</td>
-            <td>~120 行</td></tr>
+            <td>组定义 + 73 个工具的映射表 + 解析 <code>--tools=</code> / 配置文件（组叠加、<code>-</code> 排除）</td>
+            <td>✅</td></tr>
         <tr><td><code>mcp_server/server.py</code></td>
-            <td>注册处按组过滤；启动日志打印实际暴露数量；<code>list_cases</code> / <code>run_case</code> 的
-              description 加 gen 提示便条</td><td>~60 行</td></tr>
-        <tr><td><code>data/mcp_config.json</code>（新建，首次启动生成）</td>
-            <td><code>profile</code> / <code>add</code> / <code>remove</code> 三字段，带注释说明</td><td>~20 行</td></tr>
-        <tr><td><code>mcp_server/server.py</code> 签名</td>
-            <td>新增 <code>save_run_as_case(run_id, module, case_name)</code>（复用 <code>run_case</code> 已记录的步骤）</td>
-            <td>~50 行工具 + 100~150 行执行记录</td></tr>
-        <tr><td>帮助中心 / README</td>
-            <td>四种档位的说明与配置示例；说明 gen 组什么时候开</td><td>—</td></tr>
+            <td><code>main()</code> 启动时按解析结果 <code>remove_tool</code>；启动日志打印实际暴露数量</td>
+            <td>✅</td></tr>
+        <tr><td><code>data/mcp_config.json</code>（可选）</td>
+            <td><code>profile</code> / <code>add</code> / <code>remove</code> 三字段；不自动生成，缺省 = full</td>
+            <td>✅（文档说明）</td></tr>
+        <tr><td><code>save_run_as_case</code></td>
+            <td>需要先补执行记录（见第六节前置改造）</td>
+            <td>未做</td></tr>
+        <tr><td>帮助中心 / README / CHANGELOG</td>
+            <td>四个档位与配置示例；默认 full 的说明</td><td>✅</td></tr>
       </table>
-      <p><b>验收标准</b></p>
+      <p><b>B 阶段验收</b></p>
       <ul>
-        <li>默认启动后 <code>tools/list</code> 返回 <b>16 个</b>工具，schema 总量 ≤ 8500 字符</li>
-        <li><code>--tools=core,gen</code> 返回 19 个；<code>--tools=-monkey_start</code> 时该工具不在列表里</li>
-        <li>配置文件写 <code>"add": ["ops"]</code> 后重连生效，且启动日志能读出「core + ops，共 46 个」</li>
-        <li>在 <code>list_cases</code> 找不到用例时，返回的 hint 里出现 gen 组的引导语</li>
-        <li>未标注组的新工具自动进 core，并在启动日志里被点名</li>
+        <li>默认启动（无配置、无参数）仍返回 <b>73 个</b>工具，升级行为不变</li>
+        <li><code>--tools=core</code> 返回 16 个；<code>--tools=core,gen</code> 返回 19 个；
+          <code>--tools=-monkey_start</code> 返回 72 个且不含该工具</li>
+        <li>配置文件 <code>profile=core, add=["ops"]</code> 后重连生效，启动日志读出实际数量</li>
+        <li>未标注组的新工具自动进 core；未知的组名 / 工具名在日志里给出警告</li>
       </ul>
+      <p class="small">A 方案（默认 core、16 个）暂不启用：等 opt-in 阶段收集到真实使用数据后，
+        再评估是否把默认值从 full 切到 core。</p>
       <div class="tip">⚠ <b>兼容性注意</b>：分组只影响 <code>tools/list</code> 的返回值，不影响工具实现。
-        已配置好的客户端不用改任何东西 —— 升级后自动看到 16 个工具，需要更多时再改配置。
-        但<b>如果有客户端脚本硬编码了某个非 core 工具名</b>，升级后会突然「工具不存在」，需要在变更说明里点出来。</div>
+        当前默认仍是 full，已配置好的客户端升级后行为不变；只有主动设置 <code>--tools</code>
+        或配置文件的用户才会看到收窄后的清单。</div>
     </div>
   </section>
 
