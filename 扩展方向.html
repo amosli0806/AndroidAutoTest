@@ -1319,69 +1319,85 @@
     </div>
 
     <div class="card">
-      <h3>八、B 方案手工验收清单（可勾选）</h3>
-      <p class="small" style="margin-top:0">前置：改 <code>args</code> / <code>data/mcp_config.json</code>
-        后需重启 MCP 或重载 Comate 会话（不会热更新）；每次启动看 <code>data/mcp.log</code>
-        里的 <code>MCP 工具：&lt;来源&gt;，暴露 N/73 个</code>。分组只影响 <code>tools/list</code>，
-        不影响工具实现。下面 1~11 不依赖设备，12 需要真机。</p>
+      <h3>八、B 方案手工验收：照着做即可</h3>
+      <p class="small" style="margin-top:0">只改客户端配置，<b>不改 exe、不需要重新打包</b>。
+        三个概念先对齐：<b>配置文件</b>是 <code>D:\AndroidAutoTest\.comate\mcp.json</code>；
+        <b>重载</b>是在 Comate 的 <b>Context → MCP</b> 里把 <code>chongshi</code> 停掉再启动
+        （找不到按钮就关掉 Comate 窗口重开）；<b>结果看哪里</b>是
+        <code>D:\AndroidAutoTest\data\mcp.log</code>，记事本打开后 Ctrl+F 搜
+        <code>MCP 工具：</code>，最后一条就是本次启动实际暴露的数量。</p>
+
+      <p><b>第 1 步：确认基线（2 分钟）</b></p>
+      <ol>
+        <li>打开 <code>.comate\mcp.json</code>，确认 <code>"args": []</code>，内容应像这样：
+          <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">{
+  "mcpServers": {
+    "chongshi": {
+      "command": "D:\\AndroidAutoTest\\dist_mcp\\虫师-mcp.exe",
+      "args": [],
+      "env": { "PYTHONUNBUFFERED": "1", "CHONGSHI_APP_DIR": "D:\\AndroidAutoTest" }
+    }
+  }
+}</pre></li>
+        <li>按上面的方式重载 MCP。</li>
+        <li>打开 <code>data\mcp.log</code>，搜 <code>MCP 工具：</code>，应看到
+          <code>MCP 工具：默认 full，暴露 73/73 个</code>。</li>
+        <li>在 Comate 会话里让智能体调用 <code>device_list</code>；没连设备时报
+          「未检测到设备」也算服务正常。</li>
+      </ol>
+      <p class="small">通过标准：日志是 <b>73/73</b>，工具调用有正常返回（成功或结构化错误都算）。</p>
+
+      <p style="margin-top:14px"><b>第 2 步：切到 core（3 分钟）</b></p>
+      <ol>
+        <li>把 <code>.comate\mcp.json</code> 里的 <code>"args": []</code> 改成
+          <code>"args": ["--tools=core"]</code>，其余不动。</li>
+        <li>重载 MCP。</li>
+        <li>日志应变成 <code>MCP 工具：命令行 --tools=core，暴露 16/73 个</code>。</li>
+        <li>让智能体调用 <code>list_cases</code>（core 内）→ 应正常返回；
+          再让它「跑一下 Monkey」（<code>monkey_start</code> 不在 core）→ 应表示没有这个工具。
+          <b>记下它是怎么说的</b>，这句话决定以后要不要把 core 设为默认。</li>
+      </ol>
+
+      <p style="margin-top:14px"><b>第 3 步：恢复默认（1 分钟）</b></p>
+      <ol>
+        <li>把 <code>args</code> 改回 <code>[]</code>，重载 MCP，日志回到 <b>73/73</b>。</li>
+      </ol>
+
+      <p style="margin-top:14px"><b>可选进阶（想验证更细时再做）</b></p>
       <table>
-        <tr><th style="width:4%">✓</th><th style="width:19%">场景</th><th style="width:30%">配置</th>
-            <th style="width:23%">期望</th><th>重点看</th></tr>
-        <tr><td><input type="checkbox"></td><td><b>1 默认全量</b></td>
-            <td>无 <code>--tools</code>、无 <code>mcp_config.json</code></td>
-            <td><b>73 个</b>，<code>monkey_start</code> 在</td>
-            <td>日志「默认 full，暴露 73/73 个」；与升级前一致</td></tr>
-        <tr><td><input type="checkbox"></td><td><b>2 命令行 core</b></td>
-            <td><code>"args": ["--tools=core"]</code></td>
-            <td><b>16 个</b></td>
-            <td>有 <code>tap</code> / <code>run_case</code>；无 <code>perf_start</code> /
-              <code>monkey_start</code> / <code>save_case</code> / <code>knowledge_list</code></td></tr>
-        <tr><td><input type="checkbox"></td><td><b>3 core + gen</b></td>
-            <td><code>"args": ["--tools=core,gen"]</code></td>
-            <td><b>19 个</b></td>
-            <td>有 <code>explore_and_draft</code> / <code>save_case</code>；ops / content 仍不在</td></tr>
-        <tr><td><input type="checkbox"></td><td><b>4 standard</b></td>
-            <td><code>"args": ["--tools=standard"]</code></td>
-            <td><b>40 个</b>（core + content）</td>
-            <td>有 <code>suite_save</code> / <code>knowledge_read</code> / <code>voice_speak</code>；
-              无 <code>perf_start</code> / <code>monkey_start</code> / <code>save_case</code></td></tr>
-        <tr><td><input type="checkbox"></td><td><b>5 从 full 排除单工具</b></td>
-            <td><code>"args": ["--tools=-monkey_start"]</code></td>
-            <td><b>72 个</b>，<code>monkey_start</code> 不在</td>
-            <td>只有排除项时不会被清空，其余工具仍在</td></tr>
-        <tr><td><input type="checkbox"></td><td><b>6 配置 profile=core</b></td>
-            <td><code>{"tools": {"profile": "core"}}</code></td>
-            <td><b>16 个</b></td>
-            <td>日志「配置 profile=core，暴露 16/73 个」</td></tr>
-        <tr><td><input type="checkbox"></td><td><b>7 配置 add / remove</b></td>
-            <td><code>{"tools": {"profile": "core", "add": ["gen"], "remove": ["save_case"]}}</code></td>
-            <td><b>18 个</b></td>
-            <td><code>explore_and_draft</code> 在、<code>save_case</code> 不在</td></tr>
-        <tr><td><input type="checkbox"></td><td><b>8 优先级</b></td>
-            <td>文件写 <code>profile=core</code>，同时 <code>"args": ["--tools=full"]</code></td>
-            <td><b>73 个</b>（命令行覆盖文件）</td>
-            <td>再试 <code>--tools=core,gen</code> 应为 19</td></tr>
-        <tr><td><input type="checkbox"></td><td><b>9 非法输入不崩</b></td>
-            <td><code>"args": ["--tools=coretypo"]</code></td>
-            <td>回退 <b>73 个</b>，server 正常启动</td>
-            <td>日志有「忽略未知的工具/组」和「回退为 full」两条警告</td></tr>
-        <tr><td><input type="checkbox"></td><td><b>10 收窄后的真实使用</b></td>
-            <td><code>--tools=core</code> 起 Comate 会话</td>
-            <td>点击 / 跑现有用例正常；性能 / Monkey 提示没有这类工具</td>
-            <td>模型对缺失能力的表述是否可接受；加 <code>ops</code> 重启后同一请求应可用</td></tr>
-        <tr><td><input type="checkbox"></td><td><b>11 恢复默认</b></td>
-            <td>删除 <code>args</code> 与 <code>mcp_config.json</code></td>
-            <td>回到 <b>73 个</b></td>
-            <td>行为与升级前完全一致</td></tr>
-        <tr><td><input type="checkbox"></td><td><b>12 真机任务（可选）</b></td>
-            <td><code>--tools=core</code> + 真机</td>
-            <td><code>run_case</code> 正常执行</td>
-            <td>确认分组只影响清单，不影响设备执行</td></tr>
+        <tr><th style="width:24%">想验证什么</th><th style="width:40%">怎么改</th><th>期望</th></tr>
+        <tr><td>core + gen</td><td><code>"args": ["--tools=core,gen"]</code></td>
+            <td>19 个；<code>save_case</code> 可用</td></tr>
+        <tr><td>只排除一个工具</td><td><code>"args": ["--tools=-monkey_start"]</code></td>
+            <td>72 个；<code>monkey_start</code> 不在</td></tr>
+        <tr><td>用配置文件收窄</td><td>新建 <code>D:\AndroidAutoTest\data\mcp_config.json</code>，
+            内容 <code>{"tools": {"profile": "core"}}</code>；<code>args</code> 保持 <code>[]</code></td>
+            <td>16 个；删掉该文件即恢复</td></tr>
+        <tr><td>配置文件 add / remove</td><td><code>{"tools": {"profile": "core", "add": ["gen"],
+            "remove": ["save_case"]}}</code></td>
+            <td>18 个；<code>explore_and_draft</code> 在、<code>save_case</code> 不在</td></tr>
+        <tr><td>命令行优先于文件</td><td>文件写 <code>profile=core</code>，同时
+            <code>"args": ["--tools=full"]</code></td>
+            <td>73 个（命令行覆盖文件）</td></tr>
+        <tr><td>非法输入不崩</td><td><code>"args": ["--tools=coretypo"]</code></td>
+            <td>回退 73 个；日志有「忽略未知的工具/组」「回退为 full」两条警告</td></tr>
       </table>
-      <p class="small">记录建议：每个场景记「实际工具数 / 日志里的来源与数量 / 缺失是否符合预期」；
-        场景 10 额外记一句「模型是怎么描述缺失工具的」，这决定以后是否把 <code>core</code> 设为默认。</p>
+
+      <p style="margin-top:14px"><b>记录表（自己填）</b></p>
+      <table>
+        <tr><th style="width:5%">✓</th><th style="width:28%">场景</th><th style="width:30%">期望</th><th>实际</th></tr>
+        <tr><td><input type="checkbox"></td><td>1 默认</td><td>73/73</td><td></td></tr>
+        <tr><td><input type="checkbox"></td><td>2 core</td><td>16/73</td><td></td></tr>
+        <tr><td><input type="checkbox"></td><td>3 恢复默认</td><td>73/73</td><td></td></tr>
+        <tr><td><input type="checkbox"></td><td>4 core + gen（可选）</td><td>19/73</td><td></td></tr>
+        <tr><td><input type="checkbox"></td><td>5 配置文件 core（可选）</td><td>16/73</td><td></td></tr>
+        <tr><td><input type="checkbox"></td><td>6 非法输入（可选）</td><td>73/73 + 警告</td><td></td></tr>
+      </table>
+      <p class="small">如果日志里没有 <code>MCP 工具：</code> 这一行：先确认看的是最新日志
+        （文件修改时间应是刚刚），然后关掉 Comate 重开一次——多数情况是「改了配置但没重载成功」。</p>
     </div>
   </section>
+
 
   <!-- ============ 五、v1.6.0 发版前风险清单 ============ -->
   <section class="chapter" id="s5">
