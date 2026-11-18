@@ -1106,6 +1106,8 @@
       本章给出按需分组、配额与可发现性的完整方案 —— 实测数据全部来自真实的 <code>tools/list</code> 响应，不是估算。
       <b>落地采用 B</b>：默认仍暴露 73 个（与升级前一致），需要省 token 的用户主动用
       <code>--tools=core</code> 或配置文件收窄；先收集真实使用数据，再决定是否把 <code>core</code> 设为默认。
+      <b>2026-11-18 发布版 1.6.0 已实测</b>：<code>tools/list</code> 返回 73 个，客户端当前指向
+      <code>D:\虫师\虫师-mcp.exe</code>（发布数据），不是开发目录副本。
     </p>
 
     <div class="card">
@@ -1194,7 +1196,8 @@
       <h3>三、配置方式与优先级</h3>
       <p>命令行参数写在客户端的 <code>mcpServers</code> 里，改一次要重开客户端，很别扭。
         所以主入口放在虫师自己的配置文件里，命令行只做临时覆盖。</p>
-      <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">// data/mcp_config.json（可选；不写 = full）
+      <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">// &lt;安装目录&gt;\data\mcp_config.json（可选；不写 = full）
+// 发布版为 D:\虫师\data\mcp_config.json；开发目录为 D:\AndroidAutoTest\data\mcp_config.json
 {
   "tools": {
     "profile": "core",          // core | standard | full
@@ -1294,8 +1297,9 @@
         <tr><td><code>mcp_server/server.py</code></td>
             <td><code>main()</code> 启动时按解析结果 <code>remove_tool</code>；启动日志打印实际暴露数量</td>
             <td>✅</td></tr>
-        <tr><td><code>data/mcp_config.json</code>（可选）</td>
-            <td><code>profile</code> / <code>add</code> / <code>remove</code> 三字段；不自动生成，缺省 = full</td>
+        <tr><td><code>&lt;安装目录&gt;\data\mcp_config.json</code>（可选）</td>
+            <td><code>profile</code> / <code>add</code> / <code>remove</code> 三字段；不自动生成，缺省 = full；
+              发布版路径为 <code>D:\虫师\data\mcp_config.json</code></td>
             <td>✅（文档说明）</td></tr>
         <tr><td><code>save_run_as_case</code></td>
             <td>需要先补执行记录（见第六节前置改造）</td>
@@ -1321,10 +1325,12 @@
     <div class="card">
       <h3>八、B 方案手工验收：照着做即可</h3>
       <p class="small" style="margin-top:0">只改客户端配置，<b>不改 exe、不需要重新打包</b>。
-        三个概念先对齐：<b>配置文件</b>是 <code>D:\AndroidAutoTest\.comate\mcp.json</code>；
+        三个概念先对齐：<b>配置文件</b>是 <code>D:\AndroidAutoTest\.comate\mcp.json</code>
+        （本机当前已指向发布版 <code>D:\虫师\虫师-mcp.exe</code>）；
         <b>重载</b>是在 Comate 的 <b>Context → MCP</b> 里把 <code>chongshi</code> 停掉再启动
         （找不到按钮就关掉 Comate 窗口重开）；<b>结果看哪里</b>是
-        <code>D:\AndroidAutoTest\data\mcp.log</code>，记事本打开后 Ctrl+F 搜
+        <code>D:\虫师\data\mcp.log</code>（发布版；开发目录为
+        <code>D:\AndroidAutoTest\data\mcp.log</code>），记事本打开后 Ctrl+F 搜
         <code>MCP 工具：</code>，最后一条就是本次启动实际暴露的数量。</p>
 
       <p><b>第 1 步：确认基线（2 分钟）</b></p>
@@ -1333,14 +1339,19 @@
           <pre style="margin:8px 0;padding:12px 14px;background:#f6f8fb;border:1px solid var(--border);border-radius:8px;overflow:auto;font-size:12.5px;line-height:1.6;font-family:Consolas,'Courier New',monospace;color:#2c3e50">{
   "mcpServers": {
     "chongshi": {
-      "command": "D:\\AndroidAutoTest\\dist_mcp\\虫师-mcp.exe",
+      "command": "D:\\虫师\\虫师-mcp.exe",
       "args": [],
-      "env": { "PYTHONUNBUFFERED": "1", "CHONGSHI_APP_DIR": "D:\\AndroidAutoTest" }
+      "env": { "PYTHONUNBUFFERED": "1", "CHONGSHI_APP_DIR": "D:\\虫师" }
     }
   }
-}</pre></li>
+}</pre>
+          <p class="small">本机当前就是这个发布版配置；如果要在开发目录复验，把
+            <code>command</code> 换成 <code>D:\AndroidAutoTest\dist_mcp\虫师-mcp.exe</code>、
+            <code>CHONGSHI_APP_DIR</code> 换成 <code>D:\AndroidAutoTest</code>，
+            <code>--tools</code> 的行为完全一致。</p></li>
         <li>按上面的方式重载 MCP。</li>
-        <li>打开 <code>data\mcp.log</code>，搜 <code>MCP 工具：</code>，应看到
+        <li>打开 <code>D:\虫师\data\mcp.log</code>（开发目录为
+          <code>D:\AndroidAutoTest\data\mcp.log</code>），搜 <code>MCP 工具：</code>，应看到
           <code>MCP 工具：默认 full，暴露 73/73 个</code>。</li>
         <li>在 Comate 会话里让智能体调用 <code>device_list</code>；没连设备时报
           「未检测到设备」也算服务正常。</li>
@@ -1370,8 +1381,9 @@
             <td>19 个；<code>save_case</code> 可用</td></tr>
         <tr><td>只排除一个工具</td><td><code>"args": ["--tools=-monkey_start"]</code></td>
             <td>72 个；<code>monkey_start</code> 不在</td></tr>
-        <tr><td>用配置文件收窄</td><td>新建 <code>D:\AndroidAutoTest\data\mcp_config.json</code>，
-            内容 <code>{"tools": {"profile": "core"}}</code>；<code>args</code> 保持 <code>[]</code></td>
+        <tr><td>用配置文件收窄</td><td>新建 <code>D:\虫师\data\mcp_config.json</code>，
+            内容 <code>{"tools": {"profile": "core"}}</code>；<code>args</code> 保持 <code>[]</code>
+            （开发目录用 <code>D:\AndroidAutoTest\data\mcp_config.json</code>）</td>
             <td>16 个；删掉该文件即恢复</td></tr>
         <tr><td>配置文件 add / remove</td><td><code>{"tools": {"profile": "core", "add": ["gen"],
             "remove": ["save_case"]}}</code></td>
@@ -1401,14 +1413,15 @@
 
   <!-- ============ 五、v1.6.0 发版前风险清单 ============ -->
   <section class="chapter" id="s5">
-    <h2><span class="num">5</span>发版前风险清单（v1.5.24 → v1.6.0） <span class="tag part">🚧 2026-11-17 核查 · P0/P2 已修 · P3 加固待做</span></h2>
+    <h2><span class="num">5</span>发版前风险清单（v1.5.24 → v1.6.0） <span class="tag part">✅ 2026-11-18 预发布升级实测通过 · P3 加固待做</span></h2>
     <p class="small" style="margin-top:0">
       本次改动比往常任何一版都大：<b>MCP 全套（73 个工具）+ weditor 下线 + 依赖大改</b>（删
       <code>PyQt6-WebEngine</code> / <code>weditor</code>，加 <code>mcp==2.3.0</code> 及其 22 个依赖）。
       下面按「发不出去 / 发出去功能坏 / 升级后异常」三档，逐条给出证据与修法。
       所有结论都基于对 <code>.github/workflows/release.yml</code>、<code>mcp_server.spec</code>、
       <code>updater.py</code>、<code>services/update_service.py</code> 的逐行核查。
-      <b>P0 两条与 P2 已于 2026-11-17 修复</b>；下面保留原始核查记录，并在对应小节标记处理结果。
+      <b>P0 两条与 P2 已于 2026-11-17 修复；预发布实测又发现并修复了帮助页启动崩溃和「补丁复用旧 updater」两条，2026-11-18 的 1.5.24 → 1.6.0 最终升级已实测通过。</b>
+      下面保留原始核查记录，并在对应小节标记处理结果。
     </p>
 
     <div class="card">
@@ -1416,14 +1429,19 @@
       <table>
         <tr><th style="width:8%">级别</th><th style="width:34%">问题</th><th>后果</th></tr>
         <tr><td><b>P0</b> ✅</td><td><code>release.yml</code> 仍在打包 <code>weditor.spec</code>，并校验 <code>weditor.exe</code> 存在</td>
-            <td><b>已修</b>：删除 weditor 打包与校验，产物校验改为 <code>_internal/虫师-mcp.exe</code></td></tr>
+            <td><b>已修</b>：删除 weditor 打包与校验，产物校验改为 <code>dist/虫师/虫师-mcp.exe</code>（安装根目录）</td></tr>
         <tr><td><b>P0</b> ✅</td><td><code>release.yml</code> 没有 <code>mcp_server.spec</code> 的打包步骤</td>
             <td><b>已修</b>：新增打包步骤，并把 <code>虫师-mcp.exe</code> 放到安装根目录（与主程序同级）</td></tr>
+        <tr><td><b>P0</b> ✅</td><td>增量补丁带 <code>--exclude updater.exe</code>，1.5.24 客户端复用旧更新器</td>
+            <td><b>已修并实测</b>：旧更新器的 <code>ROOT_FILES</code> 不认识新增的
+              <code>虫师-mcp.exe</code>，首版升级后 MCP exe 留在暂存目录；<code>release.yml</code>
+              去掉 exclude，补丁 167.3→175.2 MB，最终升级正常</td></tr>
         <tr><td><b>P3</b></td><td><code>mcp_server.spec</code> 用 <code>console=False</code>，而启动只重定向了 stderr / print，未处理 <code>sys.stdout</code></td>
             <td>代码事实成立，但<b>实测未复现</b>：打包版在管道启动下 <code>tools/list</code> 与工具调用均正常；仅在客户端不提供 stdout 管道时才可能失败，而那种情况 stdio 本身无法通信。作为加固项处理，不阻塞发版</td></tr>
         <tr><td><b>P2</b> ✅</td><td><code>虫师-mcp.exe</code> 若放安装根目录，自动更新不会搬入</td>
             <td><b>已修</b>：<code>updater.py</code> 的 <code>ROOT_FILES</code> 增加
-              <code>虫师-mcp.exe</code>；<code>updater_selftest</code> 覆盖替换与回滚</td></tr>
+              <code>虫师-mcp.exe</code>；<b>并且</b>增量补丁必须带新 updater（见上方 P0）；
+              <code>updater_selftest</code> 覆盖替换与回滚</td></tr>
       </table>
     </div>
 
@@ -1443,8 +1461,9 @@
       </table>
       <p><b>修法</b>：删掉 weditor 打包步骤（83-84 行）；校验清单里去掉 <code>weditor.exe</code>，
         改为校验 <code>虫师.exe</code> / <code>_internal</code> / <code>updater.exe</code>（以及新决定的
-        <code>虫师-mcp.exe</code>）；清理 170 行那段针对 weditor 的补丁说明，
-        保留 <code>--exclude updater.exe</code>（那条与 weditor 无关）。</p>
+        <code>虫师-mcp.exe</code>）；清理 170 行那段针对 weditor 的补丁说明。
+        <b>不要保留 <code>--exclude updater.exe</code></b>：2026-11-18 实测该 exclude 会让 1.5.24
+        客户端复用旧更新器，导致新增的 <code>虫师-mcp.exe</code> 装不进根目录（详见第五节）。</p>
       <div class="tip">✅ <b>已确认</b>：<code>tools/weditor.exe</code> 已随本次改动删除，
         仓库里已无该文件（<code>git ls-files</code> 无跟踪），无需再决定是否保留；
         <code>release.yml</code> 的 weditor 打包与产物校验也已同步移除。</div>
@@ -1471,7 +1490,10 @@
           文档里的配置路径写成 <code>&lt;安装目录&gt;\虫师-mcp.exe</code>。
           更新侧把 <code>虫师-mcp.exe</code> 加进 <code>updater.py::ROOT_FILES</code> 即可；
           因为 <code>main.py</code> 启动的是<b>新包里暂存的 <code>updater.exe</code></b>
-          （<code>updater_exe_in(staging)</code>），新规则对老版本升级同样生效。</li>
+          （<code>updater_exe_in(staging)</code>），新规则对老版本升级同样生效。
+          <b>但前提是补丁把新 <code>updater.exe</code> 放进了 payload</b>：首版补丁用了
+          <code>--exclude updater.exe</code>，客户端复用的仍是旧更新器，导致 MCP exe 未落地；
+          修正见第五节。</li>
         <li><b>B. 不单独出 exe</b>：让用户用主程序 <code>虫师.exe --mcp</code>。
           代价是主 exe 已含 PyQt6 全套（约 200MB+），启动更慢、且主 exe 是窗口化进程，
           同样有 stdout 问题（见第四节）。</li>
@@ -1520,15 +1542,23 @@
         <code>(虫师.exe, updater.exe)</code>，新增的根目录文件会被漏掉。</p>
       <p><b>已采用的方案</b>：<code>虫师-mcp.exe</code> 放在安装根目录，与 <code>虫师.exe</code>
         同级；<code>ROOT_FILES</code> 扩成 <code>(虫师.exe, 虫师-mcp.exe, updater.exe)</code>，
-        <code>swap()</code> 的备份 / 搬入 / 回滚本来就是按 <code>ROOT_FILES</code> 循环，无需改结构。
-        关键依据：<code>main.py</code> 启动的是<b>新包里暂存的 <code>updater.exe</code></b>
-        （<code>updater_exe_in(staging)</code>），所以新版 updater 的规则对老版本升级同样生效，
-        不存在「旧 updater 不认识新文件」的问题。</p>
+        <code>swap()</code> 的备份 / 搬入 / 回滚本来就是按 <code>ROOT_FILES</code> 循环，无需改结构。</p>
+      <p><b>2026-11-18 实测修正</b>：原先认为「<code>main.py</code> 启动的是新包里暂存的
+        <code>updater.exe</code>，旧 updater 不认识新文件的问题不存在」——这个结论只在
+        <b>补丁里带了新 updater</b> 时成立。首版预发布补丁用了
+        <code>--exclude updater.exe</code>，1.5.24 客户端复用的是自己的旧
+        <code>updater.exe</code>；旧版 <code>ROOT_FILES</code> 只有
+        <code>(虫师.exe, updater.exe)</code>，升级后 <code>虫师-mcp.exe</code> 被留在暂存目录，
+        安装根目录缺失（真实升级已复现）。</p>
+      <p><b>修复</b>：<code>release.yml</code> 去掉 <code>--exclude updater.exe</code>，把新
+        <code>updater.exe</code> 打进补丁 payload；补丁从 167.3 MB 增至 175.2 MB。
+        新补丁 manifest 已确认 <code>updater.exe</code> 在 payload，最终 1.5.24 → 1.6.0
+        升级后安装根目录已有 <code>虫师-mcp.exe</code>。</p>
       <p class="small">配套改动：<code>updater_selftest.py</code> 的正常替换与回滚用例都加入
-        <code>虫师-mcp.exe</code>，分别断言「换成新版」与「回滚成旧版」。
-        另外 <code>utils/app_paths.py::get_app_dir()</code> 补了「exe 在 <code>_internal</code>
-        时上溯一级」的回退，作为其它辅助 exe 的兜底；MCP 放根目录时本来就取安装根目录，
-        不依赖这条回退。</p>
+        <code>虫师-mcp.exe</code>，分别断言「换成新版」与「回滚成旧版」；<code>release.yml</code>
+        的补丁步骤增加「新 updater 不进 payload 就会漏装根目录文件」的注释，避免以后又加回
+        <code>--exclude</code>。另外 <code>utils/app_paths.py::get_app_dir()</code> 保留了
+        「exe 在 <code>_internal</code> 时上溯一级」的回退，作为其它辅助 exe 的兜底。</p>
     </div>
 
     <div class="card">
@@ -1560,23 +1590,30 @@
         <tr><td>1</td><td>✅ 已改 <code>release.yml</code>：删 weditor 打包步骤、删 weditor.exe 校验、清理相关注释</td>
             <td>本地 <code>act</code> 或直接读 diff 确认无 <code>weditor</code> 残留</td></tr>
         <tr><td>2</td><td>✅ 已加 <code>mcp_server.spec</code> 打包，产物放到安装根目录</td>
-            <td>本地打包后 <code>_internal/虫师-mcp.exe</code> 存在</td></tr>
-        <tr><td>3</td><td>解决 <code>console=False</code> 的 stdout 问题</td>
-            <td>用 exe 跑通一次 <code>tools/list</code>（返回 16 或 73 个工具）</td></tr>
-        <tr><td>4</td><td>确认 <code>虫师-mcp.exe</code> 落位与 <code>updater</code> 兼容（已加入 <code>ROOT_FILES</code>，selftest 覆盖替换与回滚）</td>
-            <td>从 1.5.24 装一次、自动更新到新版本，确认 exe 在</td></tr>
+            <td>本地打包后 <code>dist/虫师/虫师-mcp.exe</code>（根目录）存在</td></tr>
+        <tr><td>3</td><td>✅ 协议层已用发布版 <code>D:\虫师\虫师-mcp.exe</code> 实测返回 73 个工具；
+            P3 加固（stdout 兜底）待做，不阻塞</td>
+            <td>已用 exe 跑通 <code>tools/list</code> 与 <code>device_list</code></td></tr>
+        <tr><td>4</td><td>✅ 2026-11-18 最终补丁实测通过：1.5.24 → 1.6.0 升级后根目录有 <code>虫师-mcp.exe</code>；
+            关键前提是补丁必须带新 <code>updater.exe</code></td>
+            <td>从 1.5.24 走增量补丁升级，确认 exe 在、版本为 1.6.0</td></tr>
         <tr><td>5</td><td>版本号定 <code>1.6.0</code>（破坏性变更，不建议 1.5.25）</td>
             <td><code>utils/version.py</code> + CHANGELOG 标题</td></tr>
         <tr><td>6</td><td>变更说明写明「右栏应用可视化已下线，相关代码与 weditor 一并移除」</td>
             <td>CHANGELOG 面向用户的措辞</td></tr>
-        <tr><td>7</td><td>走<b>预发布灰度</b>，本机验证后再转正</td>
-            <td>预发布 Release 拉一次全量 + 一次补丁</td></tr>
+        <tr><td>7</td><td>🚧 预发布已建，1.5.24 → 1.6.0 升级实测通过；待转正</td>
+            <td>转正前确认 <code>/releases/latest</code> 仍是 v1.5.24；转正后清理内测通道</td></tr>
+        <tr><td>8</td><td>✅ 预发布实测发现并修复：帮助页 f-string 启动崩溃；首版补丁复用旧 updater 导致 MCP exe 未落地</td>
+            <td>修复后重新打包并重建预发布，1.5.24 → 1.6.0 最终升级复验正常</td></tr>
       </table>
     </div>
 
     <div class="card">
       <h3>八、体积与版本号判断</h3>
       <ul>
+        <li><b>实测体积（2026-11-18）</b>：1.5.24 全量包 <b>440.5 MB</b> → 1.6.0 全量包
+          <b>308.3 MB</b>；增量补丁 <b>175.2 MB</b>（含新 <code>updater.exe</code> 约 8.8 MB）。
+          原预测“全量明显变小”成立。</li>
         <li><b>全量包会明显变小</b>：去掉 <code>PyQt6-WebEngine</code>（约 200MB）与
           <code>weditor.exe</code>（42MB），换入 <code>mcp</code> 依赖（pydantic / starlette /
           uvicorn 等，估 15~25MB）。净减小可观。</li>
@@ -1589,9 +1626,34 @@
           建议 <code>1.6.0</code>；补丁命名按「上个 tag → 本 tag」自动生成，无需手工处理。</li>
       </ul>
     </div>
+
+    <div class="card">
+      <h3>九、预发布实测新增与修复（2026-11-18）</h3>
+      <table>
+        <tr><th style="width:24%">改动</th><th>内容与结果</th></tr>
+        <tr><td><b>性能历史清理</b><br><span class="small">新增</span></td>
+            <td>设置 → 数据维护 → 清理缓存新增「性能历史数据」：支持 7 / 14 / 30 天或永久保留；
+              清理前把每个会话写成完整 JSON 归档（写 .part → 回读校验 → os.replace），归档失败则保留；
+              <code>perf_data.json</code> 改为紧凑 + 原子写。
+              用真实数据副本实测：122 个会话 → 归档 111 个、保留 11 个，
+              <code>perf_data.json</code> 258.7 MB → 36.7 MB，归档 90.7 MB，耗时 16.7 秒。
+              候选超过 20 个时自动清理会提示改为手动，避免采集结束时卡界面。</td></tr>
+        <tr><td><b>root 后抓包重探</b><br><span class="small">修复</span></td>
+            <td>ADB 工具箱执行 root / remount 成功后发出 <code>root_state_changed</code>，性能页清掉按序列号缓存的
+              「未 root」结论并延迟 2.5 秒重探；每次切回性能页也会在结论不可用时重探；
+              弱网面板在 adbd 稳定后自动重检。避免「root 成功了，抓包卡片仍显示未 root」。</td></tr>
+        <tr><td><b>最终升级验证</b></td>
+            <td>1.5.24 → 1.6.0 增量补丁升级后正常启动：帮助页不再崩溃、根目录有
+              <code>虫师-mcp.exe</code>、设置页能看到性能历史区块；发布版 MCP
+              <code>D:\虫师\虫师-mcp.exe</code> 经 stdio 实测返回 73 个工具，<code>device_list</code> 正常。</td></tr>
+      </table>
+      <div class="tip">当前状态：<b>v1.6.0 仍是预发布</b>，<code>/releases/latest</code> 仍为 v1.5.24，
+        本机 <code>D:\虫师\data\preview.json</code> 指向 v1.6.0。验证完成后执行
+        <code>python release.py manual-promote v1.6.0</code> 转正，再清理内测通道。</div>
+    </div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-17 · v1.5.24</footer>
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-18 · v1.6.0</footer>
 </div>
 </body>
 </html>
