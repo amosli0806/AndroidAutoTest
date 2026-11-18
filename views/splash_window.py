@@ -57,6 +57,10 @@ _LABEL_COLOR = QColor('#7C8898')
 _LABEL_SIZE_RATIO = 0.0290   # 约 12px
 _COUNT_COLOR = QColor('#3B82F6')
 
+# 圆角半径（像素，按底图宽等比缩放）与描边色
+_CORNER_RADIUS_RATIO = 0.019     # 640*0.019 ≈ 12px
+_EDGE_COLOR = QColor(15, 23, 42, 20)   # 极淡的边线，浅色桌面上也能看出轮廓
+
 # 每个阶段文案至少显示多久（毫秒）。启动时几个阶段会在极短时间内连续触发，
 # 不设下限的话用户只看得到最后一句（其余都被覆盖）。这个值让每句都有存在感，
 # 又不至于把启动拖慢 —— 5 个阶段满打满算也就多等 1 秒出头。
@@ -111,7 +115,8 @@ class SplashWindow(QWidget):
             | Qt.WindowType.WindowDoesNotAcceptFocus
             | Qt.WindowType.Tool
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        # 圆角要靠透明背景：否则圆角外面会露出一块不透明的直角底
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
 
         self._pixmap = QPixmap(image_path)
@@ -333,6 +338,12 @@ class SplashWindow(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        # 整窗裁成圆角：四角之外保持透明（配合 WA_TranslucentBackground），
+        # 后面所有绘制（版本号 / 轨迹 / 文案）都自动被裁在里面
+        radius = max(6.0, self._w * _CORNER_RADIUS_RATIO)
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(0, 0, self._w, self._h), radius, radius)
+        p.setClipPath(clip)
         p.drawPixmap(0, 0, self._pixmap)
 
         # ---- 版本号（右上角） ----
@@ -401,6 +412,14 @@ class SplashWindow(QWidget):
         count_text = f'{lit} / {len(_NODES)}'
         p.drawText(int(self._w - x - fm.horizontalAdvance(count_text)),
                    y, count_text)
+
+        # 最后描一圈极淡的边：白底封面放在浅色桌面上时，圆角轮廓才看得出来。
+        # 关掉裁剪再画，线才不会在圆角处被削掉一半。
+        p.setClipping(False)
+        p.setPen(QPen(_EDGE_COLOR, 1))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(QRectF(0.5, 0.5, self._w - 1, self._h - 1),
+                          radius, radius)
         p.end()
 
     def _lit_count(self) -> int:
