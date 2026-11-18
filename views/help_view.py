@@ -576,7 +576,7 @@ class HelpView(QFrame):
                         <code>tcpdump_stop</code> 支持过滤与时长 / 大小上限，需要设备 root。</li>
                     <li>工具分组（opt-in）：默认暴露全部 73 个；需要省 token 时用
                         <code>--tools=core</code>（16 个）或 <code>data/mcp_config.json</code> 的
-                        <code>{"tools": {"profile": "core"}}</code>。组分为 core / gen / ops / content。</li>
+                        <code>{{"tools": {{"profile": "core"}}}}</code>。组分为 core / gen / ops / content。</li>
                     <li>弱网：<code>weak_net_apply</code> / <code>weak_net_clear</code> 支持延迟、
                         丢包与带宽限制；需要 root 和 <code>allow_destructive=true</code>，
                         TTL 到期会在设备端自动清除。</li>
