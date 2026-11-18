@@ -182,7 +182,11 @@ class SplashWindow(QWidget):
             self.update()
             return
         self._pending.append((text, target))
-        self._pump_stage()   # 若当前空闲，立刻顶上，别等下一个 tick
+        # 不在调用线程里直接推进队列：主程序是同步连续调 set_stage 的，中间那些
+        # 「初始化界面」的重活会把事件循环堵死，等它放行时时间已经过去好几秒 ——
+        # 直接推进就会连着顶掉好几格，表现为「1 到 4 瞬间走完」（2026-11-18 反馈）。
+        # 统一交给 _pump 定时器按固定节奏放，每格才有相同的可见时长。
+        self.update()
 
     def _pump_stage(self) -> None:
         """队列驱动：每句至少显示 _MIN_DWELL_MS，之后再换下一句。
