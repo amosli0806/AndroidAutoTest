@@ -15,20 +15,45 @@
     （见 utils/fx.py 里 scale_in 的同类问题）；
   * 进度条在底图左下留白处自绘，版本号在右上角自绘，都不依赖外部素材。
 """
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt6.QtGui import QPainter, QColor, QFont, QPixmap, QLinearGradient
+from PyQt6.QtCore import (Qt, QTimer, QPropertyAnimation, QEasingCurve, QPointF,
+                          QRectF)
+from PyQt6.QtGui import (QPainter, QColor, QFont, QPixmap, QLinearGradient,
+                         QPainterPath, QPen)
 from PyQt6.QtWidgets import QWidget
 
 # ---------- 视觉参数（都相对底图尺寸，换底图不用改） ----------
-_BAR_MARGIN_X = 0.044      # 进度条左端距左边，28/640
-_BAR_WIDTH = 0.34          # 进度条长度占底图宽的比例（左下留白区，到波浪左边界之前收住）
-_BAR_Y = 0.905             # 进度条纵向位置（中心）378/400 附近
-_BAR_HEIGHT = 3            # 进度条粗细（像素）
-_BAR_TRACK = QColor(226, 232, 240)          # 底槽：浅灰 #E2E8F0
-_BAR_GRADIENT = (QColor('#54A8FF'), QColor('#2B7FFF'))  # 填充：品牌蓝渐变
-_LABEL_COLOR = QColor('#98A2B3')            # 阶段文案：与版本号同一个灰
-_LABEL_SIZE_RATIO = 0.030                   # 文案字号占底图高的比例（400*0.03=12px）
-_LABEL_GAP = 16                             # 文案在进度条上方多少像素
+# 轨迹：起点 + 5 个启动阶段共 6 个节点，坐标是相对底图宽/高的比例。
+# 底图上只画了空心灰节点，运行到这里按进度把走过的节点和线段点亮。
+_NODES = [
+    (0.1875, 0.3800),   # (120, 152) 起点
+    (0.2969, 0.4200),   # (190, 168) 阶段 1
+    (0.4094, 0.5450),   # (262, 218) 阶段 2
+    (0.5313, 0.6650),   # (340, 266) 阶段 3
+    (0.7031, 0.7500),   # (450, 300) 阶段 4
+    (0.8438, 0.8250),   # (540, 330) 终点
+]
+# 5 段三次贝塞尔（控制点也用相对坐标），必须与底图上的灰线严格重合，
+# 否则点亮的部分会偏离背景轨迹，看着像两条线。
+_SEGS = [
+    ((0.1875, 0.3800), (0.2344, 0.3800), (0.2656, 0.3950), (0.2969, 0.4200)),
+    ((0.2969, 0.4200), (0.3359, 0.4500), (0.3750, 0.4950), (0.4094, 0.5450)),
+    ((0.4094, 0.5450), (0.4453, 0.5900), (0.4922, 0.6350), (0.5313, 0.6650)),
+    ((0.5313, 0.6650), (0.5859, 0.6950), (0.6484, 0.7300), (0.7031, 0.7500)),
+    ((0.7031, 0.7500), (0.7500, 0.7700), (0.8047, 0.8050), (0.8438, 0.8250)),
+]
+_NODE_R_RATIO = 0.0063      # 节点半径占底图宽的比例（640*0.0063≈4px）
+_SEG_WIDTH_RATIO = 0.0031   # 轨迹线宽（640*0.0031≈2px）
+_TRACE_COLOR = QColor('#3B82F6')      # 已走过的线段
+_NODE_DONE = QColor('#1D4ED8')        # 已点亮的节点
+_NODE_CURRENT = QColor('#3B82F6')     # 当前节点
+_HALO_COLOR = QColor(59, 130, 246, 38)  # 当前节点的光圈
+
+# 阶段文案（左下）与右侧计数
+_LABEL_MARGIN_X = 0.0437    # 28/640，与底图留白对齐
+_LABEL_Y = 0.890            # 文案基线（400*0.89=356）
+_LABEL_COLOR = QColor('#7C8898')
+_LABEL_SIZE_RATIO = 0.0290   # 约 12px
+_COUNT_COLOR = QColor('#3B82F6')
 
 # 每个阶段文案至少显示多久（毫秒）。启动时几个阶段会在极短时间内连续触发，
 # 不设下限的话用户只看得到最后一句（其余都被覆盖）。这个值让每句都有存在感，
@@ -63,6 +88,11 @@ def _app_version() -> str:
         return str(APP_VERSION).strip()
     except Exception:
         return ''
+
+
+def _to_px(win, rx: float, ry: float) -> QPointF:
+    """轨迹用的相对坐标 → 窗口像素坐标（底图尺寸变了也不用改常量）。"""
+    return QPointF(win._w * rx, win._h * ry)
 
 
 class SplashWindow(QWidget):
@@ -282,7 +312,7 @@ class SplashWindow(QWidget):
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         p.drawPixmap(0, 0, self._pixmap)
 
-        # ---- 版本号（右上角，与旧 Tcl/Tk 封面同位置） ----
+        # ---- 版本号（右上角） ----
         ver = _app_version()
         if ver:
             font = QFont('Microsoft YaHei')
@@ -290,41 +320,73 @@ class SplashWindow(QWidget):
             p.setFont(font)
             p.setPen(_VERSION_COLOR)
             fm = p.fontMetrics()
-            text = f'V{ver}'
+            text = f'v{ver}'
             ax, ay = _VERSION_ANCHOR
             # 右边缘对齐 w*ax，上边缘对齐 h*ay（drawText 的 y 是基线，需 +ascent）
             p.drawText(int(self._w * ax - fm.horizontalAdvance(text)),
                        int(self._h * ay + fm.ascent()), text)
 
-        # ---- 进度条 ----
-        bar_x = self._w * _BAR_MARGIN_X
-        bar_y = self._h * _BAR_Y
-        bar_w = self._w * _BAR_WIDTH
-        r = _BAR_HEIGHT / 2
+        # ---- 轨迹：走过的线段 + 点亮的节点 ----
+        lit = self._lit_count()
+        pen = QPen(_TRACE_COLOR)
+        pen.setWidthF(max(1.5, self._w * _SEG_WIDTH_RATIO))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for i in range(min(lit - 1, len(_SEGS))):
+            p0, p1, p2, p3 = (_to_px(self, *pt) for pt in _SEGS[i])
+            path = QPainterPath(p0)
+            path.cubicTo(p1, p2, p3)
+            p.drawPath(path)
 
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(_BAR_TRACK)
-        p.drawRoundedRect(int(bar_x), int(bar_y - r), int(bar_w), _BAR_HEIGHT, r, r)
+        r = max(2.5, self._w * _NODE_R_RATIO)
+        for i, (nx, ny) in enumerate(_NODES):
+            if i > lit - 1:
+                break
+            cx, cy = self._w * nx, self._h * ny
+            if i == lit - 1 and lit < len(_NODES):
+                # 当前节点：先画一圈淡蓝光晕，再压一个实心点
+                p.setBrush(_HALO_COLOR)
+                p.drawEllipse(QPointF(cx, cy), r * 2.3, r * 2.3)
+                p.setBrush(_NODE_CURRENT)
+            else:
+                p.setBrush(_NODE_DONE)
+            p.drawEllipse(QPointF(cx, cy), r, r)
 
-        fill_w = max(0.0, min(1.0, self._progress)) * bar_w
-        if fill_w >= _BAR_HEIGHT:
-            grad = QLinearGradient(bar_x, 0, bar_x + bar_w, 0)
-            grad.setColorAt(0.0, _BAR_GRADIENT[0])
-            grad.setColorAt(1.0, _BAR_GRADIENT[1])
-            p.setBrush(grad)
-            p.drawRoundedRect(int(bar_x), int(bar_y - r), int(fill_w), _BAR_HEIGHT, r, r)
+        # 全部走完时把终点方块填成实心：底图上它是空心的白框，
+        # 只在收尾那一瞬间被填满，作为"到达"的收束
+        if lit >= len(_NODES):
+            cx, cy = self._w * _NODES[-1][0], self._h * _NODES[-1][1]
+            half = max(6.0, self._w * 0.0125)
+            p.setBrush(_NODE_DONE)
+            p.drawRoundedRect(QRectF(cx - half, cy - half, half * 2, half * 2),
+                              r * 0.7, r * 0.7)
 
-        # ---- 阶段文案（进度条上方） ----
+        # ---- 阶段文案（左下） + 节点计数（右下） ----
+        font = QFont('Microsoft YaHei')
+        font.setPixelSize(max(10, round(self._h * _LABEL_SIZE_RATIO)))
+        p.setFont(font)
+        fm = p.fontMetrics()
+        x = self._w * _LABEL_MARGIN_X
+        y = int(self._h * _LABEL_Y)
         if self._label:
-            font = QFont('Microsoft YaHei')
-            font.setPixelSize(max(10, round(self._h * _LABEL_SIZE_RATIO)))
-            p.setFont(font)
             p.setPen(_LABEL_COLOR)
-            fm = p.fontMetrics()
-            # 与进度条左端对齐（比底图原有 text_pos 的 28px 略靠左，和进度条同一起点）
-            p.drawText(int(bar_x), int(bar_y - _LABEL_GAP),
-                       self._label)
+            p.drawText(int(x), y, self._label)
+
+        p.setPen(_COUNT_COLOR)
+        count_text = f'{lit} / {len(_NODES)}'
+        p.drawText(int(self._w - x - fm.horizontalAdvance(count_text)),
+                   y, count_text)
         p.end()
+
+    def _lit_count(self) -> int:
+        """已点亮的节点数（1 = 只有起点）。阶段阈值与底图节点一一对应。"""
+        lit = 1
+        for threshold, _text in _STAGES:
+            if self._progress >= threshold - 1e-6:
+                lit += 1
+        return max(1, min(lit, len(_NODES)))
 
     def closeEvent(self, event):
         self._tick.stop()
