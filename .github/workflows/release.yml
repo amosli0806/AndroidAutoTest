@@ -176,12 +176,13 @@ jobs:
           fi
           python -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$PREV_ZIP" prev_tree
           PATCH_OUT="patch-${PREV}-to-${VER}.dpatch"
-          # updater.exe 仍排除出 payload：onefile 每次构建必然抖动，
-          # 标成 reuse=True 后客户端复用本机旧文件即可。
+          # 更新器必须进 payload（不要再 --exclude）。更新器由「暂存目录里的那份」
+          # 启动：老客户端（如 1.5.24）复用的是它自己的旧 updater.exe，而旧更新器
+          # 只认识当时的根目录文件清单 —— 1.6.0 新增的 虫师-mcp.exe 会被留在暂存
+          # 目录里，装不进安装根目录。多下几 MB，换更新器始终跟着版本走。
           if ! python make_update_patch.py \
                  --old-tree prev_tree --new-tree "dist/虫师" \
                  --extra "updater.exe=dist_updater/updater.exe" \
-                 --exclude "updater.exe" \
                  --from "$PREV" --to "$VER" --out "$PATCH_OUT"; then
             echo "补丁没生成（拿不到上一个包 / 补丁不够小），跳过 —— 不影响全量发版"
             echo "made=false" >> "$GITHUB_OUTPUT"; exit 0
