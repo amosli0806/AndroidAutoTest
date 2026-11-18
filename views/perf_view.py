@@ -334,6 +334,8 @@ class PerfView(QWidget):
                                             #  'suite': str, 'loop': int,
                                             #  'stop_on_fail': bool}
     stop_requested = pyqtSignal()
+    # 页面每次显示时发出：设备可能在别的页面刚 root / 刚重连，抓包能力要重探
+    page_shown = pyqtSignal()
     app_list_refresh_requested = pyqtSignal()
     export_csv_requested = pyqtSignal()
     export_json_requested = pyqtSignal()
@@ -1995,6 +1997,8 @@ class PerfView(QWidget):
             # 先重排再置标志：此刻视口布局可能还没激活，宽度判定仍需回退
             self._relayout_cards()
             self._shown_once = True
+        # 每次显示都通知控制器：可能在 ADB 工具箱刚执行过 root
+        self.page_shown.emit()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -1173,6 +1173,9 @@ def main():
         lambda days: perf_model.prune_preview(days, Settings.get_output_dir()))
     main_window.set_perf_prune_handler(
         lambda days: perf_controller.prune_sessions(days))
+    # ADB 工具箱执行 root/remount 成功后，性能页重探抓包能力
+    adb_toolbox_controller.root_state_changed.connect(
+        perf_controller.refresh_capture_capability)
     # 性能检测：退出时中断在录的录屏、停止抓包与旁路探针，避免 adb 子进程滞留
     app.aboutToQuit.connect(perf_controller.shutdown)
     # 自动化执行页增删套件后，即时同步到性能检测页的「场景化测试」套件下拉。

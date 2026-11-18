@@ -10,7 +10,7 @@ import tempfile
 from datetime import datetime
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QDialog, QApplication
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
 from services.command_manager import CommandManager
 from services.adb_command_pool import AdbCommandPool
@@ -41,6 +41,8 @@ class AdbToolboxController(QObject):
     device_info_ready = pyqtSignal(str)
     # 后台线程 -> 主线程的 toast（Qt 不允许在非 GUI 线程直接操作控件）
     toast_requested = pyqtSignal(str)
+    # root 相关命令执行成功：让性能页等依赖 root 的卡片重探能力
+    root_state_changed = pyqtSignal()
 
     # 无法读取 /data/anr/ 时的占位提示：拉取 ANR 一般需要 root
     ANR_ROOT_HINT = (
@@ -179,6 +181,11 @@ class AdbToolboxController(QObject):
             self.log_emitted.emit(
                 f"<span style='color:{log_colors.log_color(log_colors.SUCCESS)};'>✅ 命令 {cmd_name} 执行成功</span>"
             )
+            # root/remount 会改变设备权限：通知性能页重探抓包能力
+            if "root" in (cmd_name or "").lower() or "remount" in (cmd_name or "").lower():
+                self.root_state_changed.emit()
+                # adb root 会重启 adbd，稍等再让弱网面板重探，避免探到断连瞬间
+                QTimer.singleShot(2500, self._refresh_weak_panel_after_root)
         else:
             self.log_emitted.emit(
                 f"<span style='color:{log_colors.log_color(log_colors.ERROR)};'>❌ 命令 {cmd_name} 执行失败</span>"
@@ -186,6 +193,13 @@ class AdbToolboxController(QObject):
 
     def _on_pool_stopped(self, cmd_id, cmd_name, tag):
         self.view.set_command_state(cmd_id, 'idle')
+
+    def _refresh_weak_panel_after_root(self):
+        """root 命令成功、adbd 稳定后，让弱网面板重新检测一次。"""
+        try:
+            self.view.weak_network_panel.refresh_capability()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # 搜索

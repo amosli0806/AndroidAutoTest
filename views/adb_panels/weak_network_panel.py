@@ -397,6 +397,10 @@ class WeakNetworkPanel(QWidget):
         self._last_seen_serial = serial
         self._probe_capability(force=True)
 
+    def refresh_capability(self):
+        """外部（如 root 命令成功后）触发重新检测。"""
+        self._probe_capability(force=True)
+
     def _probe_capability(self, force: bool = False):
         """后台探测弱网能力 + root 可行性；同一设备且已有结论时跳过（force=True 强制重探）。"""
         serial = self._get_serial()

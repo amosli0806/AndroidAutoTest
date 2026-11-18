@@ -310,6 +310,9 @@ class PerfController(QObject):
         self._capture_ready_reason = ""
         self._capture_probed_serial = ""
         self._capture_probing = False
+        # root 后重探：探针在跑时先记一笔，等它回投到主线程再补一次
+        self._capture_reprobe_pending = False
+        self._capture_reprobe_timer = None
         # 截图自动循环状态
         self._screenshot_loop_timer = None
         self._screenshot_busy = False
@@ -348,6 +351,8 @@ class PerfController(QObject):
     def _connect_signals(self):
         self.view.start_requested.connect(self._on_start)
         self.view.stop_requested.connect(self._on_stop)
+        # 每次切回性能页：如果抓包能力上次是「不可用」，重探一次（可能刚 root）
+        self.view.page_shown.connect(self._on_page_shown)
         self.view.app_list_refresh_requested.connect(self._on_refresh_apps)
         self.view.export_csv_requested.connect(self._on_export_csv)
         self.view.export_json_requested.connect(self._on_export_json)
@@ -1856,6 +1861,30 @@ class PerfController(QObject):
     # ------------------------------------------------------------------
     # 抓包防呆：开抓之前先确认「这台设备能不能抓」
     # ------------------------------------------------------------------
+    def _on_page_shown(self):
+        """切回性能页时，如果抓包能力还是「未知/不可用」，重探一次。
+
+        典型场景：在 ADB 工具箱执行「root权限获取」后切到性能页，之前按
+        序列号缓存的「未 root」结论不能一直生效。
+        """
+        if self._capture_ready is not True:
+            self.refresh_capture_capability()
+
+    def refresh_capture_capability(self):
+        """root 状态可能变了：清掉缓存并延迟重探（adb root 会让 adbd 短暂重启）。"""
+        self._capture_ready = None
+        self._capture_ready_reason = ""
+        self._capture_probed_serial = ""
+        if self._capture_probing:
+            # 已有探针在跑：等它回投主线程后再补一次，避免又在旧结论上缓存
+            self._capture_reprobe_pending = True
+            return
+        if self._capture_reprobe_timer is None:
+            self._capture_reprobe_timer = QTimer(self)
+            self._capture_reprobe_timer.setSingleShot(True)
+            self._capture_reprobe_timer.timeout.connect(self._probe_capture_capability)
+        self._capture_reprobe_timer.start(2500)
+
     def _probe_capture_capability(self):
         """只读探测抓包能力，结果用来把「开始抓包」按钮置灰（而不是点开才报错）。
 
@@ -1898,6 +1927,10 @@ class PerfController(QObject):
 
     def _on_capture_ready_checked(self, ok: bool, reason: str):
         self.view.set_packet_available(ok, reason)
+        if self._capture_reprobe_pending:
+            # 这次结果是 root 前那轮探针的，作废并再探一次
+            self._capture_reprobe_pending = False
+            self.refresh_capture_capability()
 
     # 本机剩余空间低于该值就不开抓包（pcap 写在本机磁盘上，不是设备）
     CAPTURE_MIN_FREE_BYTES = 500 * 1024 * 1024
