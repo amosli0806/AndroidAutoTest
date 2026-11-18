@@ -34,7 +34,7 @@ def require_updater():
         sys.exit(2)
 
 
-def make_tree(base, exe_text, dll_text, extra_internal=None):
+def make_tree(base, exe_text, dll_text, extra_internal=None, extra_root=None):
     os.makedirs(os.path.join(base, "_internal"), exist_ok=True)
     os.makedirs(os.path.join(base, "data"), exist_ok=True)
     with open(os.path.join(base, "虫师.exe"), "w", encoding="utf-8") as f:
@@ -46,6 +46,9 @@ def make_tree(base, exe_text, dll_text, extra_internal=None):
     for name in (extra_internal or []):
         with open(os.path.join(base, "_internal", name), "w", encoding="utf-8") as f:
             f.write(name)
+    for name, text in (extra_root or []):
+        with open(os.path.join(base, name), "w", encoding="utf-8") as f:
+            f.write(text)
 
 
 def read(path, encoding="utf-8"):
@@ -66,8 +69,10 @@ def case_happy():
     base = os.path.join(ROOT, "happy")
     shutil.rmtree(base, ignore_errors=True)
     inst, staged = os.path.join(base, "install"), os.path.join(base, "staged")
-    make_tree(inst, "OLD-EXE", "OLD-DLL", ["old_only.txt"])
-    make_tree(staged, "NEW-EXE", "NEW-DLL", ["new_only.txt"])
+    make_tree(inst, "OLD-EXE", "OLD-DLL", ["old_only.txt"],
+              [("虫师-mcp.exe", "OLD-MCP")])
+    make_tree(staged, "NEW-EXE", "NEW-DLL", ["new_only.txt"],
+              [("虫师-mcp.exe", "NEW-MCP")])
     shutil.copy(UPDATER, os.path.join(staged, "updater.exe"))
 
     # 指向"替换之后才存在"的真实 exe：暂存目录里的 updater.exe 会被搬进安装目录
@@ -83,6 +88,8 @@ def case_happy():
     check("新版独有文件已就位", os.path.exists(os.path.join(inst, "_internal", "new_only.txt")))
     check("旧版独有文件已消失", not os.path.exists(os.path.join(inst, "_internal", "old_only.txt")))
     check("虫师.exe 已换成新版", read(os.path.join(inst, "虫师.exe")) == "NEW-EXE")
+    check("虫师-mcp.exe 已换成新版",
+          read(os.path.join(inst, "虫师-mcp.exe")) == "NEW-MCP")
     check("updater.exe 也换进来了", os.path.exists(os.path.join(inst, "updater.exe")))
     check("data/ 用户数据未被动过",
           read(os.path.join(inst, "data", "project_data.json")) == '{"用户数据":"必须保留"}')
@@ -97,8 +104,10 @@ def case_rollback():
     base = os.path.join(ROOT, "rollback")
     shutil.rmtree(base, ignore_errors=True)
     inst, staged = os.path.join(base, "install"), os.path.join(base, "staged")
-    make_tree(inst, "OLD-EXE", "OLD-DLL", ["old_only.txt"])
-    make_tree(staged, "NEW-EXE", "NEW-DLL", ["new_only.txt"])
+    make_tree(inst, "OLD-EXE", "OLD-DLL", ["old_only.txt"],
+              [("虫师-mcp.exe", "OLD-MCP")])
+    make_tree(staged, "NEW-EXE", "NEW-DLL", ["new_only.txt"],
+              [("虫师-mcp.exe", "NEW-MCP")])
     shutil.copy(UPDATER, os.path.join(staged, "updater.exe"))
     # 在目标位置放一个同名"目录"，让搬入 updater.exe 那一步必然失败
     os.makedirs(os.path.join(inst, "updater.exe"), exist_ok=True)
@@ -113,6 +122,8 @@ def case_rollback():
     check("旧版独有文件回来了", os.path.exists(os.path.join(inst, "_internal", "old_only.txt")))
     check("新版文件没有残留", not os.path.exists(os.path.join(inst, "_internal", "new_only.txt")))
     check("虫师.exe 回滚成旧版", read(os.path.join(inst, "虫师.exe")) == "OLD-EXE")
+    check("虫师-mcp.exe 回滚成旧版",
+          read(os.path.join(inst, "虫师-mcp.exe")) == "OLD-MCP")
     check("data/ 用户数据未被动过",
           read(os.path.join(inst, "data", "project_data.json")) == '{"用户数据":"必须保留"}')
     check("日志里记录了回滚", "回滚" in read(log))

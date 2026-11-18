@@ -39,8 +39,13 @@ def get_app_dir() -> str:
     if override and os.path.isdir(override):
         return os.path.abspath(override)
     if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        # onedir 里可能有辅助 exe 放在 _internal/（如 虫师-mcp.exe）：
+        # 它们要和主程序共用根目录的 data/，不能各自在 _internal 下建一份
+        if os.path.basename(exe_dir).lower() == "_internal":
+            return os.path.dirname(exe_dir)
         # 打包环境：onedir 下 exe 与 _internal 同级，数据放在 exe 旁边
-        return os.path.dirname(os.path.abspath(sys.executable))
+        return exe_dir
     # 开发环境：本文件位于 <项目根>/utils/ 下，往上两级即项目根
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

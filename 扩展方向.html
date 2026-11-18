@@ -880,6 +880,9 @@
     }
   }
 }</pre>
+      <p class="small">开发环境可指向 <code>dist_mcp</code> 并用 <code>CHONGSHI_APP_DIR</code>
+        指到项目根；安装包里 <code>虫师-mcp.exe</code> 与 <code>虫师.exe</code> 同级，
+        把 command 改成 <code>&lt;安装目录&gt;\虫师-mcp.exe</code> 即可，不需要该环境变量。</p>
       <p class="small">开发期不用打包，直接 <code>"command": "D:\\AndroidAutoTest\\.venv\\Scripts\\python.exe",
         "args": ["D:\\AndroidAutoTest\\main.py", "--mcp"]</code> 即可。</p>
       <p><b>与现有 AI 能力的关系</b>：<code>services/ai_service.py</code> 的失败归因已作为
@@ -1098,7 +1101,7 @@
   <section class="chapter" id="s4">
     <h2><span class="num">4</span>MCP 工具分组与 Token 预算 <span class="tag plan">📋 2026-11-17 方案 · 待实现</span></h2>
     <p class="small" style="margin-top:0">
-      第三章把工具从 19 个做到 73 个之后出现一个新问题：<b>工具清单是常驻成本</b>。
+      第三章把工具从最早的 16 个最小闭环做到 73 个之后出现一个新问题：<b>工具清单是常驻成本</b>。
       客户端每次连上来都会把全部工具的 schema 注入上下文，不管这一轮用不用得上。
       本章给出按需分组、配额与可发现性的完整方案 —— 实测数据全部来自真实的 <code>tools/list</code> 响应，不是估算。
     </p>
@@ -1118,7 +1121,7 @@
         <code>explore_and_draft</code> / <code>save_case</code> 这几个名字相近的工具，判断成本是实打实的。</p>
       <p><b>为什么不能靠压缩 schema 省</b>：92% 的体积来自参数结构，而参数结构由功能决定；
         改 key 名或省略字段说明会破坏协议兼容性。唯一有效的杠杆是<b>少暴露工具</b>。</p>
-      <p><b>单个体积 Top 6</b>（合计占全量 18%）：<code>perf_start</code> 1111 ·
+      <p><b>单个体积 Top 6</b>（合计 5707 字符，占全量 21%）：<code>perf_start</code> 1111 ·
         <code>tap</code> 965 · <code>assert</code> 958 · <code>input_text</code> 917 ·
         <code>monkey_start</code> 911 · <code>run_case</code> 845（字符）。</p>
       <div class="tip">💡 <b>一个容易被忽略的点</b>：Anthropic 系客户端支持 prompt caching，
@@ -1233,7 +1236,8 @@
     <div class="card">
       <h3>五、设计决策记录（为什么这样，为什么不那样）</h3>
       <p><b>① 为什么 <code>gen</code> 不进默认</b>：测试用例总量有上限，且集中在项目初期；
-        中后期以执行回归和零星补充为主。拿 core 的 11% 预算（1173 字符）换一个「阶段性密集使用」的能力不划算。
+        中后期以执行回归和零星补充为主。拿全量 11% 的预算（1173 字符，相当于 core 的 14.5%）
+        换一个「阶段性密集使用」的能力不划算。
         注意这是<b>按当前产品定位（回归测试工具）</b>得出的结论 —— 若将来增加「一次性任务」模式
         （说一句话现场跑一遍、跑完不存档），这条默认值需要重新评估。</p>
       <p><b>② 为什么不按工具名前缀自动分组</b>：现有命名是动词开头
@@ -1255,6 +1259,12 @@
       <p>讨论「横展」时发现一个比 <code>explore_and_draft</code> 更贴合真实动作的工具：</p>
       <p><b><code>save_run_as_case</code></b> —— 把一次 <code>run_case</code> 实际执行过的步骤（含每次点击命中的
         控件与定位值）存成新用例。</p>
+      <div class="tip">⚠ <b>前置改造（当前不具备）</b>：<code>run_case</code> 的 <code>StepResult</code>
+        只有 <code>index / name / type / ok / message / screenshot</code>，没有 params；
+        <code>CaseRunner</code> 只在<b>失败上下文</b>里记录 <code>step_params</code>，
+        成功执行时并没有留存命中的控件与定位值。要实现「含定位值」，需先让
+        <code>CaseRunner</code> / <code>DeviceService</code> 在成功执行时也记录步骤参数与命中元素，
+        约 100~150 行；工具本身约 50 行，不能按「只加一个工具」估算。</div>
       <div class="example">💡 <b>为什么它比「边探索边记」更实用：</b>横展到新车型时的真实动作是
         「先在这个界面上手点一遍看能不能跑通」，跑通了才想「这套步骤存下来」。
         <code>explore_and_draft</code> 适合全新流程，而这个适合<b>验证成功后回存</b>。
@@ -1280,7 +1290,7 @@
             <td><code>profile</code> / <code>add</code> / <code>remove</code> 三字段，带注释说明</td><td>~20 行</td></tr>
         <tr><td><code>mcp_server/server.py</code> 签名</td>
             <td>新增 <code>save_run_as_case(run_id, module, case_name)</code>（复用 <code>run_case</code> 已记录的步骤）</td>
-            <td>~50 行</td></tr>
+            <td>~50 行工具 + 100~150 行执行记录</td></tr>
         <tr><td>帮助中心 / README</td>
             <td>四种档位的说明与配置示例；说明 gen 组什么时候开</td><td>—</td></tr>
       </table>
@@ -1300,32 +1310,34 @@
 
   <!-- ============ 五、v1.6.0 发版前风险清单 ============ -->
   <section class="chapter" id="s5">
-    <h2><span class="num">5</span>发版前风险清单（v1.5.24 → v1.6.0） <span class="tag part">🚧 2026-11-17 核查 · 4 项待处理</span></h2>
+    <h2><span class="num">5</span>发版前风险清单（v1.5.24 → v1.6.0） <span class="tag part">🚧 2026-11-17 核查 · P0/P2 已修 · P3 加固待做</span></h2>
     <p class="small" style="margin-top:0">
       本次改动比往常任何一版都大：<b>MCP 全套（73 个工具）+ weditor 下线 + 依赖大改</b>（删
       <code>PyQt6-WebEngine</code> / <code>weditor</code>，加 <code>mcp==2.3.0</code> 及其 22 个依赖）。
       下面按「发不出去 / 发出去功能坏 / 升级后异常」三档，逐条给出证据与修法。
       所有结论都基于对 <code>.github/workflows/release.yml</code>、<code>mcp_server.spec</code>、
       <code>updater.py</code>、<code>services/update_service.py</code> 的逐行核查。
+      <b>P0 两条与 P2 已于 2026-11-17 修复</b>；下面保留原始核查记录，并在对应小节标记处理结果。
     </p>
 
     <div class="card">
       <h3>一、结论与优先级</h3>
       <table>
         <tr><th style="width:8%">级别</th><th style="width:34%">问题</th><th>后果</th></tr>
-        <tr><td><b>P0</b></td><td><code>release.yml</code> 仍在打包 <code>weditor.spec</code>，并校验 <code>weditor.exe</code> 存在</td>
-            <td><b>CI 必挂</b> —— 一个文件已删除、一个产物已消失，打包或校验两步都过不去</td></tr>
-        <tr><td><b>P0</b></td><td><code>release.yml</code> 没有 <code>mcp_server.spec</code> 的打包步骤</td>
-            <td>发布包里<b>没有 <code>虫师-mcp.exe</code></b>，文档给的客户端配置指向一个不存在的文件</td></tr>
-        <tr><td><b>P1</b></td><td><code>mcp_server.spec</code> 用 <code>console=False</code>，而启动只重定向了 stderr / print，未处理 <code>sys.stdout</code></td>
-            <td>窗口化 exe 下 <code>sys.stdout</code> 为 <code>None</code>，MCP 无法写 JSON-RPC，表现为「连上但工具列表为空 / 超时」</td></tr>
-        <tr><td><b>P2</b></td><td><code>虫师-mcp.exe</code> 若放安装根目录，自动更新不会搬入</td>
-            <td><code>updater</code> 只替换 <code>_internal</code> 整目录 + 根目录两个文件，新增的根目录文件永远缺席</td></tr>
+        <tr><td><b>P0</b> ✅</td><td><code>release.yml</code> 仍在打包 <code>weditor.spec</code>，并校验 <code>weditor.exe</code> 存在</td>
+            <td><b>已修</b>：删除 weditor 打包与校验，产物校验改为 <code>_internal/虫师-mcp.exe</code></td></tr>
+        <tr><td><b>P0</b> ✅</td><td><code>release.yml</code> 没有 <code>mcp_server.spec</code> 的打包步骤</td>
+            <td><b>已修</b>：新增打包步骤，并把 <code>虫师-mcp.exe</code> 放到安装根目录（与主程序同级）</td></tr>
+        <tr><td><b>P3</b></td><td><code>mcp_server.spec</code> 用 <code>console=False</code>，而启动只重定向了 stderr / print，未处理 <code>sys.stdout</code></td>
+            <td>代码事实成立，但<b>实测未复现</b>：打包版在管道启动下 <code>tools/list</code> 与工具调用均正常；仅在客户端不提供 stdout 管道时才可能失败，而那种情况 stdio 本身无法通信。作为加固项处理，不阻塞发版</td></tr>
+        <tr><td><b>P2</b> ✅</td><td><code>虫师-mcp.exe</code> 若放安装根目录，自动更新不会搬入</td>
+            <td><b>已修</b>：<code>updater.py</code> 的 <code>ROOT_FILES</code> 增加
+              <code>虫师-mcp.exe</code>；<code>updater_selftest</code> 覆盖替换与回滚</td></tr>
       </table>
     </div>
 
     <div class="card">
-      <h3>二、P0 - 1：CI 配置滞后于 weditor 下线</h3>
+      <h3>二、P0 - 1（✅ 已修）：CI 配置滞后于 weditor 下线</h3>
       <table>
         <tr><th style="width:16%">位置</th><th style="width:42%">现状</th><th>后果</th></tr>
         <tr><td><code>release.yml:83</code></td>
@@ -1342,12 +1354,13 @@
         改为校验 <code>虫师.exe</code> / <code>_internal</code> / <code>updater.exe</code>（以及新决定的
         <code>虫师-mcp.exe</code>）；清理 170 行那段针对 weditor 的补丁说明，
         保留 <code>--exclude updater.exe</code>（那条与 weditor 无关）。</p>
-      <div class="tip">⚠ <b>顺手要确认的一件事</b>：<code>tools/weditor.exe</code> 这个 42MB 的二进制本身
-        是否还需要保留在仓库/打包脚本里。它已经没有任何调用方，继续随包分发纯属浪费体积。</div>
+      <div class="tip">✅ <b>已确认</b>：<code>tools/weditor.exe</code> 已随本次改动删除，
+        仓库里已无该文件（<code>git ls-files</code> 无跟踪），无需再决定是否保留；
+        <code>release.yml</code> 的 weditor 打包与产物校验也已同步移除。</div>
     </div>
 
     <div class="card">
-      <h3>三、P0 - 2：MCP 的 exe 没进 CI 流程</h3>
+      <h3>三、P0 - 2（✅ 已修）：MCP 的 exe 没进 CI 流程</h3>
       <p><code>mcp_server.spec</code> 是本次新增的，产出独立可执行文件 <code>虫师-mcp.exe</code>，
         但 <code>release.yml</code> 里既没有打包步骤，也没有把它合并进 <code>dist/虫师</code> 或 zip。</p>
       <p><b>后果</b>：第三章与第四章里写的客户端配置——</p>
@@ -1362,10 +1375,12 @@
       <p>——<b>在发布包里找不到这个文件</b>。用户按文档配完，客户端会报「无法启动进程」。</p>
       <p><b>修法（二选一，推荐 A）</b>：</p>
       <ul>
-        <li><b>A. 把 <code>虫师-mcp.exe</code> 打进 <code>_internal/</code></b>：加一步
-          <code>pyinstaller mcp_server.spec</code>，产物复制到 <code>dist/虫师/_internal/</code>，
-          文档里的配置路径相应改为 <code>_internal\虫师-mcp.exe</code>。
-          这样做还能顺带解决第四节 P2（自动更新能搬进去）。</li>
+        <li><b>A. 放在安装根目录，与 <code>虫师.exe</code> 同级</b>：加一步
+          <code>pyinstaller mcp_server.spec</code>，产物复制到 <code>dist/虫师/虫师-mcp.exe</code>，
+          文档里的配置路径写成 <code>&lt;安装目录&gt;\虫师-mcp.exe</code>。
+          更新侧把 <code>虫师-mcp.exe</code> 加进 <code>updater.py::ROOT_FILES</code> 即可；
+          因为 <code>main.py</code> 启动的是<b>新包里暂存的 <code>updater.exe</code></b>
+          （<code>updater_exe_in(staging)</code>），新规则对老版本升级同样生效。</li>
         <li><b>B. 不单独出 exe</b>：让用户用主程序 <code>虫师.exe --mcp</code>。
           代价是主 exe 已含 PyQt6 全套（约 200MB+），启动更慢、且主 exe 是窗口化进程，
           同样有 stdout 问题（见第四节）。</li>
@@ -1373,7 +1388,7 @@
     </div>
 
     <div class="card">
-      <h3>四、P1：<code>console=False</code> 与 stdout（最可能在真机上翻车的一条）</h3>
+      <h3>四、P3（加固）：<code>console=False</code> 与 stdout</h3>
       <p><code>mcp_server.spec</code> 明确写了 <code>console=False</code>（不弹黑框），注释理由是
         「stdio 句柄由 MCP 客户端通过管道提供」。但实际链路是：</p>
       <ul>
@@ -1383,15 +1398,17 @@
           <code>sys.stderr</code> 与 <code>builtins.print</code>（把约 200 处 <code>print()</code> 重定向到
           <code>data/mcp.log</code>），<b>但没有碰 <code>sys.stdout</code></b></li>
       </ul>
-      <p><b>问题</b>：PyInstaller 的 windowed 构建下，<code>sys.stdout</code> 是 <code>None</code>
-        （不是「管道给过来的流」）。MCP 的 stdio 传输需要向 stdout 写 JSON-RPC 帧，
-        写 <code>None</code> 会抛异常或静默失败，客户端看到的现象是
-        <b>「连上了、但 tools/list 永远是空的 / 超时」</b>——比直接崩更难排查。</p>
-      <p><b>为什么之前冒烟没发现</b>：验证用的是 <code>python main.py --mcp</code>（有控制台，
-        <code>sys.stdout</code> 正常）。这条只在<b>打包后的 exe</b> 上才会暴露。</p>
-      <p><b>验证方法</b>（必须做）：打一次包，用客户端或脚本拉起 <code>虫师-mcp.exe</code>，
-        调一次 <code>tools/list</code>，能返回 16/73 个工具才算过。</p>
-      <p><b>修法（二选一）</b>：</p>
+      <p><b>问题（理论风险）</b>：PyInstaller 的 windowed 构建在<b>没有有效 stdout 句柄</b>时，
+        <code>sys.stdout</code> 会是 <code>None</code>；MCP 的 stdio 传输需要向 stdout 写 JSON-RPC 帧，
+        遇到 <code>None</code> 会抛异常或静默失败。需要注意这是<b>条件成立</b>的：
+        当客户端用管道拉起进程（所有标准 MCP 客户端都是这样）时，stdout 句柄有效，不受影响。</p>
+      <p><b>实测结论（2026-11-17）</b>：本机多次用 <code>dist_mcp\虫师-mcp.exe</code>
+        （<code>console=False</code>）通过管道调用 <code>tools/list</code> 与真实工具，
+        均正常返回 73 个工具，<b>没有复现</b>「列表为空 / 超时」。早期确实只用
+        <code>python main.py --mcp</code> 冒烟过，但后续已经用打包版反复验证。
+        因此这条从 P1 降为 P3：保留「stdout 为空时重开 fd 1」作为加固，
+        不再作为发版阻塞项。</p>
+      <p><b>修法（加固，建议做但不阻塞）</b>：</p>
       <ul>
         <li><b>改 <code>console=True</code></b>：最稳，代价是客户端拉起时一闪而过一个黑框
           （多数 MCP 客户端在后台拉进程，用户基本看不到）。</li>
@@ -1400,23 +1417,27 @@
           <code>None</code> 的情况兜底日志），保持无窗口。
           <b>前提是父进程确实把管道句柄传给了子进程</b>——不同客户端行为不一致，需要实测。</li>
       </ul>
-      <div class="tip">💡 两种都试过的经验：先用 <code>console=True</code> 打通功能，确认协议层没问题，
-        再单独优化「有没有黑框」这件事。反过来做会同时面对两个变量。</div>
+      <div class="tip">💡 <b>处理原则</b>：协议层已用现有打包版验证通过；加固只在
+        <code>setup_stdio_logging()</code> 里补 stdout 兜底即可，不要为了「有没有黑框」
+        同时改动构建模式与启动逻辑，否则两个变量一起变很难定位。</div>
     </div>
 
     <div class="card">
-      <h3>五、P2：exe 落位与自动更新</h3>
+      <h3>五、P2（✅ 已修）：exe 落位与自动更新</h3>
       <p><code>updater.py</code> 的替换策略是：<b><code>_internal</code> 整个目录换掉</b>
-        （<code>ROOT_FILES = (虫师.exe, updater.exe)</code> 逐个换）。这意味着：</p>
-      <ul>
-        <li>旧 <code>_internal</code> 里被删掉的 <code>weditor.exe</code>、<code>PyQt6-WebEngine</code>
-          <b>会随目录替换一起消失</b> —— 不会残留，这点是安全的</li>
-        <li>但<b>新增的根目录文件不会被搬进来</b>：如果 <code>虫师-mcp.exe</code> 放在安装根目录，
-          老用户自动更新后它就缺席，只能重新下载全量包</li>
-      </ul>
-      <p><b>修法</b>：把 <code>虫师-mcp.exe</code> 放进 <code>_internal/</code>（与第三节 A 方案一致），
-        或把 <code>ROOT_FILES</code> 扩成三元组并同步改 <code>swap()</code> 的循环与回滚逻辑。
-        前者改动更小，推荐。</p>
+        （根目录文件按 <code>ROOT_FILES</code> 逐个换）。原实现只有
+        <code>(虫师.exe, updater.exe)</code>，新增的根目录文件会被漏掉。</p>
+      <p><b>已采用的方案</b>：<code>虫师-mcp.exe</code> 放在安装根目录，与 <code>虫师.exe</code>
+        同级；<code>ROOT_FILES</code> 扩成 <code>(虫师.exe, 虫师-mcp.exe, updater.exe)</code>，
+        <code>swap()</code> 的备份 / 搬入 / 回滚本来就是按 <code>ROOT_FILES</code> 循环，无需改结构。
+        关键依据：<code>main.py</code> 启动的是<b>新包里暂存的 <code>updater.exe</code></b>
+        （<code>updater_exe_in(staging)</code>），所以新版 updater 的规则对老版本升级同样生效，
+        不存在「旧 updater 不认识新文件」的问题。</p>
+      <p class="small">配套改动：<code>updater_selftest.py</code> 的正常替换与回滚用例都加入
+        <code>虫师-mcp.exe</code>，分别断言「换成新版」与「回滚成旧版」。
+        另外 <code>utils/app_paths.py::get_app_dir()</code> 补了「exe 在 <code>_internal</code>
+        时上溯一级」的回退，作为其它辅助 exe 的兜底；MCP 放根目录时本来就取安装根目录，
+        不依赖这条回退。</p>
     </div>
 
     <div class="card">
@@ -1445,17 +1466,17 @@
       <h3>七、发版前动作清单</h3>
       <table>
         <tr><th style="width:6%">#</th><th style="width:52%">动作</th><th>验收方式</th></tr>
-        <tr><td>1</td><td>改 <code>release.yml</code>：删 weditor 打包步骤、删 weditor.exe 校验、清理相关注释</td>
+        <tr><td>1</td><td>✅ 已改 <code>release.yml</code>：删 weditor 打包步骤、删 weditor.exe 校验、清理相关注释</td>
             <td>本地 <code>act</code> 或直接读 diff 确认无 <code>weditor</code> 残留</td></tr>
-        <tr><td>2</td><td>加 <code>mcp_server.spec</code> 打包，产物放进 <code>_internal/</code></td>
+        <tr><td>2</td><td>✅ 已加 <code>mcp_server.spec</code> 打包，产物放到安装根目录</td>
             <td>本地打包后 <code>_internal/虫师-mcp.exe</code> 存在</td></tr>
         <tr><td>3</td><td>解决 <code>console=False</code> 的 stdout 问题</td>
             <td>用 exe 跑通一次 <code>tools/list</code>（返回 16 或 73 个工具）</td></tr>
-        <tr><td>4</td><td>确认 <code>虫师-mcp.exe</code> 落位与 <code>updater</code> 兼容</td>
+        <tr><td>4</td><td>确认 <code>虫师-mcp.exe</code> 落位与 <code>updater</code> 兼容（已加入 <code>ROOT_FILES</code>，selftest 覆盖替换与回滚）</td>
             <td>从 1.5.24 装一次、自动更新到新版本，确认 exe 在</td></tr>
         <tr><td>5</td><td>版本号定 <code>1.6.0</code>（破坏性变更，不建议 1.5.25）</td>
             <td><code>utils/version.py</code> + CHANGELOG 标题</td></tr>
-        <tr><td>6</td><td>变更说明写明「应用可视化改为内嵌页面、weditor 已下线」</td>
+        <tr><td>6</td><td>变更说明写明「右栏应用可视化已下线，相关代码与 weditor 一并移除」</td>
             <td>CHANGELOG 面向用户的措辞</td></tr>
         <tr><td>7</td><td>走<b>预发布灰度</b>，本机验证后再转正</td>
             <td>预发布 Release 拉一次全量 + 一次补丁</td></tr>

@@ -2,7 +2,7 @@
 #
 # 流程（与 README「检查更新与发版」一致）：
 #   校验 tag 与 utils/version.py 的 APP_VERSION 一致
-#   -> 打包主程序（main.spec）与独立更新器（updater.spec）
+#   -> 打包主程序（main.spec）、MCP 独立服务（mcp_server.spec）与独立更新器（updater.spec）
 #   -> 跑更新器自测 + 更新链路自测（任一失败即中止，不会产出坏 Release）
 #   -> 校验产物完整性 -> 压 zip（不含 data/ 等运行期数据）
 #   -> 生成增量补丁（对比上一个 Release 的全量包，失败只跳过、不阻塞发版）
@@ -80,11 +80,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 打包 weditor 独立服务（weditor.spec，应用可视化依赖）
-        run: pyinstaller weditor.spec --noconfirm --distpath dist_weditor --workpath build_weditor
-
       - name: 打包主程序（main.spec）
         run: pyinstaller main.spec --noconfirm
+
+      - name: 打包 MCP 独立服务（mcp_server.spec）
+        run: pyinstaller mcp_server.spec --noconfirm --clean --distpath dist_mcp --workpath build_mcp
+
+      - name: 合入 虫师-mcp.exe 到安装根目录
+        shell: python
+        run: |
+          import os, shutil
+          src = os.path.join("dist_mcp", "虫师-mcp.exe")
+          dst = os.path.join("dist", "虫师", "虫师-mcp.exe")
+          shutil.copy2(src, dst)
+          print(f"copied {dst} ({os.path.getsize(dst)} bytes)")
 
       - name: 打包独立更新器（updater.spec）
         run: pyinstaller updater.spec --noconfirm --distpath dist_updater --workpath build_updater
@@ -102,12 +111,12 @@ jobs:
           missing = [p for p in (
               os.path.join("dist", "虫师", "虫师.exe"),
               os.path.join("dist", "虫师", "_internal"),
-              os.path.join("dist", "虫师", "_internal", "tools", "weditor.exe"),
+              os.path.join("dist", "虫师", "虫师-mcp.exe"),
               os.path.join("dist_updater", "updater.exe"),
           ) if not os.path.exists(p)]
           if missing:
               sys.exit("产物缺失：" + "、".join(missing))
-          print("artifacts ok: exe / _internal / tools+ / weditor.exe / "
+          print("artifacts ok: 虫师.exe / _internal / 虫师-mcp.exe / "
                 "updater.exe present")
 
       - name: 压更新包（不含 data/ 等运行期数据）
@@ -132,7 +141,7 @@ jobs:
                         or n.endswith(".log")]
               if leaked:
                   sys.exit(f"更新包里混入了运行期数据：{leaked[:5]}")
-              need = ("虫师.exe", "_internal", "updater.exe")
+              need = ("虫师.exe", "_internal", "虫师-mcp.exe", "updater.exe")
               for n in need:
                   if not any(x == n or x.startswith(n + "/") for x in names):
                       sys.exit(f"更新包里缺少 {n}")
@@ -167,11 +176,8 @@ jobs:
           fi
           python -c "import sys,zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$PREV_ZIP" prev_tree
           PATCH_OUT="patch-${PREV}-to-${VER}.dpatch"
-          # 注意：**不要**再给 _internal/tools/weditor.exe 加 --exclude。
-          # --exclude 的文件会被标成 reuse=True，客户端遇到哈希不一致时是「视为打包
-          # 抖动、复用本机旧文件」（services/update_service.py），**不会回退全量** ——
-          # 于是 weditor.exe 真更新了也送不到用户手里（应用可视化会一直是旧的）。
-          # 代价是 onefile 打包必抖，补丁每次多背约 44MB；这个代价值得。
+          # updater.exe 仍排除出 payload：onefile 每次构建必然抖动，
+          # 标成 reuse=True 后客户端复用本机旧文件即可。
           if ! python make_update_patch.py \
                  --old-tree prev_tree --new-tree "dist/虫师" \
                  --extra "updater.exe=dist_updater/updater.exe" \

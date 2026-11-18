@@ -42,7 +42,7 @@ SYNCHRONIZE = 0x00100000
 _RETRY_WINERRORS = (5, 32)
 
 # 根目录下这些文件要一起换（_internal 单独按目录整体换）
-ROOT_FILES = (APP_EXE, "updater.exe")
+ROOT_FILES = (APP_EXE, "虫师-mcp.exe", "updater.exe")
 
 # 这次运行有没有真的动过安装目录里的文件。
 # 决定失败提示该不该说「已回滚」—— 失败可能发生在替换之前（比如 exe 被占用，
