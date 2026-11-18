@@ -1561,10 +1561,6 @@ class SettingsDialog(QDialog):
     def _on_perf_auto_changed(self, state):
         Settings.set_perf_auto_prune(bool(state))
 
-    def _reset_perf_cleanup_button(self):
-        self.perf_cleanup_btn.setEnabled(True)
-        self.perf_cleanup_btn.setText("归档并清理")
-
     def _on_cleanup_perf(self):
         main_win = self.parent()
         handler = getattr(main_win, 'perf_prune_handler', None) if main_win else None
@@ -1577,9 +1573,7 @@ class SettingsDialog(QDialog):
             return
         if self._perf_worker is not None and self._perf_worker.isRunning():
             return
-        self.perf_cleanup_btn.setEnabled(False)
-        self.perf_cleanup_btn.setText("正在归档并清理…")
-        self.perf_cleanup_result.setText("正在归档并清理，请稍候…")
+        self.perf_cleanup_result.setText("")
         self._perf_worker = _PerfCleanupWorker(handler, days, self)
         self._perf_worker.done.connect(self._on_perf_cleanup_done)
         self._perf_worker.failed.connect(self._on_perf_cleanup_failed)
@@ -1588,7 +1582,6 @@ class SettingsDialog(QDialog):
         self._perf_worker.start()
 
     def _on_perf_cleanup_done(self, stat):
-        self._reset_perf_cleanup_button()
         stat = stat or {}
         if stat.get('error'):
             self.perf_cleanup_result.setText(f"清理未完成：{stat['error']}")
@@ -1615,7 +1608,6 @@ class SettingsDialog(QDialog):
         self._refresh_perf_stats()
 
     def _on_perf_cleanup_failed(self, message):
-        self._reset_perf_cleanup_button()
         self.perf_cleanup_result.setText(f"清理失败：{message}")
 
     def _on_perf_worker_finished(self, worker):
