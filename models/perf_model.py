@@ -1,9 +1,11 @@
 # models/perf_model.py
 import json
 import os
+import re
+import shutil
 import time
 from dataclasses import dataclass, field, asdict, fields
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from utils.app_paths import data_path
@@ -82,6 +84,32 @@ class PerfSample:
 
 
 _PERF_SAMPLE_FIELDS = {f.name for f in fields(PerfSample)}
+
+
+def _parse_session_time(raw: str) -> Optional[datetime]:
+    """解析会话时间：优先 ISO，兼容早期的 'YYYY-mm-dd HH:MM:SS'。
+
+    解析失败返回 None —— 调用方对 None 一律按「保留」处理，宁可少删不误删。
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        try:
+            dt = datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
+def _safe_dirname(text: str) -> str:
+    """设备号 / 会话名当路径的一段用，去掉 Windows 非法字符。"""
+    safe = re.sub(r"[^0-9A-Za-z._-]+", "_", str(text or "")).strip("._-")
+    return safe or "unknown"
 
 
 @dataclass
@@ -477,14 +505,40 @@ class PerfModel:
 
     def save(self):
         try:
-            data = {
-                'sessions': [s.to_dict() for s in self.sessions],
-                'threshold': self.threshold.to_dict(),
-            }
-            with open(self.DATA_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            self._write_data()
+            return True
         except Exception as e:
             print(f"[PerfModel] 保存失败: {e}")
+            return False
+
+    def _write_data(self, compact: bool = True):
+        """原子写 perf_data.json：先写 .tmp，再 os.replace。
+
+        compact=True：不再 indent=2。历史文件 258 MB 里有 51% 是空格/换行，
+        紧凑写能把同样的数据直接减半；加载逻辑不变。
+        """
+        data = {
+            'sessions': [s.to_dict() for s in self.sessions],
+            'threshold': self.threshold.to_dict(),
+        }
+        target = self.DATA_FILE
+        tmp = target + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+            with open(tmp, 'w', encoding='utf-8') as f:
+                if compact:
+                    json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+                else:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, target)
+        finally:
+            if os.path.exists(tmp):
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
 
     def _migrate_baseline_breakdown(self):
         """旧基线的统计快照里没有内存分类拆解（该功能上线前保存的基线），
@@ -519,6 +573,150 @@ class PerfModel:
     def remove_session(self, session_id: str):
         self.sessions = [s for s in self.sessions if s.id != session_id]
         self.save()
+
+    # ---------- 历史会话清理（设置页「清理缓存 → 性能历史数据」） ----------
+    @staticmethod
+    def session_time(session) -> Optional[datetime]:
+        """会话的结束时间；没有就用开始时间；都解析不了返回 None（不参与清理）。"""
+        return (_parse_session_time(getattr(session, "end_time", ""))
+                or _parse_session_time(getattr(session, "start_time", "")))
+
+    def _protected_session_ids(self):
+        return {b.session_id for b in self.baselines if getattr(b, "session_id", "")}
+
+    def prune_preview(self, days: int, archive_base: str = "") -> dict:
+        """只读估算：超过 days 天的会话数、可归档大小、可释放大小。"""
+        days = int(days or 0)
+        total = len(self.sessions)
+        file_bytes = os.path.getsize(self.DATA_FILE) if os.path.exists(self.DATA_FILE) else 0
+        result = {
+            "days": days, "total": total, "file_bytes": file_bytes,
+            "candidates": 0, "protected": 0, "candidate_bytes": 0,
+            "archive_bytes": 0, "archive_base": archive_base, "cutoff": "",
+        }
+        if days <= 0:
+            return result
+        cutoff = datetime.now() - timedelta(days=days)
+        protected = self._protected_session_ids()
+        candidates = []
+        for s in self.sessions:
+            dt = self.session_time(s)
+            if dt is None or dt >= cutoff:
+                continue
+            if s.id in protected:
+                result["protected"] += 1
+                continue
+            candidates.append(s)
+        total_samples = sum(len(s.samples) for s in self.sessions)
+        cand_samples = sum(len(s.samples) for s in candidates)
+        ratio = (cand_samples / total_samples) if total_samples else 0.0
+        result["candidates"] = len(candidates)
+        result["candidate_bytes"] = int(file_bytes * ratio)
+        # 归档用紧凑 JSON，经验上约为原文件的 50%（原文件 indent=2）
+        result["archive_bytes"] = int(result["candidate_bytes"] * 0.5)
+        result["cutoff"] = cutoff.strftime("%Y-%m-%d %H:%M")
+        return result
+
+    def archive_session(self, session: PerfSession, archive_base: str):
+        """把单个会话写成完整 JSON（写 .part → 回读校验 → os.replace）。"""
+        base = os.path.abspath(archive_base or ".")
+        folder = os.path.join(base, _safe_dirname(session.device_serial), "perf_archive")
+        os.makedirs(folder, exist_ok=True)
+        stem = f"perf_{_safe_dirname(session.name)}"
+        path = os.path.join(folder, stem + ".json")
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    old = json.load(f)
+                if (old.get("id") == session.id
+                        and len(old.get("samples") or []) == len(session.samples)):
+                    return path, os.path.getsize(path)
+            except Exception:
+                pass
+            path = os.path.join(folder, f"{stem}_{session.id}.json")
+        part = path + ".part"
+        try:
+            with open(part, "w", encoding="utf-8") as f:
+                json.dump(session.to_dict(), f, ensure_ascii=False, separators=(",", ":"))
+                f.flush()
+                os.fsync(f.fileno())
+            with open(part, encoding="utf-8") as f:
+                check = json.load(f)
+            if (check.get("id") != session.id
+                    or len(check.get("samples") or []) != len(session.samples)):
+                raise RuntimeError("归档校验失败（id / 样本数不一致）")
+            os.replace(part, path)
+        finally:
+            if os.path.exists(part):
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
+        return path, os.path.getsize(path)
+
+    def prune_older_than(self, days: int, archive_base: str,
+                         progress=None, backup: bool = True) -> dict:
+        """归档并移除 days 天前的会话；归档失败/保存失败的会话一律保留。"""
+        days = int(days or 0)
+        total = len(self.sessions)
+        file_bytes = os.path.getsize(self.DATA_FILE) if os.path.exists(self.DATA_FILE) else 0
+        stats = {
+            "days": days, "total": total, "candidates": 0,
+            "archived": 0, "failed": 0, "protected": 0,
+            "archive_bytes": 0, "file_bytes_before": file_bytes,
+            "file_bytes": file_bytes, "freed_bytes": 0,
+            "archive_base": archive_base, "error": "",
+        }
+        if days <= 0 or not self.sessions:
+            return stats
+        cutoff = datetime.now() - timedelta(days=days)
+        protected = self._protected_session_ids()
+        candidates = []
+        for s in self.sessions:
+            dt = self.session_time(s)
+            if dt is None or dt >= cutoff:
+                continue
+            if s.id in protected:
+                stats["protected"] += 1
+                continue
+            candidates.append(s)
+        stats["candidates"] = len(candidates)
+        if not candidates:
+            return stats
+
+        if backup and file_bytes and not os.path.exists(self.DATA_FILE + ".bak"):
+            try:
+                shutil.copy2(self.DATA_FILE, self.DATA_FILE + ".bak")
+            except Exception as e:
+                print(f"[PerfModel] 清理前备份失败（继续执行）: {e}")
+
+        old_sessions = list(self.sessions)
+        removed = set()
+        for i, session in enumerate(candidates, 1):
+            try:
+                _path, size = self.archive_session(session, archive_base)
+                removed.add(session.id)
+                stats["archived"] += 1
+                stats["archive_bytes"] += size
+            except Exception as e:
+                stats["failed"] += 1
+                print(f"[PerfModel] 归档会话失败，保留 {session.name}: {e}")
+            if progress:
+                progress(i, len(candidates))
+
+        if not removed:
+            return stats
+        self.sessions = [s for s in self.sessions if s.id not in removed]
+        try:
+            self._write_data()
+        except Exception as e:
+            self.sessions = old_sessions
+            stats["error"] = f"保存失败：{e}"
+            return stats
+        new_bytes = os.path.getsize(self.DATA_FILE) if os.path.exists(self.DATA_FILE) else 0
+        stats["file_bytes"] = new_bytes
+        stats["freed_bytes"] = max(0, file_bytes - new_bytes)
+        return stats
 
     def get_session(self, session_id: str) -> Optional[PerfSession]:
         for s in self.sessions:

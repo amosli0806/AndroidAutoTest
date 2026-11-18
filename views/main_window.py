@@ -67,6 +67,8 @@ class MainWindow(QMainWindow):
         self.step_model = None
         self.data_cleanup_handler = None    # 「清理缓存」执行入口，由 main.py 注入
         self.cache_size_handler = None      # 「清理缓存」大小估算入口，由 main.py 注入
+        self.perf_stats_handler = None      # 性能历史统计入口（设置页）
+        self.perf_prune_handler = None      # 性能历史归档清理入口（设置页）
         self.element_controller = None
         self.project_controller = None
         self.step_controller = None
@@ -571,6 +573,14 @@ class MainWindow(QMainWindow):
         签名 () -> int|None：返回可回收的字节数，None = 当前数据未就绪、无法估算。
         """
         self.cache_size_handler = handler
+
+    def set_perf_stats_handler(self, handler):
+        """注入性能历史统计入口。签名 (days) -> dict|None。"""
+        self.perf_stats_handler = handler
+
+    def set_perf_prune_handler(self, handler):
+        """注入性能历史归档清理入口。签名 (days) -> dict。"""
+        self.perf_prune_handler = handler
 
     def set_project_controller(self, controller):
         self.project_controller = controller

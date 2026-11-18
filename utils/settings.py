@@ -133,6 +133,32 @@ class Settings:
         settings['output_dir'] = path
         cls.save(settings)
 
+    # ---------- 性能历史保留 ----------
+    @classmethod
+    def get_perf_retention_days(cls) -> int:
+        """性能会话保留天数；0 = 永久保留。"""
+        try:
+            return int(cls.load().get('perf_retention_days', 7))
+        except (TypeError, ValueError):
+            return 7
+
+    @classmethod
+    def set_perf_retention_days(cls, days: int):
+        settings = cls.load()
+        settings['perf_retention_days'] = int(days)
+        cls.save(settings)
+
+    @classmethod
+    def get_perf_auto_prune(cls) -> bool:
+        """每轮性能采集结束后是否自动清理超期会话。"""
+        return bool(cls.load().get('perf_auto_prune', False))
+
+    @classmethod
+    def set_perf_auto_prune(cls, enabled: bool):
+        settings = cls.load()
+        settings['perf_auto_prune'] = bool(enabled)
+        cls.save(settings)
+
     # ---------- 执行节奏 ----------
     @classmethod
     def get_step_interval(cls) -> float:

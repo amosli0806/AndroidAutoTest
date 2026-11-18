@@ -157,6 +157,24 @@ class AIConnectTestWorker(QThread):
         self.done.emit(ok, msg)
 
 
+class _PerfCleanupWorker(QThread):
+    """在后台归档并清理性能历史，避免 100+ 会话写盘时冻住设置页。"""
+
+    done = pyqtSignal(dict)
+    failed = pyqtSignal(str)
+
+    def __init__(self, handler, days, parent=None):
+        super().__init__(parent)
+        self._handler = handler
+        self._days = days
+
+    def run(self):
+        try:
+            self.done.emit(self._handler(self._days) or {})
+        except Exception as e:          # noqa: BLE001 - 交给界面显示
+            self.failed.emit(f"{type(e).__name__}: {e}")
+
+
 class SettingsDialog(QDialog):
     """参照 PyCharm 风格的设置对话框"""
 
@@ -1394,7 +1412,7 @@ class SettingsDialog(QDialog):
         title.setObjectName("SettingsPageTitle")
         layout.addWidget(title)
 
-        subtitle = QLabel("清除历史遗留的冗余数据，释放其占用的存储空间")
+        subtitle = QLabel("清除历史遗留的冗余数据；性能历史会先归档完整 JSON，再清理超期会话")
         subtitle.setObjectName("SettingsPageSubtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -1417,9 +1435,69 @@ class SettingsDialog(QDialog):
         self.cleanup_result.setWordWrap(True)
         layout.addWidget(self.cleanup_result)
 
+        # ---------- 区块二：性能历史数据 ----------
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(line)
+
+        perf_title = QLabel("性能历史数据")
+        perf_title.setStyleSheet("font-size: 15px; font-weight: 600;")
+        layout.addWidget(perf_title)
+
+        perf_subtitle = QLabel(
+            "只保留最近若干天的会话；更早的会先归档为完整 JSON，再从会话列表移除。"
+        )
+        perf_subtitle.setObjectName("SettingsPageSubtitle")
+        perf_subtitle.setWordWrap(True)
+        layout.addWidget(perf_subtitle)
+
+        perf_form = QFormLayout()
+        perf_form.setSpacing(12)
+        self.perf_retention_combo = QComboBox()
+        for label, days in (("7 天", 7), ("14 天", 14), ("30 天", 30), ("永久保留", 0)):
+            self.perf_retention_combo.addItem(label, days)
+        idx = self.perf_retention_combo.findData(Settings.get_perf_retention_days())
+        if idx >= 0:
+            self.perf_retention_combo.setCurrentIndex(idx)
+        self.perf_retention_combo.currentIndexChanged.connect(
+            self._on_perf_retention_changed)
+        perf_form.addRow("保留天数:", self.perf_retention_combo)
+
+        self.perf_auto_check = BorderedCheckBox("每轮采集结束后自动清理")
+        self.perf_auto_check.setChecked(Settings.get_perf_auto_prune())
+        self.perf_auto_check.stateChanged.connect(self._on_perf_auto_changed)
+        perf_form.addRow("自动清理:", self.perf_auto_check)
+        layout.addLayout(perf_form)
+
+        self.perf_stats_label = QLabel("")
+        self.perf_stats_label.setObjectName("SettingsPageSubtitle")
+        self.perf_stats_label.setWordWrap(True)
+        layout.addWidget(self.perf_stats_label)
+
+        perf_row = QHBoxLayout()
+        perf_row.setSpacing(10)
+        self.perf_cleanup_btn = QPushButton("归档并清理")
+        self.perf_cleanup_btn.setObjectName("cleanupDataBtn")
+        self.perf_cleanup_btn.setIcon(qta.icon('fa6s.broom', color='white'))
+        self.perf_cleanup_btn.setFixedSize(140, 32)
+        self.perf_cleanup_btn.clicked.connect(self._on_cleanup_perf)
+        perf_row.addWidget(self.perf_cleanup_btn)
+        perf_row.addStretch()
+        layout.addLayout(perf_row)
+
+        self.perf_cleanup_result = QLabel("")
+        self.perf_cleanup_result.setObjectName("SettingsPageSubtitle")
+        self.perf_cleanup_result.setWordWrap(True)
+        layout.addWidget(self.perf_cleanup_result)
+
+        # 后台归档线程；关闭窗口时若还在跑，reject/closeEvent 会拦住
+        self._perf_worker = None
+
         layout.addStretch()
 
         self._refresh_cache_size()
+        self._refresh_perf_stats()
         return page
 
     def _refresh_cache_size(self):
@@ -1438,6 +1516,126 @@ class SettingsDialog(QDialog):
             self.cleanup_result.setText("当前没有需要清理的缓存")
         else:
             self.cleanup_result.setText(f"当前缓存 {self._fmt_size(size)}")
+
+    # ---------- 性能历史数据 ----------
+    def _refresh_perf_stats(self):
+        """刷新「当前 N 个会话 / X MB；N 天前 K 个」的状态行。"""
+        main_win = self.parent()
+        handler = getattr(main_win, 'perf_stats_handler', None) if main_win else None
+        if not callable(handler):
+            if hasattr(self, 'perf_stats_label'):
+                self.perf_stats_label.setText("")
+            return
+        days = int(self.perf_retention_combo.currentData() or 0)
+        try:
+            stat = handler(days)
+        except Exception:
+            stat = None
+        if not stat:
+            self.perf_stats_label.setText("暂时无法读取性能历史数据")
+            return
+        total = int(stat.get('total') or 0)
+        file_bytes = int(stat.get('file_bytes') or 0)
+        if days <= 0:
+            self.perf_stats_label.setText(
+                f"当前 {total} 个会话 / {self._fmt_size(file_bytes)}（永久保留）")
+            return
+        cand = int(stat.get('candidates') or 0)
+        cand_bytes = int(stat.get('candidate_bytes') or 0)
+        archive_bytes = int(stat.get('archive_bytes') or 0)
+        protected = int(stat.get('protected') or 0)
+        # 清理后会改紧凑写，剩余部分大致是原来的 50%
+        est_new = int(max(0, file_bytes - cand_bytes) * 0.5)
+        text = (f"当前 {total} 个会话 / {self._fmt_size(file_bytes)}；"
+                f"{days} 天前 {cand} 个（原约 {self._fmt_size(cand_bytes)}，"
+                f"归档约 {self._fmt_size(archive_bytes)}，清理后约 {self._fmt_size(est_new)}）")
+        if protected:
+            text += f"；基线保护 {protected} 个"
+        self.perf_stats_label.setText(text)
+
+    def _on_perf_retention_changed(self, _index=None):
+        days = int(self.perf_retention_combo.currentData() or 0)
+        Settings.set_perf_retention_days(days)
+        self._refresh_perf_stats()
+
+    def _on_perf_auto_changed(self, state):
+        Settings.set_perf_auto_prune(bool(state))
+
+    def _reset_perf_cleanup_button(self):
+        self.perf_cleanup_btn.setEnabled(True)
+        self.perf_cleanup_btn.setText("归档并清理")
+
+    def _on_cleanup_perf(self):
+        main_win = self.parent()
+        handler = getattr(main_win, 'perf_prune_handler', None) if main_win else None
+        if not callable(handler):
+            self.perf_cleanup_result.setText("暂时无法清理，请稍后再试")
+            return
+        days = int(self.perf_retention_combo.currentData() or 0)
+        if days <= 0:
+            self.perf_cleanup_result.setText("当前设置为永久保留，无需清理")
+            return
+        if self._perf_worker is not None and self._perf_worker.isRunning():
+            return
+        self.perf_cleanup_btn.setEnabled(False)
+        self.perf_cleanup_btn.setText("正在归档并清理…")
+        self.perf_cleanup_result.setText("正在归档并清理，请稍候…")
+        self._perf_worker = _PerfCleanupWorker(handler, days, self)
+        self._perf_worker.done.connect(self._on_perf_cleanup_done)
+        self._perf_worker.failed.connect(self._on_perf_cleanup_failed)
+        self._perf_worker.finished.connect(
+            lambda w=self._perf_worker: self._on_perf_worker_finished(w))
+        self._perf_worker.start()
+
+    def _on_perf_cleanup_done(self, stat):
+        self._reset_perf_cleanup_button()
+        stat = stat or {}
+        if stat.get('error'):
+            self.perf_cleanup_result.setText(f"清理未完成：{stat['error']}")
+        elif not stat.get('archived'):
+            failed = int(stat.get('failed') or 0)
+            if failed:
+                self.perf_cleanup_result.setText(f"{failed} 个会话归档失败，已保留")
+            else:
+                self.perf_cleanup_result.setText("没有超过保留期的会话，无需清理")
+        else:
+            archived = int(stat.get('archived') or 0)
+            failed = int(stat.get('failed') or 0)
+            archive_bytes = int(stat.get('archive_bytes') or 0)
+            freed = int(stat.get('freed_bytes') or 0)
+            before = int(stat.get('file_bytes_before') or 0)
+            after = int(stat.get('file_bytes') or 0)
+            msg = (f"已归档并清理 {archived} 个会话"
+                   f"（归档 {self._fmt_size(archive_bytes)}），"
+                   f"perf_data.json {self._fmt_size(before)} → {self._fmt_size(after)}"
+                   f"（释放 {self._fmt_size(freed)}）")
+            if failed:
+                msg += f"；{failed} 个归档失败，已保留"
+            self.perf_cleanup_result.setText(msg)
+        self._refresh_perf_stats()
+
+    def _on_perf_cleanup_failed(self, message):
+        self._reset_perf_cleanup_button()
+        self.perf_cleanup_result.setText(f"清理失败：{message}")
+
+    def _on_perf_worker_finished(self, worker):
+        if self._perf_worker is worker:
+            self._perf_worker = None
+        if worker is not None:
+            worker.deleteLater()
+
+    def reject(self):
+        worker = getattr(self, "_perf_worker", None)
+        if worker is not None and worker.isRunning():
+            return
+        super().reject()
+
+    def closeEvent(self, event):
+        worker = getattr(self, "_perf_worker", None)
+        if worker is not None and worker.isRunning():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     # ------------------------------------------------------------------
     # 全局变量页

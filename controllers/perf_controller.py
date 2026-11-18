@@ -730,6 +730,8 @@ class PerfController(QObject):
                 # 不再自动弹「性能劣化告警」：基线多起来后对比容易误报，
                 # 劣化情况统一看报告里的「基线对比」页（2026-10-30 用户要求）
             self.current_session = None
+            # 每轮采集结束后按设置自动清理超期会话（默认关闭；候选过多时提示手动清理）
+            self._maybe_auto_prune()
         self._auto_save_on_stop = False
 
         self.view.set_state(self.view.STATE_IDLE)
@@ -1087,6 +1089,44 @@ class PerfController(QObject):
             ErrorDialog.show_error(
                 self.view, "自动保存失败", f"{type(e).__name__}: {e}")
             return False
+
+    def prune_sessions(self, days, progress=None) -> dict:
+        """归档并清理 days 天前的会话（设置页「归档并清理」调用）。
+
+        采集进行中直接拒绝：此时 current_session 还在内存里，清理会和收尾写盘打架。
+        """
+        if self.current_session is not None:
+            return {"error": "性能采集进行中，请先停止采集", "archived": 0}
+        from utils.settings import Settings
+        return self.model.prune_older_than(
+            days, Settings.get_output_dir(), progress=progress, backup=False)
+
+    def _maybe_auto_prune(self):
+        """每轮采集结束后按设置自动清理；候选超过 20 个时提示去设置页手动清理。"""
+        from utils.settings import Settings
+        if not Settings.get_perf_auto_prune():
+            return
+        days = Settings.get_perf_retention_days()
+        if days <= 0:
+            return
+        try:
+            base = Settings.get_output_dir()
+            preview = self.model.prune_preview(days, base)
+            count = int(preview.get("candidates") or 0)
+            if count <= 0:
+                return
+            if count > 20:
+                show_toast(self.view,
+                           f"有 {count} 个超期会话，请在设置 → 清理缓存中手动清理")
+                return
+            stats = self.model.prune_older_than(days, base, backup=False)
+            if stats.get("archived"):
+                freed = stats.get("freed_bytes", 0) / 1024 / 1024
+                self.log_emitted.emit(
+                    f"[性能] 自动归档并清理 {stats['archived']} 个会话，"
+                    f"perf_data.json 释放 {freed:.1f} MB")
+        except Exception:
+            logger.exception("自动清理性能历史失败")
 
     def _on_worker_finished(self):
         """采集线程自然结束（达到预设监控时长）→ 走完整停止收尾。

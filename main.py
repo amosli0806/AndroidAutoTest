@@ -1168,6 +1168,11 @@ def main():
     )
     perf_view.set_suite_model(suite_model)
     perf_view.set_project_model(project_model)
+    # 设置页「清理缓存 → 性能历史数据」：统计与归档清理入口
+    main_window.set_perf_stats_handler(
+        lambda days: perf_model.prune_preview(days, Settings.get_output_dir()))
+    main_window.set_perf_prune_handler(
+        lambda days: perf_controller.prune_sessions(days))
     # 性能检测：退出时中断在录的录屏、停止抓包与旁路探针，避免 adb 子进程滞留
     app.aboutToQuit.connect(perf_controller.shutdown)
     # 自动化执行页增删套件后，即时同步到性能检测页的「场景化测试」套件下拉。
