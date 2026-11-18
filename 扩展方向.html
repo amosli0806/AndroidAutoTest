@@ -1317,6 +1317,70 @@
         当前默认仍是 full，已配置好的客户端升级后行为不变；只有主动设置 <code>--tools</code>
         或配置文件的用户才会看到收窄后的清单。</div>
     </div>
+
+    <div class="card">
+      <h3>八、B 方案手工验收清单（可勾选）</h3>
+      <p class="small" style="margin-top:0">前置：改 <code>args</code> / <code>data/mcp_config.json</code>
+        后需重启 MCP 或重载 Comate 会话（不会热更新）；每次启动看 <code>data/mcp.log</code>
+        里的 <code>MCP 工具：&lt;来源&gt;，暴露 N/73 个</code>。分组只影响 <code>tools/list</code>，
+        不影响工具实现。下面 1~11 不依赖设备，12 需要真机。</p>
+      <table>
+        <tr><th style="width:4%">✓</th><th style="width:19%">场景</th><th style="width:30%">配置</th>
+            <th style="width:23%">期望</th><th>重点看</th></tr>
+        <tr><td><input type="checkbox"></td><td><b>1 默认全量</b></td>
+            <td>无 <code>--tools</code>、无 <code>mcp_config.json</code></td>
+            <td><b>73 个</b>，<code>monkey_start</code> 在</td>
+            <td>日志「默认 full，暴露 73/73 个」；与升级前一致</td></tr>
+        <tr><td><input type="checkbox"></td><td><b>2 命令行 core</b></td>
+            <td><code>"args": ["--tools=core"]</code></td>
+            <td><b>16 个</b></td>
+            <td>有 <code>tap</code> / <code>run_case</code>；无 <code>perf_start</code> /
+              <code>monkey_start</code> / <code>save_case</code> / <code>knowledge_list</code></td></tr>
+        <tr><td><input type="checkbox"></td><td><b>3 core + gen</b></td>
+            <td><code>"args": ["--tools=core,gen"]</code></td>
+            <td><b>19 个</b></td>
+            <td>有 <code>explore_and_draft</code> / <code>save_case</code>；ops / content 仍不在</td></tr>
+        <tr><td><input type="checkbox"></td><td><b>4 standard</b></td>
+            <td><code>"args": ["--tools=standard"]</code></td>
+            <td><b>40 个</b>（core + content）</td>
+            <td>有 <code>suite_save</code> / <code>knowledge_read</code> / <code>voice_speak</code>；
+              无 <code>perf_start</code> / <code>monkey_start</code> / <code>save_case</code></td></tr>
+        <tr><td><input type="checkbox"></td><td><b>5 从 full 排除单工具</b></td>
+            <td><code>"args": ["--tools=-monkey_start"]</code></td>
+            <td><b>72 个</b>，<code>monkey_start</code> 不在</td>
+            <td>只有排除项时不会被清空，其余工具仍在</td></tr>
+        <tr><td><input type="checkbox"></td><td><b>6 配置 profile=core</b></td>
+            <td><code>{"tools": {"profile": "core"}}</code></td>
+            <td><b>16 个</b></td>
+            <td>日志「配置 profile=core，暴露 16/73 个」</td></tr>
+        <tr><td><input type="checkbox"></td><td><b>7 配置 add / remove</b></td>
+            <td><code>{"tools": {"profile": "core", "add": ["gen"], "remove": ["save_case"]}}</code></td>
+            <td><b>18 个</b></td>
+            <td><code>explore_and_draft</code> 在、<code>save_case</code> 不在</td></tr>
+        <tr><td><input type="checkbox"></td><td><b>8 优先级</b></td>
+            <td>文件写 <code>profile=core</code>，同时 <code>"args": ["--tools=full"]</code></td>
+            <td><b>73 个</b>（命令行覆盖文件）</td>
+            <td>再试 <code>--tools=core,gen</code> 应为 19</td></tr>
+        <tr><td><input type="checkbox"></td><td><b>9 非法输入不崩</b></td>
+            <td><code>"args": ["--tools=coretypo"]</code></td>
+            <td>回退 <b>73 个</b>，server 正常启动</td>
+            <td>日志有「忽略未知的工具/组」和「回退为 full」两条警告</td></tr>
+        <tr><td><input type="checkbox"></td><td><b>10 收窄后的真实使用</b></td>
+            <td><code>--tools=core</code> 起 Comate 会话</td>
+            <td>点击 / 跑现有用例正常；性能 / Monkey 提示没有这类工具</td>
+            <td>模型对缺失能力的表述是否可接受；加 <code>ops</code> 重启后同一请求应可用</td></tr>
+        <tr><td><input type="checkbox"></td><td><b>11 恢复默认</b></td>
+            <td>删除 <code>args</code> 与 <code>mcp_config.json</code></td>
+            <td>回到 <b>73 个</b></td>
+            <td>行为与升级前完全一致</td></tr>
+        <tr><td><input type="checkbox"></td><td><b>12 真机任务（可选）</b></td>
+            <td><code>--tools=core</code> + 真机</td>
+            <td><code>run_case</code> 正常执行</td>
+            <td>确认分组只影响清单，不影响设备执行</td></tr>
+      </table>
+      <p class="small">记录建议：每个场景记「实际工具数 / 日志里的来源与数量 / 缺失是否符合预期」；
+        场景 10 额外记一句「模型是怎么描述缺失工具的」，这决定以后是否把 <code>core</code> 设为默认。</p>
+    </div>
   </section>
 
   <!-- ============ 五、v1.6.0 发版前风险清单 ============ -->
