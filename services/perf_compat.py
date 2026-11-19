@@ -125,10 +125,31 @@ class AndroidCompat:
         入参可能是 `包名:子进程`（性能页下拉现在按进程列），而 `dumpsys package`
         只认包名，所以先切掉 ":" 后面那截。流量本来就按 UID 统计，子进程与主进程
         同 UID，切掉不影响结果。
+
+        优先用 `pm list packages -U --user current`：它直接返回**当前用户的完整
+        UID**（副用户会带 100000 偏移）。Android 14 部分 ROM 的 `dumpsys package`
+        只给 `appId=` / `uid=`，不再有 `userId=`，只解析 dumpsys 会拿不到 UID。
         """
         base = package.split(":", 1)[0].strip()
         if base in self._pkg_uid:
             return self._pkg_uid[base]
+
+        # ① 当前用户完整 UID（Android 14 / 多用户车机）
+        try:
+            out = shell_text(self.device,
+                             f"pm list packages -U --user current {base}",
+                             timeout=GUI_TIMEOUT_HEAVY)
+            pat = re.compile(rf"^package:{re.escape(base)}\s+uid:(\d+)\b")
+            for line in (out or "").splitlines():
+                match = pat.search(line.strip())
+                if match:
+                    uid = int(match.group(1))
+                    self._pkg_uid[base] = uid
+                    return uid
+        except Exception as e:
+            logger.debug("[AndroidCompat] pm list 获取 UID 失败: %s", e)
+
+        # ② 兼容旧版 dumpsys package：userId= / Android 14 的 appId=
         try:
             out = shell_text(self.device, f"dumpsys package {base}",
                              timeout=GUI_TIMEOUT_HEAVY)
@@ -137,7 +158,14 @@ class AndroidCompat:
                 out, re.DOTALL,
             )
             if not match:
+                match = re.search(
+                    rf"Package\s+\[{re.escape(base)}\].*?appId=(\d+)",
+                    out, re.DOTALL,
+                )
+            if not match:
                 match = re.search(r"userId=(\d+)", out)
+            if not match:
+                match = re.search(r"\bappId=(\d+)", out)
             if match:
                 uid = int(match.group(1))
                 self._pkg_uid[base] = uid
