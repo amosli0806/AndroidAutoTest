@@ -72,7 +72,7 @@ jobs:
           echo "::group::取消预发布"
           CODE=$(curl -sS -o resp.json -w "%{http_code}" -X PATCH \
                    -H "$AUTH" -H "$ACCEPT" -H "Content-Type: application/json" \
-                   "${API}/releases/${RID}" --data '{"prerelease":false}')
+                   "${API}/releases/${RID}" --data '{"prerelease":false,"make_latest":"true"}')
           echo "HTTP ${CODE}"
           head -c 800 resp.json 2>/dev/null; echo
           if [ "$CODE" != "200" ]; then
