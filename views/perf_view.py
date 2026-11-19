@@ -7,7 +7,7 @@ import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QComboBox, QPushButton, QCheckBox, QRadioButton, QButtonGroup,
-    QSpinBox, QFrame, QScrollArea, QSizePolicy,
+    QSpinBox, QFrame, QScrollArea, QSizePolicy, QLineEdit,
     QFileDialog, QDialog, QStackedWidget, QListWidget, QListWidgetItem,
     QDialogButtonBox
 )
@@ -199,6 +199,13 @@ class MultiProcessDialog(QDialog):
         self.tip.setWordWrap(True)
         lay.addWidget(self.tip)
 
+        self.search = QLineEdit()
+        self.search.setObjectName("procSearch")
+        self.search.setPlaceholderText("搜索进程名 / 包名…")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._on_search)
+        lay.addWidget(self.search)
+
         self.list = QListWidget()
         self.list.setObjectName("ProcList")
         # 只在纵向上滚动：包名本来就短，横向滚动条纯属碍事
@@ -232,6 +239,7 @@ class MultiProcessDialog(QDialog):
         lay.addWidget(box)
 
         self._apply_style()
+        self.search.setFocus()
 
     # ---------- 外观 ----------
     def _is_dark(self) -> bool:
@@ -255,6 +263,7 @@ class MultiProcessDialog(QDialog):
             box_bd, bar_c, bar_h = "#5a6068", "#4b5057", "#5f656d"
             btn_bd, cancel_fg = "#43474d", "#d6d9dd"
             accent = "#4c8dff"
+            search_bg, search_bd = "#26282b", "#3a3e44"
         else:
             bg, tip_c = "#f6f7f9", "#6b7280"
             border, list_bg, item_c = "#dfe3e8", "#ffffff", "#2b2f33"
@@ -262,10 +271,17 @@ class MultiProcessDialog(QDialog):
             box_bd, bar_c, bar_h = "#c3c9d0", "#c9ced6", "#b3b9c2"
             btn_bd, cancel_fg = "#d5dae0", "#3a3f45"
             accent = "#2d6cdf"
+            search_bg, search_bd = "#ffffff", "#d5dae0"
 
         self.setStyleSheet(f"""
             QDialog#MultiProcessDialog {{ background: {bg}; }}
             QLabel {{ font-size: 13px; color: {tip_c}; background: transparent; }}
+            QLineEdit#procSearch {{
+                background: {search_bg}; color: {item_c};
+                border: 1px solid {search_bd}; border-radius: 6px;
+                padding: 6px 10px; font-size: 13px;
+            }}
+            QLineEdit#procSearch:focus {{ border-color: {accent}; }}
             QPushButton#primaryBtn {{
                 background: #2d6cdf; color: #ffffff; border: none;
                 border-radius: 5px; font-size: 13px; padding: 0 16px;
@@ -309,6 +325,13 @@ class MultiProcessDialog(QDialog):
                 background: none;
             }}
         """)
+
+    def _on_search(self, text):
+        """按关键字过滤进程；清空关键字恢复全部。"""
+        kw = (text or "").strip().lower()
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            item.setHidden(bool(kw) and kw not in (item.text() or "").lower())
 
     def selected_processes(self) -> list:
         out = []
