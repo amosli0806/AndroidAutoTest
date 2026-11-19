@@ -752,7 +752,6 @@ for loop in 1..循环次数:
   `--tools=core,gen`，或在 `data/mcp_config.json` 写
   `{"tools": {"profile": "core", "add": [], "remove": []}}`。组分为 core / gen / ops / content，
   优先级 `--tools=` > 配置文件 > 默认 full；未标注组的新工具自动归 core。
-  12 个手工验收场景见 `扩展方向.html` 第四章第八节
 - 设备影响型操作统一生成 `run_id` 并落 `data/mcp_jobs/<run_id>.json`；执行期间其他工具返回
   `DEVICE_BUSY`（`device_list` / `adb_device_info` 与任务查询/停止工具除外），避免并发抢占设备
 - `run_case` / `run_suite` / `save_case` 默认拒绝危险步骤：`app_mgr` 的清空数据、安装、卸载、
@@ -799,8 +798,8 @@ cpu / mem 主采样、sys_mem / sys_cpu / threads 探针、手动停止与到点
 验证后已 `adb unroot` 并确认回到 `uid=2000(shell)`、设备与 u2 会话正常。批次 4.1 ~ 4.3
 已在 30EA 车机上验证：采集期间跑套件（会话记录套件名与用例结果）、基线保存 / 自身对比 /
 删除门禁、知识库笔记增删改查、语音设置读取与写入（改后已还原）；语音套件场景也在
-honda_3ya 车机上跑通（播放 2 条文案、采集 7 个样本）。网页端接入属于
-远期扩展（见 `扩展方向.html` 第 3 章第八节），不属于本期。
+honda_3ya 车机上跑通（播放 2 条文案、采集 7 个样本）。网页端接入已做 POC 评估：
+仅可行性成立，生产可用性不成立，暂不纳入规划。
 
 ---
 

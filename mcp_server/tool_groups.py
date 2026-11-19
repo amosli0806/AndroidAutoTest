@@ -1,7 +1,7 @@
 """MCP 工具分组与按需暴露（opt-in，默认 full）。
 
 默认仍暴露全部工具（兼容现有客户端）；需要省 token 的用户可以通过
-`--tools=core` 或 `data/mcp_config.json` 主动收窄。分组与第四章方案一致：
+`--tools=core` 或 `data/mcp_config.json` 主动收窄。分组与扩展方向文档第三章（Token 预算）一致：
 
 * core    设备/定位/操作 + 用例执行主链路
 * gen     用例生成（草稿 / 保存）
