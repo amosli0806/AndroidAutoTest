@@ -166,9 +166,9 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-17（v1.5.24）</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-19（v1.6.0）</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.5.24</span>
+      <span class="badge">当前版本 v1.6.0</span>
       <span class="badge">9 项规划 + 2 个新方向</span>
       <span class="badge">车机 / 手机均已实机验证</span>
       <span class="badge">按改动量分 A~D 四档</span>
@@ -496,7 +496,7 @@
       本章给出按需分组、配额与可发现性的完整方案 —— 实测数据全部来自真实的 <code>tools/list</code> 响应，不是估算。
       <b>落地采用 B</b>：默认仍暴露 73 个（与升级前一致），需要省 token 的用户主动用
       <code>--tools=core</code> 或配置文件收窄；先收集真实使用数据，再决定是否把 <code>core</code> 设为默认。<b>当前仍在体验 opt-in 分组，默认 full 不变</b>；等真实使用数据足够后再评估。
-      <b>2026-11-18 发布版 1.6.0 已实测</b>：<code>tools/list</code> 返回 73 个，客户端当前指向
+      <b>1.6.0 发布版已实测</b>：<code>tools/list</code> 返回 73 个，客户端当前指向
       <code>D:\虫师\虫师-mcp.exe</code>（发布数据），不是开发目录副本。
     </p>
 
@@ -681,10 +681,10 @@
 
   <!-- ============ 四、发版剩余风险与待办 ============ -->
   <section class="chapter" id="s4">
-    <h2><span class="num">4</span>发版剩余风险与待办 <span class="tag part">P3 加固待做 · 转正待做</span></h2>
+    <h2><span class="num">4</span>发版剩余风险与待办 <span class="tag part">P3 加固待做 · v1.6.0 已全量</span></h2>
     <p class="small" style="margin-top:0">
-      v1.5.24 → 1.6.0 预发布已实测通过；已完成的 P0/P2、帮助页崩溃、旧 updater 复用等问题不再展开，
-      这里只保留尚未完成的事项。
+      v1.6.0 已于 2026-11-19 全量发布；v1.5.24 → 1.6.0 升级实测通过，已完成的 P0/P2、
+      帮助页崩溃、旧 updater 复用等问题不再展开，这里只保留尚未完成的事项。
     </p>
 
     <div class="card">
@@ -703,12 +703,12 @@
     </div>
 
     <div class="card">
-      <h3>二、待办：转正与内测通道</h3>
+      <h3>二、已发布：v1.6.0（全量）</h3>
       <ul>
-        <li>当前 v1.6.0 仍是预发布，<code>/releases/latest</code> 仍为 v1.5.24</li>
-        <li>本机 <code>D:\虫师\data\preview.json</code> 指向 v1.6.0</li>
-        <li>验证完成后：<code>python release.py manual-promote v1.6.0</code></li>
-        <li>转正后清理内测通道：<code>python release.py clear-preview</code>（转正流程通常会自动清）</li>
+        <li><code>/releases/latest</code> 已指向 v1.6.0；预发布列表为空</li>
+        <li>本机 <code>D:\虫师\data\preview.json</code> 已清理，不再走内测通道</li>
+        <li>如果其他机器还留着旧的 <code>preview.json</code>，执行
+          <code>python release.py clear-preview</code></li>
       </ul>
     </div>
 
