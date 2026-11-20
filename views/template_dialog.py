@@ -64,15 +64,25 @@ def _type_label(step_type: str) -> str:
     return _TYPE_NAMES.get(step_type, step_type or '未知')
 
 
+def _head_line(index: int, step_type: str, name: str) -> str:
+    """一行步骤的开头：序号 + 类型 + 名称。
+
+    步骤名常常自带类型前缀（真实数据里是「点击 - 开始导航(步行导航)」），
+    再补一遍类型就成了「点击 · 点击 - 开始导航」，所以名字以类型开头时不再加。
+    """
+    label = _type_label(step_type)
+    name = (name or "").strip()
+    if not name:
+        return f"{index}. {label}"
+    if name.startswith(label):
+        return f"{index}. {name}"
+    return f"{index}. {label} · {name}"
+
+
 def _step_line(index: int, snap: dict) -> str:
     """把一条步骤快照压成一行预览：序号. 类型 · 名称  关键参数。"""
-    label = _type_label(snap.get('type', ''))
-    name = (snap.get('name') or '').strip()
+    bits = [_head_line(index, snap.get('type', ''), snap.get('name') or '')]
     params = snap.get('params') or {}
-    bits = [f"{index}. {label}"]
-    # 步骤名常常就是类型名（「等待」「点击」），重复显示读起来很傻
-    if name and name != label:
-        bits.append(f"· {name}")
     # 只挑最有信息量的一个参数，避免一行太长
     for key in ('locationValue', 'text', 'packageName', 'package', 'ms', 'key'):
         val = params.get(key)
@@ -228,7 +238,7 @@ class TemplatePickerDialog(AutoFreeDialog):
         foot.addWidget(cancel)
 
         self._ok = QPushButton("插入")
-        self._ok.setFixedWidth(120)
+        self._ok.setFixedWidth(96)
         self._ok.setCursor(Qt.CursorShape.PointingHandCursor)
         self._ok.setStyleSheet(
             "QPushButton{background:#1976d2;border:none;border-radius:5px;padding:6px 0;"
@@ -310,7 +320,7 @@ class TemplatePickerDialog(AutoFreeDialog):
         steps = tpl.get("steps") or []
         lines = [_step_line(i, s) for i, s in enumerate(steps, 1)]
         self._preview.setPlainText("\n".join(lines))
-        self._ok.setText(f"插入 {len(steps)} 个步骤")
+        self._ok.setText("插入")
         self._ok.setEnabled(bool(steps))
 
     # ---------- 交互 ----------
@@ -444,12 +454,8 @@ class SaveTemplateDialog(AutoFreeDialog):
         preview.setStyleSheet(
             f"QTextBrowser{{background:{pal['preview_bg']};border:1px solid {pal['divider']};"
             f"border-radius:6px;font-size:11.5px;color:{pal['text']};padding:6px 8px;}}")
-        lines = []
-        for i, s in enumerate(self._steps, 1):
-            label = _type_label(s.type)
-            name = (s.name or "").strip()
-            lines.append(f"{i}. {label}"
-                         + (f" · {name}" if name and name != label else ""))
+        lines = [_head_line(i, s.type, s.name or '')
+                 for i, s in enumerate(self._steps, 1)]
         preview.setPlainText("\n".join(lines))
         box.addWidget(preview, 1)
 

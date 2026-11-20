@@ -837,7 +837,8 @@ class StepController(QObject):
             return
         ok, msg = self.template_model.save_from_steps(
             dlg.result_name, dlg.result_group, steps)
-        show_toast(message=msg, duration=3000)
+        # 成功只提示「已保存」：模板名和步骤数用户自己刚填的，重复念一遍是噪音
+        show_toast(message="已保存" if ok else msg, duration=2500)
 
     def _on_insert_template(self, index):
         """在 index 位置插入模板里的步骤（-1 = 末尾）。"""
@@ -868,7 +869,7 @@ class StepController(QObject):
         new_ids = self.model.insert_steps_at(self.current_case_id, index, steps)
         self.refresh_steps()
         self.step_view.flash_steps(new_ids)
-        show_toast(message=f"已插入 {len(new_ids)} 个步骤", duration=2500)
+        show_toast(message="已插入", duration=2000)
 
     def _on_add_step_from_card(self, action_type, params, name):
         if self.current_case_id is None:
