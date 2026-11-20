@@ -295,14 +295,11 @@ class StepListView(QListWidget):
 
         if ids:
             edit_act = menu.addAction(
-                menu_icon('fa6s.pen-to-square', '#1976d2'),
-                f"批量修改参数（{len(ids)} 个步骤）…")
+                menu_icon('fa6s.pen-to-square', '#1976d2'), "批量修改参数")
             tpl_save = menu.addAction(
-                menu_icon('fa6s.bookmark', '#1976d2'),
-                f"存为步骤模板（{len(ids)} 个步骤）…")
+                menu_icon('fa6s.bookmark', '#1976d2'), "存为步骤模板")
             tpl_insert = menu.addAction(
-                menu_icon('fa6s.file-import', '#1976d2'),
-                "在选中步骤之后插入模板…")
+                menu_icon('fa6s.file-import', '#1976d2'), "插入步骤模板")
             menu.addSeparator()
             if len(ids) == 1:
                 act = menu.addAction(menu_icon('fa6s.trash-can', '#e74c3c'),
@@ -313,8 +310,7 @@ class StepListView(QListWidget):
         else:
             # 没选中也要能插模板：新建用例时「先插一段标准前置」是最常见的用法
             tpl_insert = menu.addAction(
-                menu_icon('fa6s.file-import', '#1976d2'),
-                "在末尾插入模板…")
+                menu_icon('fa6s.file-import', '#1976d2'), "插入步骤模板")
 
         chosen = menu.exec(event.globalPos())
         if chosen is None:
