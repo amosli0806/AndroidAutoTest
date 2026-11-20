@@ -656,8 +656,13 @@ class StepCardWidget(QWidget):
             has_wp = False
 
         if self._flash:
-            # 高亮盖过主题底色；只是「刚插进来」的提示，不参与选中态
+            # 高亮盖过主题底色；只是「刚插进来」的提示，不参与选中态。
+            # 注意 text_color / hover_bg 也要一并给 —— 这三个变量后面样式表都要用，
+            # 只赋 bg 会在 flash() 时抛 UnboundLocalError（2026-11-20 实际踩到）
             bg = "#1d3a57" if is_dark else "#d7e8fb"
+            text_color = "#eee" if is_dark else "#333"
+            hover_bg = ("rgba(255, 255, 255, 0.1)" if is_dark
+                        else "rgba(0, 0, 0, 0.05)")
         elif is_dark:
             if has_wp:
                 # 有壁纸时半透明，透出壁纸
