@@ -4,6 +4,11 @@
 为什么不做独立的「模板管理页」：那等于再造一个用例列表，维护成本和注意力成本
 都不划算。管理动作（重命名 / 删除）直接挂在插入对话框的列表右键上，
 用到的时候顺手改，不用专门去一个页面。
+
+样式说明：项目其它对话框的背景写在 `utils/theme.py` 里，按
+`#InputDialog QFrame#container` 这样的 objectName 精确匹配。新对话框不在那份
+注册表里，拿不到样式 —— 所以这里自带一套 `_palette()`，同时照顾明暗两种主题
+（2026-11-20：第一版只给了浅色硬编码，容器没有背景色，整个对话框是透明的）。
 """
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
@@ -25,6 +30,34 @@ _TYPE_NAMES = {
     'input': '输入', 'wait': '等待', 'wait_for': '显式等待', 'assert': '断言',
     'voice': '语音播报',
 }
+
+
+def _palette() -> dict:
+    """按当前主题返回一套色值（明 / 暗）。"""
+    try:
+        from utils.settings import THEME_MODE_DARK, Settings
+        dark = Settings.get_theme_mode() == THEME_MODE_DARK
+    except Exception:
+        dark = False
+    if dark:
+        return {
+            "bg": "#2b2b2b", "border": "#3d3d3d", "text": "#e8e8e8",
+            "muted": "#9aa4b2", "faint": "#7d8794",
+            "input_bg": "#333333", "input_border": "#4a4a4a",
+            "list_bg": "#2b2b2b", "side_bg": "#262626",
+            "sel_bg": "#1d3a57", "sel_fg": "#cfe2f7", "hover_bg": "#363636",
+            "preview_bg": "#242424", "btn_bg": "#3a3a3a", "btn_fg": "#d0d0d0",
+            "divider": "#3a3a3a",
+        }
+    return {
+        "bg": "#ffffff", "border": "#d0d0d0", "text": "#1f2733",
+        "muted": "#98a2b3", "faint": "#8fa3bc",
+        "input_bg": "#f5f7fa", "input_border": "#e4e9f0",
+        "list_bg": "#ffffff", "side_bg": "#fafbfd",
+        "sel_bg": "#e8f1fd", "sel_fg": "#12406e", "hover_bg": "#f6f9fd",
+        "preview_bg": "#fafbfd", "btn_bg": "#f2f4f7", "btn_fg": "#5b6472",
+        "divider": "#edf1f7",
+    }
 
 
 def _type_label(step_type: str) -> str:
@@ -52,7 +85,7 @@ def _step_line(index: int, snap: dict) -> str:
 class _TemplateRow(QWidget):
     """模板列表的一行：名称 + 副标题（步数 / 分组 / 使用次数）。"""
 
-    def __init__(self, template: dict, parent=None):
+    def __init__(self, template: dict, pal: dict, parent=None):
         super().__init__(parent)
         self.setObjectName("TemplateRow")
         lay = QVBoxLayout(self)
@@ -60,7 +93,7 @@ class _TemplateRow(QWidget):
         lay.setSpacing(2)
 
         name = QLabel(template.get("name") or "未命名")
-        name.setStyleSheet("font-size: 13px; font-weight: 600; color: #1f2733;")
+        name.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {pal['text']};")
         lay.addWidget(name)
 
         steps = template.get("steps") or []
@@ -70,17 +103,16 @@ class _TemplateRow(QWidget):
         if used:
             meta += f" · 用过 {used} 次"
         sub = QLabel(meta)
-        sub.setStyleSheet("font-size: 11px; color: #98a2b3;")
+        sub.setStyleSheet(f"font-size: 11px; color: {pal['muted']};")
         lay.addWidget(sub)
 
-        first = steps[0] if steps else None
-        if first:
+        if steps:
             tail = "  →  ".join(
                 (s.get("name") or _type_label(s.get("type", ""))) for s in steps[:3])
             if len(steps) > 3:
                 tail += f"  …共 {len(steps)} 步"
             hint = QLabel(tail)
-            hint.setStyleSheet("font-size: 10.5px; color: #8fa3bc;")
+            hint.setStyleSheet(f"font-size: 10.5px; color: {pal['faint']};")
             lay.addWidget(hint)
 
 
@@ -92,6 +124,8 @@ class TemplatePickerDialog(AutoFreeDialog):
         self._model = model
         self.result_template = None
         self.result_steps = []
+        self._pal = _palette()
+        pal = self._pal
 
         self.setObjectName("TemplatePickerDialog")
         self.setWindowTitle("插入步骤模板")
@@ -106,10 +140,15 @@ class TemplatePickerDialog(AutoFreeDialog):
 
         container = QFrame()
         container.setObjectName("container")
+        # 背景和圆角必须显式给：theme.py 只认它自己那几个 objectName，
+        # 没有这条规则时整个对话框是全透明的（能看见下面的步骤卡片）
+        container.setStyleSheet(
+            f"QFrame#container{{background-color:{pal['bg']};"
+            f"border:1px solid {pal['border']};border-radius:12px;}}")
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(24)
         shadow.setOffset(0, 0)
-        shadow.setColor(QColor(0, 0, 0, 80))
+        shadow.setColor(QColor(0, 0, 0, 90))
         container.setGraphicsEffect(shadow)
         outer.addWidget(container)
 
@@ -120,12 +159,12 @@ class TemplatePickerDialog(AutoFreeDialog):
         # ---- 标题行 ----
         head = QHBoxLayout()
         title = QLabel("插入步骤模板")
-        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        title.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {pal['text']};")
         head.addWidget(title)
         head.addStretch(1)
         if position_text:
             pos = QLabel(position_text)
-            pos.setStyleSheet("font-size: 11px; color: #98a2b3;")
+            pos.setStyleSheet(f"font-size: 11px; color: {pal['muted']};")
             head.addWidget(pos)
         box.addLayout(head)
 
@@ -133,8 +172,8 @@ class TemplatePickerDialog(AutoFreeDialog):
         self._search = QLineEdit()
         self._search.setPlaceholderText("搜索模板名称…")
         self._search.setStyleSheet(
-            "QLineEdit{background:#f5f7fa;border:1px solid #e4e9f0;border-radius:6px;"
-            "padding:6px 10px;font-size:12px;}")
+            f"QLineEdit{{background:{pal['input_bg']};border:1px solid {pal['input_border']};"
+            f"border-radius:6px;padding:6px 10px;font-size:12px;color:{pal['text']};}}")
         self._search.textChanged.connect(self._reload)
         box.addWidget(self._search)
 
@@ -145,21 +184,21 @@ class TemplatePickerDialog(AutoFreeDialog):
         self._group_list = QListWidget()
         self._group_list.setFixedWidth(118)
         self._group_list.setStyleSheet(
-            "QListWidget{background:#fafbfd;border:1px solid #edf1f7;border-radius:6px;"
-            "font-size:12px;outline:none;}"
-            "QListWidget::item{padding:6px 8px;border-radius:4px;color:#5b6472;}"
-            "QListWidget::item:selected{background:#e8f1fd;color:#12406e;}"
-            "QListWidget::item:hover{background:#f1f5fa;}")
+            f"QListWidget{{background:{pal['side_bg']};border:1px solid {pal['divider']};"
+            f"border-radius:6px;font-size:12px;outline:none;color:{pal['muted']};}}"
+            f"QListWidget::item{{padding:6px 8px;border-radius:4px;}}"
+            f"QListWidget::item:selected{{background:{pal['sel_bg']};color:{pal['sel_fg']};}}"
+            f"QListWidget::item:hover{{background:{pal['hover_bg']};}}")
         self._group_list.currentRowChanged.connect(lambda _r: self._reload())
         mid.addWidget(self._group_list)
 
         self._list = QListWidget()
         self._list.setStyleSheet(
-            "QListWidget{background:#ffffff;border:1px solid #edf1f7;border-radius:6px;"
-            "outline:none;}"
-            "QListWidget::item{margin:2px;border-radius:6px;}"
-            "QListWidget::item:selected{background:#e8f1fd;}"
-            "QListWidget::item:hover{background:#f6f9fd;}")
+            f"QListWidget{{background:{pal['list_bg']};border:1px solid {pal['divider']};"
+            f"border-radius:6px;outline:none;}}"
+            f"QListWidget::item{{margin:2px;border-radius:6px;color:{pal['text']};}}"
+            f"QListWidget::item:selected{{background:{pal['sel_bg']};}}"
+            f"QListWidget::item:hover{{background:{pal['hover_bg']};}}")
         self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._on_row_menu)
         self._list.itemDoubleClicked.connect(lambda _i: self._accept_insert())
@@ -171,8 +210,8 @@ class TemplatePickerDialog(AutoFreeDialog):
         self._preview = QTextBrowser()
         self._preview.setFixedHeight(86)
         self._preview.setStyleSheet(
-            "QTextBrowser{background:#fafbfd;border:1px solid #edf1f7;border-radius:6px;"
-            "font-size:11.5px;color:#3d4654;padding:6px 8px;}")
+            f"QTextBrowser{{background:{pal['preview_bg']};border:1px solid {pal['divider']};"
+            f"border-radius:6px;font-size:11.5px;color:{pal['text']};padding:6px 8px;}}")
         box.addWidget(self._preview)
 
         # ---- 底部按钮 ----
@@ -182,9 +221,9 @@ class TemplatePickerDialog(AutoFreeDialog):
         cancel.setFixedWidth(84)
         cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel.setStyleSheet(
-            "QPushButton{background:#f2f4f7;border:none;border-radius:5px;padding:6px 0;"
-            "font-size:12px;color:#5b6472;}"
-            "QPushButton:hover{background:#e8ebf0;}")
+            f"QPushButton{{background:{pal['btn_bg']};border:none;border-radius:5px;"
+            f"padding:6px 0;font-size:12px;color:{pal['btn_fg']};}}"
+            f"QPushButton:hover{{background:{pal['hover_bg']};}}")
         cancel.clicked.connect(self.reject)
         foot.addWidget(cancel)
 
@@ -195,7 +234,7 @@ class TemplatePickerDialog(AutoFreeDialog):
             "QPushButton{background:#1976d2;border:none;border-radius:5px;padding:6px 0;"
             "font-size:12px;color:#fff;}"
             "QPushButton:hover{background:#1565c0;}"
-            "QPushButton:disabled{background:#c9d4e2;}")
+            "QPushButton:disabled{background:#c9d4e2;color:#f2f5f9;}")
         self._ok.clicked.connect(self._accept_insert)
         foot.addWidget(self._ok)
         box.addLayout(foot)
@@ -237,7 +276,7 @@ class TemplatePickerDialog(AutoFreeDialog):
 
         for t in rows:
             item = QListWidgetItem()
-            widget = _TemplateRow(t)
+            widget = _TemplateRow(t, self._pal)
             item.setSizeHint(widget.sizeHint())
             item.setData(Qt.ItemDataRole.UserRole, t.get("id"))
             self._list.addItem(item)
@@ -332,6 +371,8 @@ class SaveTemplateDialog(AutoFreeDialog):
         self._steps = steps or []
         self.result_name = ""
         self.result_group = ""
+        self._pal = _palette()
+        pal = self._pal
 
         self.setObjectName("SaveTemplateDialog")
         self.setWindowTitle("存为步骤模板")
@@ -346,10 +387,13 @@ class SaveTemplateDialog(AutoFreeDialog):
 
         container = QFrame()
         container.setObjectName("container")
+        container.setStyleSheet(
+            f"QFrame#container{{background-color:{pal['bg']};"
+            f"border:1px solid {pal['border']};border-radius:12px;}}")
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(24)
         shadow.setOffset(0, 0)
-        shadow.setColor(QColor(0, 0, 0, 80))
+        shadow.setColor(QColor(0, 0, 0, 90))
         container.setGraphicsEffect(shadow)
         outer.addWidget(container)
 
@@ -358,27 +402,28 @@ class SaveTemplateDialog(AutoFreeDialog):
         box.setSpacing(12)
 
         title = QLabel(f"存为步骤模板（{len(self._steps)} 个步骤）")
-        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        title.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {pal['text']};")
         box.addWidget(title)
 
         sub = QLabel("模板存的是这些步骤的快照，之后在原用例里改动不会影响模板。")
-        sub.setStyleSheet("font-size: 11px; color: #98a2b3;")
+        sub.setStyleSheet(f"font-size: 11px; color: {pal['muted']};")
         sub.setWordWrap(True)
         box.addWidget(sub)
 
         name_label = QLabel("模板名称")
-        name_label.setStyleSheet("font-size: 12px; color: #5b6472;")
+        name_label.setStyleSheet(f"font-size: 12px; color: {pal['muted']};")
         box.addWidget(name_label)
 
         self._name = QLineEdit()
         self._name.setPlaceholderText("例如：启动应用并进入首页")
         self._name.setStyleSheet(
-            "QLineEdit{background:#f5f7fa;border:1px solid #e4e9f0;border-radius:6px;"
-            "padding:6px 10px;font-size:12px;}")
+            f"QLineEdit{{background:{pal['input_bg']};border:1px solid {pal['input_border']};"
+            f"border-radius:6px;padding:6px 10px;font-size:12px;color:{pal['text']};}}"
+            f"QLineEdit:focus{{border-color:#1976d2;}}")
         box.addWidget(self._name)
 
         group_label = QLabel("分组（可留空）")
-        group_label.setStyleSheet("font-size: 12px; color: #5b6472;")
+        group_label.setStyleSheet(f"font-size: 12px; color: {pal['muted']};")
         box.addWidget(group_label)
 
         self._group = QComboBox()
@@ -388,19 +433,23 @@ class SaveTemplateDialog(AutoFreeDialog):
             if g and g != "未分组":
                 self._group.addItem(g)
         self._group.setStyleSheet(
-            "QComboBox{background:#f5f7fa;border:1px solid #e4e9f0;border-radius:6px;"
-            "padding:5px 8px;font-size:12px;}")
+            f"QComboBox{{background:{pal['input_bg']};border:1px solid {pal['input_border']};"
+            f"border-radius:6px;padding:5px 8px;font-size:12px;color:{pal['text']};}}"
+            f"QComboBox QAbstractItemView{{background:{pal['bg']};color:{pal['text']};"
+            f"selection-background-color:{pal['sel_bg']};"
+            f"selection-color:{pal['sel_fg']};}}")
         box.addWidget(self._group)
 
         preview = QTextBrowser()
         preview.setStyleSheet(
-            "QTextBrowser{background:#fafbfd;border:1px solid #edf1f7;border-radius:6px;"
-            "font-size:11.5px;color:#3d4654;padding:6px 8px;}")
+            f"QTextBrowser{{background:{pal['preview_bg']};border:1px solid {pal['divider']};"
+            f"border-radius:6px;font-size:11.5px;color:{pal['text']};padding:6px 8px;}}")
         lines = []
         for i, s in enumerate(self._steps, 1):
             label = _type_label(s.type)
             name = (s.name or "").strip()
-            lines.append(f"{i}. {label}" + (f" · {name}" if name and name != label else ""))
+            lines.append(f"{i}. {label}"
+                         + (f" · {name}" if name and name != label else ""))
         preview.setPlainText("\n".join(lines))
         box.addWidget(preview, 1)
 
@@ -410,9 +459,9 @@ class SaveTemplateDialog(AutoFreeDialog):
         cancel.setFixedWidth(84)
         cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel.setStyleSheet(
-            "QPushButton{background:#f2f4f7;border:none;border-radius:5px;padding:6px 0;"
-            "font-size:12px;color:#5b6472;}"
-            "QPushButton:hover{background:#e8ebf0;}")
+            f"QPushButton{{background:{pal['btn_bg']};border:none;border-radius:5px;"
+            f"padding:6px 0;font-size:12px;color:{pal['btn_fg']};}}"
+            f"QPushButton:hover{{background:{pal['hover_bg']};}}")
         cancel.clicked.connect(self.reject)
         foot.addWidget(cancel)
 
@@ -426,6 +475,8 @@ class SaveTemplateDialog(AutoFreeDialog):
         ok.clicked.connect(self._on_save)
         foot.addWidget(ok)
         box.addLayout(foot)
+
+        self._name.setFocus()
 
     def _on_save(self):
         name = self._name.text().strip()
