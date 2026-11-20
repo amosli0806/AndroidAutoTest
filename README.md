@@ -10,11 +10,11 @@
 
 | 项目 | 说明 |
 |---|---|
-| 当前版本 | **1.6.0**（2026-11-19 全量发布）。`utils/version.py` 是唯一版本号来源 |
+| 当前版本 | **1.6.1**（2026-11-19 全量发布）。`utils/version.py` 是唯一版本号来源 |
 | 平台 | Windows 10 / 11 x64，绿色免安装 |
 | 技术栈 | Python 3.13 + PyQt6 + uiautomator2 + adb |
 | 代码规模 | 139 个 Python 文件，约 7.1 万行（views 34.1k / utils 10.2k / services 9.6k / controllers 7.1k / models 4.1k） |
-| 安装包 | zip 约 308 MB（1.6.0 实测），解压后程序约 514 MB（另含 `data/` 用户数据；内置 scrcpy / tcpdump / 虫师-mcp.exe，**不含 adb**） |
+| 安装包 | zip 约 308 MB（1.6.1 实测），解压后程序约 514 MB（另含 `data/` 用户数据；内置 scrcpy / tcpdump / 虫师-mcp.exe，**不含 adb**） |
 | 发布通道 | GitHub Releases：正式版走 `/releases/latest`，预发布即灰度通道（见 5.9） |
 | 许可 | MIT |
 
@@ -25,9 +25,9 @@
 这份 README 不是营销页，而是**功能全景 + 实现现状**的说明书，目标读者包括「想了解能力边界的使用者」
 和「要基于现状做优化分析的人（含 AI）」。为了让信息不过时，约定如下：
 
-- **版本锚点**：本文对应 **1.6.0**，最后一次逐项核对代码是 **2026-11-19**。
-  1.6.0 已于 2026-11-19 全量发布（`/releases/latest` 指向 1.6.0），
-  普通客户端「检查更新」已经可以收到。本文按 1.6.0 的代码状态描述。
+- **版本锚点**：本文对应 **1.6.1**，最后一次逐项核对代码是 **2026-11-19**。
+  1.6.1 已于 2026-11-19 全量发布（`/releases/latest` 指向 1.6.1），
+  普通客户端「检查更新」已经可以收到。本文按 1.6.1 的代码状态描述。
 - **标注约定**：✅ 已实现且已接入界面；⚠️ 代码写好但界面未接线；❌ 未实现/仅方案。
 - **代码位置**用 `路径:类.方法` 形式标出，方便直接对照源码核实；**文档与代码冲突时以代码为准**。
 - 每次改动的「用户视角说明」记在 `CHANGELOG.md`，本文只描述**当前状态**，不记流水账。
@@ -75,7 +75,7 @@ Android 自动化测试工具链长期存在三个断层：
 ### 2.1 直接使用（推荐）
 
 1. 到 [Releases](https://github.com/amosli0806/AndroidAutoTest/releases/latest) 下载 `chongshi-<版本>-win64.zip`
-   （`latest` 是当前稳定版 **1.6.0**；1.6.0 已于 2026-11-19 全量发布）
+   （`latest` 是当前稳定版 **1.6.1**；1.6.1 已于 2026-11-19 全量发布）
 2. 解压到任意目录（**路径含中文没问题**），双击 `虫师.exe`
 3. 手机/车机打开 **USB 调试**，插线后顶部工具栏会出现序列号
 4. `F1` 打开帮助中心，里面有每一步的图文说明
@@ -116,7 +116,7 @@ pyinstaller mcp_server.spec --noconfirm --distpath dist_mcp --workpath build_mcp
 | **ADB 工具箱** | 命令执行台 + 12 条预设命令 + 弱网 / Monkey 面板 | `views/adb_toolbox_view.py` |
 | **自动化编辑** | 项目树 + 步骤列表 + 动作卡片（三栏），支持录制与自然语言生成 | `views/project_tree_view.py` / `step_list_view.py` / `action_card_view.py` |
 | **自动化执行** | 勾选用例 → 执行 → 日志（在底部面板）→ 报告 | `views/execute_view.py` |
-| **应用元素库** | 元素集中管理 + 一键验证 + 抓取界面 + 拾取入库 | `views/element_manager_view.py` |
+| **应用元素库** | 元素集中管理 + 批量健康检查 + 检查失效引用 + 抓取界面 + 拾取入库 | `views/element_manager_view.py` |
 | **应用可视化** | 整页看画面、点控件取六种定位值、存入元素库 / 回填卡片 | `views/visual_view.py` / `controllers/visual_controller.py` |
 | **接口自动化** | 分组/接口 + 环境变量 + 断言 + 批量执行 + 报告 | `views/api_view.py` |
 | **性能检测** | CPU/内存/FPS/流量采集 + 整机探针 + 现场留证 + 报告 | `views/perf_view.py` |
@@ -154,7 +154,7 @@ pyinstaller mcp_server.spec --noconfirm --distpath dist_mcp --workpath build_mcp
 
 ![语音播报](docs/screenshots/05-voice.png)
 
-**应用元素库** —— 元素按应用 / 模块归类，六种定位方式，支持一键在设备上验证
+**应用元素库** —— 元素按应用 / 模块归类，六种定位方式；支持多选批量健康检查、检查失效引用、抓取界面与拾取入库
 
 ![应用元素库](docs/screenshots/03-element.png)
 
@@ -382,18 +382,21 @@ for loop in 1..循环次数:
 
 - 表格 6 列：所属应用 / 所属模块 / 名称 / 定位方式 / 定位值 / **状态**；备注不占列，
   在新增 / 编辑对话框和 Excel 里维护
-- 操作：搜索、按应用筛选、**抓取界面**、**检查引用**、创建 / 编辑 / 删除、导入 / 导出（Excel）
-- **批量校验**（多选 → 右键「验证选中的 N 个（一次读屏）」）：一次 `dump_ui_xml()` 后在本地匹配，
+- 操作：搜索、按应用筛选、**抓取界面**、**批量健康检查**、**检查引用**、创建 / 编辑 / 删除、导入 / 导出（Excel）
+- **批量健康检查**（多选 → 右键「验证选中的 N 个（一次读屏）」）：一次 `dump_ui_xml()` 后在本地匹配，
   结果写进「状态」列（✅ 存在 / ❌ 不存在 / — 未校验）。之所以不逐个调 `exists()`：
   u2 的 exists 每次都要 dump，车机单次 8~12 秒，20 个元素就是几分钟；本地匹配仍是 1 次开销。
-  资源 ID / 文本 / 描述可本地判定；XPath（ElementTree 语法有限）与坐标、图像一律标「未校验」
+  资源 ID / 文本 / 描述可本地判定；XPath（ElementTree 语法有限）与坐标、图像一律标「未校验」。
+  状态列保存结果；元素定位值一改，旧结果自动失效；批量检查只覆盖当前屏幕
 - **重新拾取定位**（单选 → 右键）：打开拾取面板点一下控件，只更新该元素的定位方式与值，
   id / 名称 / 应用 / 模块都不变（步骤里的 `element_id` 引用因此依然有效）
-- **检查引用**（顶部按钮）：扫描全部用例步骤，列出 `element_id` 指向「已不存在的元素」的死引用，
+- **检查引用（引用健康检查）**（顶部按钮）：扫描全部用例步骤，列出 `element_id` 指向「已不存在的元素」的死引用，
   形如「用例 / 步骤 / 缺失的元素 / 现有定位」。这类步骤执行时 `resolve_element()` 会直接抛
   「元素ID 已失效」，所以给了两条修复路径：**重新拾取**（写回新定位并解除死引用）与
   **解除引用**（只抹掉 `element_id`，保留步骤原有的定位方式与值）；也可一键「全部解除引用」。
   这一步只读 `steps_data.json` + `elements_data.json`，不需要连设备
+- **健康检查的边界**：批量健康检查只看当前屏幕；XPath / 坐标 / 图像定位标「未校验」；
+  检查引用只读本地 JSON，不连设备
 - **抓取界面**：一次 dump 当前屏幕，列出所有可定位元素（默认勾选「可点击 / 有文案」的，
   纯布局容器不勾），统一填应用与模块后批量入库；已存在项按「应用 + 模块 + 定位方式 + 定位值」跳过
 - Excel 格式：**一个应用一张工作表**，5 列（所属模块 / 名称 / 定位方式 / 定位值 / 备注）；
@@ -700,12 +703,13 @@ for loop in 1..循环次数:
 - **快捷键**：7 组共 41 个，全部可在设置里改，留空即禁用（默认表见 `utils/settings.py:DEFAULT_SHORTCUTS`）
 - **检查更新**：启动 4 秒后后台检查（失败静默），有新版在菜单亮红点；见 5.8
 
-### 4.14 MCP 服务（本地 stdio，P0/P1/P2 + 批次 3.1 ~ 3.4 / 4.1 ~ 4.3）
+### 4.14 MCP 服务（本地 stdio，73 个工具）
 
-`mcp_server/` + `main.py --mcp`。这是**开发中的能力**：把 `device_service` 薄封装成 MCP 工具，
+`mcp_server/` 提供本地 stdio MCP 服务；安装包自带独立的 `虫师-mcp.exe`，与 `虫师.exe` 同级。
 让 Comate / Claude Desktop / Cursor / Cline 等支持本地 stdio 的客户端驱动虫师。**不监听端口、不做 HTTP**。
 
-- 启动：`python main.py --mcp`（`--mcp` 在任何 PyQt6 / views import 之前分流，stdout 只留给 MCP 协议）
+- 启动：安装版直接运行 `<安装目录>\虫师-mcp.exe`；开发期用 `python main.py --mcp`
+  （`--mcp` 在任何 PyQt6 / views import 之前分流，stdout 只留给 MCP 协议）
 - 设备/定位：`device_list`、`screenshot`、`ui_find`、`ui_dump`
 - 操作：`tap`、`input_text`、`swipe`、`press_key`、`launch_app`
 - 等待/断言：`wait_until`、`assert`
@@ -718,10 +722,10 @@ for loop in 1..循环次数:
 - 可控写扩展：`voice_speak` / `voice_verify`、`api_run`、`element_upsert`、
   `suite_list` / `suite_save` / `suite_delete`、`case_rename` / `case_copy` / `case_delete`、
   `step_move` / `step_update`、`adb_push`、`ai_analyze_failure`
-- 设备影响（批次 3.1）：`app_install`、`app_uninstall`、`app_clear_data`、`hprof_dump`、
+- 设备影响（单发）：`app_install`、`app_uninstall`、`app_clear_data`、`hprof_dump`、
   `device_reboot`（仅 system）。安装/卸载/清数据/重启需要 `allow_destructive=true`；
   `hprof_dump` 免门禁，dump 60 秒、pull 120 秒硬超时，产物落到输出目录 `<序列号>/hprof/`
-- 设备影响（批次 3.2）：`monkey_start` / `monkey_status` / `monkey_stop`（设备端常驻，
+- 长任务：`monkey_start` / `monkey_status` / `monkey_stop`（设备端常驻，
   默认 24 小时、最长 72 小时，适合 13 ~ 60 小时长跑）、`screenrecord_start` /
   `screenrecord_stop`（≤180 秒，结束自动 pull 并删设备文件）、`logcat_start` /
   `logcat_stop` / `logcat_read`（≤5 分钟或 2 万行）。Monkey 默认事件比例为
@@ -730,21 +734,21 @@ for loop in 1..循环次数:
   `packages` 第一项
 - 长任务统一返回 `run_id`；watchdog 到点自动停；MCP 重启后设备端任务标记 `detached`，
   可按记录的设备 PID 重新接上（`monkey_status` / `monkey_stop`）
-- 设备影响（批次 3.3）：`perf_start` / `perf_status` / `perf_stop` 支持
+- 性能与抓包：`perf_start` / `perf_status` / `perf_stop` 支持
   cpu / mem / fps / traffic，可选 sys_mem / netdev / iotop 探针；sys_cpu、threads、
   fps_display 按 GUI 规则自动跟随。默认 60 分钟、最长 180 分钟；会话写入
   `data/perf_data.json`，可直接用 `perf_report` 生成报告。`tcpdump_start` /
   `tcpdump_stop` 支持 BPF 过滤与时长 / 大小 / 分段上限，**需设备 root**
-- 设备影响（批次 3.4）：`weak_net_apply` / `weak_net_clear` 支持延迟、丢包与带宽限制，
+- 弱网模拟：`weak_net_apply` / `weak_net_clear` 支持延迟、丢包与带宽限制，
   需 `allow_destructive=true` 且设备已 root；TTL 默认 600 秒、最大 3600 秒，
   设备端 `sleep + tc qdisc del` 兜底，MCP 退出也会按时自动清除
-- 性能场景化（4.1）：`perf_start` 支持 `suite_name` / `case_ids` / `loop` /
+- 性能场景化：`perf_start` 支持 `suite_name` / `case_ids` / `loop` /
   `stop_on_failure`，采集期间同步执行用例；`suite_type="voice"` 时改为播放语音套件，
   `perf_status` / `perf_stop` 会返回场景执行结果
-- 性能基线（4.2）：`perf_baseline_save`（同名需 `overwrite=true`）、
+- 性能基线：`perf_baseline_save`（同名需 `overwrite=true`）、
   `perf_baseline_delete`（需 `allow_destructive=true`）、`perf_compare`
   （逐项变化与 worse / better / stable 统计）
-- 知识库（4.3）：`knowledge_list`、`knowledge_read`、`knowledge_upsert_note`（新建/更新）、
+- 知识库：`knowledge_list`、`knowledge_read`、`knowledge_upsert_note`（新建/更新）、
   `knowledge_delete_note`（删除需授权）
 - 语音设置：`voice_settings_get` / `voice_settings_update`，覆盖引擎、音色、输出设备、
   语速、循环次数、唤醒词与回执验证；只写传入字段，`verify` 为浅合并
@@ -765,41 +769,34 @@ for loop in 1..循环次数:
   写操作返回 `PERMISSION_DENIED`；`run_case` / `run_suite` 执行期间其他设备工具返回 `DEVICE_BUSY`
 - 每次调用写 `data/mcp_audit.log`（参数摘要，不落截图/完整层级）；日志写 `data/mcp.log`
 - 错误统一 `{ok:false,error:{code,message,hint}}`；错误码见 `mcp_server/schema.py`
-- 客户端配置示例（打包后把 command 换成 `虫师-mcp.exe`）：
+- 客户端配置示例（安装版；把 `D:\虫师` 换成实际安装目录）：
 
 ```json
 {
   "mcpServers": {
     "chongshi": {
-      "command": "D:\\AndroidAutoTest\\dist_mcp\\虫师-mcp.exe",
+      "command": "D:\\虫师\\虫师-mcp.exe",
       "args": [],
-      "env": { "CHONGSHI_APP_DIR": "D:\\AndroidAutoTest" }
+      "env": { "PYTHONUNBUFFERED": "1" }
     }
   }
 }
 ```
 
-`CHONGSHI_APP_DIR` 用于让独立的 `虫师-mcp.exe` 和主程序共用同一份 `data/`；正式安装包里把
-`虫师-mcp.exe` 放到 `虫师.exe` 同级即可省略这个环境变量。
+安装版的 `虫师-mcp.exe` 与 `虫师.exe` 同级，默认使用同目录的 `data/`，不需要额外环境变量。
+开发期如果直接跑 `dist_mcp\虫师-mcp.exe`，再加
+`"CHONGSHI_APP_DIR": "D:\\AndroidAutoTest"`。
 
 Comate 的入口在 **Context → MCP**（个人级 `~/.comate/mcp.json` / 项目级 `.comate/mcp.json`）；
-也支持 STDIO / SSE / Streamable HTTP。当前推荐项目级 `.comate/mcp.json`，格式同上；该目录已加入
+虫师 MCP 本身只提供 stdio，当前推荐项目级 `.comate/mcp.json`，格式同上；该目录已加入
 `.gitignore`，不会把本机绝对路径提交。注册后新开会话加载 `chongshi.*` 工具。
 
-P2 工具已完成并做过真机闭环验收：草稿生成 → `save_case` 覆盖保存 → `run_case` → `run_suite`
-全部通过。批次 1 只读、批次 2 可控写已开放；批次 3.1 的设备影响型单发工具已在真机闭环：
-覆盖安装、清空数据、卸载（回退到系统预置版本）、恢复安装、`hprof_dump`、重启后 47 秒回连
-并确认应用仍在。批次 3.2 的 Monkey / 录屏 / 实时 logcat 已实现并真机验证：录屏自动 pull、
-logcat 按行数自动停、Monkey 的默认启动与白名单启动都能注入事件，中途 stop 与跨进程重连也已通过；
-13 ~ 60 小时长跑未实际执行（耗时），能力链路已完整验证。批次 3.3 的性能采集已闭环：
-cpu / mem 主采样、sys_mem / sys_cpu / threads 探针、手动停止与到点自然结束、会话落库与
-`perf_report` 出报告都已在真机验证。批次 3.4 在临时 `adb root` 下完成验证：弱网延迟 / 丢包
-下发与 TTL 自动清除、带宽限制与手动清除、`tcpdump` 真实抓包（720 字节 ICMP）均通过，
-验证后已 `adb unroot` 并确认回到 `uid=2000(shell)`、设备与 u2 会话正常。批次 4.1 ~ 4.3
-已在 30EA 车机上验证：采集期间跑套件（会话记录套件名与用例结果）、基线保存 / 自身对比 /
-删除门禁、知识库笔记增删改查、语音设置读取与写入（改后已还原）；语音套件场景也在
-honda_3ya 车机上跑通（播放 2 条文案、采集 7 个样本）。网页端接入已做 POC 评估：
-仅可行性成立，生产可用性不成立，暂不纳入规划。
+以上 73 个工具已在真实车机闭环验证：设备/UI、用例执行与套件、安装 / 卸载 / 清数据、
+Monkey / 录屏 / logcat、性能采集 / 场景化 / 基线、抓包、弱网、知识库与语音设置。
+MCP 与主程序共用同一份 `data/`，界面运行时自动降级为只读；1.6.1 发布版已用
+`<安装目录>\虫师-mcp.exe` 实测 `tools/list` 返回 73 个工具。
+Monkey 的 13~60 小时长跑未实际执行（耗时），但启动 / 停止 / 跨进程重连链路已验证。
+网页端接入已做 POC 评估：仅可行性成立，生产可用性不成立，暂不纳入规划。
 
 ---
 
@@ -812,7 +809,7 @@ main.py              入口：装配模型 / 视图 / 控制器，启动封面�
 main.spec            主程序打包配置（自绘启动封面、DPI 感知清单）
 updater.py/.spec     独立更新器（下载完成后替换文件并重启）
 release.py           发版辅助脚本（改版本号 / 打 tag / 等 CI / 转正）
-mcp_server/          本地 stdio MCP Server（P0/P1/P2 + ADB/性能/语音/接口/元素库/报告只读）
+mcp_server/          本地 stdio MCP Server（73 个工具：设备/UI、用例、ADB、性能、语音、接口、元素库、报告）
 models/              数据模型（项目树、步骤、元素、套件、任务、性能、语音、接口、知识库、变量…）
 views/               界面（主窗口、8 个功能页 + 右栏入口、对话框、ADB 面板、性能控件）
 controllers/         控制器（把视图事件转成模型操作与执行流程）
@@ -863,7 +860,7 @@ data/                运行期数据（不进仓库）
 | `knowledge_data.json` | 知识库 | `{projects, notes}` |
 | `vars_data.json` | 全局变量 | `{vars: []}` |
 | `local_commands.json`（可选） | 本地私有命令库，**不进版本库** | `{presets: [], adb: []}` |
-| `preview.json`（临时） | 内测通道：`{"tag": "v1.6.0"}`，验完必须删；v1.6.0 全量后本机已清理 | — |
+| `preview.json`（临时） | 内测通道：`{"tag": "v1.6.1"}`，验完必须删；v1.6.1 全量后本机已清理 | — |
 
 步骤与用例的映射是**独立顺序表**（`case_steps`），所以步骤可以跨用例存在，
 也正因如此需要 `gc_orphan_steps()` 回收孤儿（启动时会自愈并提示省下多少 KB）。
@@ -981,23 +978,23 @@ data/                运行期数据（不进仓库）
   停旧 adb server / 旧版 weditor 服务（升级清理）→ 全部改名备份 `.old` → 依次搬入 → 失败按 `reversed` 逐项回滚；
   **绝不碰 `data/`**
 - 实测：PyInstaller 构建不具确定性（PE 时间戳导致同一份代码两次构建 87% 的 4KB 块不同），
-  所以补丁体积常在 **100~180MB**（1.5.24→1.6.0 实测 175MB），真实业务改动通常只有 1~3MB
+  所以补丁体积常在 **100~180MB**（1.6.0→1.6.1 实测 124MB），真实业务改动通常只有 1~3MB
 
 ### 5.9 发版流程
 
 CI（`.github/workflows/release.yml`）默认把 Release 造成**预发布**，普通客户端查不到 —— 这就是灰度开关。
 
 1. 改 `utils/version.py` 的 `APP_VERSION` 与 `CHANGELOG.md` 的版段落 → 提交推送
-2. `git tag v1.6.0 && git push origin v1.6.0`
-3. CI 自动：校验 tag 与代码版本一致 → 跑更新器自测 → 打包主程序与更新器 → 校验产物完整性 →
+2. `git tag v1.6.1 && git push origin v1.6.1`
+3. CI 自动：校验 tag 与代码版本一致 → 跑更新器自测 → 打包主程序、MCP 服务与更新器 → 校验产物完整性 →
    打 zip（断言不含 `data/`、`log/`）→ 生成增量补丁 → 建预发布 Release
-4. 本机内测：设 `CHONGSHI_UPDATE_TAG=v1.6.0` 或放 `data/preview.json`（`{"tag": "v1.6.0"}`），
+4. 本机内测：设 `CHONGSHI_UPDATE_TAG=v1.6.1` 或放 `data/preview.json`（`{"tag": "v1.6.1"}`），
    「检查更新」走的是和用户完全相同的链路
 5. 确认没问题 → 取消「pre-release」并**同时设为 latest**
 6. **内测完必须删掉 `data/preview.json` / 清掉环境变量**，否则这台机器会一直盯着那个 tag
 
 ⚠️ **版本号必须连续递增**：客户端用 PEP 440 比较，`1.5.205 > 1.5.21`，一旦发过三位号的预发布，
-那批机器就收不到后续的两位号正式版。**只用两位小版本号**（1.6.0 → 1.6.1 → 1.6.2）。
+那批机器就收不到后续的两位号正式版。**只用两位小版本号**（1.6.1 → 1.6.2 → 1.6.3）。
 
 ---
 
@@ -1120,8 +1117,8 @@ Windows 上「父进程退出，子进程还在」是常见问题，本项目排
 | 200 次弹窗（修复前泄漏） | RSS +33MB（约 170KB/个），已用 `AutoFreeDialog` 修复 |
 | 2 万行日志面板 | QTextEdit 多占约 7MB |
 | 性能数据落盘（90 个会话 / 7.9MB） | 0.31 秒（整份 JSON 重写） |
-| 完整安装包 zip（1.6.0） | 约 308MB |
-| 增量补丁（1.5.24→1.6.0） | 175MB（真实业务改动通常 1~3MB） |
+| 完整安装包 zip（1.6.1） | 约 308MB |
+| 增量补丁（1.6.0→1.6.1） | 124MB（真实业务改动通常 1~3MB） |
 
 ---
 
@@ -1140,7 +1137,7 @@ Windows 上「父进程退出，子进程还在」是常见问题，本项目排
 | 执行 | 停止不是强杀，正在超时等待的步骤要等它跑完 | 大超时配置下点停止会有延迟 |
 | 执行 | 点击生效校验只观察 0.7 秒；幂等控件（如已全屏时再点「地图全屏」）差值≈0，会打 warning | 属正常现象，建议用断言确认状态 |
 | 执行 | 没有用例级别的「前置 / 后置」钩子 | 每条用例要自己写启动和清理步骤 |
-| 元素库 | 删除元素只删库记录，不会自动清理步骤里的 `element_id` | 步骤会标「已失效」，用「检查引用」批量修；校验只能覆盖当前屏幕 |
+| 元素库 | 删除元素只删库记录，不会自动清理步骤里的 `element_id` | 步骤会标「已失效」，用「检查引用」批量修；批量健康检查只能覆盖当前屏幕 |
 | 性能 | 点停止会同步等旁路探针收尾（单个 `wait` 上限 15 秒）并整份 JSON 落盘 | 长会话 / 数据量大时「停止中」会停留数秒 |
 | 定时 | **没有补跑**，关闭期间错过的窗口不补 | 长时间关机后任务会跳过 |
 | 接口 | `VERIFY_SSL = False` 且无界面开关 | 内网自签证书可用，但公网请求也是不校验证书 |
@@ -1151,7 +1148,7 @@ Windows 上「父进程退出，子进程还在」是常见问题，本项目排
 | 可视化 | 层级 dump 失败时只能看画面、框选图像，点不出语义定位 | 自绘 UI / 界面持续动画时 |
 | 工具 | 无线调试只做 `tcpip + connect`，**没有 `adb pair`** | Android 11+ 需先在系统里配对 |
 | 工具 | 弱网、磁盘 IO、部分抓包需要 root | 无 root 时置灰 |
-| 数据 | 没有数据库，全是 JSON 全量读写；`perf_data.json` 随会话累积 | 90 个会话 / 7.9MB 时保存 0.31 秒，长期不清理会越来越慢 |
+| 数据 | 没有数据库，全是 JSON 全量读写；`perf_data.json` 默认按保留窗口归档清理 | 首次清理 100+ 会话会花十几秒；保留天数可在设置页改为 7 / 14 / 30 天或永久 |
 | 数据 | 日志面板不限行数 | 长时间跑会涨内存 |
 | 兼容 | 内存日志解析器硬编码 `2025-` 时间前缀（`utils/memory_analyzer.py`） | 跨年后时间轴会失效 |
 | 启动 | 顶层 import 在封面之前，双击到封面有 1~3 秒空白 | 要秒开需要更轻量的 launcher |
@@ -1201,7 +1198,7 @@ Windows 上「父进程退出，子进程还在」是常见问题，本项目排
 debug 包 + `run-as`。
 
 **为什么增量补丁也有一百多兆？** PyInstaller 构建不具确定性，`虫师.exe`、`scrcpy.exe`
-即使代码没改，每次打出来也略有差异，二进制差分压不下去。1.5.24→1.6.0 的补丁实测 175MB，
+即使代码没改，每次打出来也略有差异，二进制差分压不下去。1.6.0→1.6.1 的补丁实测 124MB，
 而真实业务改动通常只有几 MB。
 
 **数据丢了怎么办？** 所有数据都在程序目录 `data/`。升级不会碰这个目录；手动备份就把 `data/` 整目录拷走。
@@ -1235,12 +1232,12 @@ debug 包 + `run-as`。
 
 ## 11. 版本历史
 
-当前版本 **1.6.0**（2026-11-19 全量发布）。每个版本的更新说明见
+当前版本 **1.6.1**（2026-11-19 全量发布）。每个版本的更新说明见
 [CHANGELOG.md](CHANGELOG.md)；其中 `## 未发布` 段是下一个版本的草稿，发版时改成版本号即可。
 
-1.6.0 的改动已在本文中体现，主要包括：MCP 服务（73 个工具，支持按需分组）、性能历史按保留窗口归档清理、
-root 后抓包能力自动重探、帮助页启动崩溃修复、增量补丁携带新更新器、MCP exe 与主程序同级等。
-1.5.24 的功能（定位值拾取、应用可视化整页、执行日志底部面板、工具栏固定、性能倒计时等）保持不变。
+1.6.1 的改动已在本文中体现，主要包括：目标进程弹窗支持关键字搜索、安卓 14 车机应用流量采集修复、
+启动封面轨迹样式与圆角。1.6.0 的 MCP 服务（73 个工具，支持按需分组）、性能历史归档清理、
+root 后抓包重探等功能保持不变。
 
 ---
 
