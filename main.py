@@ -28,6 +28,7 @@ from models.element_model import ElementModel
 from models.knowledge_model import KnowledgeModel
 from models.suite_model import SuiteModel
 from models.task_model import TaskModel
+from models.history_model import HistoryModel
 from views.project_tree_view import ProjectTreeView
 from views.step_list_view import StepListView
 from views.action_card_view import ActionCardView
@@ -676,6 +677,36 @@ def main():
     project_controller = ProjectController(project_model, project_tree, step_controller, execute_view, main_window)
     element_controller = ElementController(element_model, step_model, project_model)
 
+    # ---------- 数据历史（快照 / 回滚） ----------
+    # 后台每 5 秒比对一次 data/ 下被跟踪文件的 mtime，静置 10 秒写一份快照。
+    # 为什么不用 Git、为什么排除 perf_data，见 models/history_model.py 的模块注释。
+    history_model = HistoryModel(main_window)
+    main_window.set_history_model(history_model)
+
+    def _reload_after_restore():
+        """恢复历史后让内存里的模型重新读盘，再把项目树与步骤列表刷一遍。
+
+        不重载的话界面还显示旧数据，用户会以为恢复没生效。重载不换实例，
+        只换内容 —— 各 controller 手里的引用仍然有效。
+        """
+        for _m in (project_model, step_model, element_model, suite_model,
+                   task_model, knowledge_model):
+            try:
+                _m.load()
+            except Exception:
+                logger.warning("恢复后重载模型失败: %s", type(_m).__name__, exc_info=True)
+        try:
+            project_controller.view.refresh()
+        except Exception:
+            logger.warning("恢复后刷新项目树失败", exc_info=True)
+        try:
+            step_controller.refresh_steps()
+        except Exception:
+            logger.warning("恢复后刷新步骤列表失败", exc_info=True)
+
+    main_window.set_history_hook(_reload_after_restore)
+    history_model.start()
+    app.aboutToQuit.connect(history_model.stop)
     project_controller.set_suite_model(suite_model)
 
     step_controller.set_element_controller(element_controller)

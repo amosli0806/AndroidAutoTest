@@ -86,7 +86,10 @@ class MainWindow(QMainWindow):
         self.msg_action = None
         self._notification_service = None
         self._notification_view = None
-        self._bottom_stack = None
+        self._bottom_stack = None        # 底部面板内容容器（QStackedWidget），由 main() 注入
+        self._history_model = None       # 数据历史模型（models/history_model.py）
+        self._history_panel = None       # 历史面板，首次打开时懒创建
+        self._history_restore_hook = None  # 恢复后重载数据的回调，由 main() 注入
         # 系统托盘（None=未注入）；「允许退出」标志：真正退出（托盘退出/更新接管）时为 True
         self._tray_controller = None
         self._allow_quit = False
@@ -1137,6 +1140,20 @@ class MainWindow(QMainWindow):
         self.right_toolbar.addAction(self.msg_action)
         # 复用底部面板那套互斥机制：一次只显示一种内容
         self._bottom_panel_actions["message"] = self.msg_action
+
+        # 历史记录：同样复用底部面板。数据快照由 HistoryModel 在后台轮询写入，
+        # 这里只负责开关面板（Ctrl+H）。放在右侧是因为「消息」也在这边，
+        # 两个都是「辅助查看」而不是主功能导航。
+        self.history_action = QAction(
+            qta.icon('fa6s.clock-rotate-left', color=self._toolbar_icon_color()),
+            "历史记录", self)
+        self.history_action.setCheckable(True)
+        self.history_action.setShortcut("Ctrl+H")
+        self.history_action.setToolTip("历史记录：查看改动并回滚 (Ctrl+H)")
+        self.history_action.triggered.connect(
+            lambda checked: self._on_bottom_panel_action("history", checked))
+        self.right_toolbar.addAction(self.history_action)
+        self._bottom_panel_actions["history"] = self.history_action
 
         # 应用可视化：只保留左栏整页，旧版 weditor 浮窗已移除。
         self.help_action = QAction(qta.icon('fa6s.circle-question', color=self._toolbar_icon_color()), "帮助中心", self)
@@ -2750,6 +2767,7 @@ class MainWindow(QMainWindow):
         "anr": "⏳ ANR 日志",
         "execute_log": "📋 执行日志",
         "message": "🔔 消息",
+        "history": "🕘 历史记录",
     }
     BOTTOM_PANEL_ICONS = {
         "log": 'fa6s.terminal',
@@ -2861,15 +2879,27 @@ class MainWindow(QMainWindow):
         # 整行连间距一起收起，观感与虫师日志一致（它需要标题是因为正文是纯文本）。
         title_row = getattr(self, "_bottom_log_title_row", None)
         if title_row is not None:
-            title_row.setVisible(kind != "execute_log")
+            title_row.setVisible(kind not in ("execute_log", "history"))
 
         # 内容容器切页：0 = 文本区（log / crash / anr / device_info），
-        # 1 = 消息中心，2 = 执行日志（自带筛选/搜索/通过率统计，塞不进纯文本区）
+        # 1 = 消息中心，2 = 执行日志（自带筛选/搜索/通过率统计，塞不进纯文本区），
+        # 3 = 历史记录（时间线 + 差异，同样塞不进纯文本区）
         is_message = (kind == "message")
         is_exec_log = (kind == "execute_log")
+        is_history = (kind == "history")
+        if is_history:
+            panel = self._ensure_history_panel()
+            if panel is not None:
+                panel.refresh()
         if self._bottom_stack is not None:
             if is_exec_log:
                 self._bottom_stack.setCurrentIndex(2)
+            elif is_history:
+                # 按 widget 定位而不是写死索引：执行日志那页是后挂的，
+                # 万一没挂上，固定索引 3 就指到空处了
+                panel = getattr(self, "_history_panel", None)
+                if panel is not None and self._bottom_stack.indexOf(panel) >= 0:
+                    self._bottom_stack.setCurrentWidget(panel)
             else:
                 self._bottom_stack.setCurrentIndex(1 if is_message else 0)
 
@@ -2950,6 +2980,50 @@ class MainWindow(QMainWindow):
         exec_logs = getattr(self, "_logs_view_ref", None)
         if exec_logs is not None and stack.indexOf(exec_logs) < 0:
             stack.addWidget(exec_logs)
+
+    # ---------- 历史记录 ----------
+    def set_history_model(self, model):
+        """注入数据历史模型（由 main() 创建并 start()）。"""
+        self._history_model = model
+
+    def set_history_hook(self, on_restored=None):
+        """恢复历史后要执行的回调：让内存里的各 model 重新读盘。
+
+        只能在 main() 里注入 —— model 与 controller 都是那边的局部变量，
+        主窗口只持有视图，拿不到它们。
+        """
+        self._history_restore_hook = on_restored
+
+    def _ensure_history_panel(self):
+        if self._history_model is None or self._bottom_stack is None:
+            return None
+        if self._history_panel is None:
+            try:
+                from views.history_panel import HistoryPanel
+                panel = HistoryPanel(self._history_model, self._bottom_stack)
+                panel.collapse_requested.connect(self._hide_bottom_panel)
+                panel.restored_done.connect(self._on_history_restored)
+                self._bottom_stack.addWidget(panel)   # index 3
+                self._history_panel = panel
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning("历史面板创建失败", exc_info=True)
+                return None
+        return self._history_panel
+
+    def _on_history_restored(self, snap_id):
+        """恢复完成：让模型重读磁盘。没有 hook 时降级提示重启（内存状态可能不一致）。"""
+        hook = getattr(self, "_history_restore_hook", None)
+        if hook is None:
+            show_toast(message="已恢复，请重启虫师以加载新数据", duration=3500)
+            return
+        try:
+            hook()
+            show_toast(self, "已恢复，数据已重新加载", duration=2500)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("恢复后重载失败", exc_info=True)
+            show_toast(message="已恢复，但重新加载失败，请重启虫师", duration=3500)
 
     def set_notification_service(self, service):
         """注入消息总线：仅用于驱动铃铛未读角标"""
