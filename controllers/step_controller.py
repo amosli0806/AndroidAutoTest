@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import QMessageBox, QDialog, QVBoxLayout, QFormLayout, QLin
     QPushButton, QGraphicsDropShadowEffect, QListView, QCheckBox
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from models.step_model import StepModel, Step
+from models.template_model import TemplateModel
+from views.template_dialog import TemplatePickerDialog, SaveTemplateDialog
 from utils.dialogs import WarningDialog, ConfirmDeleteDialog, ErrorDialog
 from views.step_list_view import StepListView
 from views.action_card_view import ActionCardView
@@ -51,6 +53,8 @@ class StepController(QObject):
         super().__init__()
         self.model = step_model
         self.step_view = step_view
+        # 步骤模板：跨用例复用的步骤片段（数据在 data/step_templates.json）
+        self.template_model = TemplateModel()
         self.action_view = action_view
         self.element_controller = None
         self.current_case_id = None
@@ -96,6 +100,8 @@ class StepController(QObject):
         self.step_view.delete_steps.connect(self._on_delete_steps)
         self.step_view.batch_edit_steps.connect(self._on_batch_edit_steps)
         self.step_view.duplicate_step.connect(self._on_duplicate_step)
+        self.step_view.save_as_template.connect(self._on_save_as_template)
+        self.step_view.insert_template.connect(self._on_insert_template)
         self.action_view.add_step_signal.connect(self._on_add_step_from_card)
 
         self.refresh_steps()
@@ -809,6 +815,60 @@ class StepController(QObject):
             new_step = self.model.duplicate_step(step_id, self.current_case_id)
             if new_step:
                 self.refresh_steps()
+
+    # ========== 步骤模板 ==========
+    def _on_save_as_template(self, step_ids):
+        """把选中的步骤存成模板。"""
+        if not self.current_case_id or not step_ids:
+            show_toast(message="请先选中要保存的步骤")
+            return
+        wanted = set(step_ids)
+        # 按用例里的顺序取，不用信号传来的顺序 —— 多选时 selectedItems()
+        # 的顺序不保证跟列表显示一致，存下来顺序错了很难发现
+        steps = [s for s in self.model.get_steps_for_case(self.current_case_id)
+                 if s.id in wanted]
+        if not steps:
+            show_toast(message="选中的步骤已不存在，请刷新后重试")
+            return
+
+        dlg = SaveTemplateDialog(self.step_view, steps,
+                                 existing_groups=sorted(self.template_model.groups().keys()))
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        ok, msg = self.template_model.save_from_steps(
+            dlg.result_name, dlg.result_group, steps)
+        show_toast(message=msg, duration=3000)
+
+    def _on_insert_template(self, index):
+        """在 index 位置插入模板里的步骤（-1 = 末尾）。"""
+        if self.current_case_id is None:
+            show_toast(message="请先在项目树中选择一个用例")
+            return
+
+        current = self.model.get_steps_for_case(self.current_case_id)
+        if index is None or index < 0 or index > len(current):
+            position_text = "插入到末尾"
+        elif index == 0:
+            position_text = "插入到最前面"
+        else:
+            position_text = f"插入到第 {index} 步之后"
+
+        dlg = TemplatePickerDialog(self.step_view, self.template_model, position_text)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        snapshots = dlg.result_steps or []
+        if not snapshots:
+            return
+
+        steps = [Step(id=-1,
+                      type=str(s.get("type") or ""),
+                      name=str(s.get("name") or ""),
+                      params=dict(s.get("params") or {}))
+                 for s in snapshots]
+        new_ids = self.model.insert_steps_at(self.current_case_id, index, steps)
+        self.refresh_steps()
+        self.step_view.flash_steps(new_ids)
+        show_toast(message=f"已插入 {len(new_ids)} 个步骤", duration=2500)
 
     def _on_add_step_from_card(self, action_type, params, name):
         if self.current_case_id is None:

@@ -1,4 +1,5 @@
 # models/step_model.py
+import copy
 import json
 import os
 from dataclasses import dataclass, field
@@ -108,6 +109,28 @@ class StepModel:
         self.save()
         return step.id
 
+    def insert_steps_at(self, case_id: str, index: int, steps: List[Step]) -> List[int]:
+        """把一批步骤插到用例的第 index 位；index < 0 或超界则追加到末尾。
+
+        步骤模板用这个：模板里存的是**快照**（没有 id），插入时必须重新分配 id，
+        否则会跟已有步骤撞号（steps_data.json 的 steps 是全局池，id 唯一）。
+        返回新分配的 id 列表，调用方拿去高亮。
+        """
+        if not steps:
+            return []
+        new_ids: List[int] = []
+        for src in steps:
+            step = copy.deepcopy(src)
+            step.id = self._id_counter
+            self._id_counter += 1
+            self._steps[step.id] = step
+            new_ids.append(step.id)
+        seq = self.case_steps.setdefault(case_id, [])
+        pos = len(seq) if index < 0 or index > len(seq) else index
+        seq[pos:pos] = new_ids
+        self.save()
+        return new_ids
+
     def remove_step(self, step_id: int, case_id: str = None):
         if step_id in self._steps:
             del self._steps[step_id]
@@ -139,7 +162,6 @@ class StepModel:
     def duplicate_step(self, step_id: int, case_id: str) -> Optional[Step]:
         if step_id in self._steps and case_id in self.case_steps:
             orig = self._steps[step_id]
-            import copy
             new_step = copy.deepcopy(orig)
             new_step.id = self._id_counter
             self._id_counter += 1

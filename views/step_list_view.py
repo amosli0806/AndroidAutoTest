@@ -37,6 +37,8 @@ class StepListView(QListWidget):
     delete_steps = pyqtSignal(list)     # 批量删除：选中步骤的 id 列表
     batch_edit_steps = pyqtSignal(list)  # 批量修改参数：选中步骤的 id 列表
     duplicate_step = pyqtSignal(int)
+    save_as_template = pyqtSignal(list)   # 存为模板：选中步骤的 id（按列表顺序）
+    insert_template = pyqtSignal(int)     # 插入模板：插入位置索引（-1 = 末尾）
     recording_state_changed = pyqtSignal(bool)
 
     def __init__(self, parent=None):
@@ -279,29 +281,74 @@ class StepListView(QListWidget):
 
     def contextMenuEvent(self, event):
         ids = self._selected_steps()
-        if not ids:
-            return
+        # 插入位置：选中步骤里最靠下的那条之后；没选中就是末尾（-1）
+        rows = sorted(self.row(it) for it in self.selectedItems())
+        insert_at = (max(rows) + 1) if rows else -1
+
         menu = QMenu()
         # 图标用 menu_icon()：这个菜单没有自己的样式表，会走全局 Fusion 调色板的
         # 「蓝底白字」悬浮效果，本色图标（蓝 / 深红）在蓝底上会糊掉，
         # menu_icon 让图标在悬浮时自动转白。
-        edit_act = menu.addAction(
-            menu_icon('fa6s.pen-to-square', '#1976d2'),
-            f"批量修改参数（{len(ids)} 个步骤）…")
-        menu.addSeparator()
-        if len(ids) == 1:
-            act = menu.addAction(menu_icon('fa6s.trash-can', '#e74c3c'),
-                                 "删除此步骤")
+        edit_act = None
+        act = None
+        tpl_save = None
+
+        if ids:
+            edit_act = menu.addAction(
+                menu_icon('fa6s.pen-to-square', '#1976d2'),
+                f"批量修改参数（{len(ids)} 个步骤）…")
+            tpl_save = menu.addAction(
+                menu_icon('fa6s.bookmark', '#1976d2'),
+                f"存为步骤模板（{len(ids)} 个步骤）…")
+            tpl_insert = menu.addAction(
+                menu_icon('fa6s.file-import', '#1976d2'),
+                "在选中步骤之后插入模板…")
+            menu.addSeparator()
+            if len(ids) == 1:
+                act = menu.addAction(menu_icon('fa6s.trash-can', '#e74c3c'),
+                                     "删除此步骤")
+            else:
+                act = menu.addAction(menu_icon('fa6s.trash-can', '#e74c3c'),
+                                     f"删除选中步骤（{len(ids)} 个）")
         else:
-            act = menu.addAction(menu_icon('fa6s.trash-can', '#e74c3c'),
-                                 f"删除选中步骤（{len(ids)} 个）")
+            # 没选中也要能插模板：新建用例时「先插一段标准前置」是最常见的用法
+            tpl_insert = menu.addAction(
+                menu_icon('fa6s.file-import', '#1976d2'),
+                "在末尾插入模板…")
+
         chosen = menu.exec(event.globalPos())
         if chosen is None:
             return
-        if chosen == edit_act:
+        if edit_act is not None and chosen == edit_act:
             self.batch_edit_steps.emit(ids)
-        elif chosen == act:
+        elif tpl_save is not None and chosen == tpl_save:
+            self.save_as_template.emit(ids)
+        elif chosen == tpl_insert:
+            self.insert_template.emit(insert_at)
+        elif act is not None and chosen == act:
             self.delete_steps.emit(ids)
+
+    def flash_steps(self, step_ids):
+        """插入模板后把新步骤闪一下再滚过去。
+
+        不闪的话用户只看到列表变长了，不知道插在哪；滚动到第一个新步骤，
+        是因为连续插入多个模板时最后插的那批才在视野里，容易漏看前面几批。
+        """
+        wanted = set(step_ids or [])
+        if not wanted:
+            return
+        first_item = None
+        for i, step in enumerate(self._current_steps):
+            if getattr(step, 'id', None) not in wanted:
+                continue
+            item = self.item(i)
+            widget = self.itemWidget(item)
+            if widget is not None and hasattr(widget, 'flash'):
+                widget.flash()
+            if first_item is None:
+                first_item = item
+        if first_item is not None:
+            self.scrollToItem(first_item, QListWidget.ScrollHint.PositionAtCenter)
 
     def set_steps(self, steps):
         self._original_steps = steps[:] if steps else []
@@ -475,6 +522,7 @@ class StepCardWidget(QWidget):
         self.setObjectName("StepCard")
         self.step = step
         self._selected = False
+        self._flash = False        # 插入模板后的短暂高亮（见 flash()）
         self._theme_mode = ThemeMode.LIGHT
         self._has_wallpaper = False
         self.element_controller = element_controller
@@ -573,6 +621,16 @@ class StepCardWidget(QWidget):
         self._theme_mode = theme_mode
         self.update_style()
 
+    def flash(self):
+        """闪一下：插入模板后告诉用户「新步骤在这儿」。1.6 秒后自动恢复。"""
+        self._flash = True
+        self.update_style()
+        QTimer.singleShot(1600, self._end_flash)
+
+    def _end_flash(self):
+        self._flash = False
+        self.update_style()
+
     def update_style(self):
         """根据主题和选中状态更新样式（选中只加粗边框，背景不变，圆角保持一致）"""
         from utils.settings import Settings, THEME_MODE_DARK
@@ -597,7 +655,10 @@ class StepCardWidget(QWidget):
         except Exception:
             has_wp = False
 
-        if is_dark:
+        if self._flash:
+            # 高亮盖过主题底色；只是「刚插进来」的提示，不参与选中态
+            bg = "#1d3a57" if is_dark else "#d7e8fb"
+        elif is_dark:
             if has_wp:
                 # 有壁纸时半透明，透出壁纸
                 bg = "rgba(55, 55, 55, 0.85)"
