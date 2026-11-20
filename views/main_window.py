@@ -2776,6 +2776,7 @@ class MainWindow(QMainWindow):
         "anr": 'fa6s.hourglass-half',
         "execute_log": 'fa6s.list-check',
         "message": 'fa6s.bell',
+        "history": 'fa6s.clock-rotate-left',
     }
     # 各模式的占位文案（内容拉取完成前的提示）
     BOTTOM_PANEL_PENDING = {
@@ -2852,8 +2853,11 @@ class MainWindow(QMainWindow):
                 # 直接用 qta.icon(...) 会把角标覆盖掉，表现为"一打开面板角标就没了"
                 action.setIcon(self._render_bell_icon(active=on))
             else:
-                action.setIcon(qta.icon(self.BOTTOM_PANEL_ICONS[kind],
-                                        color='white' if on else self._toolbar_icon_color()))
+                # 用 get 兜底：新增一种底部面板时，只要漏加图标就会在启动刷主题时
+                # 抛 KeyError 直接把程序打挂（2026-11-21 实际踩到，history 就是这么崩的）
+                action.setIcon(qta.icon(
+                    self.BOTTOM_PANEL_ICONS.get(kind, 'fa6s.circle'),
+                    color='white' if on else self._toolbar_icon_color()))
 
     def show_bottom_panel(self, kind, content=None):
         """切换底部面板内容：log / crash / anr / device_info / message 共用同一块区域"""
@@ -3182,7 +3186,7 @@ class MainWindow(QMainWindow):
                 action.setIcon(self._render_bell_icon(active=on))
             else:
                 action.setIcon(qta.icon(
-                    self.BOTTOM_PANEL_ICONS[kind],
+                    self.BOTTOM_PANEL_ICONS.get(kind, 'fa6s.circle'),
                     color='white' if on else color))
 
         # 迷你模式开关
