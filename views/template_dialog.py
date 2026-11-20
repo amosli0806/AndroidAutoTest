@@ -48,6 +48,7 @@ def _palette() -> dict:
             "sel_bg": "#1d3a57", "sel_fg": "#cfe2f7", "hover_bg": "#363636",
             "preview_bg": "#242424", "btn_bg": "#3a3a3a", "btn_fg": "#d0d0d0",
             "divider": "#3a3a3a",
+            "sb_handle": "#565656", "sb_handle_hover": "#6e6e6e",
         }
     return {
         "bg": "#ffffff", "border": "#d0d0d0", "text": "#1f2733",
@@ -57,7 +58,29 @@ def _palette() -> dict:
         "sel_bg": "#e8f1fd", "sel_fg": "#12406e", "hover_bg": "#f6f9fd",
         "preview_bg": "#fafbfd", "btn_bg": "#f2f4f7", "btn_fg": "#5b6472",
         "divider": "#edf1f7",
+        "sb_handle": "#c8ced8", "sb_handle_hover": "#a8b2c1",
     }
+
+
+def _scrollbar_qss(pal: dict) -> str:
+    """6px 细滚动条。
+
+    和 `StepListView._apply_scrollbar_style` / 项目树用同一套尺寸：Qt 默认的
+    Fusion 滚动条有 14px 宽、带上下箭头，塞进 86px 高的预览框里又粗又抢眼。
+    """
+    h = pal["sb_handle"]
+    hh = pal["sb_handle_hover"]
+    return (
+        "QScrollBar:vertical{width:6px;background:transparent;margin:0px;}"
+        f"QScrollBar::handle:vertical{{background:{h};border-radius:3px;min-height:20px;}}"
+        f"QScrollBar::handle:vertical:hover{{background:{hh};}}"
+        "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0px;}"
+        "QScrollBar::add-page:vertical,QScrollBar::sub-page:vertical{background:transparent;}"
+        "QScrollBar:horizontal{height:6px;background:transparent;margin:0px;}"
+        f"QScrollBar::handle:horizontal{{background:{h};border-radius:3px;min-width:20px;}}"
+        f"QScrollBar::handle:horizontal:hover{{background:{hh};}}"
+        "QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal{width:0px;}"
+    )
 
 
 def _type_label(step_type: str) -> str:
@@ -198,7 +221,8 @@ class TemplatePickerDialog(AutoFreeDialog):
             f"border-radius:6px;font-size:12px;outline:none;color:{pal['muted']};}}"
             f"QListWidget::item{{padding:6px 8px;border-radius:4px;}}"
             f"QListWidget::item:selected{{background:{pal['sel_bg']};color:{pal['sel_fg']};}}"
-            f"QListWidget::item:hover{{background:{pal['hover_bg']};}}")
+            f"QListWidget::item:hover{{background:{pal['hover_bg']};}}"
+            + _scrollbar_qss(pal))
         self._group_list.currentRowChanged.connect(lambda _r: self._reload())
         mid.addWidget(self._group_list)
 
@@ -208,7 +232,8 @@ class TemplatePickerDialog(AutoFreeDialog):
             f"border-radius:6px;outline:none;}}"
             f"QListWidget::item{{margin:2px;border-radius:6px;color:{pal['text']};}}"
             f"QListWidget::item:selected{{background:{pal['sel_bg']};}}"
-            f"QListWidget::item:hover{{background:{pal['hover_bg']};}}")
+            f"QListWidget::item:hover{{background:{pal['hover_bg']};}}"
+            + _scrollbar_qss(pal))
         self._list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._on_row_menu)
         self._list.itemDoubleClicked.connect(lambda _i: self._accept_insert())
@@ -221,7 +246,8 @@ class TemplatePickerDialog(AutoFreeDialog):
         self._preview.setFixedHeight(86)
         self._preview.setStyleSheet(
             f"QTextBrowser{{background:{pal['preview_bg']};border:1px solid {pal['divider']};"
-            f"border-radius:6px;font-size:11.5px;color:{pal['text']};padding:6px 8px;}}")
+            f"border-radius:6px;font-size:11.5px;color:{pal['text']};padding:6px 8px;}}"
+            + _scrollbar_qss(pal))
         box.addWidget(self._preview)
 
         # ---- 底部按钮 ----
@@ -444,16 +470,33 @@ class SaveTemplateDialog(AutoFreeDialog):
                 self._group.addItem(g)
         self._group.setStyleSheet(
             f"QComboBox{{background:{pal['input_bg']};border:1px solid {pal['input_border']};"
-            f"border-radius:6px;padding:5px 8px;font-size:12px;color:{pal['text']};}}"
-            f"QComboBox QAbstractItemView{{background:{pal['bg']};color:{pal['text']};"
+            f"border-radius:6px;padding:5px 10px;font-size:12px;color:{pal['text']};"
+            f"min-height:20px;}}"
+            f"QComboBox:hover{{border-color:{pal['sb_handle_hover']};}}"
+            f"QComboBox:focus{{border-color:#1976d2;}}"
+            f"QComboBox::drop-down{{border:none;width:22px;}}"
+            # 弹出列表：默认每个 item 只有 ~18px 高、零内边距，三项挤在一起像老控件；
+            # 这里给足行高和内边距，圆角和选中色跟列表保持一致
+            f"QComboBox QAbstractItemView{{background:{pal['bg']};"
+            f"border:1px solid {pal['border']};border-radius:6px;padding:4px;"
+            f"outline:none;font-size:12px;"
             f"selection-background-color:{pal['sel_bg']};"
-            f"selection-color:{pal['sel_fg']};}}")
+            f"selection-color:{pal['sel_fg']};}}"
+            f"QComboBox QAbstractItemView::item{{min-height:28px;padding:3px 10px;"
+            f"border-radius:4px;}}"
+            # ::item 一旦自定义，selection-background-color 就不再生效，
+            # 必须显式写 :selected（否则只有文字变蓝、背景还是白的）
+            f"QComboBox QAbstractItemView::item:selected{{background:{pal['sel_bg']};"
+            f"color:{pal['sel_fg']};}}"
+            f"QComboBox QAbstractItemView::item:hover{{background:{pal['hover_bg']};}}"
+            + _scrollbar_qss(pal))
         box.addWidget(self._group)
 
         preview = QTextBrowser()
         preview.setStyleSheet(
             f"QTextBrowser{{background:{pal['preview_bg']};border:1px solid {pal['divider']};"
-            f"border-radius:6px;font-size:11.5px;color:{pal['text']};padding:6px 8px;}}")
+            f"border-radius:6px;font-size:11.5px;color:{pal['text']};padding:6px 8px;}}"
+            + _scrollbar_qss(pal))
         lines = [_head_line(i, s.type, s.name or '')
                  for i, s in enumerate(self._steps, 1)]
         preview.setPlainText("\n".join(lines))
