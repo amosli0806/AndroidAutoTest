@@ -474,7 +474,9 @@ class SaveTemplateDialog(AutoFreeDialog):
             f"min-height:20px;}}"
             f"QComboBox:hover{{border-color:{pal['sb_handle_hover']};}}"
             f"QComboBox:focus{{border-color:#1976d2;}}"
-            f"QComboBox::drop-down{{border:none;width:22px;}}"
+            # 不要自定义 ::drop-down —— 一旦写了 border/width，Fusion 就不再画那个
+            # 小三角，而下拉箭头必须靠 image 资源补，项目里没有现成的，于是变成
+            # 「右边空一块、看不见能点」（2026-11-20 实际踩到）。
             # 弹出列表：默认每个 item 只有 ~18px 高、零内边距，三项挤在一起像老控件；
             # 这里给足行高和内边距，圆角和选中色跟列表保持一致
             f"QComboBox QAbstractItemView{{background:{pal['bg']};"
@@ -491,6 +493,15 @@ class SaveTemplateDialog(AutoFreeDialog):
             f"QComboBox QAbstractItemView::item:hover{{background:{pal['hover_bg']};}}"
             + _scrollbar_qss(pal))
         box.addWidget(self._group)
+
+        # 弹出层去掉右下那圈灰边：QComboBox 的 popup 是个 Raised 风格的 QFrame，
+        # 外加系统 drop shadow，在浅色底上会拖出一道脏边（用户截图右侧/底部那两条）。
+        # 注意要在 showPopup 之前设，show 之后再改 windowFlags 会让 popup 重新创建。
+        popup = self._group.view().window()
+        # 只**追加**标志，不要整体覆盖：popup 原本带 Popup / FramelessWindowHint 等，
+        # 覆盖掉会冒出一个标题栏或抢焦点
+        popup.setWindowFlags(popup.windowFlags() | Qt.WindowType.NoDropShadowWindowHint)
+        popup.setFrameShape(QFrame.Shape.NoFrame)
 
         preview = QTextBrowser()
         preview.setStyleSheet(
