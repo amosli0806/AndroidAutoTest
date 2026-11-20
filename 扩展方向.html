@@ -166,10 +166,10 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 复核于 2026-11-19（v1.6.0）</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 更新于 2026-11-20（v1.6.1）</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.6.0</span>
-      <span class="badge">9 项规划 + 2 个新方向</span>
+      <span class="badge">当前版本 v1.6.1</span>
+      <span class="badge">8 项规划 · 1 项已完成</span>
       <span class="badge">车机 / 手机均已实机验证</span>
       <span class="badge">按改动量分 A~D 四档</span>
     </div>
@@ -208,9 +208,31 @@
     </div>
 
     <div class="card">
-      <h3>2. 步骤模板 <span class="tag plan">📋 规划中</span></h3>
-      <p>保存常用步骤组合为模板（如「启动应用 → 等待 → 点击首页」），任意用例里插入复用。</p>
-      <div class="example">💡 <b>打个比方：</b>像 Word / PPT 模板——「启动 → 等待 → 点首页」这套成熟流程存成模板，新用例直接套用，不用每次从零搭。</div>
+      <h3>2. 步骤模板 <span class="tag done">✅ 2026-11-20 已完成</span></h3>
+      <p><b>已实现</b>：把一段步骤存成模板，任意用例里插入复用。步骤列表右键
+        「存为步骤模板」/「插入步骤模板」；选择器支持搜索、分组筛选、预览，右键可重命名 / 删除；
+        插入后新步骤闪一下并滚动到位。</p>
+      <p><b>设计决策</b>（再动这块之前先看这里，免得推翻重来）：</p>
+      <ul>
+        <li><b>存快照，不存引用</b>：模板里是步骤副本（type / name / params），不是原步骤 id。
+          原用例删掉后模板仍可用。插入时重新分配 id —— <code>steps</code> 是全局池、id 唯一，
+          不重新分配会撞号</li>
+        <li><b>独立数据文件</b> <code>data/step_templates.json</code>：模板是跨用例资产，
+          不该跟用例一起被 <code>gc_orphan_steps</code> 清掉</li>
+        <li><b>不做变量化</b>：定位值原样带过去。车机同项目包名与界面固定，跨项目复用模板是少数场景；
+          做占位符会让「创建模板」多一步标注，投入产出不合算</li>
+        <li><b>不做模板内步骤编辑</b>：想改就在用例里改好再同名覆盖（会提示已存在）。
+          在对话框里做增删排序＝把 <code>step_list_view</code> 再实现一遍</li>
+        <li><b>管理入口挂在选择器右键</b>，不另开「模板管理页」——那等于再造一个用例列表</li>
+      </ul>
+      <p><b>改动范围</b>：<code>models/template_model.py</code>（新）、<code>views/template_dialog.py</code>（新）、
+        <code>models/step_model.py</code>（<code>insert_steps_at</code>）、
+        <code>views/step_list_view.py</code>（右键两项 + 插入后高亮）、
+        <code>controllers/step_controller.py</code>（两个处理函数）。不动现有数据结构。</p>
+      <p><b>后续可选</b>：① 插入时校验模板引用的元素库元素是否还存在（失效的标黄提示）；
+        ② 若真出现跨项目复用需求，再加 <code>{{占位符}}</code> 与插入时填写。</p>
+      <div class="example">💡 <b>打个比方：</b>像 PPT 模板——「启动 → 等待 → 点首页」这套成熟流程存成模板，
+        新用例直接套用，不用每次从零搭。</div>
     </div>
 
     <div class="card">
@@ -340,7 +362,7 @@
         <thead><tr><th>档位</th><th>能力</th><th>优先级</th><th>理由</th></tr></thead>
         <tbody>
           <tr><td>A</td><td>1. 测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
-          <tr><td>A</td><td>2. 步骤模板</td><td class="stars">⭐⭐⭐</td><td>「一组步骤的另存与插入」，不需要改执行逻辑</td></tr>
+          <tr><td>A</td><td>2. 步骤模板 ✅</td><td class="stars">—</td><td>2026-11-20 已完成：右键存取 + 选择器，不动数据结构（详见上方卡片）</td></tr>
           <tr><td>A</td><td>3. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
           <tr><td>B</td><td>4. 语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
           <tr><td>B</td><td>5. 版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
@@ -351,7 +373,7 @@
         </tbody>
       </table>
     </div>
-    <div class="tip">💡 建议从 <b>A 档</b> 起步：套件增强 / 步骤模板 / 知识库的几个小件都是小步快跑、影响面可控的活，可随时插进版本。</div>
+    <div class="tip">💡 建议从 <b>A 档</b> 起步：套件增强 / 知识库的几个小件都是小步快跑、影响面可控的活，可随时插进版本。步骤模板已于 2026-11-20 落地，可作改动量的参照。</div>
     <div class="card">
       <h3>范围边界（明确不做）</h3>
       <ul>
@@ -681,10 +703,10 @@
 
   <!-- ============ 四、发版剩余风险与待办 ============ -->
   <section class="chapter" id="s4">
-    <h2><span class="num">4</span>发版剩余风险与待办 <span class="tag part">P3 加固待做 · v1.6.0 已全量</span></h2>
+    <h2><span class="num">4</span>发版剩余风险与待办 <span class="tag part">P3 加固待做 · v1.6.1 已全量</span></h2>
     <p class="small" style="margin-top:0">
-      v1.6.0 已于 2026-11-19 全量发布；v1.5.24 → 1.6.0 升级实测通过，已完成的 P0/P2、
-      帮助页崩溃、旧 updater 复用等问题不再展开，这里只保留尚未完成的事项。
+      v1.6.0（2026-11-19）、v1.6.1（2026-11-20）均已全量发布；v1.5.24 → 1.6.0 升级实测通过，
+      已完成的 P0/P2、帮助页崩溃、旧 updater 复用等问题不再展开，这里只保留尚未完成的事项。
     </p>
 
     <div class="card">
@@ -703,9 +725,9 @@
     </div>
 
     <div class="card">
-      <h3>二、已发布：v1.6.0（全量）</h3>
+      <h3>二、已发布：v1.6.0 / v1.6.1（均全量）</h3>
       <ul>
-        <li><code>/releases/latest</code> 已指向 v1.6.0；预发布列表为空</li>
+        <li><code>/releases/latest</code> 已指向 v1.6.1；预发布列表为空</li>
         <li>本机 <code>D:\虫师\data\preview.json</code> 已清理，不再走内测通道</li>
         <li>如果其他机器还留着旧的 <code>preview.json</code>，执行
           <code>python release.py clear-preview</code></li>
@@ -725,7 +747,7 @@
     </div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-19 · v1.6.0</footer>
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-20 · v1.6.1</footer>
 </div>
 </body>
 </html>
