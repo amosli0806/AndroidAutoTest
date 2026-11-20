@@ -290,9 +290,57 @@
     </div>
 
     <div class="card">
-      <h3>5. 版本控制集成（Git）<span class="tag plan">📋 规划中</span></h3>
-      <p>把项目数据、步骤、元素库等接入 Git，支持版本回滚、差异对比、分支管理。</p>
-      <div class="example">💡 <b>打个比方：</b>像文档的「修订记录 / 历史版本」——用例改乱了，一键回到昨天的版本，还能看看到底改了哪几行。</div>
+      <h3>5. 历史记录与回滚（原「版本控制集成 · Git」）<span class="tag plan">📋 规划中 · 方案已定</span></h3>
+      <p><b>不是接 Git，也不是上传 GitHub。</b>Git 是本地版本库、GitHub 是远程托管 —— 这是两件事，
+        而虫师其实不需要真正的 Git。目标只有一个：<b>用例改乱了能回到上一个版本，并且看得懂改了什么</b>。</p>
+
+      <p><b>为什么不用真 Git（三条硬约束）</b>：</p>
+      <ul>
+        <li><b>打包版没有 <code>git.exe</code></b>：绿色免安装，用户机器上不一定有；
+          内置一份 +40MB，用 <code>dulwich</code>（纯 Python 实现）也要 +20MB 包体，
+          还得处理 index / ref / pack 一堆概念</li>
+        <li><b>数据只有约 40KB</b>：<code>steps_data</code> 20KB + <code>project_data</code> 8KB +
+          <code>config</code> 12KB，元素库与接口不到 1KB。全量复制 100 次才 4MB ——
+          增量和分支在这里完全没有价值</li>
+        <li><b>没有协作需求</b>：单人测试工具，分支 / 合并 / 冲突解决是负担而不是能力</li>
+      </ul>
+      <p><b>改为文件快照</b>：每次改动后把 6 个 json 复制到 <code>data/.history/时间戳/</code>。
+        零依赖、可打包、行为可预测，实现量比接 Git 少一半。</p>
+
+      <p><b>纳入范围（只放用户资产）</b>：<code>steps_data.json</code>、<code>project_data.json</code>、
+        <code>config.json</code>、<code>elements_data.json</code>、<code>api_data.json</code>、
+        <code>knowledge_data.json</code>。</p>
+      <p><b>必须排除</b>：<code>perf_data.json</code>（7MB 高频采样，进来会把历史撑爆）、
+        <code>edge_voices_cache</code> / <code>gui.info</code> / <code>perf_baselines</code>
+        （缓存类，每次重启内容都变，记了也没有意义）。</p>
+
+      <p><b>三层能力，本期做前两层</b>：</p>
+      <ul>
+        <li><b>① 自动快照</b>（约 1 天）：保存动作后防抖 10 秒写一份；危险操作
+          （批量删除 / 导入覆盖 / 清空数据）之前强制快照；每天首个自动保留为「日快照」，
+          其余自动快照滚动清理（默认留 30 天）</li>
+        <li><b>② 语义差异</b>（约 1.5 天）：按 id 对齐两边实体，输出人话而不是 JSON 文本 diff ——
+          「用例「导航」新增 2 步；元素「首页按钮」定位从文本改成 ID」。<b>这是全功能 60% 的工作量，
+          也是「工程师玩具」与「测试人员真会用」的分水岭</b></li>
+        <li><b>③ 远程备份</b>（可选，本期不做）：换电脑 / 多人共享。相比接 GitHub，
+          更推荐「导出 / 导入数据包（zip）」—— 少一层凭据与仓库管理，
+          也避免把设备序列号、包名、账号备注推到公网</li>
+      </ul>
+
+      <p><b>三处容易做错的交互</b>：</p>
+      <ul>
+        <li><b>恢复是「再存一版」而不是「抹掉历史」</b>：点恢复时先把当前状态存一份再写回旧内容，
+          这样恢复本身也能撤销，用户才敢点</li>
+        <li><b>不用文件监听</b>：一次保存可能触发多次文件系统事件，产生几十条无意义快照。
+          改成挂在保存动作上防抖（代码里本来就知道自己在存）</li>
+        <li><b>界面不出现 Git 词汇</b>：没有 commit / stash / HEAD，只有
+          「历史 / 对比 / 恢复到此处 / 打标记」</li>
+      </ul>
+
+      <p><b>工作量</b>：约 2.5 天（快照 1 天 + 差异比较器 1.5 天），风险明显低于接 Git。
+        原估的「分支管理」直接删掉 —— 单人工具用不上，是从程序员视角带进来的伪需求。</p>
+      <div class="example">💡 <b>打个比方：</b>像文档软件的「历史版本」——不是给你看代码差异，
+        而是告诉你「昨天 18:20 那一版里，导航用例多了两步」，点一下就能回去。</div>
     </div>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ C · 改动较大、需先设计（要先出方案再动手）</h3>
@@ -347,7 +395,7 @@
         <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报待增强</b> — 唤醒词不能按用例切换；「回执验证」只能确认车机听懂了，还验不了界面真的变了（如地图是否全屏）。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无工程化配套</b> — 无 Git 集成（用例数据没有版本管理与回滚）。</div></div>
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>无工程化配套</b> — 用例数据没有版本历史与回滚（改乱了回不去，删错了救不回）。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>数据与参考图按绝对路径绑定</b> — 数据驱动绑定的 CSV / Excel、图像定位的参考图存的都是绝对路径，换机器或挪动工程目录后要重新绑定。</div></div>
@@ -365,7 +413,7 @@
           <tr><td>A</td><td>2. 步骤模板 ✅</td><td class="stars">—</td><td>2026-11-20 已完成：右键存取 + 选择器，不动数据结构（详见上方卡片）</td></tr>
           <tr><td>A</td><td>3. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
           <tr><td>B</td><td>4. 语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
-          <tr><td>B</td><td>5. 版本控制集成（Git）</td><td class="stars">⭐⭐</td><td>调 git 命令 + 一个界面，不改现有数据结构；难点在「何时提交」的体验设计</td></tr>
+          <tr><td>B</td><td>5. 历史记录与回滚（原 Git 集成）</td><td class="stars">⭐⭐</td><td>文件快照替代 Git（打包无 git.exe、数据仅 40KB）；难点在语义差异比较器</td></tr>
           <tr><td>C</td><td>6. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
           <tr><td>C</td><td>7. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
           <tr><td>D</td><td>8. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接唤醒词 / 语速</td></tr>
