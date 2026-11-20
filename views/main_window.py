@@ -2819,7 +2819,10 @@ class MainWindow(QMainWindow):
         if kind == "log":
             self.show_bottom_panel("log")
             return
-        if kind in ("message", "execute_log"):
+        # history 也必须走这条：它不需要拉任何设备数据，落到下面的兜底分支会被
+        # _dispatch_quick_action 当成硬件 / Crash / ANR 一类动作去查设备，
+        # 结果打开历史面板先弹一句「未检测到设备」（2026-11-21 实际踩到）
+        if kind in ("message", "execute_log", "history"):
             # 不需要拉取内容，也不该走 ADB 快捷动作分发
             self.show_bottom_panel(kind)
             return

@@ -703,6 +703,24 @@ def main():
             step_controller.refresh_steps()
         except Exception:
             logger.warning("恢复后刷新步骤列表失败", exc_info=True)
+        # 元素库 / 知识库 / 任务列表也要刷，否则界面还挂着旧数据：
+        # 实测恢复后元素库里被删的元素不会自己回来，得手动检索一次才刷新
+        targets = [(element_manager, "refresh"),
+                   (knowledge_view, "refresh_tree"),
+                   (task_view, "refresh_list")]
+        try:
+            # api_view 在 1238 行才创建，比这里晚得多；恢复发生在启动之后，
+            # 那时它一定存在，但留个 NameError 兜底免得 depend 关系变了就炸
+            targets.append((api_view, "refresh_all"))
+        except NameError:
+            pass
+        for _v, _fn in targets:
+            try:
+                _f = getattr(_v, _fn, None)
+                if callable(_f):
+                    _f()
+            except Exception:
+                logger.warning("恢复后刷新 %s 失败", type(_v).__name__, exc_info=True)
 
     main_window.set_history_hook(_reload_after_restore)
     history_model.start()
