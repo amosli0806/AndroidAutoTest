@@ -98,6 +98,9 @@ class HistoryPanel(QWidget):
         self._list.currentRowChanged.connect(self._on_select)
         body.addWidget(self._list)
 
+        # 新快照写入后自动刷新列表。不接这个信号的话，用户改完看不到新条目，
+        # 会以为「历史没在记」—— 其实快照已经写进去了（2026-11-21 实测反馈）
+        self._model.snapshot_ready.connect(self._on_snapshot_ready)
         self._diff = QTextBrowser()
         self._diff.setStyleSheet(
             f"QTextBrowser{{background:{pal['side']};border:1px solid {pal['line']};"
@@ -141,9 +144,16 @@ class HistoryPanel(QWidget):
 
     # ---------- 数据 ----------
     def refresh(self):
-        """重新拉快照并重建时间线，尽量保持当前选中的位置。"""
-        keep_index = self._list.currentRow()
-        self._groups = self._group(self._model.list_snapshots())
+        """重新拉快照并重建时间线，尽量停在原来那条上。"""
+        # 记住当前选中的快照 id 而不是行号：新快照会插到列表顶部，
+        # 行号会整体下移，按行号恢复就会跳到别的条目上
+        current_id = None
+        group = self._current_group()
+        if group:
+            current_id = group["items"][0]["id"]
+
+        snaps = self._model.list_snapshots()
+        self._groups = self._group(snaps)
 
         self._list.blockSignals(True)
         self._list.clear()
@@ -162,14 +172,19 @@ class HistoryPanel(QWidget):
             self._list.addItem(item)
         self._list.blockSignals(False)
 
-        total = len(self._model.list_snapshots())
+        total = len(snaps)
         size_kb = self._model.total_bytes() / 1024
         size_text = f"{size_kb:.0f} KB" if size_kb < 1024 else f"{size_kb / 1024:.1f} MB"
         self._summary.setText(f"{total} 份快照 · 占用 {size_text}"
                               if total else "还没有历史记录")
 
         if self._groups:
-            row = keep_index if 0 <= keep_index < len(self._groups) else 0
+            row = 0
+            if current_id:
+                for i, g in enumerate(self._groups):
+                    if any(s["id"] == current_id for s in g["items"]):
+                        row = i
+                        break
             self._list.setCurrentRow(row)
         else:
             self._diff.setHtml(
@@ -177,6 +192,11 @@ class HistoryPanel(QWidget):
                 "还没有历史记录。修改任意用例后会自动保存，你随时能回到之前的状态。</p>")
             self._restore_btn.setEnabled(False)
             self._mark_btn.setEnabled(False)
+
+    def _on_snapshot_ready(self, _snap_id):
+        """后台写了新快照：面板可见时立刻刷新，不可见就等下次打开（那时会 refresh）"""
+        if self.isVisible():
+            self.refresh()
 
     @staticmethod
     def _group(snaps: List[Dict]) -> List[Dict]:
