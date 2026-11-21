@@ -117,6 +117,10 @@ KIND_VERIFY = "verify"    # 检测步骤（预期结果：回执验证关键词�
 # 这是「唤醒词多套管理」的地基 —— 原先点「唤醒」按钮会把当时的词固化成
 # phrase 文本，之后改设置不会同步，862 个用例要逐个改（2026-11-21）。
 KIND_WAKE = "wake"
+# 界面断言行：播完这句后去查界面（元素存在/不存在/文本等于/图像匹配）。
+# 与「预期检测」（kind=verify，抓 logcat）分开：前者证明车机听懂了，
+# 后者证明界面真的变了 —— 出问题时才知道该查语音链路还是查 UI。
+KIND_ASSERT = "assert"
 
 # 唤醒步骤的默认播后等待：比普通播报长一点，车机从识别到进入聆听态有延迟
 WAKE_DELAY = 3.8
@@ -166,12 +170,17 @@ class VoiceStep:
     text: str = ""
     delay: float = DEFAULT_DELAY
     keywords: List[str] = field(default_factory=list)
+    # 仅 assert 用：与自动化断言的参数完全一致（assert_type / locationType /
+    # locationValue / expected_value / timeout），执行时原样交给 _perform_assert
+    params: dict = field(default_factory=dict)
 
     def to_dict(self):
         if self.kind == KIND_VERIFY:
             return {"kind": KIND_VERIFY, "keywords": list(self.keywords)}
         if self.kind == KIND_WAKE:
             return {"kind": KIND_WAKE, "delay": self.delay}
+        if self.kind == KIND_ASSERT:
+            return {"kind": KIND_ASSERT, "params": dict(self.params)}
         return {"kind": KIND_PHRASE, "text": self.text, "delay": self.delay}
 
     @classmethod
@@ -184,6 +193,8 @@ class VoiceStep:
         if kind == KIND_WAKE:
             return cls(kind=KIND_WAKE,
                        delay=float(data.get("delay", WAKE_DELAY) or WAKE_DELAY))
+        if kind == KIND_ASSERT:
+            return cls(kind=KIND_ASSERT, params=dict(data.get("params") or {}))
         return cls(kind=KIND_PHRASE,
                    text=str(data.get("text", "")),
                    delay=float(data.get("delay", DEFAULT_DELAY) or 0))
@@ -433,7 +444,7 @@ class VoiceModel:
     def build_play_items(self, case_ids) -> list:
         """把若干语音用例展开成「播报组」列表（播放器吃的格式）。
 
-        每组 = (case_id, 播报步骤下标, 文案, 播后等待, [紧随的检测步骤...], 用例名)。
+        每组 = (case_id, 播报步骤下标, 文案, 播后等待, [检测步骤...], 用例名, [断言行...])。
         传进来的 case_ids 顺序即播放顺序；不存在的 id 自动跳过。
 
         这段逻辑原来长在语音页的勾选树里（_checked_items），性能检测的
@@ -457,15 +468,21 @@ class VoiceModel:
                     continue
                 if not text:
                     continue
-                # 收集紧跟其后的连续检测步骤（碰到下一个播报步骤即止）
+                # 收集紧跟其后的连续检查项（预期检测 / 界面断言），
+                # 碰到下一个播报步骤即止 —— 它们都属于「这句播报之后的期望」
                 verifies = []
+                asserts = []
                 k = idx + 1
-                while k < len(case.steps) and case.steps[k].kind == KIND_VERIFY:
-                    kw = [x for x in case.steps[k].keywords if x]
-                    if kw:
-                        verifies.append((k, kw))
+                while k < len(case.steps) and case.steps[k].kind in (KIND_VERIFY, KIND_ASSERT):
+                    st = case.steps[k]
+                    if st.kind == KIND_VERIFY:
+                        kw = [x for x in st.keywords if x]
+                        if kw:
+                            verifies.append((k, kw))
+                    elif st.params:
+                        asserts.append((k, dict(st.params)))
                     k += 1
-                items.append((case_id, idx, text, delay, verifies, case.name))
+                items.append((case_id, idx, text, delay, verifies, case.name, asserts))
         return items
 
     def delete_suite(self, name: str) -> bool:
@@ -663,6 +680,16 @@ class VoiceModel:
         if case is None:
             return None
         step = VoiceStep(kind=KIND_VERIFY, keywords=_clean_keywords(keywords))
+        case.steps.append(step)
+        self.save()
+        return step
+
+    def add_assert(self, case_id: str, params: dict) -> Optional[VoiceStep]:
+        """追加一条界面断言步骤（参数与自动化断言一致）。"""
+        case = self.get_case(case_id)
+        if case is None or not params:
+            return None
+        step = VoiceStep(kind=KIND_ASSERT, params=dict(params))
         case.steps.append(step)
         self.save()
         return step

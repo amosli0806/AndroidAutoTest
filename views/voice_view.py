@@ -38,8 +38,9 @@ from utils.icons import menu_icon
 
 from models.voice_model import (
     DEFAULT_DELAY, DEFAULT_WAKE_WORD, KIND_PHRASE, KIND_VERIFY, KIND_WAKE,
-    WAKE_DELAY, VoiceModel, get_loop, get_wake_word, get_wake_words)
+    KIND_ASSERT, WAKE_DELAY, VoiceModel, get_loop, get_wake_word, get_wake_words)
 from services.voice_player import VoicePlaybackWorker
+from views.dialogs.voice_assert_dialog import VoiceAssertDialog, assert_label
 from services.voice_service import VoiceError
 from utils import tree_state, voice_table
 # InputDialog 是项目自定义的圆角卡片式对话框，与编辑页"创建项目"用同一个
@@ -500,6 +501,99 @@ class _WakeRow(QFrame):
             'fa6s.trash-can', color=del_color, color_disabled=icon_off))
 
 
+class _AssertRow(QFrame):
+    """一条界面断言行：只显示摘要，双击或点铅笔进对话框改。
+
+    与「预期检测」（验证车机有没有听懂）刻意做出视觉区分：标签、摘要、
+    图标都走橙色系，一眼能看出这两类检查不是一回事。
+    """
+
+    copy_requested = pyqtSignal(int)
+    remove_requested = pyqtSignal(int)
+    edit_requested = pyqtSignal(int)
+
+    def __init__(self, index, step, parent=None):
+        super().__init__(parent)
+        self.index = index
+        self.setObjectName("PhraseRow")
+        self.setProperty("assert", "true")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setToolTip("双击可修改断言条件")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 5, 8, 5)
+        layout.setSpacing(8)
+
+        self.no_label = QLabel(str(index + 1))
+        self.no_label.setObjectName("PhraseNo")
+        self.no_label.setFixedWidth(26)
+        self.no_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.no_label)
+
+        tag = QLabel("断言")
+        tag.setObjectName("AssertTag")
+        layout.addWidget(tag)
+
+        self.text_label = QLabel(assert_label(step.params or {}))
+        self.text_label.setObjectName("AssertText")
+        layout.addWidget(self.text_label, 1)
+
+        self.edit_btn = QToolButton()
+        self.edit_btn.setObjectName("PhraseCopyBtn")   # 复用行内图标按钮样式
+        self.edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.edit_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.edit_btn.setFixedSize(26, 26)
+        self.edit_btn.setAutoRaise(True)
+        self.edit_btn.setToolTip("修改断言条件")
+        self.edit_btn.clicked.connect(lambda: self.edit_requested.emit(self.index))
+        layout.addWidget(self.edit_btn)
+
+        self.copy_btn = QToolButton()
+        self.copy_btn.setObjectName("PhraseCopyBtn")
+        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.copy_btn.setFixedSize(26, 26)
+        self.copy_btn.setAutoRaise(True)
+        self.copy_btn.clicked.connect(lambda: self.copy_requested.emit(self.index))
+        layout.addWidget(self.copy_btn)
+
+        self.del_btn = QToolButton()
+        self.del_btn.setObjectName("PhraseDelBtn")
+        self.del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.del_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.del_btn.setFixedSize(26, 26)
+        self.del_btn.setAutoRaise(True)
+        self.del_btn.clicked.connect(lambda: self.remove_requested.emit(self.index))
+        layout.addWidget(self.del_btn)
+
+        self.delay_spin = None
+        self.estimate_btn = None
+        self.play_btn = None
+        self.text_edit = None
+
+    def mouseDoubleClickEvent(self, event):
+        self.edit_requested.emit(self.index)
+        super().mouseDoubleClickEvent(event)
+
+    def set_playing(self, playing: bool):
+        pass   # 断言不发声
+
+    def apply_theme(self, theme_mode):
+        if theme_mode == ThemeMode.DARK:
+            color, del_color, icon_off = "#bbbbbb", "#ff6b6b", "#565a61"
+            text_color = "#e0a86a"
+        else:
+            color, del_color, icon_off = "#555555", "#e74c3c", "#c2c6cd"
+            text_color = "#9a5a12"
+        self.text_label.setStyleSheet(f"color:{text_color};font-size:12px;")
+        self.edit_btn.setIcon(qta.icon('fa6s.pen-to-square', color=color,
+                                       color_disabled=icon_off))
+        self.copy_btn.setIcon(qta.icon('fa6s.copy', color=color,
+                                       color_disabled=icon_off))
+        self.del_btn.setIcon(qta.icon('fa6s.trash-can', color=del_color,
+                                      color_disabled=icon_off))
+
+
 class VoiceView(QWidget):
     """语音播报页（左：语音用例 / 中：文案编辑 / 右：执行）。"""
 
@@ -660,12 +754,21 @@ class VoiceView(QWidget):
         title_row.addWidget(self.add_btn)
         # 添加检测：往用例末尾追加一条「预期结果」步骤（回执验证关键词），
         # 它会作为独立的一行出现在步骤列表里，可复制/删除
-        self.add_verify_btn = QPushButton("添加检测")
+        self.add_verify_btn = QPushButton("预期检测")
         self.add_verify_btn.setObjectName("VoiceAddBtn")
         self.add_verify_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_verify_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.add_verify_btn.clicked.connect(self._on_add_verify)
         title_row.addWidget(self.add_verify_btn)
+        # 界面断言：与「预期检测」并列，但验证的是两件不同的事 ——
+        # 前者抓 logcat 看车机听没听懂，后者查 UI 看界面变没变
+        self.add_assert_btn = QPushButton("界面断言")
+        self.add_assert_btn.setObjectName("VoiceAddBtn")
+        self.add_assert_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_assert_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.add_assert_btn.setToolTip("播完这句后检查界面元素，验证界面是否真的变化")
+        self.add_assert_btn.clicked.connect(self._on_add_assert)
+        title_row.addWidget(self.add_assert_btn)
         # 批量重算：把**全部用例**的「播后等待」按文案+语速重算一遍
         # （表格导入后一次性补齐用；实现上必须全部算完只落盘一次，见 _on_recalc_delays）
         self.recalc_btn = QPushButton("批量重算")
@@ -991,6 +1094,11 @@ class VoiceView(QWidget):
                     row.copy_requested.connect(self._on_copy_step)
                     row.remove_requested.connect(self._on_remove_step)
                     row.delay_changed.connect(self._on_delay_changed)
+                elif step.kind == KIND_ASSERT:
+                    row = _AssertRow(i, step, self._container)
+                    row.copy_requested.connect(self._on_copy_step)
+                    row.remove_requested.connect(self._on_remove_step)
+                    row.edit_requested.connect(self._on_edit_assert)
                 else:
                     row = _PhraseRow(i, step, self._container)
                     row.play_requested.connect(self._on_play_one)
@@ -1345,6 +1453,29 @@ class VoiceView(QWidget):
         self._reload_steps()
         self.status_label.setText(f"已追加唤醒步骤（跟随设置：{wake_word}）")
 
+    def _on_add_assert(self):
+        case = self._current_case()
+        if case is None:
+            self.status_label.setText("先在左侧选一个语音用例")
+            return
+        dlg = VoiceAssertDialog(self)
+        if dlg.exec() != dlg.DialogCode.Accepted or not dlg.result_params:
+            return
+        self.model.add_assert(case.id, dlg.result_params)
+        self._reload_steps()
+        self.status_label.setText(f"已追加界面断言：{assert_label(dlg.result_params)}")
+
+    def _on_edit_assert(self, index):
+        case = self._current_case()
+        if case is None or not (0 <= index < len(case.steps)):
+            return
+        step = case.steps[index]
+        dlg = VoiceAssertDialog(self, step.params or {})
+        if dlg.exec() != dlg.DialogCode.Accepted or not dlg.result_params:
+            return
+        self.model.update_step(case.id, index, params=dlg.result_params)
+        self._reload_steps()
+
     def _on_remove_step(self, index):
         case = self._current_case()
         if case is None:
@@ -1653,6 +1784,7 @@ class VoiceView(QWidget):
         # 批量重算是全量操作，不依赖当前选中哪个用例，只要有用例就能点
         self.recalc_btn.setEnabled(not running and bool(self.model.cases))
         self.add_verify_btn.setEnabled(not running and self._current_case() is not None)
+        self.add_assert_btn.setEnabled(not running and self._current_case() is not None)
         self.wake_btn.setEnabled(not running and self._current_case() is not None)
         # 「全选 / 取消全选」二合一：文案跟着树里实际勾选情况走
         self._sync_select_all_btn()
@@ -1849,6 +1981,12 @@ class VoiceView(QWidget):
         self.suites_changed.emit()
         self.status_label.setText(f"已删除套件「{name}」")
 
+    def _make_assert_runner(self):
+        """界面断言的执行入口：直接复用设备服务的断言实现，不另写判定。"""
+        ds = getattr(self, "_device_service", None)
+        fn = getattr(ds, "_perform_assert", None)
+        return fn if callable(fn) else None
+
     def _build_feedback(self):
         """按当前配置与设备状态构建回执抓取服务。
 
@@ -1901,7 +2039,8 @@ class VoiceView(QWidget):
             self.service, items, loop_count,
             feedback=feedback, verify_block=verify_block,
             wake_cfg=wake_cfg, wake_words=wake_words,
-            verify_enabled=verify_enabled)
+            verify_enabled=verify_enabled,
+            assert_runner=self._make_assert_runner())
         self._worker = worker
         worker.progress.connect(self._on_progress)
         worker.round_changed.connect(self._on_round_changed)
@@ -1979,12 +2118,24 @@ class VoiceView(QWidget):
         self._sync_play_buttons(running=False)
         for row in self._rows:
             row.set_playing(False)
+        # 界面断言单独报一行：和「预期检测」混在一起说，用户就分不清
+        # 是车机没听懂还是界面没变
+        w = self._worker
+        a_pass = getattr(w, "_assert_pass", 0) if w is not None else 0
+        a_fail = getattr(w, "_assert_fail", 0) if w is not None else 0
+        a_skip = getattr(w, "_assert_skipped", 0) if w is not None else 0
+        tail = ""
+        if a_pass or a_fail:
+            tail = f"　｜　界面断言 {a_pass} 通过 / {a_fail} 失败"
+        elif a_skip:
+            tail = f"　｜　界面断言 {a_skip} 跳过（未连设备）"
+
         if error:
-            self.status_label.setText(f"播报失败：{error}")
+            self.status_label.setText(f"播报失败：{error}{tail}")
         elif ok:
-            self.status_label.setText("播报完成")
+            self.status_label.setText("播报完成" + tail)
         else:
-            self.status_label.setText("已停止")
+            self.status_label.setText("已停止" + tail)
         # 这里**不能**把 self._worker 置空：done 是在 run() 里发出的，线程可能
         # 还没退出，析构运行中的 QThread 会让 Qt 直接 abort（播完闪退）。
         # 引用的释放交给 finished → _release_worker。

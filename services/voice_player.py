@@ -23,6 +23,17 @@ from PyQt6.QtCore import QThread, pyqtSignal
 from services.voice_service import VoiceError
 
 
+def _assert_label(params: dict) -> str:
+    """把断言参数压成一句人话，日志与报告里都用它。"""
+    kind = (params.get("assert_type") or "元素存在").strip()
+    loc = (params.get("locationValue") or "").strip()
+    loc_type = (params.get("locationType") or "").strip()
+    if not loc:
+        return f"{kind}（未填定位值）"
+    short = loc if len(loc) <= 28 else loc[:28] + "…"
+    return f"{kind}「{short}」" + (f"（{loc_type}）" if loc_type and loc_type != "资源ID" else "")
+
+
 class VoicePlaybackWorker(QThread):
     """按顺序执行若干「播报组」，可循环、可被 stop() 打断。
 
@@ -51,7 +62,7 @@ class VoicePlaybackWorker(QThread):
 
     def __init__(self, service, items, loop_count=1, feedback=None,
                  verify_block="", wake_cfg=None, wake_word="", wake_words=None,
-                 verify_enabled=True, parent=None):
+                 verify_enabled=True, assert_runner=None, parent=None):
         super().__init__(parent)
         self.service = service
         self.items = list(items)          # 先做快照
@@ -72,6 +83,13 @@ class VoicePlaybackWorker(QThread):
         if not self.wake_words and (wake_word or "").strip():
             self.wake_words = [wake_word.strip()]
         self.wake_word = self.wake_words[0] if self.wake_words else ""
+        # 界面断言：传入的是 device_service._perform_assert（参数与自动化断言一致）。
+        # None 表示没有设备，断言一律跳过并在日志里说明，不假装通过。
+        self.assert_runner = assert_runner
+        self._assert_pass = 0
+        self._assert_fail = 0
+        self._assert_skipped = 0
+        self._failed_asserts = []
         self._stop = False
         self._interrupted = False
         # 未命中的预期结果 / 唤醒确认（只用于收尾汇总）。一条没命中**不再中断**
@@ -120,6 +138,38 @@ class VoicePlaybackWorker(QThread):
                 voice_log.emit("error", f"❌ 播报超时「{short}」")
                 self._interrupted = True
                 return f"「{text[:12]}」播报超时"
+
+    # ---------------- 界面断言 ----------------
+    def _run_asserts(self, asserts, short):
+        """逐条跑界面断言。未命中只记账 + 记日志，不中断播报。
+
+        语义与回执验证一致：一条没命中不代表后面几句白播，多用例连跑时
+        要跑完整轮，最后统一汇总。
+        """
+        from utils import voice_log
+        if self.assert_runner is None:
+            self._assert_skipped += len(asserts)
+            voice_log.emit(
+                "warning",
+                f"⚠ 未连接设备，{len(asserts)} 条界面断言跳过「{short}」")
+            return
+        for _idx, params in asserts:
+            label = _assert_label(params)
+            try:
+                self.assert_runner(params)
+                self._assert_pass += 1
+                voice_log.emit("success", f"✅ 界面断言「{label}」通过")
+            except AssertionError as e:
+                self._assert_fail += 1
+                self._failed_asserts.append(label)
+                voice_log.emit("error", f"❌ 界面断言「{label}」失败：{e}")
+            except Exception as e:
+                # 定位方式不支持、UI 树取不到等：算失败但把原因说清楚，
+                # 不能静默当成通过（那比不加断言更危险）
+                self._assert_fail += 1
+                self._failed_asserts.append(label)
+                voice_log.emit(
+                    "error", f"❌ 界面断言「{label}」执行出错：{type(e).__name__}: {e}")
 
     # ---------------- 唤醒确认 ----------------
     def _run_wake_cycle(self, text, short, next_text=None):
@@ -227,8 +277,8 @@ class VoicePlaybackWorker(QThread):
                 self.round_changed.emit(round_index + 1, self.loop_count)
                 # 「跳过本用例」只作用于本轮；下一轮重新尝试唤醒
                 self._skipped_cases.clear()
-                for _i, (case_id, phrase_index, text, delay, verifies, case_name) \
-                        in enumerate(self.items):
+                for _i, (case_id, phrase_index, text, delay, verifies, case_name,
+                         asserts) in enumerate(self.items):
                     if self._stop:
                         self._interrupted = True
                         break
@@ -357,6 +407,12 @@ class VoicePlaybackWorker(QThread):
                         else:
                             reason = "未开启回执验证"
                         voice_log.emit("success", f"✅ 播报完成「{short}」（{reason}）")
+
+                    # 界面断言：与回执分开记账 —— 回执证明「车机听懂了」，
+                    # 断言证明「界面真的变了」。两者都过才算这句真的成功，
+                    # 失败时也能一眼看出该查语音链路还是查 UI
+                    if asserts:
+                        self._run_asserts(asserts, short)
                 if self._interrupted:
                     break
         except VoiceError as e:
