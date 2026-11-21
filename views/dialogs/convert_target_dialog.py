@@ -117,8 +117,8 @@ class ConvertTargetDialog(AutoFreeDialog):
             f"selection-background-color:{pal['sel_bg']};"
             f"selection-color:{pal['sel_fg']};"
             f"show-decoration-selected:1;}}"
-            f"QTreeWidget::item{{min-height:24px;padding:2px 4px;border-radius:4px;"
-            f"border:none;}}"
+            # 树是整行选中，圆角会让选中块的左右两端各缺一块，看着琐碎 —— 用直角
+            f"QTreeWidget::item{{min-height:24px;padding:2px 4px;border:none;}}"
             f"QTreeWidget::item:selected{{background:{pal['sel_bg']};"
             f"color:{pal['sel_fg']};border:none;}}"
             f"QTreeWidget::item:hover:!selected{{background:{pal['hover']};}}"
