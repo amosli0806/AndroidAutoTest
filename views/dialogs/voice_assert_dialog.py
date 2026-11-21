@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import (QComboBox, QDoubleSpinBox, QFrame, QGraphicsDropSha
 from utils.dialogs import AutoFreeDialog
 from utils.toast import show_toast
 
-ASSERT_TYPES = ["元素存在", "元素不存在", "文本等于"]
+# 与自动化断言卡片保持一致（_perform_assert 支持这四种）
+ASSERT_TYPES = ["元素存在", "元素不存在", "文本等于", "文本包含"]
 LOC_TYPES = ["资源ID", "文本", "描述", "XPath", "图像"]
 
 
@@ -153,7 +154,8 @@ class VoiceAssertDialog(AutoFreeDialog):
         row.setSpacing(8)
         row.addWidget(label("预期值"))
         self.expected_edit = QLineEdit(params.get("expected_value", ""))
-        self.expected_edit.setPlaceholderText("仅「文本等于」需要")
+        self.expected_edit.setPlaceholderText(
+            "选「文本等于 / 文本包含」时才需要填写")
         self.expected_edit.setStyleSheet(self.value_edit.styleSheet())
         row.addWidget(self.expected_edit, 1)
         row.addWidget(label("超时"))
@@ -195,8 +197,16 @@ class VoiceAssertDialog(AutoFreeDialog):
         self._sync_pick_icon()
         self.value_edit.setFocus()
 
+    # 只有这两类断言会读 expected_value（见 device_service._perform_assert）
+    NEEDS_EXPECTED = ("文本等于", "文本包含")
+
     def _sync_expected_enabled(self, text):
-        self.expected_edit.setEnabled(text == "文本等于")
+        need = text in self.NEEDS_EXPECTED
+        self.expected_edit.setEnabled(need)
+        if need:
+            self.expected_edit.setPlaceholderText(
+                "元素实际文本应完全等于该值" if text == "文本等于"
+                else "元素实际文本应包含该片段")
 
     def _sync_pick_icon(self):
         """图像定位 → 相机（截屏取图）；其余 → 准星（画面拾取）。与动作卡片一致。"""
@@ -235,7 +245,7 @@ class VoiceAssertDialog(AutoFreeDialog):
             return
         assert_type = self.type_combo.currentText()
         expected = self.expected_edit.text().strip()
-        if assert_type == "文本等于" and not expected:
+        if assert_type in ("文本等于", "文本包含") and not expected:
             show_toast(self, "「文本等于」需要填预期值", duration=2000)
             self.expected_edit.setFocus()
             return

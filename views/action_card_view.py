@@ -512,6 +512,15 @@ class ActionCard(QGroupBox):
         'voice': '#00bcd4',
     }
 
+    # 「预期值」的提示跟着**断言类型**走，不是跟着定位方式 ——
+    # 判定逻辑里只有文本等于 / 文本包含 会读 expected_value，
+    # 元素存在/不存在填了也不参与比较（2026-11-21 用户提问时核对过）。
+    EXPECTED_PLACEHOLDER_MAP = {
+        '文本等于': '元素实际文本应完全等于该值',
+        '文本包含': '元素实际文本应包含该片段',
+    }
+    EXPECTED_DISABLED_HINT = '选「文本等于 / 文本包含」时才需要填写'
+
     PLACEHOLDER_MAP = {
         '资源ID': '例如：com.example:id/button',
         '坐标': '例如：100,200',
@@ -541,6 +550,7 @@ class ActionCard(QGroupBox):
 
         self.setup_ui()
         self._setup_placeholder_sync()
+        self._setup_expected_sync()
         self.apply_theme(self._theme_mode)
 
     def apply_theme(self, theme_mode):
@@ -1059,6 +1069,24 @@ class ActionCard(QGroupBox):
                         lambda idx, c=combo, l=line_edit_widget: self._update_placeholder(c, l)
                     )
                     self._update_placeholder(combo, line_edit_widget)
+
+    def _setup_expected_sync(self):
+        """断言卡片：断言类型变化时启用/禁用「预期值」并换提示。"""
+        combo = self.fields.get('assert_type')
+        line_edit = self.fields.get('expected_value')
+        if not isinstance(combo, QComboBox) or not isinstance(line_edit, QLineEdit):
+            return
+        combo.currentIndexChanged.connect(
+            lambda _i, c=combo, l=line_edit: self._sync_expected_field(c, l))
+        self._sync_expected_field(combo, line_edit)
+
+    def _sync_expected_field(self, combo, line_edit):
+        text = combo.currentText()
+        need = text in self.EXPECTED_PLACEHOLDER_MAP
+        # 禁用而不是清空：用户来回切换类型时，已经打好的值还在
+        line_edit.setEnabled(need)
+        line_edit.setPlaceholderText(
+            self.EXPECTED_PLACEHOLDER_MAP.get(text, self.EXPECTED_DISABLED_HINT))
 
     def _update_placeholder(self, combo, line_edit):
         current_text = combo.currentText()
