@@ -175,7 +175,7 @@
     <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 更新于 2026-11-20（v1.6.1）</div>
     <div class="badges">
       <span class="badge">当前版本 v1.6.1</span>
-      <span class="badge">7 项待办 · 3 项已落地</span>
+      <span class="badge">9 项待办 · 3 项已落地</span>
       <span class="badge">车机 / 手机均已实机验证</span>
       <span class="badge">按改动量分 A~C 三档</span>
     </div>
@@ -198,12 +198,12 @@
     </div>
   </nav>
 
-  <!-- ============ 一、已知缺口 ============ -->
+  <!-- ============ 一、待办与扩展方向 ============ -->
     <section class="chapter" id="s1">
     <h2><span class="num">1</span>待办与扩展方向（按改动量排序）</h2>
     <p class="small" style="margin-top:0">从「改动小、见效快」到「改动大、影响面广」依次排列 —— <b>越靠前越建议先动</b>。档位只反映<b>改动量与风险</b>，不代表价值：C 档（如关键字驱动）一旦做出来收益最大，只是要先有变量地基。</p>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ A · 改动小、见效快（半天 ~ 1 天，可随时插进版本）</h3>
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ A · 改动小、见效快（0.5 ~ 3.5 天，可独立插进版本）</h3>
 
     <div class="card">
       <h3>1. 测试套件增强 <span class="tag plan">📋 规划中</span></h3>
@@ -294,10 +294,23 @@
       <p><b>工作量约 3.5 天</b>：模型与展开 0.5 + 执行与报告 0.5 + 循环 UI 1.5 + 条件 UI 1。</p>
     </div>
 
+    <div class="card">
+      <h3>4. 数据驱动与参考图改相对路径 <span class="tag plan">📋 规划中</span></h3>
+      <p><b>现状</b>：用例绑的数据驱动文件（<code>TreeNode.data_file</code>）、图像定位的参考图
+        存的都是<b>绝对路径</b>。换台机器、或者把工程拷给别人，这些绑定全部失效，只能逐个重选。</p>
+      <p><b>做法</b>：<code>data/assets/</code> 作为资源的统一家，库里只存相对路径。</p>
+      <ul>
+        <li>绑定数据文件 / 选参考图时自动复制进 <code>assets/</code>，只存 <code>assets/xxx.csv</code></li>
+        <li>读取统一走 <code>to_abs()</code>；文件不在了提示「资源缺失：assets/xxx.csv」，
+          而不是抛一句系统错误</li>
+        <li>一次性迁移：扫描项目 / 步骤 / 元素里的绝对路径，能读到的收拢进来并改写</li>
+      </ul>
+      <p><b>工作量约 1 天</b>：改动集中在路径解析与三处选择入口，数据结构不动（只是值的格式变了）。</p>
+    </div>
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ B · 改动较大、需先设计（要先出方案再动手）</h3>
 
     <div class="card">
-      <h3>4. 接口模块二期 <span class="tag plan">📋 规划中 · 方案已定 2026-11-21</span></h3>
+      <h3>5. 接口模块二期 <span class="tag plan">📋 规划中 · 方案已定 2026-11-21</span></h3>
 
       <p><b>已有的地基</b>（不用重做）：<code>{{变量}}</code> 渲染（URL / 请求头 / 请求体三处）、
         JSON 路径取值 <code>json_get</code>、状态码 / 耗时 / JSON 断言 —— 链路编排要做的只是把它们接起来。</p>
@@ -343,7 +356,7 @@ def after(ctx):
     </div>
 
     <div class="card">
-      <h3>5. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <h3>6. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
       <p><b>已经有的</b>：CPU / 内存 / 流量 / FPS / 线程都能采，堆转储、抓包、截图、录屏可随监控一起跑；
         也能在监控期间顺带跑一组自动化或语音用例。失败现场截图、内存超阈值自动转储也都具备。
         但<b>产物与报告都是整场一份</b>。</p>
@@ -358,6 +371,9 @@ def after(ctx):
           （已有），<b>都不绑到用例边界</b></li>
         <li><b>抓包整场一份，事后离线切</b>：执行结束后按用例起止时间戳切片，不占执行时间</li>
       </ul>
+
+      <p class="small"><b>GPU 指标暂不做</b>：只有高通 Adreno 能取到，车机多为 Mali / PowerVR，
+        SurfaceFlinger 只给帧统计；FPS 已经覆盖「卡不卡」的主要判断。</p>
 
       <p class="small"><b>刻意不做的</b>：每条用例都转储、每条用例重启抓包。堆转储走
         <code>am dumpheap</code>，会触发强制 GC 让被测应用短暂冻结 —— 不只拖慢，还可能让
@@ -399,10 +415,23 @@ def after(ctx):
         等真嫌麻烦再把 editcap 打包进去。</p>
     </div>
 
+    <div class="card">
+      <h3>7. 数据包导出 / 导入 <span class="tag plan">📋 规划中</span></h3>
+      <p><b>现状</b>：换电脑只能手动拷整个 <code>data/</code> 目录，历史快照也只留在本机。
+        与其接 GitHub（见第 4 章历史记录那段），一个文件更贴合「备份 / 迁移」这个真实场景。</p>
+      <ul>
+        <li>导出 <code>虫师数据包_日期.zip</code>：11 个资产 json + <code>assets/</code>，
+          可选是否带历史快照</li>
+        <li>排除性能采样（7MB）、性能基线、GUI 状态、TTS 缓存 —— 与历史记录同一份排除名单</li>
+        <li>导入：先显示包内清单（用例 / 元素 / 套件数量与体积）→ 校验结构 →
+          <b>自动存一份历史快照</b> → 覆盖 → 提示重启生效</li>
+      </ul>
+      <p><b>工作量约 1.5 天</b>：打包与校验 0.5 + 导入与回滚 0.5 + 界面 0.5。</p>
+    </div>
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ C · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
-      <h3>6. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
+      <h3>8. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把语速、播报文案片段等提升为可参数化变量，用例内可覆盖</li>
         <li><b>唤醒词不做用例级覆盖</b> —— 它是环境配置（设置里填对就行），换车型走车型模板；
@@ -412,7 +441,7 @@ def after(ctx):
     </div>
 
     <div class="card">
-      <h3>7. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
+      <h3>9. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
 
       <p><b>它和「步骤模板」不是一回事</b>（这两个最容易混，先分清）：</p>
@@ -437,45 +466,7 @@ def after(ctx):
         只解决「改一处全生效」，不需要变量，成本低得多。</p>
     </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 已知缺口与桩实现</h3>
-    <p class="small" style="margin-top:0">当前尚未补齐、或做了半截的能力 —— 与上面的规划项互相呼应，是判断优先级时的依据。</p>
-
-<div class="grid2">
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无关键字复用</b> — 「登录」「搜索」等常用组合无法封装复用。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>套件能力不完整</b> — 无套件级报告、无链式执行（A→B）。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>GPU 采集缺失</b> — 渲染类指标（帧耗时分布 / GPU 占用）还没有采集手段；原方案的 GPU 仅支持高通 Adreno 且未接编排，属半成品。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无导出 / 导入数据包</b> — 换电脑或做备份只能手动拷 data 目录；历史快照也只在本机。</div></div>
-      </div>
-      <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>数据与参考图按绝对路径绑定</b> — 数据驱动绑定的 CSV / Excel、图像定位的参考图存的都是绝对路径，换机器或挪动工程目录后要重新绑定。</div></div>
-      </div>
-
-    </div>
-
-    <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 优先级速查表</h3>
-    <p class="small" style="margin-top:0">按档位排列：<b>A = 改动最小、最建议先动</b>；⭐ 只表示建议顺序，与档位一致。</p>
-    <div class="card">
-      <table>
-        <thead><tr><th>档位</th><th>能力</th><th>优先级</th><th>理由</th></tr></thead>
-        <tbody>
-          <tr><td>A</td><td>1. 测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
-          <tr><td>A</td><td>2. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件</td></tr>
-          <tr><td>A</td><td>3. 步骤级条件与循环 ✅方案已定</td><td class="stars">⭐⭐⭐</td><td>循环用展开式，执行器主循环不动；条件复用断言判定。改动集中在步骤模型与列表 UI（约 3.5 天）</td></tr>
-          <tr><td>B</td><td>4. 接口模块二期</td><td class="stars">⭐⭐</td><td>方案已定（先链路后脚本，约 5 天）；<code>{{var}}</code> 渲染与 json_get 是现成地基</td></tr>
-          <tr><td>B</td><td>5. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例归组，改动集中在场景化执行器与报告分组</td></tr>
-          <tr><td>C</td><td>6. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接语速 / 文案片段</td></tr>
-          <tr><td>C</td><td>7. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="tip">💡 建议从 <b>A 档</b> 起步：套件增强 / 知识库的几个小件都是小步快跑、影响面可控的活，可随时插进版本。<br>
+    <div class="tip">💡 建议从 <b>A 档</b> 起步：套件增强 / 知识库的几个小件、数据路径相对化都是小步快跑、影响面可控的活，可随时插进版本。<br>
       已完成项已从本文移除（步骤模板 2026-11-20、历史记录与回滚 2026-11-21、<br>
       语音播报增强 2026-11-21），改动量与做法见更新日志。</div>
     <div class="card">
