@@ -10,8 +10,10 @@ expected_value / timeout），执行时原样交给 device_service._perform_asse
 """
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
+import qtawesome as qta
 from PyQt6.QtWidgets import (QComboBox, QDoubleSpinBox, QFrame, QGraphicsDropShadowEffect,
-                             QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout)
+                             QHBoxLayout, QLabel, QLineEdit, QPushButton, QToolButton,
+                             QVBoxLayout)
 
 from utils.dialogs import AutoFreeDialog
 from utils.toast import show_toast
@@ -126,13 +128,30 @@ class VoiceAssertDialog(AutoFreeDialog):
         box.addWidget(self.loc_combo)
 
         box.addWidget(label("定位值"))
+        value_row = QHBoxLayout()
+        value_row.setSpacing(6)
         self.value_edit = QLineEdit(params.get("locationValue", ""))
         self.value_edit.setPlaceholderText(
             "资源ID 如 com.app:id/btn；文本/描述直接填写；图像填图片路径")
         self.value_edit.setStyleSheet(
             f"QLineEdit{{background:{pal['input_bg']};border:1px solid {pal['input_border']};"
             f"border-radius:6px;padding:6px 10px;font-size:12px;color:{pal['text']};}}")
-        box.addWidget(self.value_edit)
+        value_row.addWidget(self.value_edit, 1)
+
+        # 准星 / 相机：与动作卡片同一套交互 —— 在设备画面上点控件直接回填，
+        # 省得用户手抄一长串资源 ID。图像定位时变成相机（截屏取图）。
+        self.pick_btn = QToolButton()
+        self.pick_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.pick_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.pick_btn.setFixedSize(30, 28)
+        self.pick_btn.setAutoRaise(True)
+        self.pick_btn.setStyleSheet(
+            f"QToolButton{{border:1px solid {pal['input_border']};border-radius:6px;"
+            f"background:{pal['input_bg']};}}"
+            f"QToolButton:hover{{background:{pal['border']};}}")
+        self.pick_btn.clicked.connect(self._on_pick)
+        value_row.addWidget(self.pick_btn)
+        box.addLayout(value_row)
 
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -176,10 +195,43 @@ class VoiceAssertDialog(AutoFreeDialog):
 
         self.type_combo.currentTextChanged.connect(self._sync_expected_enabled)
         self._sync_expected_enabled(self.type_combo.currentText())
+        self.loc_combo.currentTextChanged.connect(lambda _t: self._sync_pick_icon())
+        self._sync_pick_icon()
         self.value_edit.setFocus()
 
     def _sync_expected_enabled(self, text):
         self.expected_edit.setEnabled(text == "文本等于")
+
+    def _sync_pick_icon(self):
+        """图像定位 → 相机（截屏取图）；其余 → 准星（画面拾取）。与动作卡片一致。"""
+        color = "#bbbbbb" if self._pal["bg"] != "#ffffff" else "#555555"
+        if self.loc_combo.currentText() == "图像":
+            self.pick_btn.setIcon(qta.icon('fa6s.camera', color=color))
+            self.pick_btn.setToolTip("截屏取图（图像定位）")
+        else:
+            self.pick_btn.setIcon(qta.icon('fa6s.crosshairs', color=color))
+            self.pick_btn.setToolTip("在设备画面中拾取控件")
+
+    def _on_pick(self):
+        """打开拾取面板：在设备画面上点控件 → 回填定位方式与定位值。"""
+        parent = self.parent()
+        ds = getattr(parent, "_device_service", None)
+        if ds is None or not getattr(ds, "device", None):
+            show_toast(self, "请先在顶部工具栏连接设备", duration=2000)
+            return
+        try:
+            from views.dialogs.element_pick_dialog import ElementPickDialog
+            dlg = ElementPickDialog(ds, self)
+        except Exception as e:
+            show_toast(self, f"打不开拾取面板：{e}", duration=2500)
+            return
+        if dlg.exec() != dlg.DialogCode.Accepted or not dlg.result:
+            return
+        res = dlg.result
+        idx = self.loc_combo.findText(res.get("loc_type") or "")
+        if idx >= 0:
+            self.loc_combo.setCurrentIndex(idx)
+        self.value_edit.setText(res.get("loc_value") or "")
 
     def _on_ok(self):
         value = self.value_edit.text().strip()
