@@ -4,10 +4,10 @@
 格式约定（一个分组一张工作表）：
 
     用例名称              | 操作步骤              | 预期结果
-    打开地图 - 地图在全屏  | 1. 你好本田           | 1. 主驾，在呢，我在
+    打开地图 - 地图在全屏  | 1. 唤醒：你好本田      | 1. 主驾，在呢，我在
                          | 2. 我要打开导航页面     | 2. 正在为您切换为全屏地图
                          | 3. 我要打开导航页面     | 3. 当前已为全屏地图
-    打开地图 - 地图在半屏  | 1. 你好本田           | 1. 主驾，在呢，我在
+    打开地图 - 地图在半屏  | 1. 唤醒：你好本田      | 1. 主驾，在呢，我在
                          | 2. 我要打开导航页面     |
 
 要点：
@@ -15,12 +15,18 @@
 2. **操作步骤 / 预期结果两列里是「换行 + 序号」的多行文本**，一个单元格装完该用例的
    全部步骤 / 全部预期。
 3. **序号就是「步骤号」**：第 N 条预期前面的数字，指的是它对应的那条操作步骤。
-   内部模型里检测步骤归属于紧挨在它前面的那句播报，所以「一句播报配多条预期」是成立的，
-   而「有预期却没有对应步骤」不成立。用步骤号当预期序号，两边数量不等时也不会错位：
-   某条步骤没有预期，它就不出现在预期列里。
+   内部模型里检测步骤归属于紧挨在它前面的那句播报（唤醒也算一步），所以
+   「一句播报配多条预期」是成立的，而「有预期却没有对应步骤」不成立。用步骤号当
+   预期序号，两边数量不等时也不会错位：某条步骤没有预期，它就不出现在预期列里。
 4. 同一句播报配了多条预期时，预期列会出现多行**相同序号**——导入时它们各自还原成
    一条独立的检测步骤。刻意不合并成一条：合并会把「各自都要通过」悄悄放宽成
    「命中任一即通过」。
+5. **唤醒步骤单独标出来**：`1. 唤醒：你好本田`。唤醒词在模型里是「跟随设置」的引用
+   （步骤本身不存文本），所以导出时把当前配置的词写进去方便人看；导入时只要认出
+   「唤醒：」前缀就还原成唤醒步骤，文本本身不落库。
+6. **界面断言不写进表格**（`kind=assert` 会跳过）：它是界面检查，不是语音话术，
+   塞进「操作步骤」会让人以为要念出来。含断言用例导入回来会丢断言，导出后会在
+   状态栏提示这一点。
 
 openpyxl 延迟导入：主程序启动路径对时间敏感，不为一个按需功能拖慢启动。
 """
@@ -28,13 +34,22 @@ import re
 from typing import List, Tuple
 
 from models.voice_model import (
-    DEFAULT_DELAY, KIND_PHRASE, KIND_VERIFY, VoiceStep, _clean_keywords)
+    DEFAULT_DELAY, KIND_ASSERT, KIND_PHRASE, KIND_VERIFY, KIND_WAKE, WAKE_DELAY,
+    VoiceStep, _clean_keywords, get_wake_words)
 
 # 表头（导入时认这一行就跳过；没有表头也能导）
 HEADERS = ("用例名称", "操作步骤", "预期结果")
 
 # 关键词分隔：与界面上检测步骤输入框的规则完全一致（中英文逗号都认）
 _KEYWORD_SPLIT = re.compile(r"[,，]")
+
+# 唤醒步骤的前缀（导出时写、导入时认）
+WAKE_PREFIX = "唤醒："
+_WAKE_RE = re.compile(r"^唤醒\s*[：:]\s*(.*)$")
+
+# 多个唤醒词之间的分隔（导出用顿号，与关键字的逗号规则区分开）
+_WAKE_JOIN = "、"
+_WAKE_SPLIT = re.compile(r"[、,，/]")
 
 # 行首序号：「1. xxx」「2、xxx」「3) xxx」「4：xxx」都认
 _STEP_NO_RE = re.compile(r"^\s*(\d+)\s*[.、．)）:：]\s*(.*)$")
@@ -52,23 +67,45 @@ ROW_HEIGHT_PER_LINE = 15
 # ============================================================
 # 导出方向：用例 -> 一行三列
 # ============================================================
-def case_to_row(case) -> List[str]:
-    """一个用例 -> 一行 [用例名, 操作步骤文本, 预期结果文本]。"""
+def case_to_row(case, wake_words=None) -> List[str]:
+    """一个用例 -> 一行 [用例名, 操作步骤文本, 预期结果文本]。
+
+    wake_words 只给测试用；默认读当前设置里的唤醒词。唤醒步骤在模型里不存文本，
+    导出得把配置里的词写出来，否则表格里只剩一串没头没尾的播报。
+    """
+    if wake_words is None:
+        wake_words = get_wake_words()
+    wake_text = _WAKE_JOIN.join(w for w in wake_words if w)
+
     step_lines: List[str] = []
     expect_lines: List[str] = []
     step_no = 0
     last_step_no = None
     for step in case.steps:
+        if step.kind == KIND_WAKE:
+            # 唤醒也是一步：它同样可以配预期（「主驾，在呢」就是它的回执）
+            step_no += 1
+            last_step_no = step_no
+            step_lines.append(f"{step_no}. {WAKE_PREFIX}{wake_text}")
+            continue
         if step.kind == KIND_PHRASE:
             step_no += 1
             last_step_no = step_no
             step_lines.append(f"{step_no}. {step.text or ''}")
             continue
-        # 检测步骤：归属于紧挨在它前面的那句播报，序号就用那句播报的步骤号
+        if step.kind == KIND_ASSERT:
+            # 界面检查不是话术，暂不进表格（见模块说明第 6 条）
+            continue
+        # 检测步骤：归属于紧挨在它前面的那句播报 / 唤醒，序号用它的步骤号
         if last_step_no is None:
             continue      # 开头就是检测（异常数据）：没有归属，丢掉
         expect_lines.append(f"{last_step_no}. {'，'.join(step.keywords or [])}")
     return [case.name, "\n".join(step_lines), "\n".join(expect_lines)]
+
+
+def case_has_assert(case) -> bool:
+    """该用例是否含界面断言（导出时用来提示「断言不进表格」）。"""
+    return any(s.kind == KIND_ASSERT for s in case.steps)
 
 
 def group_to_sheet_rows(cases) -> List[list]:
@@ -118,10 +155,23 @@ def _parse_case(case_name: str, steps_text: str, expects_text: str):
 
     steps: List[VoiceStep] = []
     used_numbers = set()
+    configured = {w for w in get_wake_words() if w}
     for no, text in parsed_steps:
-        steps.append(VoiceStep(kind=KIND_PHRASE,
-                               text=text[:MAX_CELL_CHARS],
-                               delay=DEFAULT_DELAY))
+        wake_match = _WAKE_RE.match(text)
+        if wake_match:
+            steps.append(VoiceStep(kind=KIND_WAKE, delay=WAKE_DELAY))
+            # 唤醒词本身不落库（跟随设置），表里写的只用来提醒「和设置不一致」
+            stated = [w.strip() for w in _WAKE_SPLIT.split(wake_match.group(1))
+                      if w.strip()]
+            if stated and configured and set(stated) != configured:
+                warnings.append(
+                    f"「{case_name}」序号 {no} 的唤醒词「{_WAKE_JOIN.join(stated)}」"
+                    f"与设置里的不一致，已按设置（"
+                    f"{_WAKE_JOIN.join(sorted(configured))}）处理")
+        else:
+            steps.append(VoiceStep(kind=KIND_PHRASE,
+                                   text=text[:MAX_CELL_CHARS],
+                                   delay=DEFAULT_DELAY))
         for keywords in expects_by_no.get(no, []):
             steps.append(VoiceStep(kind=KIND_VERIFY, keywords=list(keywords)))
         if no in expects_by_no:

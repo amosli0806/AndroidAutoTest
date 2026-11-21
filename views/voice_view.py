@@ -1351,9 +1351,16 @@ class VoiceView(QWidget):
             ErrorDialog.show_error(self, "导出失败",
                                    f"导出语音用例表格时出错：\n{e}")
             return
+        # 表格只有「用例名称 / 操作步骤 / 预期结果」三列，有两样东西进不去：
+        # 播后等待（导入后批量重算）和界面断言（它不是话术，写进去会被误当成要念的话）
+        with_assert = sum(1 for c in self.model.cases
+                          if voice_table.case_has_assert(c))
+        note = "播后等待不在表格里，导入后可点「批量重算」补齐"
+        if with_assert:
+            note += f"；{with_assert} 个用例的界面断言不导出"
         self.status_label.setText(
             f"已导出 {total_cases} 个用例 / {count} 张分组表到 "
-            f"{os.path.basename(path)}（播后等待不在表格里，导入后可点「批量重算」一次性补齐）")
+            f"{os.path.basename(path)}（{note}）")
 
     def _on_import_all(self):
         """导入语音用例表格：**工作表 = 分组**，表名即分组名。
