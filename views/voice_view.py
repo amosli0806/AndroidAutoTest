@@ -38,7 +38,7 @@ from utils.icons import menu_icon
 
 from models.voice_model import (
     DEFAULT_DELAY, DEFAULT_WAKE_WORD, KIND_PHRASE, KIND_VERIFY, KIND_WAKE,
-    WAKE_DELAY, VoiceModel, get_loop, get_wake_word)
+    WAKE_DELAY, VoiceModel, get_loop, get_wake_word, get_wake_words)
 from services.voice_player import VoicePlaybackWorker
 from services.voice_service import VoiceError
 from utils import tree_state, voice_table
@@ -1893,14 +1893,14 @@ class VoiceView(QWidget):
         # 单条试听不验证（人耳确认场景）；「执行选中」才抓回执/确认唤醒
         if verify:
             feedback, verify_enabled, verify_block, wake_cfg = self._build_feedback()
-            wake_word = get_wake_word()
+            wake_words = get_wake_words()
         else:
             feedback, verify_enabled, verify_block = None, False, ""
-            wake_cfg, wake_word = {}, ""
+            wake_cfg, wake_words = {}, []
         worker = VoicePlaybackWorker(
             self.service, items, loop_count,
             feedback=feedback, verify_block=verify_block,
-            wake_cfg=wake_cfg, wake_word=wake_word,
+            wake_cfg=wake_cfg, wake_words=wake_words,
             verify_enabled=verify_enabled)
         self._worker = worker
         worker.progress.connect(self._on_progress)

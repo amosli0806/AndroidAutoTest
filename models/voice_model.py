@@ -28,6 +28,7 @@ steps 是统一的步骤列表，每个元素带 kind 区分类型：
 import itertools
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -816,20 +817,37 @@ class VoiceModel:
         return added
 
 
-def get_wake_word() -> str:
-    """当前配置的唤醒词；没配置（清空过）或读不出来都回落到 DEFAULT_WAKE_WORD。
+def get_wake_words() -> List[str]:
+    """当前配置的全部唤醒词（逗号 / 顿号分隔，去空去重保序）。
 
-    取值规则与 VoiceView._wake_word 一致（都从 voice_data.json 的 settings 段取），
-    但这里**只读 settings 段**，不构造 VoiceModel —— 「动作卡片」里语音播报卡片的
-    默认文案要在界面构建时取一次，没必要为了一句话把上千条语音用例读进内存。
+    支持多套是为了应对车机对某些词的识别率差异：唤醒失败时依次换下一条，
+    比同一句重复念三遍更容易成功。配置仍存在 settings.wake_word 这一个字段里，
+    不新增结构 —— 老数据和车型模板都不用迁移。
+
+    只读 settings 段，不构造 VoiceModel（理由同 get_rate）。
     """
     try:
         with open(VoiceModel.DATA_FILE, encoding="utf-8") as f:
             data = json.load(f)
-        word = ((data.get("settings") or {}).get("wake_word") or "").strip()
+        raw = ((data.get("settings") or {}).get("wake_word") or "").strip()
     except Exception:
-        word = ""
-    return word or DEFAULT_WAKE_WORD
+        raw = ""
+    parts = [p.strip() for p in re.split(r"[,，、]", raw) if p.strip()]
+    seen, out = set(), []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out or [DEFAULT_WAKE_WORD]
+
+
+def get_wake_word() -> str:
+    """当前配置的**首个**唤醒词。
+
+    兼容原有调用点（动作卡片默认文案、唤醒判定、界面展示等）——
+    它们只需要一个词，多候选的轮播由播放器内部处理。
+    """
+    return get_wake_words()[0]
 
 
 def get_rate() -> int:

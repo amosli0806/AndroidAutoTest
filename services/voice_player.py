@@ -50,7 +50,7 @@ class VoicePlaybackWorker(QThread):
     done = pyqtSignal(bool, str)          # (是否正常播完, 错误信息)
 
     def __init__(self, service, items, loop_count=1, feedback=None,
-                 verify_block="", wake_cfg=None, wake_word="",
+                 verify_block="", wake_cfg=None, wake_word="", wake_words=None,
                  verify_enabled=True, parent=None):
         super().__init__(parent)
         self.service = service
@@ -66,7 +66,12 @@ class VoicePlaybackWorker(QThread):
         self.verify_enabled = bool(verify_enabled)
         # 唤醒确认配置（settings.verify.wake）与当前唤醒词文本
         self.wake_cfg = dict(wake_cfg or {})
-        self.wake_word = (wake_word or "").strip()
+        # 多套唤醒词：唤醒失败依次换下一条，只配一个时退化成重复念同一句。
+        # wake_word 保留为「首个候选」，唤醒判定（text == wake_word）仍走它。
+        self.wake_words = [str(w).strip() for w in (wake_words or []) if str(w).strip()]
+        if not self.wake_words and (wake_word or "").strip():
+            self.wake_words = [wake_word.strip()]
+        self.wake_word = self.wake_words[0] if self.wake_words else ""
         self._stop = False
         self._interrupted = False
         # 未命中的预期结果 / 唤醒确认（只用于收尾汇总）。一条没命中**不再中断**
@@ -143,6 +148,11 @@ class VoicePlaybackWorker(QThread):
             if self._stop:
                 self._interrupted = True
                 return False, ""
+            # 每次尝试换下一个候选词：车机对某些词就是听不准，换一句
+            # 往往比重复念同一句有效得多
+            if self.wake_words:
+                text = self.wake_words[(attempt - 1) % len(self.wake_words)]
+                short = text[:20] + ("…" if len(text) > 20 else "")
             try:
                 self.feedback.clear()
             except Exception:

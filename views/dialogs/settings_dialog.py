@@ -785,7 +785,7 @@ class SettingsDialog(QDialog):
         # 贴在旁边比单独占一行更直观，也省掉一行高度。
         self.wake_word_edit = QLineEdit()
         self.wake_word_edit.setMinimumWidth(340)
-        self.wake_word_edit.setPlaceholderText("例如：你好虫师")
+        self.wake_word_edit.setPlaceholderText("例如：你好虫师（多个用逗号分隔，唤醒失败依次尝试）")
 
         self.voice_test_btn = QPushButton("试听")
         self.voice_test_btn.setObjectName("aiTestBtn")
