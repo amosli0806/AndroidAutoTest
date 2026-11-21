@@ -1040,6 +1040,11 @@ class VoiceView(QWidget):
                 menu.addAction(menu_icon('fa6s.copy', icon_color),
                                "复制语音用例",
                                lambda: self._on_copy_case(node_id))
+                # 转成自动化用例：播报→语音播报、回执→语音回执、断言→断言，
+                # 于是语音用例能进自动化套件，和点击类用例一起跑、一起出报告
+                menu.addAction(menu_icon('fa6s.right-left', icon_color),
+                               "转为自动化用例",
+                               lambda: self._on_convert_to_automation(node_id))
             else:
                 menu.addAction(menu_icon('fa6s.copy', icon_color),
                                "复制分组",
@@ -1472,6 +1477,66 @@ class VoiceView(QWidget):
             return
         self.model.update_step(case.id, index, params=dlg.result_params)
         self._reload_steps()
+
+    def set_automation_models(self, project_model, step_model, refresh=None):
+        """注入自动化的项目树、步骤模型与刷新回调（供「转为自动化用例」使用）。"""
+        self._project_model = project_model
+        self._step_model = step_model
+        self._automation_refresh = refresh
+
+    def _on_convert_to_automation(self, case_id):
+        """把语音用例转成一条自动化用例（原用例保留）。"""
+        case = self.model.get_case(case_id)
+        if case is None:
+            return
+        pm = getattr(self, "_project_model", None)
+        sm = getattr(self, "_step_model", None)
+        if pm is None or sm is None:
+            from utils.toast import show_toast
+            show_toast(self, "未接入自动化数据，无法转换", 2500)
+            return
+
+        parent = next((n for n in getattr(pm, "root_nodes", [])
+                       if n.type in ("project", "folder")), None)
+        if parent is None:
+            from utils.toast import show_toast
+            show_toast(self, "请先在自动化编辑页创建一个项目", 2500)
+            return
+
+        # 转换前先留一份快照：这一步会写项目树与步骤，出问题时能整库回退
+        try:
+            from models.history_model import HistoryModel
+            HistoryModel().take_snapshot("before_convert", f"语音转自动化：{case.name}")
+        except Exception:
+            pass
+
+        from models.voice_converter import convert_case_to_steps
+        converted, skipped_verify = convert_case_to_steps(case, self._wake_word())
+
+        if not converted:
+            from utils.toast import show_toast
+            show_toast(self, "这个用例没有可转换的步骤", 2500)
+            return
+
+        node = pm.create_case(parent.id, f"{case.name}（自动化）")
+        if node is None:
+            from utils.toast import show_toast
+            show_toast(self, "创建自动化用例失败", 2500)
+            return
+        sm.insert_steps_at(node.id, -1, converted)
+
+        # 树与执行页要跟着刷新，否则新用例要重启才看得到
+        try:
+            if getattr(self, "_automation_refresh", None):
+                self._automation_refresh()
+        except Exception:
+            pass
+
+        from utils.toast import show_toast
+        msg = f"已生成「{node.name}」（{len(converted)} 个步骤）"
+        if skipped_verify:
+            msg += f"，跳过 {skipped_verify} 条空回执"
+        show_toast(self, msg, 3000)
 
     def _on_remove_step(self, index):
         case = self._current_case()

@@ -1290,6 +1290,21 @@ def main():
     voice_view = VoiceView(model=voice_model, service=voice_service,
                            device_service=device_svc)
     main_window.set_voice_view(voice_view)
+
+    def _refresh_automation_after_convert():
+        """语音用例转成自动化用例后，让项目树与执行页立刻看到新节点。"""
+        try:
+            project_controller.view.refresh()
+        except Exception:
+            logger.warning("转换后刷新项目树失败", exc_info=True)
+        try:
+            if hasattr(execute_view, "refresh"):
+                execute_view.refresh()
+        except Exception:
+            logger.warning("转换后刷新执行页失败", exc_info=True)
+
+    voice_view.set_automation_models(project_model, step_model,
+                                     _refresh_automation_after_convert)
     # 语音页保存/删除「语音套件」后，即时同步到性能检测页的「模式」下拉。
     # 那边只做展示（语音套件不能做场景化，见 perf_view._on_mode_changed）。
     voice_view.suites_changed.connect(perf_view.refresh_suite_combo)

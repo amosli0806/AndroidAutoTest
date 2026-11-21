@@ -1,5 +1,6 @@
 # services/device_service.py
 import uiautomator2 as u2
+import re
 import time
 import sys
 import subprocess
@@ -1078,6 +1079,57 @@ class DeviceService:
             time.sleep(remain)
 
         voice_log.emit("success", f"✅ 播报完成「{short}」（语音步骤不做回执验证）")
+
+    def _perform_voice_receipt(self, params):
+        """语音回执：抓车机 logcat，判定上一句播报有没有被正确识别。
+
+        必须跟在「语音播报」后面 —— 它抓的是播报之后车机回的那句。
+        判定逻辑与语音播报页的「预期检测」完全共用（VoiceFeedbackService），
+        不另写一套关键词规则。
+
+        为什么不在播报前清基线：`logcat -c` 会把这段时间内其它功能依赖的日志
+        一起清掉（性能检测也在读同一个缓冲）。这里改为「抓当前日志 + 时间窗口
+        轮询 + 关键词判定」，代价是要求关键字具备一定区分度 —— 车机语音助手的
+        反馈语（「已为您导航」「没听清」）本来就满足这一点。
+        """
+        raw = params.get('keywords') or ''
+        keywords = [k.strip() for k in re.split(r"[,，、]", raw) if k.strip()]
+        if not keywords:
+            raise Exception("语音回执的关键字为空")
+        try:
+            wait = float(params.get('timeout', 8) or 8)
+        except (TypeError, ValueError):
+            wait = 8.0
+
+        from models.voice_model import get_verify_config
+        from services.voice_feedback_service import VoiceFeedbackService
+        from utils import voice_log
+
+        cfg = get_verify_config()
+        tag = (params.get('log_tag') or '').strip() or (cfg.get('log_tag') or '')
+        fail_kw = cfg.get('fail_keywords') or []
+        svc = VoiceFeedbackService(getattr(self, 'serial', None))
+
+        short = "、".join(keywords[:3]) + ("…" if len(keywords) > 3 else "")
+        voice_log.emit("info", f"🎧 等待语音回执「{short}」（最多 {wait:g} 秒）")
+
+        deadline = time.time() + wait
+        ok, msg = False, ""
+        while True:
+            try:
+                lines = svc.capture(tag)
+            except Exception as e:
+                raise Exception(f"读取车机日志失败：{e}")
+            ok, msg, _ = svc.judge_result(lines, keywords, fail_kw)
+            if ok or time.time() >= deadline:
+                break
+            time.sleep(1.0)
+
+        if ok:
+            voice_log.emit("success", f"✅ 语音回执「{short}」命中")
+            return
+        voice_log.emit("error", f"❌ 语音回执「{short}」未命中：{msg}")
+        raise AssertionError(f"语音回执未命中：{msg}")
 
     def _perform_swipe(self, params):
         direction = params.get('direction', '自定义坐标')

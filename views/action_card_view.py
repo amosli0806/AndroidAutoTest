@@ -396,6 +396,12 @@ class ActionCardView(QScrollArea):
                  'default': wake_word},
                 {'key': 'afterDelay', 'label': '播后等待：', 'type': 'spin', 'decimals': 1,
                  'default': 2.0, 'estimate': True}
+            ]},
+            # 语音回执：抓车机日志，看刚才那句话有没有被正确识别。
+            # 必须跟在「语音播报」后面用 —— 它抓的是播报之后车机回的那句。
+            {'type': 'voice_receipt', 'title': '语音回执', 'fields': [
+                {'key': 'keywords', 'label': '包含关键字：', 'type': 'line', 'required': True},
+                {'key': 'timeout', 'label': '等待秒数：', 'type': 'spin', 'default': 8}
             ]}
         ]
 
