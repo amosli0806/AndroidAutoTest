@@ -15,6 +15,11 @@ from utils.settings import Settings, THEME_MODE_DARK
 # 放大后同样的落点会落在按钮内，容错余量从 ~0 提到 8px 以上。
 DIALOG_BTN_W = 120
 DIALOG_BTN_H = 42
+# 只有单个「确定」的提示弹窗（Warning / Error）：底栏只有一个按钮靠右，
+# 用 120x42 会显得又长又扁（用户反馈「高度有些窄」）。收窄加高，比例接近
+# 带两个按钮的弹窗，视觉上不再像一条横条。
+DIALOG_BTN_W_SINGLE = 112
+DIALOG_BTN_H_SINGLE = 48
 
 
 class _ButtonHotZone(QObject):
@@ -409,7 +414,7 @@ class WarningDialog(AutoFreeDialog):
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton("确定")
         ok_btn.setObjectName("okBtn")
-        ok_btn.setFixedSize(DIALOG_BTN_W, DIALOG_BTN_H)
+        ok_btn.setFixedSize(DIALOG_BTN_W_SINGLE, DIALOG_BTN_H_SINGLE)
         ok_btn.clicked.connect(self.accept)
         btn_layout.addStretch()
         btn_layout.addWidget(ok_btn)
@@ -495,7 +500,7 @@ class ErrorDialog(AutoFreeDialog):
         btn_layout = QHBoxLayout()
         ok_btn = QPushButton("确定")
         ok_btn.setObjectName("okBtn")
-        ok_btn.setFixedSize(DIALOG_BTN_W, DIALOG_BTN_H)
+        ok_btn.setFixedSize(DIALOG_BTN_W_SINGLE, DIALOG_BTN_H_SINGLE)
         ok_btn.clicked.connect(self.accept)
         btn_layout.addStretch()
         btn_layout.addWidget(ok_btn)
