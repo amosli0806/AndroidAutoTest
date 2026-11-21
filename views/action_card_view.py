@@ -436,8 +436,17 @@ class ActionCardView(QScrollArea):
             'drag_drop', 'gesture_zoom',
             # 第八行
             'screenshot', 'voice',
+            # 第九行
+            'voice_receipt',
         ]
+        # 注意：这张表是**白名单**，configs 里有但这里没列的类型会被静默丢弃
+        # （2026-11-21 加「语音回执」时踩到：卡片定义写好了，界面一片空白）
         type_to_cfg = {c['type']: c for c in configs}
+        missing = [c['type'] for c in configs if c['type'] not in ordered_types]
+        if missing:
+            import logging
+            logging.getLogger(__name__).warning(
+                "动作卡片未排进 ordered_types，界面上不会出现: %s", missing)
         configs_sorted = [type_to_cfg[t] for t in ordered_types if t in type_to_cfg]
 
         row, col = 0, 0
