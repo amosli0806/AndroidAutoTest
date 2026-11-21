@@ -16,10 +16,10 @@ from utils.settings import Settings, THEME_MODE_DARK
 DIALOG_BTN_W = 120
 DIALOG_BTN_H = 42
 # 只有单个「确定」的提示弹窗（Warning / Error）：底栏只有一个按钮靠右，
-# 用 120x42 会显得又长又扁（用户反馈「高度有些窄」）。收窄加高，比例接近
-# 带两个按钮的弹窗，视觉上不再像一条横条。
-DIALOG_BTN_W_SINGLE = 112
-DIALOG_BTN_H_SINGLE = 48
+# 120x42 在宽弹窗里像一条横条（用户两次反馈「高度窄」）。宽度收到 100、
+# 高度提到 50，比例 2:1 —— 视觉上才像个按钮而不是色块。
+DIALOG_BTN_W_SINGLE = 100
+DIALOG_BTN_H_SINGLE = 50
 
 
 class _ButtonHotZone(QObject):
