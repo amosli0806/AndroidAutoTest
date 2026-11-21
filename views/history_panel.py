@@ -57,10 +57,9 @@ class HistoryPanel(QWidget):
         self.setStyleSheet(f"#HistoryPanel{{background:{pal['bg']};}}")
 
         root = QVBoxLayout(self)
-        # 四边统一 14：原先左右 12 / 上 6 / 下 8 不对称，视觉上左右贴边、上下更贴；
-        # 拉到 22 又显得空旷（用户两轮反馈的折中点）。14 在面板这种
-        # 高度只有 200 多的区域里，既留出呼吸又不挤压内容。
-        root.setContentsMargins(14, 14, 14, 14)
+        # 四边统一 10：12/6/8 那版偏贴边、22 太空，14 仍嫌松（三轮反馈收敛到这里）。
+        # 面板高度只有 200 多，留白越小越能把空间让给时间线和差异区。
+        root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
 
         # ---------- 标题行 ----------
