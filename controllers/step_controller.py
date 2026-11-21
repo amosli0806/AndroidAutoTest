@@ -18,6 +18,7 @@ from utils.dialogs import WarningDialog, ConfirmDeleteDialog, ErrorDialog
 from views.step_list_view import StepListView
 from views.action_card_view import ActionCardView
 from views.element_selector_dialog import ElementSelectorDialog
+from utils.step_params import TYPE_NAMES
 from utils.toast import show_toast
 from utils.adb_path import get_adb_path
 from utils.android_packages import is_system_ui_package
@@ -1811,9 +1812,9 @@ class StepController(QObject):
             row_bg, row_border, row_hover = "#fafbfc", "#d8dce2", "#eef3f9"
             row_border_hover = "#1976d2"
 
-        type_names = {'click': '点击', 'double_click': '双击', 'long_press': '长按',
-                      'input': '输入', 'swipe': '滑动', 'wait': '等待', 'wait_for': '显式等待',
-                      'assert': '断言', 'voice': '语音'}
+        # 与步骤卡片、步骤模板预览共用同一份中文名（原先这里另存了一份，
+        # 且把 voice 叫「语音」、缺 voice_receipt —— 三处叫法不一致）
+        type_names = TYPE_NAMES
 
         dlg = QDialog(self.step_view)
         dlg.setWindowTitle("录制完成 - 确认步骤")

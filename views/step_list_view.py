@@ -10,6 +10,7 @@ from utils.icons import IconManager, menu_icon
 from utils.flow_layout import FlowLayout
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings
+from utils.step_params import PARAM_LABELS, TYPE_NAMES
 
 
 class ParamChipLabel(QLabel):
@@ -358,20 +359,12 @@ class StepListView(QListWidget):
         if not self._filter_text:
             self.set_steps(self._original_steps if self._original_steps else self._all_steps)
             return
-        type_names = {
-            'click': '点击', 'double_click': '双击', 'long_press': '长按',
-            'swipe': '滑动', 'drag_drop': '拖拽', 'multi_swipe': '多点滑动',
-            'gesture_zoom': '手势缩放', 'flick': '飞掠', 'gesture_seq': '复杂手势',
-            'physical_key': '物理按键', 'screen_ctrl': '屏幕控制', 'app_mgr': '应用管理',
-            'screenshot': '截图', 'input': '输入', 'wait': '等待', 'wait_for': '显式等待',
-            'assert': '断言', 'voice': '语音播报'
-        }
         filtered = []
         for step in self._all_steps:
             if step.name and self._filter_text in step.name.lower():
                 filtered.append(step)
                 continue
-            if step.type in type_names and self._filter_text in type_names[step.type].lower():
+            if step.type in TYPE_NAMES and self._filter_text in TYPE_NAMES[step.type].lower():
                 filtered.append(step)
                 continue
             match = False
@@ -485,6 +478,8 @@ class StepCardWidget(QWidget):
         'wait_for': '#78909c',
         'assert': '#ff9800',
         'voice': '#00bcd4',
+        # 语音回执与语音播报同属语音链路，用同色系的稍深一档区分
+        'voice_receipt': '#00879b',
     }
 
     # 注：这里原本还有一份完整的 LABEL_MAP，但全项目没有任何读取点
@@ -511,6 +506,7 @@ class StepCardWidget(QWidget):
         'savePath': '路径', 'fileName': '前缀',
         'assert_type': '断言', 'expected_value': '预期', 'timeout': '超时',
         'voiceText': '文案', 'afterDelay': '播后等待',
+        'keywords': '关键字',
     }
 
     def __init__(self, step, element_controller=None, parent=None):
@@ -791,15 +787,7 @@ class StepCardWidget(QWidget):
     def _refresh_content(self):
         """重建 type_label、name_label、参数 chips"""
         # 1. type_label
-        type_names = {
-            'click': '点击', 'double_click': '双击', 'long_press': '长按',
-            'swipe': '滑动', 'drag_drop': '拖拽', 'multi_swipe': '多点滑动',
-            'gesture_zoom': '手势缩放', 'flick': '飞掠', 'gesture_seq': '复杂手势',
-            'physical_key': '物理按键', 'screen_ctrl': '屏幕控制', 'app_mgr': '应用管理',
-            'screenshot': '截图', 'input': '输入', 'wait': '等待', 'wait_for': '显式等待',
-            'assert': '断言', 'voice': '语音播报'
-        }
-        self.type_label.setText(type_names.get(self.step.type, self.step.type))
+        self.type_label.setText(TYPE_NAMES.get(self.step.type, self.step.type))
         self.type_label.setStyleSheet(
             f"padding: 1px 6px; border-radius: 8px; font-weight: 600; color: white; "
             f"background-color: {self.COLOR_MAP.get(self.step.type, '#333')}; font-size: 11px;"
@@ -942,7 +930,9 @@ class StepCardWidget(QWidget):
                 continue
             if value is None or value == '':
                 continue
-            label = self.COMPACT_LABEL_MAP.get(key, key)
+            # 短标签优先；没登记的回落参数中文名（keyword 之类）；
+            # 都没有才显示原 key —— 否则新参数一律以英文示人（2026-11-21 踩到）
+            label = self.COMPACT_LABEL_MAP.get(key) or PARAM_LABELS.get(key) or key
             chips.append(f"{label}: {value}")
 
         # ---------- 添加到布局，最多 4 个 ----------

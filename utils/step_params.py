@@ -7,6 +7,20 @@
 所以集中到这里，两边都 import 这一份。
 """
 
+# 步骤类型 → 中文名。
+# 步骤卡片标签、步骤列表搜索、步骤模板预览都用这一份 ——
+# 这三处原先各存了一份，新增类型（voice_receipt）只改一处就会
+# 「卡片显示英文、中文搜不到、模板预览又是英文」（2026-11-21 实测）。
+TYPE_NAMES = {
+    'click': '点击', 'double_click': '双击', 'long_press': '长按',
+    'swipe': '滑动', 'drag_drop': '拖拽', 'multi_swipe': '多点滑动',
+    'gesture_zoom': '手势缩放', 'flick': '飞掠', 'gesture_seq': '复杂手势',
+    'physical_key': '物理按键', 'screen_ctrl': '屏幕控制', 'app_mgr': '应用管理',
+    'screenshot': '截图', 'input': '输入', 'wait': '等待', 'wait_for': '显式等待',
+    'assert': '断言', 'voice': '语音播报', 'voice_receipt': '语音回执',
+}
+
+
 # 不参与编辑 / 不在界面上展示的内部字段
 #   element_id 是「元素库绑定」这种关联关系，不是可手改的参数
 #   normalized* / screenWidth / screenHeight 是按比例换算用的内部快照

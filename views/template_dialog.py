@@ -19,18 +19,8 @@ from PyQt6.QtWidgets import (QComboBox, QFrame, QGraphicsDropShadowEffect,
 
 from utils.dialogs import AutoFreeDialog, QuestionDialog
 from utils.icons import menu_icon
+from utils.step_params import TYPE_NAMES
 from utils.toast import show_toast
-
-# 步骤类型 → 中文名（和步骤卡片的类型名保持一致，用户看到的是同一套词）
-_TYPE_NAMES = {
-    'click': '点击', 'double_click': '双击', 'long_press': '长按', 'swipe': '滑动',
-    'drag_drop': '拖拽', 'multi_swipe': '多点滑动', 'gesture_zoom': '手势缩放',
-    'flick': '飞掠', 'gesture_seq': '复杂手势', 'physical_key': '物理按键',
-    'screen_ctrl': '屏幕控制', 'app_mgr': '应用管理', 'screenshot': '截图',
-    'input': '输入', 'wait': '等待', 'wait_for': '显式等待', 'assert': '断言',
-    'voice': '语音播报',
-}
-
 
 def _palette() -> dict:
     """按当前主题返回一套色值（明 / 暗）。"""
@@ -84,7 +74,7 @@ def _scrollbar_qss(pal: dict) -> str:
 
 
 def _type_label(step_type: str) -> str:
-    return _TYPE_NAMES.get(step_type, step_type or '未知')
+    return TYPE_NAMES.get(step_type, step_type or '未知')
 
 
 def _head_line(index: int, step_type: str, name: str) -> str:
