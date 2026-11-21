@@ -18,8 +18,9 @@ DIALOG_BTN_H = 42
 # 只有单个「确定」的提示弹窗（Warning / Error）：底栏只有一个按钮靠右，
 # 120x42 在宽弹窗里像一条横条（用户两次反馈「高度窄」）。宽度收到 100、
 # 高度提到 50，比例 2:1 —— 视觉上才像个按钮而不是色块。
-DIALOG_BTN_W_SINGLE = 100
-DIALOG_BTN_H_SINGLE = 54
+# 单按钮提示弹窗与其它弹窗同尺寸（见上方说明）
+DIALOG_BTN_W_SINGLE = DIALOG_BTN_W
+DIALOG_BTN_H_SINGLE = DIALOG_BTN_H
 
 
 class _ButtonHotZone(QObject):
