@@ -57,10 +57,10 @@ class HistoryPanel(QWidget):
         self.setStyleSheet(f"#HistoryPanel{{background:{pal['bg']};}}")
 
         root = QVBoxLayout(self)
-        # 面板横跨整个窗口底部，原来 12px 让标题和按钮几乎贴住边框。
-        # 左右取 22 —— 和上方内容区（元素库那页约 24）视觉对齐，
-        # 上下收到 10/12，与分隔线之间留出呼吸但不浪费高度。
-        root.setContentsMargins(22, 10, 22, 12)
+        # 四边统一 14：原先左右 12 / 上 6 / 下 8 不对称，视觉上左右贴边、上下更贴；
+        # 拉到 22 又显得空旷（用户两轮反馈的折中点）。14 在面板这种
+        # 高度只有 200 多的区域里，既留出呼吸又不挤压内容。
+        root.setContentsMargins(14, 14, 14, 14)
         root.setSpacing(8)
 
         # ---------- 标题行 ----------
