@@ -32,6 +32,7 @@ PARAM_LABELS = {
     'keyName': '按键名称', 'action': '操作', 'packageName': '包名/应用名',
     'apkPath': '安装包路径', 'savePath': '保存路径', 'fileName': '文件名前缀',
     'assert_type': '断言类型', 'expected_value': '预期值', 'timeout': '超时(秒)',
+    'keywords': '关键字',
     'element_id': '元素ID',
     'instance': '实例序号',
     'fallbackType': '备用定位方式', 'fallbackValue': '备用定位值',

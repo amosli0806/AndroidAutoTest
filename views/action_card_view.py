@@ -188,13 +188,26 @@ class ActionCardView(QScrollArea):
         self._relayout_cards()
         return True
 
+    # 后来新增的卡片类型：老配置里没有它们，不主动补进去的话用户会以为没做
+    # （2026-11-21 加「语音回执」时实测：卡片定义写好了，界面上一片空白）
+    NEW_CARD_TYPES = {"voice_receipt"}
+
     def _load_visible_types(self) -> set:
-        """读上次勾选结果；没记录 = 全部显示"""
+        """读上次勾选结果；没记录 = 全部显示。
+
+        新增的卡片（NEW_CARD_TYPES）即使不在保存的列表里也默认显示 ——
+        代价是用户手动勾掉它之后，下次启动还会回来；相对「功能做了却看不见」，
+        这个代价更划算。
+        """
         all_types = self.card_types()
         saved = Settings.load_visible_action_cards()
         if saved is None:
             return set(all_types)
-        return {t for t in saved if t in all_types}
+        visible = {t for t in saved if t in all_types}
+        for t in all_types:
+            if t in self.NEW_CARD_TYPES and t not in saved:
+                visible.add(t)
+        return visible
 
     def _relayout_cards(self):
         """按当前显示范围重排卡片区：只把要显示的卡片放进网格，剩下的藏起来。

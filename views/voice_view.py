@@ -528,7 +528,9 @@ class _AssertRow(QFrame):
         layout.addWidget(self.no_label)
 
         tag = QLabel("断言")
-        tag.setObjectName("AssertTag")
+        # 复用「唤醒 / 预期」那个绿框绿字的徽标样式：三类行用同一套标签外观，
+        # 差别靠后面的正文颜色（唤醒绿、断言橙）来区分
+        tag.setObjectName("VerifyTag")
         layout.addWidget(tag)
 
         self.text_label = QLabel(assert_label(step.params or {}))
