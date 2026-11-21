@@ -29,11 +29,13 @@ def _palette() -> dict:
         return {"bg": "#2b2b2b", "border": "#3d3d3d", "text": "#e8e8e8",
                 "muted": "#9aa4b2", "input_bg": "#333333", "input_border": "#4a4a4a",
                 "btn_bg": "#3a3a3a", "btn_fg": "#d0d0d0",
-                "sel_bg": "#1d3a57", "sel_fg": "#cfe2f7", "hover": "#363636"}
+                "sel_bg": "#2f6fae", "sel_fg": "#ffffff", "hover": "#363636",
+                "disabled": "#6f7783"}
     return {"bg": "#ffffff", "border": "#d0d0d0", "text": "#1f2733",
             "muted": "#98a2b3", "input_bg": "#f5f7fa", "input_border": "#e4e9f0",
             "btn_bg": "#f2f4f7", "btn_fg": "#5b6472",
-            "sel_bg": "#e8f1fd", "sel_fg": "#12406e", "hover": "#f6f9fd"}
+            "sel_bg": "#bcdcff", "sel_fg": "#0d3f74", "hover": "#f2f7fd",
+            "disabled": "#a8b0bb"}
 
 
 class ConvertTargetDialog(AutoFreeDialog):
@@ -96,17 +98,33 @@ class ConvertTargetDialog(AutoFreeDialog):
             f"QLineEdit:focus{{border-color:#1976d2;}}")
         box.addWidget(self.name_edit)
 
-        box.addWidget(label("放到哪里"))
+        box.addWidget(label("放到哪里（只能选功能模块）"))
+        self.hint_label = QLabel("项目只是分组，用例要挂在功能模块下")
+        self.hint_label.setStyleSheet(f"font-size:11px;color:{pal['muted']};")
+        box.addWidget(self.hint_label)
         self.tree = QTreeWidget()
         self.tree.setHeaderHidden(True)
         self.tree.setRootIsDecorated(True)
+        # 选中项四周的虚线焦点框是 QStyle 画在 item 上的（QSS 的 outline:none 管不到），
+        # 只能让树不接焦点来去掉；点击照样能选中，选中态由 ::item:selected 绘制
+        self.tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.tree.setStyleSheet(
             f"QTreeWidget{{background:{pal['input_bg']};"
             f"border:1px solid {pal['input_border']};border-radius:6px;"
-            f"font-size:12px;color:{pal['text']};outline:none;padding:4px;}}"
-            f"QTreeWidget::item{{min-height:24px;padding:2px 4px;border-radius:4px;}}"
-            f"QTreeWidget::item:selected{{background:{pal['sel_bg']};color:{pal['sel_fg']};}}"
-            f"QTreeWidget::item:hover{{background:{pal['hover']};}}"
+            f"font-size:12px;color:{pal['text']};outline:0;padding:4px;"
+            # 这两条管的是「::item 以外」的选中底色：展开箭头那一条会被视图
+            # 用 palette 的深蓝 highlight 涂满，QSS 的 ::branch 盖不住
+            f"selection-background-color:{pal['sel_bg']};"
+            f"selection-color:{pal['sel_fg']};"
+            f"show-decoration-selected:1;}}"
+            f"QTreeWidget::item{{min-height:24px;padding:2px 4px;border-radius:4px;"
+            f"border:none;}}"
+            f"QTreeWidget::item:selected{{background:{pal['sel_bg']};"
+            f"color:{pal['sel_fg']};border:none;}}"
+            f"QTreeWidget::item:hover:!selected{{background:{pal['hover']};}}"
+            # branch（展开箭头那一条）选中时沿用同一底色，整行连成一片
+            f"QTreeWidget::branch:selected{{background:{pal['sel_bg']};}}"
+            f"QTreeWidget::branch:hover:!selected{{background:transparent;}}"
             # 6px 细则滚动条，与项目其它面板一致
             f"QScrollBar:vertical{{background:transparent;width:6px;margin:0;}}"
             f"QScrollBar::handle:vertical{{background:{'#565656' if pal['bg'] != '#ffffff' else '#c8ced8'};"
@@ -116,10 +134,18 @@ class ConvertTargetDialog(AutoFreeDialog):
         box.addWidget(self.tree, 1)
 
         self._fill_tree(self.tree, root_nodes or [])
-        # 默认选中第一个可挂载的节点，用户直接回车就能用
-        if self.tree.topLevelItemCount() > 0:
-            first = self.tree.topLevelItem(0)
+        # 点项目节点时自动落到它的第一个模块 —— 项目不可选，点了没反应
+        # 会让人以为界面卡住
+        self.tree.itemClicked.connect(self._on_item_clicked)
+        self._has_folder = True
+        first = self._first_folder()
+        if first is not None:
+            # 默认选中第一个功能模块，用户直接回车就能用
             self.tree.setCurrentItem(first)
+        else:
+            self.hint_label.setText("还没有功能模块 —— 请先在自动化编辑页的项目下建一个模块")
+            self.hint_label.setStyleSheet("font-size:11px;color:#c0392b;")
+            self._has_folder = False
 
         foot = QHBoxLayout()
         foot.addStretch(1)
@@ -132,6 +158,7 @@ class ConvertTargetDialog(AutoFreeDialog):
         cancel.clicked.connect(self.reject)
         foot.addWidget(cancel)
         ok = QPushButton("转换")
+        self._ok_btn = ok
         ok.setFixedWidth(96)
         ok.setCursor(Qt.CursorShape.PointingHandCursor)
         ok.setStyleSheet(
@@ -141,22 +168,68 @@ class ConvertTargetDialog(AutoFreeDialog):
         foot.addWidget(ok)
         box.addLayout(foot)
 
+        # 一个模块都没有时，点「转换」只能报错，直接置灰
+        if not self._has_folder:
+            self._ok_btn.setEnabled(False)
+
         self.name_edit.setFocus()
         self.name_edit.selectAll()
 
     def _fill_tree(self, tree, nodes, parent_item=None):
-        """只建「项目 / 文件夹」，用例不出现（挂到用例下面没有意义）。"""
+        """建出项目与功能模块；用例不出现（挂到用例下面没有意义）。
+
+        **只有功能模块（folder）可选**：用例直接挂在项目下会让项目树变平，
+        项目本身只是一个分组壳，往里塞用例后没法再和模块区分。所以项目节点
+        保留显示（用户要看到层级），但去掉可选中标志并灰显。
+        """
         for n in nodes:
-            if getattr(n, "type", "") == "case":
+            ntype = getattr(n, "type", "")
+            if ntype == "case":
                 continue
             item = QTreeWidgetItem([getattr(n, "name", "") or str(n.id)])
             item.setData(0, Qt.ItemDataRole.UserRole, n.id)
+            item.setData(0, Qt.ItemDataRole.UserRole + 1, ntype)
+            item.setExpanded(True)
+            if ntype != "folder":
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                item.setForeground(0, QColor(self._pal["disabled"]))
+                item.setToolTip(0, "用例要放到功能模块下，请选中一个模块")
             if parent_item is None:
                 tree.addTopLevelItem(item)
             else:
                 parent_item.addChild(item)
-            item.setExpanded(True)
             self._fill_tree(tree, getattr(n, "children", None) or [], item)
+            # 折叠项目节点没有意义（模块都藏在里面），默认展开
+            if parent_item is not None:
+                parent_item.setExpanded(True)
+
+    def _on_item_clicked(self, item, _column):
+        if item.data(0, Qt.ItemDataRole.UserRole + 1) == "folder":
+            return
+        for i in range(item.childCount()):
+            child = item.child(i)
+            if child.data(0, Qt.ItemDataRole.UserRole + 1) == "folder":
+                self.tree.setCurrentItem(child)
+                return
+
+    def _first_folder(self):
+        """深度优先找第一个可选的功能模块，作为默认选中项。"""
+        def walk(item):
+            if item is None:
+                return None
+            if item.flags() & Qt.ItemFlag.ItemIsSelectable:
+                return item
+            for i in range(item.childCount()):
+                found = walk(item.child(i))
+                if found is not None:
+                    return found
+            return None
+
+        for i in range(self.tree.topLevelItemCount()):
+            found = walk(self.tree.topLevelItem(i))
+            if found is not None:
+                return found
+        return None
 
     def _on_ok(self):
         name = self.name_edit.text().strip()
@@ -165,7 +238,12 @@ class ConvertTargetDialog(AutoFreeDialog):
             return
         item = self.tree.currentItem()
         if item is None:
-            show_toast(self, "请选择一个项目或文件夹", duration=2000)
+            show_toast(self, "请选择一个功能模块", duration=2000)
+            return
+        # 项目节点的 ItemIsSelectable 已去掉，但程序化 setCurrentItem 或方向键
+        # 仍可能把它设成 current —— 这里按类型再拦一道（2026-11-21 实测）
+        if item.data(0, Qt.ItemDataRole.UserRole + 1) != "folder":
+            show_toast(self, "用例要放到功能模块下，请选中一个模块", duration=2500)
             return
         self.result = {
             "parent_id": item.data(0, Qt.ItemDataRole.UserRole),
