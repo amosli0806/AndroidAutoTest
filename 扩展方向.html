@@ -264,12 +264,49 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ B · 改动较大、需先设计（要先出方案再动手）</h3>
 
     <div class="card">
-      <h3>3. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
+      <h3>3. 接口模块二期 <span class="tag plan">📋 规划中 · 方案已定 2026-11-21</span></h3>
+
+      <p><b>已有的地基</b>（不用重做）：<code>{{变量}}</code> 渲染（URL / 请求头 / 请求体三处）、
+        JSON 路径取值 <code>json_get</code>、状态码 / 耗时 / JSON 断言 —— 链路编排要做的只是把它们接起来。</p>
+
+      <p><b>① 链路编排（先做，约 3 天）</b>：场景 = 有序步骤，每步引用一个已有接口（不复制定义），
+        跑完按配置提取变量给下一步用。</p>
+      <div class="tree">场景「登录后下单」
+  1. POST /login    提取 token ← $.data.token
+  2. GET  /cart     请求头 Authorization: {{token}}
+  3. POST /order    断言 状态码 = 200，失败即停</div>
       <ul>
-        <li>前后置脚本（Python 钩子，处理签名 / 加解密 / 数据提取）</li>
-        <li>链路场景编排（接口串联，上一步响应作为下一步入参）</li>
+        <li><b>变量优先级</b>：上一步提取 &gt; 前置脚本写入 &gt; 环境变量。提取的是本次运行的真实值，
+          环境里的是默认值，只能兜底</li>
+        <li><b>失败策略</b>：默认「停」—— 链路有前后依赖，中间断了继续跑只会产生一堆假结果；
+          单步可改成「继续」，用于登出 / 清理这类收尾步骤</li>
+        <li>改造量很小：<code>run_case()</code> 加一个 <code>extra_vars</code> 参数合并进变量表，
+          <code>ApiEnv</code> 结构不动</li>
       </ul>
-      <div class="example">💡 <b>打个比方：</b>前后置脚本像「做饭前的备菜 + 上桌前的摆盘」——请求前先签名、加密，响应后把数据提炼出来；链路编排像「接力赛」——上一个接口的返回，直接变成下一个接口的入参。</div>
+
+      <p><b>② 前后置脚本（后做，约 2 天）</b>：给一个 <code>ctx</code>，不给一堆 API。</p>
+      <div class="tree">def before(ctx):
+    ctx.headers["X-Sign"] = sign(ctx.body, ctx.env["secret"])
+
+def after(ctx):
+    ctx.set("token", ctx.json["data"]["token"])</div>
+      <ul>
+        <li><code>ctx</code> 只有四类：请求（method / url / headers / body，可改）、
+          响应（status / headers / text / json / elapsed_ms）、变量（get / set）、日志（log）</li>
+        <li><b>安全边界说实话</b>：这是本机 Python，能读文件、能联网，<b>做不了真沙箱</b>。
+          做法是首次启用弹一次确认「脚本以虫师进程权限运行」；密钥不要写死，走环境变量</li>
+        <li><b>脚本随导出走</b>：否则换机器就丢了。导出 JSON 时提示「含可执行脚本」</li>
+        <li>报错要带行号与源码片段，不能只丢一句「脚本错误」</li>
+      </ul>
+
+      <p><b>为什么先链路后脚本</b>：变量提取用配置就能做；先上脚本的话，用户会拿脚本写「取 token 存起来」，
+        20 个场景就是 20 段重复代码。脚本只留给签名 / 加解密这类非敲代码不可的事。</p>
+
+      <p><b>v1 明确不做</b>：条件分支与循环（要配表达式编辑器，等于写个小语言）、场景嵌套场景（递归与调试成本高）、
+        公共脚本库（先允许复制，重复多了再抽）、场景参数化（有环境变量够用）。</p>
+
+      <div class="example">💡 <b>打个比方：</b>前置脚本像「做饭前的备菜 + 上桌前的摆盘」——请求前先签名、加密，
+        响应后把数据提炼出来；链路编排像「接力赛」——上一个接口的返回，直接变成下一个接口的入参。</div>
     </div>
 
     <div class="card">
@@ -403,7 +440,7 @@
         <tbody>
           <tr><td>A</td><td>1. 测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
           <tr><td>A</td><td>2. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
-          <tr><td>B</td><td>3. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
+          <tr><td>B</td><td>3. 接口模块二期</td><td class="stars">⭐⭐</td><td>方案已定（先链路后脚本，约 5 天）；`{{var}}` 渲染与 json_get 是现成地基，改动集中在接口模块内部</td></tr>
           <tr><td>B</td><td>4. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
           <tr><td>C</td><td>5. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接语速 / 文案片段</td></tr>
           <tr><td>C</td><td>6. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
