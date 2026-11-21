@@ -57,12 +57,15 @@ class HistoryPanel(QWidget):
         self.setStyleSheet(f"#HistoryPanel{{background:{pal['bg']};}}")
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 6, 12, 8)
-        root.setSpacing(6)
+        # 面板横跨整个窗口底部，原来 12px 让标题和按钮几乎贴住边框。
+        # 左右取 22 —— 和上方内容区（元素库那页约 24）视觉对齐，
+        # 上下收到 10/12，与分隔线之间留出呼吸但不浪费高度。
+        root.setContentsMargins(22, 10, 22, 12)
+        root.setSpacing(8)
 
         # ---------- 标题行 ----------
         head = QHBoxLayout()
-        head.setSpacing(8)
+        head.setSpacing(10)
         title = QLabel("历史记录")
         title.setStyleSheet(f"font-size:13px;font-weight:600;color:{pal['text']};")
         head.addWidget(title)
@@ -81,14 +84,14 @@ class HistoryPanel(QWidget):
 
         # ---------- 主体：左时间线 + 右差异 ----------
         body = QHBoxLayout()
-        body.setSpacing(8)
+        body.setSpacing(10)
 
         self._list = QListWidget()
         self._list.setFixedWidth(196)
         self._list.setStyleSheet(
             f"QListWidget{{background:{pal['side']};border:1px solid {pal['line']};"
             f"border-radius:5px;outline:none;font-size:11.5px;color:{pal['text']};}}"
-            f"QListWidget::item{{padding:5px 8px;border-radius:4px;}}"
+            f"QListWidget::item{{padding:5px 8px;border-radius:4px;margin:1px 2px;}}"
             f"QListWidget::item:selected{{background:{pal['sel']};color:{pal['sel_fg']};}}"
             f"QListWidget::item:hover{{background:{pal['sel']};}}"
             "QScrollBar:vertical{width:6px;background:transparent;}"
@@ -114,7 +117,7 @@ class HistoryPanel(QWidget):
 
         # ---------- 底部操作 ----------
         foot = QHBoxLayout()
-        foot.setSpacing(6)
+        foot.setSpacing(8)
         self._restore_btn = QPushButton("恢复到此版本")
         self._restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._restore_btn.setStyleSheet(
