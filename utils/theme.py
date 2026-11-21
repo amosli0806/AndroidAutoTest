@@ -1491,6 +1491,17 @@ class Theme:
         #WarningDialog QPushButton#okBtn {
             background-color: #1976d2;
             color: white;
+            /* 尺寸写死：弹窗 parent 是页面，页面 QSS 的通用 min/max-height
+               会顺着父链漏进弹窗，把按钮压成 20 来像素（2026-11-21 用户实测
+               100x54 只生效宽度、高度被压回默认）。ConfirmDeleteDialog 同样处理过。 */
+            min-height: 54px;
+            max-height: 54px;
+            min-width: 100px;
+            max-width: 100px;
+            padding: 0px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 6px;
         }
         #WarningDialog QPushButton#okBtn:hover {
             background-color: #1565c0;
@@ -1517,6 +1528,17 @@ class Theme:
         #WarningDialog QPushButton#okBtn {
             background-color: #1976d2;
             color: white;
+            /* 尺寸写死：弹窗 parent 是页面，页面 QSS 的通用 min/max-height
+               会顺着父链漏进弹窗，把按钮压成 20 来像素（2026-11-21 用户实测
+               100x54 只生效宽度、高度被压回默认）。ConfirmDeleteDialog 同样处理过。 */
+            min-height: 54px;
+            max-height: 54px;
+            min-width: 100px;
+            max-width: 100px;
+            padding: 0px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 6px;
         }
         #WarningDialog QPushButton#okBtn:hover {
             background-color: #64b5f6;
@@ -1545,6 +1567,17 @@ class Theme:
         #ErrorDialog QPushButton#okBtn {
             background-color: #1976d2;
             color: white;
+            /* 尺寸写死：弹窗 parent 是页面，页面 QSS 的通用 min/max-height
+               会顺着父链漏进弹窗，把按钮压成 20 来像素（2026-11-21 用户实测
+               100x54 只生效宽度、高度被压回默认）。ConfirmDeleteDialog 同样处理过。 */
+            min-height: 54px;
+            max-height: 54px;
+            min-width: 100px;
+            max-width: 100px;
+            padding: 0px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 6px;
         }
         #ErrorDialog QPushButton#okBtn:hover {
             background-color: #1565c0;
@@ -1571,6 +1604,17 @@ class Theme:
         #ErrorDialog QPushButton#okBtn {
             background-color: #1976d2;
             color: white;
+            /* 尺寸写死：弹窗 parent 是页面，页面 QSS 的通用 min/max-height
+               会顺着父链漏进弹窗，把按钮压成 20 来像素（2026-11-21 用户实测
+               100x54 只生效宽度、高度被压回默认）。ConfirmDeleteDialog 同样处理过。 */
+            min-height: 54px;
+            max-height: 54px;
+            min-width: 100px;
+            max-width: 100px;
+            padding: 0px;
+            font-size: 14px;
+            font-weight: 600;
+            border-radius: 6px;
         }
         #ErrorDialog QPushButton#okBtn:hover {
             background-color: #64b5f6;
