@@ -1539,11 +1539,18 @@ class VoiceView(QWidget):
         except Exception:
             pass
 
+        # toast 只说结果：用例名和步骤数用户刚在对话框里填过 / 看得见，
+        # 再念一遍是噪音；细节（生成到哪、跳过了几条空回执）写进虫师日志备查
+        from utils import voice_log
         from utils.toast import show_toast
-        msg = f"已生成「{node.name}」（{len(converted)} 个步骤）"
+        show_toast(self, "转换成功", 2000)
+        voice_log.emit(
+            "success",
+            f"已生成自动化用例「{node.name}」（{len(converted)} 个步骤）")
         if skipped_verify:
-            msg += f"，跳过 {skipped_verify} 条空回执"
-        show_toast(self, msg, 3000)
+            voice_log.emit(
+                "warning",
+                f"转换时跳过 {skipped_verify} 条空回执（源用例里没有关键字）")
 
     def _on_remove_step(self, index):
         case = self._current_case()
