@@ -169,9 +169,9 @@
     <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 更新于 2026-11-20（v1.6.1）</div>
     <div class="badges">
       <span class="badge">当前版本 v1.6.1</span>
-      <span class="badge">7 项待办 · 2 项已落地</span>
+      <span class="badge">6 项待办 · 3 项已落地</span>
       <span class="badge">车机 / 手机均已实机验证</span>
-      <span class="badge">按改动量分 A~D 四档</span>
+      <span class="badge">按改动量分 A~C 三档</span>
     </div>
   </header>
 
@@ -251,71 +251,14 @@
         三个做完「好用感」有明显质变，且都不动数据模型。</p>
     </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ B · 改动适中、模块独立（1 ~ 2 天，独立开发不影响别处）</h3>
+
+
+
+
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ B · 改动较大、需先设计（要先出方案再动手）</h3>
 
     <div class="card">
-        <h3>3. 语音播报增强 <span class="tag plan">📋 规划中 · 方案已定 2026-11-21</span></h3>
-      <p><b>现状</b>：863 个语音用例，步骤只有 <code>phrase</code>（播报）和 <code>verify</code>
-        （抓 logcat 关键字）。唤醒词是<b>被固化进用例文本</b>的 —— 点「唤醒」按钮时把当时的词
-        写成文字，之后改设置不会同步。</p>
-
-      <p><b>三件事，按投入产出排序</b>：</p>
-
-      <p><b>① 唤醒词从「步骤」变「引用」</b>（约 1.5 天）</p>
-      <ul>
-        <li>新增步骤 <code>{"kind": "wake"}</code>，执行时才从配置取词 ——
-          改设置 / 切车型模板，所有用例<b>同步生效</b></li>
-        <li>多条候选轮播：配置存成列表，唤醒失败换下一条（复用现有
-          <code>verify.wake.max_retries</code> 的重试计数）</li>
-        <li><b>不做「用例级固定词」覆盖</b>：不存在「用错误唤醒词测试」这种场景
-          （除非设置没配好），多一个入口只会让用户困惑</li>
-        <li>迁移：首步 phrase 文本等于当前唤醒词的批量转成 <code>wake</code>；
-          文本对不上的列成清单人工确认，不硬转</li>
-      </ul>
-
-      <p><b>② 「真执行了」校验：直接接自动化的断言</b>（约 2 天）</p>
-      <ul>
-        <li>新增步骤 <code>{"kind": "assert"}</code>，复用
-          <code>device_service._perform_assert</code>（元素存在 / 不存在 / 文本等于）——
-          <b>不需要从零做图像识别</b>，元素库与定位方式都是现成的</li>
-        <li><b>与预期检测的区分</b>：按钮改名为「预期检测」（抓 logcat）与「界面断言」（查 UI），
-          步骤行用图标 + 颜色区分（🔊 青 / 🖼 橙），文案直接写「确认车机听懂」/「确认界面」</li>
-        <li><b>执行报告分开统计</b>：「语音回执 3/3、界面断言 2/3」——
-          一眼看出是车机没听懂还是听懂了但界面没变。<b>这是本功能的核心价值</b></li>
-        <li>图像比对（pHash）留作后续，只用于「说不清是哪个控件」的场景（全屏 vs 半屏）</li>
-      </ul>
-
-      <p><b>③ 语音 → 自动化：先给自动化补一张「语音回执」卡片</b>（约 2 天）</p>
-      <ul>
-        <li>自动化步骤现有 <code>voice</code>（播报），但
-          <code>device_service.py:1054</code> 的注释明确它<b>不做回执验证</b></li>
-        <li>新增卡片 <code>voice_receipt</code>（包含关键字 + 等待秒数），执行时调
-          <code>services/voice_feedback_service.py</code> —— 这个服务已经独立存在，
-          只是没被自动化链路用上</li>
-        <li><b>前提约束</b>：回执必须有前置播报（它抓的是播报后的车机反馈），
-          前面没有 <code>voice</code> 步骤时要当场提示，不能静默失败</li>
-        <li>于是转换可以做到<b>无损</b>：<code>phrase → voice</code>、
-          <code>verify → voice_receipt</code></li>
-        <li>入口：语音用例右键「转为自动化用例…」，弹「目标位置 + 转换预览」，原用例保留。
-          <b>副本会分叉</b>（改语音用例不影响自动化那份），但转换后能在自动化里继续加断言、
-          调顺序，比「长期同步」更实用</li>
-        <li>不做反向（自动化 → 语音）：点击操作没法自动变成语音指令，除非维护一张
-          「点 X 等于说 Y」的映射表，那是无底洞</li>
-      </ul>
-
-      <p><b>工作量合计约 5.5 天</b>，建议顺序 ① → ② → ③。</p>
-      <div class="example">💡 <b>打个比方：</b>现在的语音用例像「把台词写在剧本里的演员」——
-        换台戏就得重写剧本；改完之后台词变成「按提示器说」，提示器一改全剧场同步。
-        而「预期检测」是听导演喊「收到没有」，「界面断言」是抬头看「布景换了没有」，
-        两件事分开记账，出问题才知道该找谁。</div>
-    </div>
-
-
-
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ C · 改动较大、需先设计（要先出方案再动手）</h3>
-
-    <div class="card">
-      <h3>4. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
+      <h3>3. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>前后置脚本（Python 钩子，处理签名 / 加解密 / 数据提取）</li>
         <li>链路场景编排（接口串联，上一步响应作为下一步入参）</li>
@@ -324,22 +267,24 @@
     </div>
 
     <div class="card">
-      <h3>5. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <h3>4. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
       <p>剩余<b>场景化联动</b>：场景化执行时按用例自动转储 / 抓包，每用例一份产物、报告按用例分组。实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
     </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ D · 改动大 / 影响面广（需专门排期）</h3>
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ C · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
-      <h3>6. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
+      <h3>5. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
       <ul>
-        <li>把唤醒词、语速等提升为可参数化变量，用例内可覆盖</li>
+        <li>把语速、播报文案片段等提升为可参数化变量，用例内可覆盖</li>
+        <li><b>唤醒词不做用例级覆盖</b> —— 它是环境配置（设置里填对就行），换车型走车型模板；
+          按用例切唤醒词没有真实场景，多一个入口只会让人误以为设置没生效</li>
       </ul>
       <div class="example">💡 <b>打个比方：</b>换车已经能整套套用（车型模板）；这一步要再细到「同一条用例在不同车上自适应」——像「对不同的人用不同称呼」，在用例里各配各的。</div>
     </div>
 
     <div class="card">
-      <h3>7. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
+      <h3>6. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
       <div class="example">💡 <b>打个比方：</b>像手机「快捷指令 / 宏」——把「打开 App → 输账号 → 输密码 → 点登录」这 5 步打包成一个「登录」关键字，以后任何用例点一下就好，不用重复拖 5 个步骤。</div>
     </div>
@@ -361,10 +306,10 @@
         <div class="gap-item"><span class="tag plan">📋</span><div><b>GPU 采集缺失</b> — 渲染类指标（帧耗时分布 / GPU 占用）还没有采集手段；原方案的 GPU 仅支持高通 Adreno 且未接编排，属半成品。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>语音播报待增强</b> — 唤醒词不能按用例切换；「回执验证」只能确认车机听懂了，还验不了界面真的变了（如地图是否全屏）。</div></div>
+        <div class="gap-item"><span class="tag done">✅</span><div><b>语音转自动化是一次性转换</b> — 生成的是副本，之后改语音用例不会同步；且目标位置固定落在第一个项目，还不能选。</div></div>
       </div>
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无工程化配套</b> — 用例数据没有版本历史与回滚（改乱了回不去，删错了救不回）。</div></div>
+        <div class="gap-item"><span class="tag plan">📋</span><div><b>无导出 / 导入数据包</b> — 换电脑或做备份只能手动拷 data 目录；历史快照也只在本机。</div></div>
       </div>
       <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>数据与参考图按绝对路径绑定</b> — 数据驱动绑定的 CSV / Excel、图像定位的参考图存的都是绝对路径，换机器或挪动工程目录后要重新绑定。</div></div>
@@ -380,16 +325,16 @@
         <tbody>
           <tr><td>A</td><td>1. 测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
           <tr><td>A</td><td>2. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
-          <tr><td>B</td><td>3. 语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
-          <tr><td>C</td><td>4. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
-          <tr><td>C</td><td>5. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
-          <tr><td>D</td><td>6. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接唤醒词 / 语速</td></tr>
-          <tr><td>D</td><td>7. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
+          <tr><td>B</td><td>3. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
+          <tr><td>B</td><td>4. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
+          <tr><td>C</td><td>5. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接语速 / 文案片段</td></tr>
+          <tr><td>C</td><td>6. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
         </tbody>
       </table>
     </div>
     <div class="tip">💡 建议从 <b>A 档</b> 起步：套件增强 / 知识库的几个小件都是小步快跑、影响面可控的活，可随时插进版本。<br>
-      已完成项已从本文移除（步骤模板 2026-11-20、历史记录与回滚 2026-11-21），改动量与做法见更新日志。</div>
+      已完成项已从本文移除（步骤模板 2026-11-20、历史记录与回滚 2026-11-21、<br>
+      语音播报增强 2026-11-21），改动量与做法见更新日志。</div>
     <div class="card">
       <h3>范围边界（明确不做）</h3>
       <ul>
