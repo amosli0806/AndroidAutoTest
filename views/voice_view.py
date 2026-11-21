@@ -418,8 +418,6 @@ class _WakeRow(QFrame):
         self._wake_word = (wake_word or "").strip()
         self.text_label = QLabel()
         self.text_label.setObjectName("WakeText")
-        self.text_label.setToolTip(
-            "唤醒词在「设置 → 语音播报 → 唤醒词」修改，所有用例同步生效")
         layout.addWidget(self.text_label, 1)
         self._render_text()
 
@@ -518,7 +516,6 @@ class _AssertRow(QFrame):
         self.setObjectName("PhraseRow")
         self.setProperty("assert", "true")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setToolTip("双击可修改断言条件")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 5, 8, 5)
@@ -544,7 +541,6 @@ class _AssertRow(QFrame):
         self.edit_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.edit_btn.setFixedSize(26, 26)
         self.edit_btn.setAutoRaise(True)
-        self.edit_btn.setToolTip("修改断言条件")
         self.edit_btn.clicked.connect(lambda: self.edit_requested.emit(self.index))
         layout.addWidget(self.edit_btn)
 
@@ -584,7 +580,8 @@ class _AssertRow(QFrame):
             text_color = "#e0a86a"
         else:
             color, del_color, icon_off = "#555555", "#e74c3c", "#c2c6cd"
-            text_color = "#9a5a12"
+            text_color = "#b26b00"
+        # 与唤醒行同一套：纯文字 + 主题色，不加背景块
         self.text_label.setStyleSheet(f"color:{text_color};font-size:12px;")
         self.edit_btn.setIcon(qta.icon('fa6s.pen-to-square', color=color,
                                        color_disabled=icon_off))

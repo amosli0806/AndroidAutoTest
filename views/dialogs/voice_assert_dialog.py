@@ -145,10 +145,6 @@ class VoiceAssertDialog(AutoFreeDialog):
         self.pick_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.pick_btn.setFixedSize(30, 28)
         self.pick_btn.setAutoRaise(True)
-        self.pick_btn.setStyleSheet(
-            f"QToolButton{{border:1px solid {pal['input_border']};border-radius:6px;"
-            f"background:{pal['input_bg']};}}"
-            f"QToolButton:hover{{background:{pal['border']};}}")
         self.pick_btn.clicked.connect(self._on_pick)
         value_row.addWidget(self.pick_btn)
         box.addLayout(value_row)
@@ -207,17 +203,15 @@ class VoiceAssertDialog(AutoFreeDialog):
         color = "#bbbbbb" if self._pal["bg"] != "#ffffff" else "#555555"
         if self.loc_combo.currentText() == "图像":
             self.pick_btn.setIcon(qta.icon('fa6s.camera', color=color))
-            self.pick_btn.setToolTip("截屏取图（图像定位）")
         else:
             self.pick_btn.setIcon(qta.icon('fa6s.crosshairs', color=color))
-            self.pick_btn.setToolTip("在设备画面中拾取控件")
 
     def _on_pick(self):
         """打开拾取面板：在设备画面上点控件 → 回填定位方式与定位值。"""
         parent = self.parent()
         ds = getattr(parent, "_device_service", None)
         if ds is None or not getattr(ds, "device", None):
-            show_toast(self, "请先在顶部工具栏连接设备", duration=2000)
+            show_toast(self, "未检测到设备", duration=2000)
             return
         try:
             from views.dialogs.element_pick_dialog import ElementPickDialog
