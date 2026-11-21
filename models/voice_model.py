@@ -112,6 +112,13 @@ SEED_PHRASES = [
 
 KIND_PHRASE = "phrase"    # 播报步骤
 KIND_VERIFY = "verify"    # 检测步骤（预期结果：回执验证关键词）
+# 唤醒步骤：文案**不写进用例**，执行时才从设置里取。
+# 这是「唤醒词多套管理」的地基 —— 原先点「唤醒」按钮会把当时的词固化成
+# phrase 文本，之后改设置不会同步，862 个用例要逐个改（2026-11-21）。
+KIND_WAKE = "wake"
+
+# 唤醒步骤的默认播后等待：比普通播报长一点，车机从识别到进入聆听态有延迟
+WAKE_DELAY = 3.8
 
 # 「播后等待」的默认值（秒）—— 语义是**播完之后的纯缓冲**，不是「播报 + 缓冲」。
 # 取 services.voice_service.ESTIMATE_POST_DELAY_BASE（估算公式的基准，空文案的返回值）。
@@ -162,6 +169,8 @@ class VoiceStep:
     def to_dict(self):
         if self.kind == KIND_VERIFY:
             return {"kind": KIND_VERIFY, "keywords": list(self.keywords)}
+        if self.kind == KIND_WAKE:
+            return {"kind": KIND_WAKE, "delay": self.delay}
         return {"kind": KIND_PHRASE, "text": self.text, "delay": self.delay}
 
     @classmethod
@@ -171,6 +180,9 @@ class VoiceStep:
         if kind == KIND_VERIFY:
             return cls(kind=KIND_VERIFY, keywords=_clean_keywords(
                 data.get("keywords") or []))
+        if kind == KIND_WAKE:
+            return cls(kind=KIND_WAKE,
+                       delay=float(data.get("delay", WAKE_DELAY) or WAKE_DELAY))
         return cls(kind=KIND_PHRASE,
                    text=str(data.get("text", "")),
                    delay=float(data.get("delay", DEFAULT_DELAY) or 0))
@@ -432,9 +444,16 @@ class VoiceModel:
             if case is None:
                 continue
             for idx, step in enumerate(case.steps):
-                if step.kind != KIND_PHRASE:
+                if step.kind == KIND_WAKE:
+                    # 唤醒步骤的文案在**这里**才解析：改设置 / 切车型模板后，
+                    # 所有用例下一次执行自动用新唤醒词，不用逐条改用例
+                    text = (get_wake_word() or "").strip()
+                    delay = float(step.delay or WAKE_DELAY)
+                elif step.kind == KIND_PHRASE:
+                    text = (step.text or "").strip()
+                    delay = float(step.delay or 0)
+                else:
                     continue
-                text = (step.text or "").strip()
                 if not text:
                     continue
                 # 收集紧跟其后的连续检测步骤（碰到下一个播报步骤即止）
@@ -445,8 +464,7 @@ class VoiceModel:
                     if kw:
                         verifies.append((k, kw))
                     k += 1
-                items.append((case_id, idx, text, float(step.delay or 0),
-                              verifies, case.name))
+                items.append((case_id, idx, text, delay, verifies, case.name))
         return items
 
     def delete_suite(self, name: str) -> bool:
@@ -644,6 +662,16 @@ class VoiceModel:
         if case is None:
             return None
         step = VoiceStep(kind=KIND_VERIFY, keywords=_clean_keywords(keywords))
+        case.steps.append(step)
+        self.save()
+        return step
+
+    def add_wake(self, case_id: str, delay: float = WAKE_DELAY) -> Optional[VoiceStep]:
+        """追加一条唤醒步骤（引用设置里的唤醒词，不在用例里存文本）。"""
+        case = self.get_case(case_id)
+        if case is None:
+            return None
+        step = VoiceStep(kind=KIND_WAKE, delay=delay)
         case.steps.append(step)
         self.save()
         return step

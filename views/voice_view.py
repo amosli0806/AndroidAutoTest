@@ -37,8 +37,8 @@ import qtawesome as qta
 from utils.icons import menu_icon
 
 from models.voice_model import (
-    DEFAULT_DELAY, DEFAULT_WAKE_WORD, KIND_PHRASE, KIND_VERIFY, VoiceModel,
-    get_loop, get_wake_word)
+    DEFAULT_DELAY, DEFAULT_WAKE_WORD, KIND_PHRASE, KIND_VERIFY, KIND_WAKE,
+    WAKE_DELAY, VoiceModel, get_loop, get_wake_word)
 from services.voice_player import VoicePlaybackWorker
 from services.voice_service import VoiceError
 from utils import tree_state, voice_table
@@ -376,6 +376,121 @@ class _VerifyRow(QFrame):
             del_color = "#e74c3c"
             icon_off = "#c2c6cd"
         # 与播报行同理：不给 color_disabled，执行中被禁用的图标还是原色
+        self.copy_btn.setIcon(qta.icon(
+            'fa6s.copy', color=color, color_disabled=icon_off))
+        self.del_btn.setIcon(qta.icon(
+            'fa6s.trash-can', color=del_color, color_disabled=icon_off))
+
+
+class _WakeRow(QFrame):
+    """一条唤醒步骤：文案**不存用例**，执行时跟随设置里的唤醒词。
+
+    与播报行的区别就是文本不可编辑 —— 想改唤醒词去设置页改，
+    所有用例一起生效。播后等待仍然可调（不同车型进入聆听态的延迟不一样）。
+    """
+
+    copy_requested = pyqtSignal(int)
+    remove_requested = pyqtSignal(int)
+    delay_changed = pyqtSignal(int, float)
+
+    def __init__(self, index, step, wake_word, parent=None):
+        super().__init__(parent)
+        self.index = index
+        self.setObjectName("PhraseRow")       # 复用播报行的底色/分隔线/悬停样式
+        self.setProperty("wake", "true")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 5, 8, 5)
+        layout.setSpacing(8)
+
+        self.no_label = QLabel(str(index + 1))
+        self.no_label.setObjectName("PhraseNo")
+        self.no_label.setFixedWidth(26)
+        self.no_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.no_label)
+
+        tag = QLabel("唤醒")
+        tag.setObjectName("VerifyTag")        # 和「预期」标签同一套样式
+        layout.addWidget(tag)
+
+        self._wake_word = (wake_word or "").strip()
+        self.text_label = QLabel()
+        self.text_label.setObjectName("WakeText")
+        self.text_label.setToolTip(
+            "唤醒词在「设置 → 语音播报 → 唤醒词」修改，所有用例同步生效")
+        layout.addWidget(self.text_label, 1)
+        self._render_text()
+
+        self.delay_spin = QDoubleSpinBox()
+        self.delay_spin.setObjectName("PhraseDelay")
+        self.delay_spin.setDecimals(1)
+        self.delay_spin.setRange(0, 60)
+        self.delay_spin.setSingleStep(0.5)
+        self.delay_spin.setSuffix(" s")
+        self.delay_spin.setValue(float(step.delay or WAKE_DELAY))
+        self.delay_spin.setFixedWidth(74)
+        self.delay_spin.setToolTip("播完这句后等待多久（车机进入聆听态需要时间）")
+        self.delay_spin.valueChanged.connect(
+            lambda v: self.delay_changed.emit(self.index, float(v)))
+        layout.addWidget(self.delay_spin)
+
+        self.estimate_btn = None
+        self.play_btn = None
+
+        self.copy_btn = QToolButton()
+        self.copy_btn.setObjectName("PhraseCopyBtn")
+        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.copy_btn.setFixedSize(26, 26)
+        self.copy_btn.setAutoRaise(True)
+        self.copy_btn.clicked.connect(lambda: self.copy_requested.emit(self.index))
+        layout.addWidget(self.copy_btn)
+
+        self.del_btn = QToolButton()
+        self.del_btn.setObjectName("PhraseDelBtn")
+        self.del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.del_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.del_btn.setFixedSize(26, 26)
+        self.del_btn.setAutoRaise(True)
+        self.del_btn.clicked.connect(lambda: self.remove_requested.emit(self.index))
+        layout.addWidget(self.del_btn)
+
+    def set_wake_word(self, wake_word: str):
+        self._wake_word = (wake_word or "").strip()
+        self._render_text()
+
+    def _render_text(self):
+        """唤醒词用主题色，「（跟随设置）」压成灰色 —— 两者同色会糊成一句。"""
+        if not self._wake_word:
+            self.text_label.setText(
+                "<span style='color:#c0392b'>设置里还没填唤醒词</span>")
+            return
+        muted = "#8a929e" if self._theme_is_dark() else "#98a2b3"
+        main = "#7fd4c1" if self._theme_is_dark() else "#0b6e5b"
+        self.text_label.setText(
+            f"<span style='color:{main}'>{self._wake_word}</span>"
+            f"<span style='color:{muted}'>（跟随设置）</span>")
+
+    def _theme_is_dark(self) -> bool:
+        try:
+            from utils.settings import THEME_MODE_DARK, Settings
+            return Settings.get_theme_mode() == THEME_MODE_DARK
+        except Exception:
+            return False
+
+    def set_playing(self, playing: bool):
+        pass   # 唤醒行不单独高亮（它是执行时才会被播报的一句）
+
+    def apply_theme(self, theme_mode):
+        if theme_mode == ThemeMode.DARK:
+            color, del_color, icon_off = "#bbbbbb", "#ff6b6b", "#565a61"
+            text_color = "#7fd4c1"
+        else:
+            color, del_color, icon_off = "#555555", "#e74c3c", "#c2c6cd"
+            text_color = "#0b6e5b"
+        self.text_label.setStyleSheet("font-size:12px;")
+        self._render_text()
         self.copy_btn.setIcon(qta.icon(
             'fa6s.copy', color=color, color_disabled=icon_off))
         self.del_btn.setIcon(qta.icon(
@@ -868,6 +983,11 @@ class VoiceView(QWidget):
                     row.copy_requested.connect(self._on_copy_step)
                     row.remove_requested.connect(self._on_remove_step)
                     row.keywords_changed.connect(self._on_keywords_changed)
+                elif step.kind == KIND_WAKE:
+                    row = _WakeRow(i, step, self._wake_word(), self._container)
+                    row.copy_requested.connect(self._on_copy_step)
+                    row.remove_requested.connect(self._on_remove_step)
+                    row.delay_changed.connect(self._on_delay_changed)
                 else:
                     row = _PhraseRow(i, step, self._container)
                     row.play_requested.connect(self._on_play_one)
@@ -1216,9 +1336,11 @@ class VoiceView(QWidget):
         if case is None:
             self.status_label.setText("先在左侧选一个语音用例")
             return
-        self.model.add_phrase(case.id, wake_word, DEFAULT_DELAY)
+        # 插的是「唤醒步骤」而不是把词写成播报文本：之后在设置里改唤醒词，
+        # 这条用例下一次执行就自动用新词（原先固化文本，改了设置不会同步）
+        self.model.add_wake(case.id)
         self._reload_steps()
-        self.status_label.setText(f"已追加唤醒词「{wake_word}」")
+        self.status_label.setText(f"已追加唤醒步骤（跟随设置：{wake_word}）")
 
     def _on_remove_step(self, index):
         case = self._current_case()
