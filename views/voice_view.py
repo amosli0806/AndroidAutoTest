@@ -1498,12 +1498,17 @@ class VoiceView(QWidget):
             show_toast(self, "未接入自动化数据，无法转换", 2500)
             return
 
-        parent = next((n for n in getattr(pm, "root_nodes", [])
-                       if n.type in ("project", "folder")), None)
-        if parent is None:
+        if not getattr(pm, "root_nodes", None):
             from utils.toast import show_toast
             show_toast(self, "请先在自动化编辑页创建一个项目", 2500)
             return
+
+        # 目标位置交给用户选：原先固定落到第一个项目，项目一多就得手动挪
+        from views.dialogs.convert_target_dialog import ConvertTargetDialog
+        dlg = ConvertTargetDialog(self, pm.root_nodes, f"{case.name}（自动化）")
+        if dlg.exec() != dlg.DialogCode.Accepted or not dlg.result:
+            return
+        target = dlg.result
 
         # 转换前先留一份快照：这一步会写项目树与步骤，出问题时能整库回退
         try:
@@ -1520,7 +1525,7 @@ class VoiceView(QWidget):
             show_toast(self, "这个用例没有可转换的步骤", 2500)
             return
 
-        node = pm.create_case(parent.id, f"{case.name}（自动化）")
+        node = pm.create_case(target["parent_id"], target["name"])
         if node is None:
             from utils.toast import show_toast
             show_toast(self, "创建自动化用例失败", 2500)

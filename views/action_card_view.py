@@ -413,8 +413,10 @@ class ActionCardView(QScrollArea):
             # 语音回执：抓车机日志，看刚才那句话有没有被正确识别。
             # 必须跟在「语音播报」后面用 —— 它抓的是播报之后车机回的那句。
             {'type': 'voice_receipt', 'title': '语音回执', 'fields': [
-                {'key': 'keywords', 'label': '包含关键字：', 'type': 'line', 'required': True},
-                {'key': 'timeout', 'label': '等待秒数：', 'type': 'spin', 'default': 8}
+                {'key': 'keywords', 'label': '包含关键字：', 'type': 'line', 'required': True,
+                 'placeholder': '例如：已为您导航（多个用逗号分隔，命中任一即通过）'},
+                {'key': 'timeout', 'label': '等待秒数：', 'type': 'spin', 'default': 8,
+                 'hint': '播报后最多等多久去抓车机回执，车机话术长就调大'}
             ]}
         ]
 
@@ -918,6 +920,8 @@ class ActionCard(QGroupBox):
             widget.setProperty('field_key', field['key'])
         elif field['type'] == 'line':
             widget = QLineEdit()
+            if field.get('placeholder'):
+                widget.setPlaceholderText(str(field['placeholder']))
             if 'default' in field:
                 widget.setText(str(field['default']))
             if field['key'] in ('locationValue', 'fromValue', 'toValue'):
@@ -970,6 +974,9 @@ class ActionCard(QGroupBox):
                 widget.setRange(-999999, 999999)
             if 'default' in field:
                 widget.setValue(field['default'])
+            if field.get('hint'):
+                # QSpinBox 没有 placeholder，提示只能走 tooltip
+                widget.setToolTip(str(field['hint']))
             # 语音播报的「播后等待」旁加一个估算按钮：按文案+语速自动填建议值
             if field.get('estimate'):
                 container = QWidget()
