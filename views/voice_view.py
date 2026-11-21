@@ -711,6 +711,8 @@ class VoiceView(QWidget):
         self.tree.setObjectName("VoiceTree")
         self.tree.setHeaderHidden(True)
         self.tree.setIndentation(14)
+        # 支持 Ctrl / Shift 多选：批量删除分组或用例
+        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_tree_context_menu)
         self.tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
@@ -955,10 +957,12 @@ class VoiceView(QWidget):
             finally:
                 self.tree.blockSignals(False)
             return
-        items = self.tree.selectedItems()
-        kind = items[0].data(0, self.ROLE_KIND) if items else None
+        # 多选时 selectedItems() 的顺序不稳定（按树内顺序，不按点击顺序），
+        # 中栏要跟「最后点的那个」走，所以取 currentItem
+        item = self.tree.currentItem()
+        kind = item.data(0, self.ROLE_KIND) if item is not None else None
         self._current_case_id = (
-            items[0].data(0, self.ROLE_ID) if items and kind == "case" else None)
+            item.data(0, self.ROLE_ID) if item is not None and kind == "case" else None)
         self._reload_steps()
 
     def _find_case_item(self, case_id):
@@ -1032,6 +1036,16 @@ class VoiceView(QWidget):
             menu.addAction(
                 menu_icon('fa6s.comment-dots', icon_color), "新建语音用例",
                 lambda: self._on_new_case(target_group))
+
+        selected = self._selected_nodes()
+        multi = len(selected) > 1
+        if multi:
+            menu.addSeparator()
+            menu.addAction(
+                menu_icon('fa6s.trash', '#e74c3c'), f"删除选中的 {len(selected)} 项",
+                self._on_delete_selected)
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
+            return
 
         if kind in ("case", "group"):
             menu.addSeparator()
@@ -1285,6 +1299,60 @@ class VoiceView(QWidget):
             return
         self._reload_tree()
         self._reload_steps()
+
+    def _selected_nodes(self):
+        """当前选中的 (kind, id) 列表。"""
+        out = []
+        for it in self.tree.selectedItems():
+            k = it.data(0, self.ROLE_KIND)
+            i = it.data(0, self.ROLE_ID)
+            if k and i:
+                out.append((k, i))
+        return out
+
+    def _on_delete_selected(self):
+        """批量删除选中的分组与用例（一次确认、一次落盘）。"""
+        from utils.dialogs import ConfirmDeleteDialog
+
+        nodes = self._selected_nodes()
+        groups = [i for k, i in nodes if k == "group"]
+        cases = [i for k, i in nodes if k == "case"]
+        # 分组里的用例会跟着删，别在提示里重复计数
+        covered = set()
+        for gid in groups:
+            covered.update(c.id for c in self.model.cases_of_group(gid))
+        extra_cases = [c for c in cases if c not in covered]
+        if not groups and not extra_cases:
+            return
+
+        parts = []
+        if groups:
+            parts.append(f"{len(groups)} 个分组（含 {len(covered)} 个用例）")
+        if extra_cases:
+            parts.append(f"{len(extra_cases)} 个用例")
+        if not ConfirmDeleteDialog.ask(
+                self, title="删除选中项",
+                message=f"确定删除{'、'.join(parts)}？删除后无法恢复。"):
+            return
+
+        removed = 0
+        if groups:
+            removed += self.model.remove_groups(groups, with_cases=True)
+        if extra_cases:
+            removed += self.model.remove_cases(extra_cases)
+
+        # 当前编辑的用例被删掉时清空选择，避免中栏还挂着已消失的用例
+        if self._current_case_id and self.model.get_case(self._current_case_id) is None:
+            self._current_case_id = None
+
+        self._reload_tree()
+        self._reload_steps()
+        if groups:
+            self.status_label.setText(
+                f"已删除 {len(groups)} 个分组、{len(extra_cases)} 个用例"
+                f"（分组内共 {removed} 个用例）")
+        else:
+            self.status_label.setText(f"已删除 {len(extra_cases)} 个用例")
 
     def _on_delete_node(self, kind, node_id):
         if kind == "case":

@@ -570,6 +570,44 @@ class VoiceModel:
         self.save()
         return removed
 
+    def remove_groups(self, group_ids, with_cases: bool = True) -> int:
+        """批量删除分组，**只落盘一次**。
+
+        逐个调 remove_group 会每次都重写整份 JSON：删 20 个分组就是 20 次全量
+        写入（用户数据大时明显卡顿）。返回连带给删掉的用例数。
+        """
+        ids = {str(g) for g in (group_ids or [])}
+        if not ids:
+            return 0
+        removed = 0
+        if with_cases:
+            keep = []
+            for case in self.cases:
+                if case.group_id in ids:
+                    removed += 1
+                else:
+                    keep.append(case)
+            self.cases = keep
+        else:
+            for case in self.cases:
+                if case.group_id in ids:
+                    case.group_id = UNGROUPED_ID
+        self.groups = [g for g in self.groups if g.id not in ids]
+        self.save()
+        return removed
+
+    def remove_cases(self, case_ids) -> int:
+        """批量删除用例，只落盘一次。返回实际删掉的条数。"""
+        ids = {str(c) for c in (case_ids or [])}
+        if not ids:
+            return 0
+        before = len(self.cases)
+        self.cases = [c for c in self.cases if c.id not in ids]
+        removed = before - len(self.cases)
+        if removed:
+            self.save()
+        return removed
+
     def cases_of_group(self, group_id: str) -> List[VoiceCase]:
         return [c for c in self.cases if c.group_id == group_id]
 
