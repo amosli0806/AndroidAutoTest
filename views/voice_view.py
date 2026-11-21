@@ -422,14 +422,17 @@ class _WakeRow(QFrame):
         layout.addWidget(self.text_label, 1)
         self._render_text()
 
+        # 与播报行同样带「播后等待」标签、同样用「秒」作单位 —— 两行并排时
+        # 只有单位不同（s / 秒）会显得像两个不同系统的控件
+        layout.addWidget(QLabel("播后等待"))
         self.delay_spin = QDoubleSpinBox()
         self.delay_spin.setObjectName("PhraseDelay")
         self.delay_spin.setDecimals(1)
         self.delay_spin.setRange(0, 60)
         self.delay_spin.setSingleStep(0.5)
-        self.delay_spin.setSuffix(" s")
+        self.delay_spin.setSuffix(" 秒")
         self.delay_spin.setValue(float(step.delay or WAKE_DELAY))
-        self.delay_spin.setFixedWidth(74)
+        self.delay_spin.setFixedWidth(90)
         self.delay_spin.setToolTip("播完这句后等待多久（车机进入聆听态需要时间）")
         self.delay_spin.valueChanged.connect(
             lambda v: self.delay_changed.emit(self.index, float(v)))
@@ -1661,11 +1664,17 @@ class VoiceView(QWidget):
         for row in self._rows:
             row.copy_btn.setEnabled(not running)
             row.del_btn.setEnabled(not running)
-            row.text_edit.setEnabled(not running)
-            if row.play_btn is not None:   # 播报行独有：播放 / 估算 / 播后等待
+            # 唤醒行没有输入框（文案跟随设置，不可编辑）—— 直接 row.text_edit
+            # 会抛 AttributeError，把整个步骤列表刷新打断（2026-11-21 实测崩过）
+            edit = getattr(row, "text_edit", None)
+            if edit is not None:
+                edit.setEnabled(not running)
+            # 播后等待：播报行和唤醒行都有，检测行没有
+            if getattr(row, "delay_spin", None) is not None:
+                row.delay_spin.setEnabled(not running)
+            if row.play_btn is not None:   # 播报行独有：播放 / 估算
                 row.play_btn.setEnabled(available and not running)
                 row.estimate_btn.setEnabled(not running)
-                row.delay_spin.setEnabled(not running)
 
     def _playback_running(self) -> bool:
         return self._worker is not None and self._worker.isRunning()
