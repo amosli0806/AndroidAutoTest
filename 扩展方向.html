@@ -175,7 +175,7 @@
     <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 更新于 2026-11-20（v1.6.1）</div>
     <div class="badges">
       <span class="badge">当前版本 v1.6.1</span>
-      <span class="badge">6 项待办 · 3 项已落地</span>
+      <span class="badge">7 项待办 · 3 项已落地</span>
       <span class="badge">车机 / 手机均已实机验证</span>
       <span class="badge">按改动量分 A~C 三档</span>
     </div>
@@ -261,10 +261,43 @@
 
 
 
+    <div class="card">
+      <h3>3. 步骤级条件与循环 <span class="tag plan">📋 规划中 · 方案已定 2026-11-21</span></h3>
+      <p>现在步骤只能一条条顺序跑：弹窗在不在都得点，想重复一段只能复制粘贴。补两样 ——
+        <b>条件步骤</b>（满足才执行，否则跳过）与<b>循环块</b>（一段步骤重复 N 次）。</p>
+
+      <p><b>条件挂在步骤上，不做 if / else 块</b>：车机用例九成是「有就处理、没有就跳过」，
+        真要 else 就写成两条条件相反的步骤，结果等价。判定复用断言那套
+        <code>_get_ui_object(...).exists()</code>，不另写一套逻辑。</p>
+
+      <p><b>循环用展开式</b>：次数固定，执行前展开成 N 份（带轮次标记），执行器主循环不用动 ——
+        这是本方案最省事的地方。</p>
+
+      <div class="tree">case_steps:
+  [ "step_1",
+    {"kind":"loop", "count":3, "children":["step_2","step_3"]},
+    "step_4" ]</div>
+
+      <ul>
+        <li>老数据是纯 id 列表，原样能读；新增 <code>get_structure()</code> 给界面渲染块，
+          <code>get_steps_for_case()</code> 仍返回扁平列表（内部展开）——
+          执行器、控制器、MCP 共 7 处调用点<b>一行不用改</b></li>
+        <li>报告按轮次标注（<code>2.3</code> = 第 2 步第 3 轮）；循环里失败仍走现有「失败即停」，
+          条件不满足记为「跳过」而不是失败</li>
+        <li>交互：多选步骤右键「包成循环」；步骤卡片加条件按钮，拾取控件直接复用准星</li>
+        <li>三个要防的坑：同一步骤 id 不能同时属于两个块（包成时校验）；步骤模板含块时要连结构一起存；
+          性能按用例归组时以整块为区间，报告序号要对得上轮次</li>
+      </ul>
+
+      <p><b>v1 不做</b>：嵌套块、if / else 块、while / until（要改成执行状态机）、
+        <code>{{loop.index}}</code> 变量（依赖变量系统）。</p>
+      <p><b>工作量约 3.5 天</b>：模型与展开 0.5 + 执行与报告 0.5 + 循环 UI 1.5 + 条件 UI 1。</p>
+    </div>
+
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ B · 改动较大、需先设计（要先出方案再动手）</h3>
 
     <div class="card">
-      <h3>3. 接口模块二期 <span class="tag plan">📋 规划中 · 方案已定 2026-11-21</span></h3>
+      <h3>4. 接口模块二期 <span class="tag plan">📋 规划中 · 方案已定 2026-11-21</span></h3>
 
       <p><b>已有的地基</b>（不用重做）：<code>{{变量}}</code> 渲染（URL / 请求头 / 请求体三处）、
         JSON 路径取值 <code>json_get</code>、状态码 / 耗时 / JSON 断言 —— 链路编排要做的只是把它们接起来。</p>
@@ -310,7 +343,7 @@ def after(ctx):
     </div>
 
     <div class="card">
-      <h3>4. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <h3>5. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
       <p><b>已经有的</b>：CPU / 内存 / 流量 / FPS / 线程都能采，堆转储、抓包、截图、录屏可随监控一起跑；
         也能在监控期间顺带跑一组自动化或语音用例。失败现场截图、内存超阈值自动转储也都具备。
         但<b>产物与报告都是整场一份</b>。</p>
@@ -369,7 +402,7 @@ def after(ctx):
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ C · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
-      <h3>5. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
+      <h3>6. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把语速、播报文案片段等提升为可参数化变量，用例内可覆盖</li>
         <li><b>唤醒词不做用例级覆盖</b> —— 它是环境配置（设置里填对就行），换车型走车型模板；
@@ -379,7 +412,7 @@ def after(ctx):
     </div>
 
     <div class="card">
-      <h3>6. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
+      <h3>7. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
 
       <p><b>它和「步骤模板」不是一回事</b>（这两个最容易混，先分清）：</p>
@@ -409,9 +442,6 @@ def after(ctx):
 
 <div class="grid2">
       <div class="card">
-        <div class="gap-item"><span class="tag plan">📋</span><div><b>无分支与步骤级循环</b> — 没有 if/else，也没有「这段步骤重复 N 次」（执行页的「循环次数」只是整轮重复）。</div></div>
-      </div>
-      <div class="card">
         <div class="gap-item"><span class="tag plan">📋</span><div><b>无关键字复用</b> — 「登录」「搜索」等常用组合无法封装复用。</div></div>
       </div>
       <div class="card">
@@ -436,11 +466,12 @@ def after(ctx):
         <thead><tr><th>档位</th><th>能力</th><th>优先级</th><th>理由</th></tr></thead>
         <tbody>
           <tr><td>A</td><td>1. 测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
-          <tr><td>A</td><td>2. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
-          <tr><td>B</td><td>3. 接口模块二期</td><td class="stars">⭐⭐</td><td>方案已定（先链路后脚本，约 5 天）；`{{var}}` 渲染与 json_get 是现成地基，改动集中在接口模块内部</td></tr>
-          <tr><td>B</td><td>4. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
-          <tr><td>C</td><td>5. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接语速 / 文案片段</td></tr>
-          <tr><td>C</td><td>6. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
+          <tr><td>A</td><td>2. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件</td></tr>
+          <tr><td>A</td><td>3. 步骤级条件与循环 ✅方案已定</td><td class="stars">⭐⭐⭐</td><td>循环用展开式，执行器主循环不动；条件复用断言判定。改动集中在步骤模型与列表 UI（约 3.5 天）</td></tr>
+          <tr><td>B</td><td>4. 接口模块二期</td><td class="stars">⭐⭐</td><td>方案已定（先链路后脚本，约 5 天）；<code>{{var}}</code> 渲染与 json_get 是现成地基</td></tr>
+          <tr><td>B</td><td>5. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例归组，改动集中在场景化执行器与报告分组</td></tr>
+          <tr><td>C</td><td>6. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接语速 / 文案片段</td></tr>
+          <tr><td>C</td><td>7. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
         </tbody>
       </table>
     </div>
