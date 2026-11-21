@@ -1377,8 +1377,13 @@ class VoiceView(QWidget):
             ErrorDialog.show_error(self, "导入失败", f"读取表格失败：\n{e}")
             return
 
+        from collections import Counter
         new_groups = created = overwritten = 0
         wake_converted = 0
+        total_parsed = 0
+        # 首步文本出现次数：用来发现「整张表首步都是唤醒词，但和设置对不上」
+        first_texts = Counter()
+        wake_words = {w for w in get_wake_words() if w}
         warnings = []
         # 本次导入涉及到的用例：只给它们估算「播后等待」，不碰用户手调过的其它用例
         affected = []
@@ -1391,8 +1396,12 @@ class VoiceView(QWidget):
                 new_groups += 1
             parsed, sheet_warnings = voice_table.parse_sheet(rows)
             warnings += [f"[{sheet_name}] {w}" for w in sheet_warnings]
-            wake_words = {w for w in get_wake_words() if w}
             for case_name, steps in parsed:
+                total_parsed += 1
+                if steps and steps[0].kind == KIND_PHRASE:
+                    text0 = (steps[0].text or "").strip()
+                    if text0:
+                        first_texts[text0] += 1
                 # 老表格的首步是写死的唤醒词，导回来要还原成「跟随设置」
                 steps, converted = voice_table.adopt_wake_steps(steps, wake_words)
                 wake_converted += converted
@@ -1428,6 +1437,17 @@ class VoiceView(QWidget):
             parts.append(f"{wake_converted} 条首步改为跟随设置的唤醒")
         self.status_label.setText(
             "导入完成：" + ("、".join(parts) if parts else "没有可导入的内容"))
+        # 绝大多数用例首步都是同一句话、又不等于当前配置的唤醒词 —— 多半是
+        # 旧表的固化唤醒词（设置里的词已经改过），提醒一句，否则用户会以为
+        # 「唤醒没跟着设置走」是坏的
+        if first_texts and total_parsed:
+            text, cnt = first_texts.most_common(1)[0]
+            if cnt >= max(3, total_parsed * 6 // 10) and text not in wake_words:
+                warnings.append(
+                    f"{cnt} 个用例的首步都是「{text}」，看起来是唤醒词，"
+                    f"但和设置里的不一致，未自动识别。把它填进"
+                    f"「设置 → 语音播报 → 唤醒词」后重新导入即可")
+
         if warnings:
             shown = warnings[:8]
             if len(warnings) > len(shown):
