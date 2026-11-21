@@ -19,7 +19,7 @@ DIALOG_BTN_H = 42
 # 120x42 在宽弹窗里像一条横条（用户两次反馈「高度窄」）。宽度收到 100、
 # 高度提到 50，比例 2:1 —— 视觉上才像个按钮而不是色块。
 DIALOG_BTN_W_SINGLE = 100
-DIALOG_BTN_H_SINGLE = 50
+DIALOG_BTN_H_SINGLE = 54
 
 
 class _ButtonHotZone(QObject):
