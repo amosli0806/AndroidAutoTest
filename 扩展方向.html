@@ -150,6 +150,12 @@
   tr:last-child td { border-bottom: none; }
   .stars { color: var(--star); font-weight: 700; white-space: nowrap; }
 
+  /* 目录树 / 代码块 */
+  .tree { margin: 8px 0 6px; padding: 10px 14px; border-radius: 8px; background: #f6f8fb;
+          border: 1px solid var(--border); font-family: ui-monospace, Consolas, monospace;
+          font-size: 12.5px; line-height: 1.75; color: #33415c;
+          white-space: pre; overflow-x: auto; }
+
   /* 缺口列表 */
   .gap-item { display: flex; gap: 12px; align-items: flex-start; }
   .gap-item .tag { margin-top: 2px; }
@@ -287,6 +293,40 @@
         <code>am dumpheap</code>，会触发强制 GC 让被测应用短暂冻结 —— 不只拖慢，还可能让
         「3 秒内出现」这类基于时间的断言超时，变成<b>假失败</b>；抓包每条重启则会丢包。
         这两样都放在执行路径之外，是这条路「不增加用例耗时」的关键。</p>
+
+      <p><b>产物长什么样</b>（目录骨架沿用现有 <code>{输出目录}/{设备号}/perf/{会话名}/</code>）：</p>
+      <div class="tree">├─ cpu/  mem/  netdev/  fps/    整场采样（不按用例切）
+├─ hprof/                         整场按间隔 + 超阈值触发
+├─ screenshots/                   失败截图（已有）
+├─ packet/
+│   └─ capture.pcap               整场一份，边跑边抓
+├─ cases/                         新增：每条用例的元信息与指标汇总
+│   ├─ 01_打开地图.json
+│   └─ 02_搜索.json
+└─ perf_report_2026-11-21_1502.html</div>
+
+      <p class="small"><code>cases/01_打开地图.json</code> 存这条用例的起止时间与该区间的汇总值：
+        <code>started_at</code>、<code>duration_ms</code>、<code>ok</code>、
+        <code>cpu_avg</code> / <code>cpu_peak</code>、<code>mem_peak_mb</code>、
+        <code>fps_avg</code>、<code>traffic_kb</code>，以及 <code>screenshot</code> / <code>pcap</code> 的指向。
+        报告与后续对比都读这份，不用再解析整场采样。</p>
+
+      <p><b>报告新增一节</b>「🕒 场景化 · 按用例」，排在「测试详情」之后，一行一条：</p>
+      <table>
+        <thead><tr><th>用例</th><th>结果</th><th>耗时</th><th>CPU 峰值</th><th>内存峰值</th><th>流量</th><th>产物</th></tr></thead>
+        <tbody>
+          <tr><td>打开地图 - 地图在全屏</td><td>✅</td><td>4.3s</td><td>38%</td><td>348MB</td><td>812KB</td><td>—</td></tr>
+          <tr><td>打开地图 - 地图在半屏</td><td>❌</td><td>6.1s</td><td>52%</td><td>412MB</td><td>1.2MB</td><td>截图</td></tr>
+          <tr><td>语音打开导航</td><td>✅</td><td>12.8s</td><td>41%</td><td>386MB</td><td>2.4MB</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <p class="small">点一行展开：该用例时间区间的曲线（整场曲线加起止遮罩）+ 步骤与错误信息；
+        截图直接是链接。这样「内存涨了」能一眼落到具体用例上。</p>
+
+      <p><b>pcap 切包先别做</b>：<code>editcap</code>（Wireshark CLI）能按时间切，但要随包带几 MB；
+        <code>scapy</code> / <code>dpkt</code> 是新增依赖。零依赖的做法是<b>不切文件</b> ——
+        报告里给出每条用例的时间范围（如 <code>15:02:31.4–15:02:37.9</code>），需要时在 Wireshark 里按时间过滤。
+        等真嫌麻烦再把 editcap 打包进去。</p>
     </div>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ C · 改动大 / 影响面广（需专门排期）</h3>
