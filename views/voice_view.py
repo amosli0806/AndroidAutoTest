@@ -765,7 +765,6 @@ class VoiceView(QWidget):
         self.add_assert_btn.setObjectName("VoiceAddBtn")
         self.add_assert_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_assert_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.add_assert_btn.setToolTip("播完这句后检查界面元素，验证界面是否真的变化")
         self.add_assert_btn.clicked.connect(self._on_add_assert)
         title_row.addWidget(self.add_assert_btn)
         # 批量重算：把**全部用例**的「播后等待」按文案+语速重算一遍
