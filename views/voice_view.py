@@ -22,6 +22,7 @@
   2. SAPI 是 COM 组件，播放线程首次调用时会自行 CoInitialize。
 """
 import os
+import re
 import time
 
 from PyQt6.QtCore import QRectF, QThread, QTimer, Qt, pyqtSignal
@@ -381,6 +382,34 @@ class _VerifyRow(QFrame):
             'fa6s.copy', color=color, color_disabled=icon_off))
         self.del_btn.setIcon(qta.icon(
             'fa6s.trash-can', color=del_color, color_disabled=icon_off))
+
+
+# 「唤醒词与设置不一致」这类警告在整表导入时会有上千条（862 个用例几乎人人都中），
+# 逐条列出来既看不清也没意义，先按类型合并再展示。
+_WAKE_MISMATCH_RE = re.compile(
+    r"唤醒词「(.+?)」与设置里的不一致，已按设置（(.+?)）处理")
+
+
+def _summarize_import_warnings(warnings):
+    """把重复度高的同类警告合并成一条，其余原样保留。"""
+    from collections import Counter
+    words = []
+    configured = ""
+    rest = []
+    for text in warnings:
+        m = _WAKE_MISMATCH_RE.search(text)
+        if m:
+            words.append(m.group(1))
+            configured = configured or m.group(2)
+        else:
+            rest.append(text)
+    if not words:
+        return rest
+    top, top_n = Counter(words).most_common(1)[0]
+    detail = f"都是「{top}」" if top_n == len(words) else f"多为「{top}」"
+    suffix = f"，已按设置「{configured}」处理" if configured else "，已按设置处理"
+    merged = f"{len(words)} 处唤醒词与设置不一致（{detail}）{suffix}"
+    return [merged] + rest
 
 
 class _WakeRow(QFrame):
@@ -1515,6 +1544,7 @@ class VoiceView(QWidget):
                     f"但和设置里的不一致，未自动识别。把它填进"
                     f"「设置 → 语音播报 → 唤醒词」后重新导入即可")
 
+        warnings = _summarize_import_warnings(warnings)
         if warnings:
             shown = warnings[:8]
             if len(warnings) > len(shown):
