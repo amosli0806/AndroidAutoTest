@@ -1378,6 +1378,7 @@ class VoiceView(QWidget):
             return
 
         new_groups = created = overwritten = 0
+        wake_converted = 0
         warnings = []
         # 本次导入涉及到的用例：只给它们估算「播后等待」，不碰用户手调过的其它用例
         affected = []
@@ -1390,7 +1391,11 @@ class VoiceView(QWidget):
                 new_groups += 1
             parsed, sheet_warnings = voice_table.parse_sheet(rows)
             warnings += [f"[{sheet_name}] {w}" for w in sheet_warnings]
+            wake_words = {w for w in get_wake_words() if w}
             for case_name, steps in parsed:
+                # 老表格的首步是写死的唤醒词，导回来要还原成「跟随设置」
+                steps, converted = voice_table.adopt_wake_steps(steps, wake_words)
+                wake_converted += converted
                 existing = next(
                     (c for c in self.model.cases_of_group(group.id)
                      if c.name == case_name), None)
@@ -1419,6 +1424,8 @@ class VoiceView(QWidget):
             parts.append(f"新建 {created} 个用例")
         if filled:
             parts.append(f"估算 {filled} 条播后等待")
+        if wake_converted:
+            parts.append(f"{wake_converted} 条首步改为跟随设置的唤醒")
         self.status_label.setText(
             "导入完成：" + ("、".join(parts) if parts else "没有可导入的内容"))
         if warnings:

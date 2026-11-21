@@ -183,6 +183,24 @@ def _parse_case(case_name: str, steps_text: str, expects_text: str):
     return steps, warnings
 
 
+def adopt_wake_steps(steps, wake_words):
+    """老表格里首步写死的唤醒词 -> 还原成「跟随设置」的唤醒步骤。
+
+    改造前的表格第一行就是「1. 你好本田」（唤醒词被固化成播报文本）。这种表
+    导回来如果照原样存成 phrase，唤醒词又退回写死状态，之后改设置不生效 ——
+    看上去像「新功能没起作用」。这里按「首步文本等于当前唤醒词」自动识别。
+
+    只认第一条步骤：唤醒词出现在中间多半是用例本身要念这句话，不该动。
+    返回 (步骤列表, 转换条数)。
+    """
+    if not steps or not wake_words:
+        return steps, 0
+    first = steps[0]
+    if first.kind == KIND_PHRASE and (first.text or "").strip() in wake_words:
+        return [VoiceStep(kind=KIND_WAKE, delay=WAKE_DELAY)] + list(steps[1:]), 1
+    return steps, 0
+
+
 def parse_sheet(rows) -> Tuple[List[Tuple[str, List[VoiceStep]]], List[str]]:
     """一个工作表的数据行 -> ([(用例名, 步骤序列)], 警告列表)。
 
