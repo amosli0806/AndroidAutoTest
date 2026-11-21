@@ -413,8 +413,11 @@ class ActionCardView(QScrollArea):
             # 语音回执：抓车机日志，看刚才那句话有没有被正确识别。
             # 必须跟在「语音播报」后面用 —— 它抓的是播报之后车机回的那句。
             {'type': 'voice_receipt', 'title': '语音回执', 'fields': [
+                # 提示要短：卡片只有约 300px 宽，长文案会被输入框截断成
+                # 「例如：已为您导航（多个用…」，反而看不懂
                 {'key': 'keywords', 'label': '包含关键字：', 'type': 'line', 'required': True,
-                 'placeholder': '例如：已为您导航（多个用逗号分隔，命中任一即通过）'},
+                 'placeholder': '例如：已为您导航',
+                 'hint': '多个关键字用逗号分隔，命中任一即通过'},
                 {'key': 'timeout', 'label': '等待秒数：', 'type': 'spin', 'default': 8,
                  'hint': '播报后最多等多久去抓车机回执，车机话术长就调大'}
             ]}
@@ -922,6 +925,8 @@ class ActionCard(QGroupBox):
             widget = QLineEdit()
             if field.get('placeholder'):
                 widget.setPlaceholderText(str(field['placeholder']))
+            if field.get('hint'):
+                widget.setToolTip(str(field['hint']))
             if 'default' in field:
                 widget.setText(str(field['default']))
             if field['key'] in ('locationValue', 'fromValue', 'toValue'):
