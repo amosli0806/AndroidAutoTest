@@ -169,7 +169,7 @@
     <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 更新于 2026-11-20（v1.6.1）</div>
     <div class="badges">
       <span class="badge">当前版本 v1.6.1</span>
-      <span class="badge">7 项规划 · 2 项已完成</span>
+      <span class="badge">7 项待办 · 2 项已落地</span>
       <span class="badge">车机 / 手机均已实机验证</span>
       <span class="badge">按改动量分 A~D 四档</span>
     </div>
@@ -207,36 +207,10 @@
       <div class="example">💡 <b>打个比方：</b>像「歌单」——用例按「冒烟测试」「回归测试」分组，跑完自动出这份歌单的「成绩单」（通过率），A 歌单放完自动放 B。（还差「成绩单」和「连着放」。）</div>
     </div>
 
-    <div class="card">
-      <h3>2. 步骤模板 <span class="tag done">✅ 2026-11-20 已完成</span></h3>
-      <p><b>已实现</b>：把一段步骤存成模板，任意用例里插入复用。步骤列表右键
-        「存为步骤模板」/「插入步骤模板」；选择器支持搜索、分组筛选、预览，右键可重命名 / 删除；
-        插入后新步骤闪一下并滚动到位。</p>
-      <p><b>设计决策</b>（再动这块之前先看这里，免得推翻重来）：</p>
-      <ul>
-        <li><b>存快照，不存引用</b>：模板里是步骤副本（type / name / params），不是原步骤 id。
-          原用例删掉后模板仍可用。插入时重新分配 id —— <code>steps</code> 是全局池、id 唯一，
-          不重新分配会撞号</li>
-        <li><b>独立数据文件</b> <code>data/step_templates.json</code>：模板是跨用例资产，
-          不该跟用例一起被 <code>gc_orphan_steps</code> 清掉</li>
-        <li><b>不做变量化</b>：定位值原样带过去。车机同项目包名与界面固定，跨项目复用模板是少数场景；
-          做占位符会让「创建模板」多一步标注，投入产出不合算</li>
-        <li><b>不做模板内步骤编辑</b>：想改就在用例里改好再同名覆盖（会提示已存在）。
-          在对话框里做增删排序＝把 <code>step_list_view</code> 再实现一遍</li>
-        <li><b>管理入口挂在选择器右键</b>，不另开「模板管理页」——那等于再造一个用例列表</li>
-      </ul>
-      <p><b>改动范围</b>：<code>models/template_model.py</code>（新）、<code>views/template_dialog.py</code>（新）、
-        <code>models/step_model.py</code>（<code>insert_steps_at</code>）、
-        <code>views/step_list_view.py</code>（右键两项 + 插入后高亮）、
-        <code>controllers/step_controller.py</code>（两个处理函数）。不动现有数据结构。</p>
-      <p><b>后续可选</b>：① 插入时校验模板引用的元素库元素是否还存在（失效的标黄提示）；
-        ② 若真出现跨项目复用需求，再加 <code>{{占位符}}</code> 与插入时填写。</p>
-      <div class="example">💡 <b>打个比方：</b>像 PPT 模板——「启动 → 等待 → 点首页」这套成熟流程存成模板，
-        新用例直接套用，不用每次从零搭。</div>
-    </div>
+
 
     <div class="card">
-      <h3>3. 知识库增强（检索与关联）<span class="tag plan">📋 规划中</span></h3>
+      <h3>2. 知识库增强（检索与关联）<span class="tag plan">📋 规划中</span></h3>
       <p><b>现状</b>：<code>views/knowledge_view.py</code>（1329 行）+ <code>models/knowledge_model.py</code>（747 行）
         已具备「项目 → 分类 → 笔记」树、富文本编辑器（落库转 Markdown）、标签、全文搜索、图片资源、Markdown 导出。
         基础功能够用，但<b>提效交互仍然偏少</b>。</p>
@@ -280,7 +254,7 @@
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ B · 改动适中、模块独立（1 ~ 2 天，独立开发不影响别处）</h3>
 
     <div class="card">
-        <h3>4. 语音播报增强 <span class="tag plan">📋 规划中</span></h3>
+        <h3>3. 语音播报增强 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>唤醒词多套管理（按用例切换、多条候选轮播）—— 目前只有全局一个唤醒词，靠车型模板整体切换</li>
         <li>「真执行了」校验：回执验证已能确认「被正确识别」，但界面是否真的变了（如地图是否全屏）还没有手段</li>
@@ -289,60 +263,12 @@
       <div class="example">💡 <b>打个比方：</b>换车已经能整套套用（车型模板）；这一步要再细到「按用例切换唤醒词、多条候选轮播」，并验明正身 —— 确认「地图真的切成全屏了没有」，而不只是「车机听懂了没有」。</div>
     </div>
 
-    <div class="card">
-      <h3>5. 历史记录与回滚（原「版本控制集成 · Git」）<span class="tag done">✅ 2026-11-21 初步实现</span></h3>
-      <p><b>已实现</b>：数据自动快照 + 时间线 + 语义差异 + 整库回滚。入口在右侧工具栏「历史」
-        （<code>Ctrl+H</code>），复用底部面板，与日志 / 执行日志 / 消息互斥。</p>
 
-      <p><b>为什么不是 Git</b>（这是本功能最重要的判断，以后想「正经接个 Git」之前先看这段）：
-        打包版没有 <code>git.exe</code>（内置 +40MB，引 <code>dulwich</code> 也要 +20MB）；
-        用户数据只有约 50KB，全量快照 100 次才 5MB，<b>增量与分支在这里没有价值</b>；
-        单人工具没有协作需求，分支 / 合并 / 冲突是负担不是能力。→ 用文件快照：
-        零依赖、可打包、行为可预测。</p>
-
-      <p><b>实现要点</b>：</p>
-      <ul>
-        <li>快照落 <code>data/.history/时间戳/</code>，<b>gzip 压缩</b>：<code>voice_data</code> 单个
-          356KB，整份快照 404KB → 28KB（不压的话 500 份要吃 200MB）</li>
-        <li>跟踪 11 个「用户资产」json；排除 <code>perf_data</code>（7MB）、
-          <code>perf_baselines</code> / <code>gui.info</code> / <code>edge_voices_cache</code>（缓存类）</li>
-        <li>触发：每 5 秒比对 mtime + 10 秒防抖，<b>不用文件系统监听</b>（一次保存会触发多条，
-          产出几十份重复快照）</li>
-        <li>恢复：先存当前再覆盖，<b>恢复本身可撤销</b>；保留 30 天 / 500 份，
-          带标记的里程碑永不删</li>
-        <li>面板：时间线按批次聚合（间隔 &lt; 5 分钟合并成一条），单击看「该版 vs 当前」，
-          <b>双击不恢复</b>（破坏性操作不给易误触的入口）</li>
-      </ul>
-
-      <p><b>实现中踩到的四个坑</b>（都写进代码注释了，别重复踩）：</p>
-      <ul>
-        <li>新增底部面板 kind 忘了同步 <code>BOTTOM_PANEL_ICONS</code> → 启动刷主题时 KeyError，
-          <b>整个程序起不来</b>（现在两处取值都改成 <code>.get(..., 'fa6s.circle')</code> 兜底）</li>
-        <li><code>history</code> 落到 <code>_dispatch_quick_action</code> 的兜底分支 →
-          打开面板先弹「未检测到设备」</li>
-        <li>套件（<code>suites_data</code> / <code>voice_data.suites</code>）是
-          <code>{name, case_ids}</code> 没有 id → 通用比较器只认 id，
-          <b>增删套件永远检测不到</b>（改为 id 优先、无 id 用 name 兜底）</li>
-        <li>恢复后只刷了项目树和步骤列表 → 元素库还显示旧数据，得手动检索才刷新</li>
-      </ul>
-
-      <p><b>已知限制</b>：</p>
-      <ul>
-        <li>恢复是<b>整库回退</b>，不能只退单个用例 —— 同时改了好几个用例时会误伤</li>
-        <li>只能「选中版 vs 当前」，不能自己挑两版对比</li>
-        <li>套件改名会显示成「删一个 + 加一个」（因为套件没有 id，无法认作同一实体）</li>
-      </ul>
-
-      <p><b>后续</b>：① 单用例回退；② 任意两版对比；③ 导出 / 导入数据包
-        （比接 GitHub 更适合「换电脑 / 备份」这个场景）。</p>
-      <div class="example">💡 <b>打个比方：</b>像文档软件的「历史版本」——不是给你看代码差异，
-        而是告诉你「昨天 18:20 那一版里，导航用例多了两步」，点一下就能回去。</div>
-    </div>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ C · 改动较大、需先设计（要先出方案再动手）</h3>
 
     <div class="card">
-      <h3>6. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
+      <h3>4. 接口模块二期 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>前后置脚本（Python 钩子，处理签名 / 加解密 / 数据提取）</li>
         <li>链路场景编排（接口串联，上一步响应作为下一步入参）</li>
@@ -351,14 +277,14 @@
     </div>
 
     <div class="card">
-      <h3>7. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
+      <h3>5. 性能检测补全 <span class="tag plan">📋 规划中</span></h3>
       <p>剩余<b>场景化联动</b>：场景化执行时按用例自动转储 / 抓包，每用例一份产物、报告按用例分组。实现细节见 <code>docs/性能检测能力并入方案.md</code>。</p>
     </div>
 
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ D · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
-      <h3>8. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
+      <h3>6. 变量 / 参数化落地到语音播报 <span class="tag plan">📋 规划中</span></h3>
       <ul>
         <li>把唤醒词、语速等提升为可参数化变量，用例内可覆盖</li>
       </ul>
@@ -366,7 +292,7 @@
     </div>
 
     <div class="card">
-      <h3>9. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
+      <h3>7. 关键字驱动 <span class="tag plan">📋 规划中</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
       <div class="example">💡 <b>打个比方：</b>像手机「快捷指令 / 宏」——把「打开 App → 输账号 → 输密码 → 点登录」这 5 步打包成一个「登录」关键字，以后任何用例点一下就好，不用重复拖 5 个步骤。</div>
     </div>
@@ -406,18 +332,17 @@
         <thead><tr><th>档位</th><th>能力</th><th>优先级</th><th>理由</th></tr></thead>
         <tbody>
           <tr><td>A</td><td>1. 测试套件增强</td><td class="stars">⭐⭐⭐</td><td>在现有套件与报告上做汇总 / 串联，改动集中在套件与执行控制器</td></tr>
-          <tr><td>A</td><td>2. 步骤模板 ✅</td><td class="stars">—</td><td>2026-11-20 已完成：右键存取 + 选择器，不动数据结构（详见上方卡片）</td></tr>
-          <tr><td>A</td><td>3. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
-          <tr><td>B</td><td>4. 语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
-          <tr><td>B</td><td>5. 历史记录与回滚 ✅</td><td class="stars">—</td><td>2026-11-21 初步实现：文件快照 + 语义差异 + 整库回滚（详见上方卡片）</td></tr>
-          <tr><td>C</td><td>6. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
-          <tr><td>C</td><td>7. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
-          <tr><td>D</td><td>8. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接唤醒词 / 语速</td></tr>
-          <tr><td>D</td><td>9. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
+          <tr><td>A</td><td>2. 知识库增强</td><td class="stars">⭐⭐⭐</td><td>纯视图层 + 现有笔记字段，不动数据结构；代码块 / 速查卡 / 命令面板都是独立小件，「一键记坑」才需要动执行页与控制器</td></tr>
+          <tr><td>B</td><td>3. 语音播报增强</td><td class="stars">⭐⭐</td><td>模块独立：唤醒词多套是数据 + UI；「真执行了」校验与用例互转稍大</td></tr>
+          <tr><td>C</td><td>4. 接口模块二期</td><td class="stars">⭐⭐</td><td>改动集中在接口模块内部，但链路编排与脚本钩子要先设计</td></tr>
+          <tr><td>C</td><td>5. 性能检测 · 场景化联动</td><td class="stars">⭐⭐</td><td>在已有会话与产物链路上按用例触发，改动集中在场景化执行器与报告分组</td></tr>
+          <tr><td>D</td><td>6. 变量 / 参数化落地到语音播报</td><td class="stars">⭐</td><td>语音模块尚未接入变量替换，要先补这一层，再接唤醒词 / 语速</td></tr>
+          <tr><td>D</td><td>7. 关键字驱动</td><td class="stars">⭐</td><td>要设计关键字模型 + 展开逻辑，且依赖变量地基</td></tr>
         </tbody>
       </table>
     </div>
-    <div class="tip">💡 建议从 <b>A 档</b> 起步：套件增强 / 知识库的几个小件都是小步快跑、影响面可控的活，可随时插进版本。步骤模板已于 2026-11-20 落地，可作改动量的参照。</div>
+    <div class="tip">💡 建议从 <b>A 档</b> 起步：套件增强 / 知识库的几个小件都是小步快跑、影响面可控的活，可随时插进版本。<br>
+      已完成项已从本文移除（步骤模板 2026-11-20、历史记录与回滚 2026-11-21），改动量与做法见更新日志。</div>
     <div class="card">
       <h3>范围边界（明确不做）</h3>
       <ul>
