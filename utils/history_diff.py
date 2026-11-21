@@ -90,7 +90,12 @@ def _walk_tree(nodes, out: Dict[str, dict], parent_id: str = "", parent_name: st
 
 
 def _entities(obj) -> Dict[str, dict]:
-    """从 json 里抽实体：顶层 list，或 dict 里值为 list 的字段。"""
+    """从 json 里抽实体：优先用 id，没有 id 的退而用 name。
+
+    测试套件（suites_data.json、voice_data.json 的 suites）就是 `{name, case_ids}`
+    这种没有 id 的结构 —— 早先只认 id，于是「新增/删除套件」永远检测不到
+    （2026-11-21 用户实测反馈）。
+    """
     items: List[dict] = []
     if isinstance(obj, list):
         items = [x for x in obj if isinstance(x, dict)]
@@ -98,7 +103,14 @@ def _entities(obj) -> Dict[str, dict]:
         for v in obj.values():
             if isinstance(v, list):
                 items.extend(x for x in v if isinstance(x, dict))
-    return {str(x["id"]): x for x in items if "id" in x}
+
+    out: Dict[str, dict] = {}
+    for x in items:
+        if x.get("id") not in (None, ""):
+            out[f"id:{x['id']}"] = x
+        elif x.get("name"):
+            out[f"name:{x['name']}"] = x
+    return out
 
 
 def _diff_entity_fields(old: dict, new: dict) -> List[str]:
@@ -126,6 +138,11 @@ def _diff_entity_fields(old: dict, new: dict) -> List[str]:
         a, b = old.get(key), new.get(key)
         if a != b and key not in ("params",):
             out.append(f"{key}：{_short(a)} → {_short(b)}")
+
+    # 套件的成员变化（suites_data / voice_data.suites 都是 case_ids 列表）
+    a_ids, b_ids = old.get("case_ids"), new.get("case_ids")
+    if isinstance(a_ids, list) and isinstance(b_ids, list) and a_ids != b_ids:
+        out.append(f"用例数 {len(a_ids)} → {len(b_ids)}")
     return out
 
 
@@ -152,6 +169,19 @@ def _diff_flat(old_map: Dict[str, dict], new_map: Dict[str, dict],
                 _add(group, "mod", f"「{name}」{c}", buckets)
 
 
+def _batch_text(verb: str, nodes: List[dict], limit: int = 3) -> str:
+    """增删一批节点时合成一句话。
+
+    删一个模块往往连带它下面的用例一起消失，逐条列会把 8 条配额全占满，
+    用户反而看不到「哪条被改名了」这种更重要的信息。
+    """
+    if len(nodes) == 1:
+        return f"{verb}「{_short(nodes[0]['name'], 18)}」"
+    names = "、".join(_short(n["name"], 12) for n in nodes[:limit])
+    tail = " 等" if len(nodes) > limit else ""
+    return f"{verb} {len(nodes)} 个：{names}{tail}"
+
+
 def _diff_projects(old, new, buckets: Dict[str, List[dict]]) -> Dict[str, str]:
     """项目树：新增 / 删除 / 改名 / 移动。返回 {id: 名称} 给步骤比较用。"""
     old_tree: Dict[str, dict] = {}
@@ -159,14 +189,12 @@ def _diff_projects(old, new, buckets: Dict[str, List[dict]]) -> Dict[str, str]:
     _walk_tree(old, old_tree)
     _walk_tree(new, new_tree)
 
-    for nid in new_tree:
-        if nid not in old_tree:
-            _add("用例与项目", "add",
-                 f"新增「{_short(new_tree[nid]['name'], 18)}」", buckets)
-    for nid in old_tree:
-        if nid not in new_tree:
-            _add("用例与项目", "del",
-                 f"删除「{_short(old_tree[nid]['name'], 18)}」", buckets)
+    added = [new_tree[nid] for nid in new_tree if nid not in old_tree]
+    removed = [old_tree[nid] for nid in old_tree if nid not in new_tree]
+    if added:
+        _add("用例与项目", "add", _batch_text("新增", added), buckets)
+    if removed:
+        _add("用例与项目", "del", _batch_text("删除", removed), buckets)
     for nid in old_tree:
         if nid not in new_tree:
             continue
