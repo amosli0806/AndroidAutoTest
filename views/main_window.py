@@ -1605,12 +1605,13 @@ class MainWindow(QMainWindow):
         self._sidebar_show_labels = bool(show)
         style = (Qt.ToolButtonStyle.ToolButtonTextUnderIcon if show
                  else Qt.ToolButtonStyle.ToolButtonIconOnly)
-        width = 46 if show else 40
         for tb in (self.left_toolbar, self.right_toolbar):
             if tb is None:
                 continue
             tb.setToolButtonStyle(style)
-            tb.setFixedWidth(width)
+            # 宽度**不变**：两字 10px 约 20px，按钮实测 31px，40px 的栏完全放得下。
+            # 之前设 46 是保守估计，实际只会让三栏内容区白白变窄。
+            tb.setFixedWidth(40)
         # 左栏样式里要跟着加 10px 字号（两字才塞得下），重新套一遍
         self._apply_left_toolbar_qss()
         self._schedule_left_toolbar_sync()
