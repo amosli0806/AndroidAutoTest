@@ -390,6 +390,20 @@ class Settings:
             return [str(v) for v in value]
         return None
 
+    @classmethod
+    def get_sidebar_labels(cls) -> bool:
+        """左右工具栏是否显示按钮名称。默认 False，保持原来的纯图标外观。"""
+        try:
+            return bool(cls.load().get('sidebar_show_labels', False))
+        except Exception:
+            return False
+
+    @classmethod
+    def set_sidebar_labels(cls, value: bool):
+        settings = cls.load()
+        settings['sidebar_show_labels'] = bool(value)
+        cls.save(settings)
+
     # ---------- 站点私有目标（存在本机 data/config.json，不进公开仓库） ----------
     # 这类"具体测哪个应用"的值不该写死在代码里：公开仓库里只留通用默认值，
     # 各自的机器在本地配置里指定。

@@ -1184,6 +1184,9 @@ class MainWindow(QMainWindow):
             if btn:
                 btn.installEventFilter(self)
                 self.right_toolbar_buttons.append(btn)
+
+        # 两侧工具栏：两字短名 + 右键「显示按钮名称」（设置持久化在 config.json）
+        self._setup_sidebar_labels()
         # ---------- 状态栏 ----------
         self.statusBar().setFixedHeight(30)
         self.statusBar().setStyleSheet("background: #e9eaee; color: #333;")
@@ -1555,7 +1558,61 @@ class MainWindow(QMainWindow):
             return
         if self._left_toolbar_compact:
             base += self._TOOLBAR_COMPACT_QSS
+        if getattr(self, "_sidebar_show_labels", False):
+            # 竖向栏只有 46px 宽，12px 字的两字标签会顶出去，压到 10px
+            base += ("\nQToolButton { font-size: 10px; padding: 2px 0px;"
+                     " margin: 1px 1px; }")
         self.left_toolbar.setStyleSheet(base)
+
+    # ------------------------------------------------------------------
+    # 左右工具栏：右键切换「显示按钮名称」
+    # ------------------------------------------------------------------
+    def _setup_sidebar_labels(self):
+        """给两侧工具栏的 action 配两字短名，并装上右键菜单。"""
+        for tb in (self.left_toolbar, self.right_toolbar):
+            if tb is None:
+                continue
+            for action in tb.actions():
+                short = self.SIDEBAR_ICON_TEXT.get(action.text())
+                if short:
+                    action.setIconText(short)
+            self._install_sidebar_menu(tb)
+            for action in tb.actions():
+                btn = tb.widgetForAction(action)
+                if btn is not None:
+                    self._install_sidebar_menu(btn)
+        self._apply_sidebar_labels(Settings.get_sidebar_labels(), save=False)
+
+    def _install_sidebar_menu(self, widget):
+        widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        widget.customContextMenuRequested.connect(
+            lambda pos, w=widget: self._show_sidebar_menu(w, pos))
+
+    def _show_sidebar_menu(self, widget, pos):
+        menu = QMenu(self)
+        act = menu.addAction("显示按钮名称")
+        act.setCheckable(True)
+        act.setChecked(bool(getattr(self, "_sidebar_show_labels", False)))
+        chosen = menu.exec(widget.mapToGlobal(pos))
+        if chosen is act:
+            self._apply_sidebar_labels(act.isChecked())
+
+    def _apply_sidebar_labels(self, show: bool, save: bool = True):
+        """切换「图标 + 两字名称」与「纯图标」，并记住选择。"""
+        self._sidebar_show_labels = bool(show)
+        style = (Qt.ToolButtonStyle.ToolButtonTextUnderIcon if show
+                 else Qt.ToolButtonStyle.ToolButtonIconOnly)
+        width = 46 if show else 40
+        for tb in (self.left_toolbar, self.right_toolbar):
+            if tb is None:
+                continue
+            tb.setToolButtonStyle(style)
+            tb.setFixedWidth(width)
+        # 左栏样式里要跟着加 10px 字号（两字才塞得下），重新套一遍
+        self._apply_left_toolbar_qss()
+        self._schedule_left_toolbar_sync()
+        if save:
+            Settings.set_sidebar_labels(bool(show))
 
     def _left_toolbar_need_height(self) -> int:
         """按当前密度算装下所有按钮需要的高度（不含可伸缩的弹簧）"""
@@ -2760,6 +2817,20 @@ class MainWindow(QMainWindow):
 
     # ---------- 底部日志面板 ----------
     # 面板标题与图标：三种模式共用同一块区域
+    # 左右工具栏显示名称时用的两字短名：竖向工具栏只有 40 多像素宽，
+    # 完整名称（「自动化编辑」）会把栏挤宽、挤压三栏内容区。
+    # 用 setIconText 而不是 setText —— iconText 只喂给工具栏标签，
+    # action.text() 仍是完整名称（状态栏「当前功能: xxx」与菜单不受影响）。
+    SIDEBAR_ICON_TEXT = {
+        "ADB工具箱": "工具", "自动化编辑": "编辑", "自动化执行": "执行",
+        "应用元素库": "元素", "应用可视化": "可视", "接口自动化": "接口",
+        "性能检测": "性能", "语音播报": "语音",
+        "硬件信息": "硬件", "Crash 日志": "崩溃", "ANR 日志": "ANR",
+        "执行日志": "记录", "日志": "日志", "迷你模式": "迷你",
+        "消息": "消息", "历史记录": "历史", "帮助中心": "帮助",
+        "个人知识库": "知识",
+    }
+
     BOTTOM_PANEL_TITLES = {
         "log": "🐞 虫师日志",
         "device_info": "📱 硬件信息",
