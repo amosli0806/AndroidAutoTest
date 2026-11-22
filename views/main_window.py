@@ -1595,7 +1595,10 @@ class MainWindow(QMainWindow):
         act.setChecked(bool(getattr(self, "_sidebar_show_labels", False)))
         chosen = menu.exec(widget.mapToGlobal(pos))
         if chosen is act:
+            # 用户主动切换：清掉「因高度自动关闭」的标记，重新按当前高度判断
+            self._sidebar_labels_auto_off = False
             self._apply_sidebar_labels(act.isChecked())
+            self._schedule_left_toolbar_sync()
 
     def _apply_sidebar_labels(self, show: bool, save: bool = True):
         """切换「图标 + 两字名称」与「纯图标」，并记住选择。"""
@@ -1658,7 +1661,40 @@ class MainWindow(QMainWindow):
 
     def _run_left_toolbar_sync(self):
         self._toolbar_sync_scheduled = False
+        # 先按高度决定名称要不要显示（影响按钮高度），再算密度
+        self._sync_sidebar_labels_by_height()
         self._sync_left_toolbar_density()
+
+    def _sync_sidebar_labels_by_height(self):
+        """窗口太矮时自动收起侧栏名称，回到纯图标；拉高后自动恢复。
+
+        名称模式每个按钮约 47px，左栏 12 个要 629px。窗口低于这个高度就藏掉名称，
+        但**不改用户的选择**（config 里仍是「要显示」）——只是这一屏暂时不显示。
+        恢复阈值取「关闭前记录的需求高度 + 8px」，避免在临界高度上来回抖。
+        """
+        tb = self.left_toolbar
+        if tb is None or tb.height() <= 0:
+            return
+        if not Settings.get_sidebar_labels():
+            self._sidebar_labels_auto_off = False
+            return
+        if getattr(self, "_sidebar_show_labels", False):
+            need = self._left_toolbar_need_height()
+            if not need:
+                return
+            self._sidebar_labels_need = need
+            if tb.height() < need:
+                first_time = not getattr(self, "_sidebar_labels_auto_off", False)
+                self._sidebar_labels_auto_off = True
+                self._apply_sidebar_labels(False, save=False)
+                if first_time:
+                    self.statusBar().showMessage(
+                        "窗口高度不足，侧栏名称暂时隐藏；拉高窗口会自动恢复", 3000)
+        elif getattr(self, "_sidebar_labels_auto_off", False):
+            need = getattr(self, "_sidebar_labels_need", 0)
+            if need and tb.height() >= need + 8:
+                self._sidebar_labels_auto_off = False
+                self._apply_sidebar_labels(True, save=False)
 
     # ---------- 主题：可见 / 当前页同步刷，隐藏页延后到切页时刷 ----------
     def _apply_view_theme(self, view, mode):
