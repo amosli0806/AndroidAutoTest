@@ -1099,7 +1099,7 @@ class MainWindow(QMainWindow):
         self.right_toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.right_toolbar.setIconSize(QSize(20, 20))
         self.right_toolbar.setFixedWidth(40)
-        self.right_toolbar.setStyleSheet("""
+        self._right_toolbar_qss_base = """
             QToolBar {
                 background: #e9eaee;
                 border: none;
@@ -1122,7 +1122,8 @@ class MainWindow(QMainWindow):
             QToolButton:checked:hover {
                 background: #1565c0;
             }
-        """)
+        """
+        self.right_toolbar.setStyleSheet(self._right_toolbar_qss_base)
         self._lock_toolbar_in_place(self.right_toolbar)
         self.addToolBar(Qt.RightToolBarArea, self.right_toolbar)
 
@@ -1550,7 +1551,8 @@ class MainWindow(QMainWindow):
         QToolButton { padding: 2px 1px; margin: 0px 2px; }
     """
 
-    def _apply_left_toolbar_qss(self):
+    def _apply_sidebar_qss(self):
+        """把两侧工具栏的样式重新套一遍（紧凑密度只作用于左栏）。"""
         if self.left_toolbar is None:
             return
         base = getattr(self, "_left_toolbar_qss_base", "")
@@ -1558,11 +1560,16 @@ class MainWindow(QMainWindow):
             return
         if self._left_toolbar_compact:
             base += self._TOOLBAR_COMPACT_QSS
+        # 右栏也要跟着换字号：只改左栏会让两侧的名称大小、行间距对不上
+        label_qss = ""
         if getattr(self, "_sidebar_show_labels", False):
-            # 竖向栏只有 46px 宽，12px 字的两字标签会顶出去，压到 10px
-            base += ("\nQToolButton { font-size: 10px; padding: 2px 0px;"
-                     " margin: 1px 1px; }")
-        self.left_toolbar.setStyleSheet(base)
+            # 竖向栏只有 40px 宽，12px 字的两字标签会顶出去，压到 10px
+            label_qss = ("\nQToolButton { font-size: 10px; padding: 2px 0px;"
+                         " margin: 1px 1px; }")
+        self.left_toolbar.setStyleSheet(base + label_qss)
+        right_base = getattr(self, "_right_toolbar_qss_base", "")
+        if right_base:
+            self.right_toolbar.setStyleSheet(right_base + label_qss)
 
     # ------------------------------------------------------------------
     # 左右工具栏：右键切换「显示按钮名称」
@@ -1613,7 +1620,7 @@ class MainWindow(QMainWindow):
             # 之前设 46 是保守估计，实际只会让三栏内容区白白变窄。
             tb.setFixedWidth(40)
         # 左栏样式里要跟着加 10px 字号（两字才塞得下），重新套一遍
-        self._apply_left_toolbar_qss()
+        self._apply_sidebar_qss()
         self._schedule_left_toolbar_sync()
         if save:
             Settings.set_sidebar_labels(bool(show))
@@ -1644,14 +1651,14 @@ class MainWindow(QMainWindow):
             need = self._left_toolbar_normal_need
             if need and tb.height() >= need + 8:
                 self._left_toolbar_compact = False
-                self._apply_left_toolbar_qss()
+                self._apply_sidebar_qss()
         else:
             need = self._left_toolbar_need_height()
             if need:
                 self._left_toolbar_normal_need = need
                 if tb.height() < need:
                     self._left_toolbar_compact = True
-                    self._apply_left_toolbar_qss()
+                    self._apply_sidebar_qss()
 
     def _schedule_left_toolbar_sync(self):
         # resizeEvent 里工具栏还没重新布局，等这一轮布局结束再量高度
@@ -1877,10 +1884,9 @@ class MainWindow(QMainWindow):
                 QToolButton:hover {{ background: rgba(255, 255, 255, 0.08); }}
                 QToolButton:checked {{ background: #555; }}
             """
-            self.left_toolbar.setStyleSheet(sidebar_style_dark)
-            self.right_toolbar.setStyleSheet(sidebar_style_dark)
             self._left_toolbar_qss_base = sidebar_style_dark
-            self._apply_left_toolbar_qss()
+            self._right_toolbar_qss_base = sidebar_style_dark
+            self._apply_sidebar_qss()
             self.statusBar().setStyleSheet(f"background: {toolbar_bg}; color: #ccc;")
 
             # 设备下拉框样式
@@ -2198,10 +2204,9 @@ class MainWindow(QMainWindow):
                 color: #ccc;
             }}
         """
-        self.left_toolbar.setStyleSheet(sidebar_style)
-        self.right_toolbar.setStyleSheet(sidebar_style)
         self._left_toolbar_qss_base = sidebar_style
-        self._apply_left_toolbar_qss()
+        self._right_toolbar_qss_base = sidebar_style
+        self._apply_sidebar_qss()
 
         self.statusBar().setStyleSheet(f"background: {toolbar_bg}; color: #333;")
         self.device_combo.setStyleSheet("""
