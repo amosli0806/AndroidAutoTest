@@ -10,6 +10,7 @@
 """
 import logging
 import re
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ SUCCESS = "success"
 WARNING = "warning"
 ERROR = "error"
 RESULT = "result"
+TIMESTAMP = "timestamp"
 
 # ---------- 两套配色 ----------
 # dark 一列的取值刻意选用项目里深色主题已在使用的亮色，保持一致
@@ -29,6 +31,7 @@ _PALETTE = {
         WARNING: "#f57c00",
         ERROR: "#c62828",
         RESULT: "#1565c0",
+        TIMESTAMP: "#6b7280",
     },
     "dark": {
         INFO: "#e0e0e0",
@@ -36,6 +39,7 @@ _PALETTE = {
         WARNING: "#f39c12",
         ERROR: "#e74c3c",
         RESULT: "#64b5f6",
+        TIMESTAMP: "#9aa0a6",
     },
 }
 
@@ -76,6 +80,18 @@ def span(level: str, text: str, icon: str = "") -> str:
     """直接生成带主题色的日志 span。"""
     prefix = f"{icon} " if icon else ""
     return f"<span style='color:{log_color(level)};'>{prefix}{text}</span>"
+
+
+def stamp(text: str, ts: str = "") -> str:
+    """给一条日志加 [HH:MM:SS] 前缀（时间戳颜色随主题切换）。
+
+    只加一次：调用方在缓存/渲染之前统一套用，切主题时 recolor 会把
+    timestamp 这一档一起换色，不会出现「旧日志时间戳颜色不跟主题」。
+    """
+    if not ts:
+        ts = time.strftime("%H:%M:%S")
+    return (f"<span style='color:{log_color(TIMESTAMP)};'>[{ts}]</span> "
+            f"{text}")
 
 
 def recolor(html: str) -> str:

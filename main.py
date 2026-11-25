@@ -854,6 +854,9 @@ def main():
 
     def append_bottom_log(text: str):
         if hasattr(main_window, "_bottom_log_text") and main_window._bottom_log_text:
+            # 行首统一加时间戳：缓存里也存带时间戳的版本，切主题重渲染后不丢。
+            # 只在此处加（ADB / 语音 / 性能事件都汇到这一个入口），避免多层重复。
+            text = log_colors.stamp(text)
             main_window._bottom_log_entries.append(text)
             # 当前若在底部面板看 Crash / ANR，只缓存日志，不打断当前内容
             if main_window._bottom_panel_kind != "log":
