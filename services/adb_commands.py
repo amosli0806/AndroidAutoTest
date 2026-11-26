@@ -456,9 +456,9 @@ ADB_COMMANDS = [
         "description": "25M GPS 日志路径"
     },
     {
-        "command": "adb shell am start -n com.alap.honda30ea.chs.developerdiag/com.alap.honda30ea.chs.developerdiag.MainActivity",
+        "command": "adb shell am start -n <诊断 App 包名>/<Activity>",
         "category": "设备管理",
-        "description": "23M/24M 走行限制关闭"
+        "description": "23M/24M 走行限制关闭（包名按实际诊断 App 替换）"
     },
 ]
 

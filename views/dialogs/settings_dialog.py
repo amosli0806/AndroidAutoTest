@@ -1025,7 +1025,7 @@ class SettingsDialog(QDialog):
         vm = VoiceModel()
         default = self.car_profile_combo.currentData() or ""
         name, ok = InputDialog.get_text(
-            self, "另存为车企", "车企名称（如：本田）:",
+            self, "另存为车企", "车企名称（如：某车企）:",
             default_text=default)
         name = (name or "").strip()
         if not ok or not name:

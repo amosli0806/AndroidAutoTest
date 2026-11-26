@@ -107,7 +107,7 @@ def parse_latency(out: str):
 def parse_displays(out: str) -> list:
     """从 `dumpsys display` 解析显示屏列表（名称 / 分辨率 / 刷新率 / owner）。
 
-    车机上副屏通常是 `DisplayDeviceInfo{"honda_meter": ..., 1130 x 306, ...,
+    车机上副屏通常是 `DisplayDeviceInfo{"meter_display": ..., 1130 x 306, ...,
     type VIRTUAL, owner com.baidu.naviauto (uid 2911)}`。
     """
     rows = []
@@ -135,8 +135,8 @@ def parse_displays(out: str) -> list:
 def parse_display_stacks(dump: str) -> dict:
     """从 `dumpsys SurfaceFlinger` 解析 {显示屏名: {stack, width, height, virtual}}。
 
-    虚拟屏（如仪表的 `honda_meter`）在 dump 里是
-    `+ DisplayDevice{..., virtual, "honda_meter"}`，块内有 `layerStack=6`
+    虚拟屏（如仪表的 `仪表屏`）在 dump 里是
+    `+ DisplayDevice{..., virtual, "meter_display"}`，块内有 `layerStack=6`
     和 `layerStackSpace=...Rect(0, 0, 1130, 306)`。
     """
     out = {}
@@ -441,7 +441,7 @@ class FpsDisplayProbe(PerfProbe):
                         if info["stack"] == stack), None)
             if hit:
                 # SurfaceFlinger 的名字（Internal display）换成 dumpsys display 的
-                # 友好名字（内置屏幕 / honda_meter）：按分辨率对上
+                # 友好名字（内置屏幕 / 仪表屏）：按分辨率对上
                 info = self._display_stacks[hit]
                 same = [d for d in self._displays
                         if (d["width"], d["height"]) == (info["width"], info["height"])]

@@ -863,7 +863,7 @@ class HelpView(QFrame):
                 <div style="border-left: 4px solid; padding: 12px 16px; margin: 12px 0; border-radius: 4px;">
                     📄 <b>导入 / 导出 Excel</b>（「语音管理 ▾」菜单）：一个分组一张工作表，
                     每张表三列 —— <b>用例名称 / 操作步骤 / 预期结果</b>，一行一个用例，步骤和预期带序号
-                    （如 <code>1. 你好本田</code>），预期序号对应第几条步骤<br>
+                    （如 <code>1. 你好小车</code>），预期序号对应第几条步骤<br>
                     • 导入按表名匹配分组（没有就新建），同名用例覆盖其步骤；格式不对的行会跳过并提示<br>
                     • 「播后等待」不在表格里，导入后点一次「批量重算」即可补齐
                 </div>

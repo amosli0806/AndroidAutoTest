@@ -285,7 +285,7 @@ pyinstaller mcp_server.spec --noconfirm --distpath dist_mcp --workpath build_mcp
 定位值右侧的**定位辅助按钮按当前定位方式换身份**：定位方式=图像时是相机（截屏框选，生成模板图），
 其余五种是准星（打开拾取面板，在设备画面上点控件，自动回填定位方式与定位值，同 ID 多节点带 `instance`）。
 两类动作语义互斥，所以只占一个固定位置，不会把输入框挤窄；图标本身已说明动作，不再挂悬停提示。
-细节见 4.1.7；手机（抖音页面）与车机（Honda 3QK）双端均已实测通过。
+细节见 4.1.7；手机（抖音页面）与车机（某车企 3QK）双端均已实测通过。
 
 #### 4.1.4 定位方式与回退链
 
@@ -297,7 +297,7 @@ pyinstaller mcp_server.spec --noconfirm --distpath dist_mcp --workpath build_mcp
    元素库改了不用改用例（`controllers/element_controller.py:resolve_element`）
 2. **变量替换**：解析后再替换 `${变量}`（顺序不能反，元素库的定位值里也可能写变量）
 3. **浅层快查**：资源 ID / 文本 / 描述先做一次限深 16 层的 dump，本地解析 bounds 直接算坐标点
-   （见 6.1；完整 dump 在大页面要 8~12 秒，Honda 3QK 车机页面实测 0.3~0.6 秒）
+   （见 6.1；完整 dump 在大页面要 8~12 秒，某车企 3QK 车机页面实测 0.3~0.6 秒）
 4. **完整定位**：快查未命中才用 uiautomator2 原生 selector
 5. **坐标兜底**：所有语义定位失败时按归一化坐标点击；资源 ID 有重复时带 `instance` 序号，
    录制生成的步骤还会带 `fallbackType/fallbackValue`（文本兜底）
@@ -352,7 +352,7 @@ pyinstaller mcp_server.spec --noconfirm --distpath dist_mcp --workpath build_mcp
   一次性换成完整画面，避免「先弹一个空的大窗、再突然缩小」的跳动。画面按屏幕可用区限制尺寸并重新居中
   （只 `resize()` 会保持左上角不动，曾导致窗口向右下长、超出屏幕）
 - **一次 dump**：打开面板时截图 + 读层级各一次并缓存；之后每次点击都在本地 XML 里命中，
-  **不再 dump**（dump 耗时与页面规模强相关：大页面 8~12 秒，Honda 3QK 实测 0.3~0.6 秒，
+  **不再 dump**（dump 耗时与页面规模强相关：大页面 8~12 秒，某车企 3QK 实测 0.3~0.6 秒，
   但都不能每点一次都来一遍）。换页面点「刷新」重新截图 + dump 一次
 - **命中规则**（`ui_tree.find_node_at`，与录制反查共用同一份）：收集所有 bounds 覆盖该点的节点
   （祖先与后代都算）→ 有资源 ID / 文案 / 描述的优先 → 按「可点击 > 有文案 > 仅资源 ID」分档，
@@ -368,7 +368,7 @@ pyinstaller mcp_server.spec --noconfirm --distpath dist_mcp --workpath build_mcp
   应用默认当前包名、模块默认「默认」、名称按资源 ID 末段 / 文本预填；入库走
   `ElementModel.upsert_elements`，合并键是 **应用 + 模块 + 名称**（与 Excel 导入同一套；
   「抓取界面」则按「应用 + 模块 + 定位方式 + 定位值」跳过重复项）
-- **双端验收**：手机（抖音页 `btn_immersefullscreen` / `treasure_loading_view`）与车机（Honda 3QK）已实测通过
+- **双端验收**：手机（抖音页 `btn_immersefullscreen` / `treasure_loading_view`）与车机（某车企 3QK）已实测通过
 - **边界**：dump 失败只能退回「截屏取图」或手填；自绘界面（游戏 / Flutter）层级里 `clickable=false`，
   只能给坐标；重叠图层（弹窗遮罩）按「可点优先 + 同档面积最小」命中，个别场景需要真机抽验
 
@@ -1062,7 +1062,7 @@ CI（`.github/workflows/release.yml`）默认把 Release 造成**预发布**，�
 ### 6.1 元素等待与定位策略
 
 **问题**：uiautomator2 的 `exists(timeout=N)` 内部是一次不可中断的 dump。实测大页面单次完整 dump
-8~12 秒（Honda 3QK 车机系统页面只要 0.3~0.6 秒，但百度地图这类大页面很慢）：配 5 秒超时实测跑了
+8~12 秒（某车企 3QK 车机系统页面只要 0.3~0.6 秒，但百度地图这类大页面很慢）：配 5 秒超时实测跑了
 10.24 秒，配 6 秒超时实测跑了 27 秒（内部重试叠加）。
 
 **做法**（`services/device_service.py`）：
@@ -1163,7 +1163,7 @@ Windows 上「父进程退出，子进程还在」是常见问题，本项目排
 | 项目 | 实测 |
 |---|---|
 | 完整 `dump_hierarchy`（百度地图这类大页面） | 8~12 秒 |
-| 完整 `dump_hierarchy`（Honda 3QK 车机系统页面） | 0.3~0.6 秒 |
+| 完整 `dump_hierarchy`（某车企 3QK 车机系统页面） | 0.3~0.6 秒 |
 | 限深 16 层 dump（大页面） | 约 5 秒 |
 | 元素等待（配 6 秒超时，旧实现） | 实测 27 秒（内部重试叠加） |
 | 元素等待（现实现，预算 10 秒） | 实测 6.48 秒返回 |
