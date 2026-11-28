@@ -1449,18 +1449,29 @@ class SettingsDialog(QDialog):
 
         row = QHBoxLayout()
         row.setSpacing(8)
+        export_icon = qta.icon('fa6s.file-export', color='#FFFFFF')
         self.export_pkg_btn = QPushButton(" 导出数据包")
         self.export_pkg_btn.setObjectName("pkgPrimaryBtn")
-        self.export_pkg_btn.setIcon(qta.icon('fa6s.file-export', color='#FFFFFF'))
+        self.export_pkg_btn.setIcon(export_icon)
         self.export_pkg_btn.setMinimumHeight(32)
         self.export_pkg_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.export_pkg_btn.clicked.connect(self._on_export_package)
+
+        import_icon = qta.icon('fa6s.file-import', color='#185FA5')
         self.import_pkg_btn = QPushButton(" 导入数据包")
         self.import_pkg_btn.setObjectName("pkgSecondaryBtn")
-        self.import_pkg_btn.setIcon(qta.icon('fa6s.file-import', color='#185FA5'))
+        self.import_pkg_btn.setIcon(import_icon)
         self.import_pkg_btn.setMinimumHeight(32)
         self.import_pkg_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.import_pkg_btn.clicked.connect(self._on_import_package)
+
+        # 禁用时要去掉图标：qtawesome 的图标颜色是画进位图的，QSS 改不了，
+        # 于是白色图标压在灰底上会「浮」出来。清空图标 + 去掉前导空格，
+        # 只留文字。元组 = (图标, 启用文案, 禁用文案)
+        self._pkg_btn_meta = {
+            self.export_pkg_btn: (export_icon, " 导出数据包", "导出数据包"),
+            self.import_pkg_btn: (import_icon, " 导入数据包", "导入数据包"),
+        }
         row.addWidget(self.export_pkg_btn)
         row.addWidget(self.import_pkg_btn)
         row.addStretch()
@@ -1478,8 +1489,10 @@ class SettingsDialog(QDialog):
                 border-radius: 4px; padding: 5px 14px; font-size: 13px;
             }
             QPushButton#pkgSecondaryBtn:hover { background: #E8F1FD; }
+            /* 禁用态统一成同一种灰：都点不了的时候主次没有意义，
+               保留深一档的底色反而让人以为「导出还能点」 */
             QPushButton#pkgPrimaryBtn:disabled {
-                background: #C3D3E4; color: #FFFFFF; border-color: #C3D3E4;
+                background: #F2F3F5; color: #B0B7C3; border-color: #E3E1EA;
             }
             QPushButton#pkgSecondaryBtn:disabled {
                 background: #F4F5F7; color: #B0B7C3; border-color: #E3E1EA;
@@ -1521,12 +1534,15 @@ class SettingsDialog(QDialog):
         from utils import busy
 
         reason = busy.busy_reason()
-        for btn in (getattr(self, "export_pkg_btn", None),
-                    getattr(self, "import_pkg_btn", None)):
-            if btn is None:
-                continue
-            btn.setEnabled(not reason)
+        blocked = bool(reason)
+        # 直接访问 _pkg_btn_meta：它在 _build_package_page 里必建，
+        # 静默跳过会导致「按钮看着能点、实际被拦」，不如让异常早点暴露
+        for btn, (icon, text_on, text_off) in self._pkg_btn_meta.items():
+            btn.setEnabled(not blocked)
             btn.setToolTip(f"{reason}，请先停止" if reason else "")
+            # 置灰时只留文字：图标色是位图里画死的，跟灰底打架
+            btn.setIcon(QIcon() if blocked else icon)
+            btn.setText(text_off if blocked else text_on)
 
         # 状态行顺带说明原因 —— 只靠 tooltip 的话，用户看到灰按钮却不知道为什么
         if reason:
