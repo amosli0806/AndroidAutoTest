@@ -7,6 +7,7 @@ worker 只发信号，界面更新都在主线程做。
 import os
 
 from PyQt6.QtCore import QThread, Qt, pyqtSignal
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -81,14 +82,16 @@ class ImportPreviewDialog(AutoFreeDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setContentsMargins(16, 16, 16, 16)
 
         container = QFrame()
         container.setObjectName("pkgContainer")
         shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(20)
-        shadow.setOffset(0, 0)
-        shadow.setColor(Qt.GlobalColor.black)
+        # 阴影必须半透明：Qt.GlobalColor.black 是 100% 不透明，会晕出一圈灰边
+        # （用户反馈「深得能看到边界」）。与 WarningDialog 用同一档透明度。
+        shadow.setBlurRadius(24)
+        shadow.setOffset(0, 2)
+        shadow.setColor(QColor(0, 0, 0, 60))
         container.setGraphicsEffect(shadow)
 
         v = QVBoxLayout(container)
@@ -201,7 +204,7 @@ class ImportPreviewDialog(AutoFreeDialog):
             #pkgContainer {
                 background: #FFFFFF;
                 border-radius: 12px;
-                border: 1px solid #D0D0D0;
+                border: 1px solid #E3E1DA;
             }
             #pkgContainer QPushButton {
                 background: #F1EFE8;
@@ -210,6 +213,7 @@ class ImportPreviewDialog(AutoFreeDialog):
                 color: #444441;
                 font-size: 13px;
             }
+            #pkgContainer QLabel { background: transparent; }
             #pkgContainer QFrame#pkgWarn {
                 background: #FDF3F2;
                 border: 1px solid #F3C9C4;
@@ -246,14 +250,16 @@ class PackageProgressDialog(AutoFreeDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setContentsMargins(16, 16, 16, 16)
 
         container = QFrame()
         container.setObjectName("progContainer")
         shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(20)
-        shadow.setOffset(0, 0)
-        shadow.setColor(Qt.GlobalColor.black)
+        # 阴影必须半透明：Qt.GlobalColor.black 是 100% 不透明，会晕出一圈灰边
+        # （用户反馈「深得能看到边界」）。与 WarningDialog 用同一档透明度。
+        shadow.setBlurRadius(24)
+        shadow.setOffset(0, 2)
+        shadow.setColor(QColor(0, 0, 0, 60))
         container.setGraphicsEffect(shadow)
 
         v = QVBoxLayout(container)
@@ -292,8 +298,9 @@ class PackageProgressDialog(AutoFreeDialog):
             #progContainer {
                 background: #FFFFFF;
                 border-radius: 12px;
-                border: 1px solid #D0D0D0;
+                border: 1px solid #E3E1DA;
             }
+            #progContainer QLabel { background: transparent; }
             QProgressBar {
                 background: #EEF1F5;
                 border: none;
