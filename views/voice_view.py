@@ -2260,7 +2260,13 @@ class VoiceView(QWidget):
         self.status_label.setText(label)
         # 全局忙碌登记：播报期间禁止导出/导入数据包（导入会重启，掐断播放）
         busy.set_busy(busy.KEY_VOICE, "语音播报进行中")
-        worker.start()
+        try:
+            worker.start()
+        except Exception:
+            # 登记了就必须有对应的注销，否则设置页会永久禁用导出/导入。
+            # 正常路径由 _release_worker 在 finished 时清掉。
+            busy.clear_busy(busy.KEY_VOICE)
+            raise
 
     def _release_worker(self, worker):
         """线程真正退出后再丢掉最后一个引用。"""
