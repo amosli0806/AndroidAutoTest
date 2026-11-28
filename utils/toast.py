@@ -193,13 +193,37 @@ class Toast(QWidget):
         super().closeEvent(event)
 
 
+def _is_alive(obj) -> bool:
+    """底层 C++ 对象是否还在。
+
+    PyQt 里包装对象（Python 壳）可能比 C++ 对象活得久：parent 被销毁时子控件
+    由 Qt 直接 delete，**不走 closeEvent**，于是 _current_toast 成了一个悬空壳，
+    再访问 .timer 就抛 `wrapped C/C++ object ... has been deleted`。
+    """
+    if obj is None:
+        return False
+    try:
+        from PyQt6 import sip
+        return not sip.isdeleted(obj)
+    except Exception:
+        return True          # 拿不到 sip 时按活着处理，别把正常流程也挡了
+
+
 def close_current_toast():
     global _current_toast
-    if _current_toast is not None and not _current_toast._is_closing:
-        _current_toast.timer.stop()
-        for anim in [_current_toast.slide_in, _current_toast.fade_in,
-                     _current_toast.slide_out, _current_toast.fade_out]:
-            if anim and anim.state() == QPropertyAnimation.State.Running:
-                anim.stop()
-        _current_toast.close()
+    if _current_toast is None:
+        return
+    # 悬空引用：只清指针，不能再碰它的属性（2026-11-28 用户反馈「转自动化」崩溃）
+    if not _is_alive(_current_toast):
         _current_toast = None
+        return
+    if _current_toast._is_closing:
+        _current_toast = None
+        return
+    _current_toast.timer.stop()
+    for anim in [_current_toast.slide_in, _current_toast.fade_in,
+                 _current_toast.slide_out, _current_toast.fade_out]:
+        if anim and _is_alive(anim) and anim.state() == QPropertyAnimation.State.Running:
+            anim.stop()
+    _current_toast.close()
+    _current_toast = None
