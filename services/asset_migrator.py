@@ -24,16 +24,43 @@ from utils.app_paths import (
     import_asset,
     is_asset_rel,
     to_rel,
+    get_data_dir,
 )
 
 
-def _plan_value(value, prefix: str, report: dict, owner: str, kind: str):
+def _legacy_basename_path(text: str) -> str:
+    """「仅文件名」的旧引用 → element_images/ 下的真实路径；不是这种格式返回空串。
+
+    旧版应用可视化存进元素库时只写了 basename（`elem_2026....png`），文件实际
+    躺在 data/element_images/。这类引用也得收拢，否则旧目录永远删不掉。
+    """
+    name = str(text or "").strip()
+    if not name or os.path.basename(name) != name:
+        return ""
+    if any(ch in name for ch in ("/", "\\", ":")):
+        return ""
+    legacy = os.path.join(get_data_dir(), "element_images", name)
+    return legacy if os.path.isfile(legacy) else ""
+
+
+def _plan_value(value, prefix: str, report: dict, owner: str, kind: str,
+                allow_basename: bool = False):
     """只读判断 + 必要的文件复制。返回 (新值, 是否改动)，不改任何模型字段。"""
     text = str(value or "").strip()
     if not text or is_asset_rel(text):
         return value, False
     if not os.path.isabs(text):
-        return value, False          # 仅文件名 / 普通文本，不动
+        if not allow_basename:
+            return value, False      # 数据驱动等字段：非路径文本不动
+        legacy = _legacy_basename_path(text)
+        if not legacy:
+            return value, False
+        rel = import_asset(legacy, prefix)
+        if not rel or not is_asset_rel(rel):
+            report["missing"].append(f"{owner}（{kind}）：旧引用收拢失败 {text}")
+            return value, False
+        report["copied"] += 1
+        return rel, True
     if not os.path.isfile(text):
         report["missing"].append(f"{owner}（{kind}）：{text}")
         return value, False
@@ -81,7 +108,8 @@ def plan_assets(project_model=None, step_model=None,
                 if not raw:
                     continue
                 new, ok = _plan_value(raw, ASSET_PREFIX_IMAGE, report,
-                                      f"步骤「{getattr(step, 'name', '')}」", "参考图")
+                                      f"步骤「{getattr(step, 'name', '')}」", "参考图",
+                                      allow_basename=True)
                 if ok:
                     plan["step"].append((step_id, new))
         except Exception as e:
@@ -94,7 +122,8 @@ def plan_assets(project_model=None, step_model=None,
                 if getattr(elem, "loc_type", "") != "图像":
                     continue
                 new, ok = _plan_value(getattr(elem, "loc_value", ""), ASSET_PREFIX_IMAGE,
-                                      report, f"元素「{getattr(elem, 'name', '')}」", "参考图")
+                                      report, f"元素「{getattr(elem, 'name', '')}」", "参考图",
+                                      allow_basename=True)
                 if ok:
                     plan["element"].append((elem.id, new))
         except Exception as e:
@@ -113,7 +142,8 @@ def plan_assets(project_model=None, step_model=None,
                     if not raw:
                         continue
                     new, ok = _plan_value(raw, ASSET_PREFIX_IMAGE, report,
-                                          f"模板「{tpl_name}」第 {idx + 1} 步", "参考图")
+                                          f"模板「{tpl_name}」第 {idx + 1} 步", "参考图",
+                                          allow_basename=True)
                     if ok:
                         plan["template"].append((tpl_name, idx, new))
         except Exception as e:
@@ -224,7 +254,12 @@ def has_absolute_assets(project_model=None, step_model=None,
     """是否还有需要迁移的绝对路径（只读检查，供启动时决定要不要跑迁移）。"""
     def _is_abs(val) -> bool:
         text = str(val or "").strip()
-        return bool(text) and os.path.isabs(text) and not is_asset_rel(text)
+        if not text or is_asset_rel(text):
+            return False
+        if os.path.isabs(text):
+            return True
+        # 仅文件名的旧引用：落在 element_images/ 里的也算待收拢
+        return bool(_legacy_basename_path(text))
 
     try:
         if project_model is not None:
