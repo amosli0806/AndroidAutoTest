@@ -391,6 +391,20 @@ class Settings:
         return None
 
     @classmethod
+    def get_last_export(cls):
+        """上次导出数据包的信息 (时间, 体积字节)；没导过返回 ("", 0)。"""
+        settings = cls.load()
+        return (str(settings.get('last_export_at', '') or ''),
+                int(settings.get('last_export_size', 0) or 0))
+
+    @classmethod
+    def set_last_export(cls, when: str, size: int):
+        settings = cls.load()
+        settings['last_export_at'] = str(when or '')
+        settings['last_export_size'] = int(size or 0)
+        cls.save(settings)
+
+    @classmethod
     def get_sidebar_labels(cls) -> bool:
         """左右工具栏是否显示按钮名称。默认 False，保持原来的纯图标外观。"""
         try:

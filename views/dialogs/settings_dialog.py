@@ -320,6 +320,12 @@ class SettingsDialog(QDialog):
         self.content_stack.addWidget(self._build_data_page())
         idx += 1
 
+        pkg_item = QTreeWidgetItem(["数据包备份"])
+        pkg_item.setData(0, Qt.ItemDataRole.UserRole, idx)
+        data_root.addChild(pkg_item)
+        self.content_stack.addWidget(self._build_package_page())
+        idx += 1
+
         # ========== 分类：变量 ==========
         var_root = QTreeWidgetItem(["变量"])
         var_root.setFlags(Qt.ItemFlag.ItemIsEnabled)
@@ -1402,6 +1408,209 @@ class SettingsDialog(QDialog):
     # ------------------------------------------------------------------
     # 数据维护：清理缓存
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 数据维护：数据包备份（导出 / 导入）
+    # ------------------------------------------------------------------
+    def _build_package_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(16)
+
+        title = QLabel("数据包备份")
+        title.setObjectName("SettingsPageTitle")
+        layout.addWidget(title)
+
+        subtitle = QLabel("把用例、元素库、语音用例、接口配置与资源文件打成一个 zip，"
+                          "用于换机器或留档备份。整包覆盖，不做合并。")
+        subtitle.setObjectName("SettingsPageSubtitle")
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        self.export_pkg_btn = QPushButton("导出数据包")
+        self.export_pkg_btn.clicked.connect(self._on_export_package)
+        self.import_pkg_btn = QPushButton("导入数据包")
+        self.import_pkg_btn.clicked.connect(self._on_import_package)
+        row.addWidget(self.export_pkg_btn)
+        row.addWidget(self.import_pkg_btn)
+        row.addStretch()
+        layout.addLayout(row)
+
+        self.pkg_status = QLabel("")
+        self.pkg_status.setObjectName("SettingsPageSubtitle")
+        self.pkg_status.setWordWrap(True)
+        layout.addWidget(self.pkg_status)
+
+        hint = QLabel("不包含性能采样与日志；勾选历史改动时只带最近 10 次。"
+                      "导入完成后需要重启虫师才会生效。")
+        hint.setObjectName("SettingsPageSubtitle")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch()
+
+        self._refresh_pkg_status()
+        return page
+
+    def _refresh_pkg_status(self):
+        from utils.settings import Settings
+        when, size = Settings.get_last_export()
+        if when and size:
+            self.pkg_status.setText(
+                f"上次导出：{when} · {size / 1024:.0f} KB")
+        else:
+            self.pkg_status.setText("还没有导出过数据包。")
+
+    def _on_export_package(self):
+        import os
+        import time
+        from PyQt6.QtWidgets import QFileDialog, QProgressDialog
+        from services.data_package import export_package
+        from utils.dialogs import QuestionDialog, WarningDialog
+        from utils.settings import Settings
+        from utils.toast import show_toast
+        from views.dialogs.data_package_dialog import ExportWorker
+
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        default = os.path.join(desktop, f"虫师数据包_{time.strftime('%Y%m%d_%H%M')}.zip")
+        path, _ = QFileDialog.getSaveFileName(self, "导出数据包", default, "数据包 (*.zip)")
+        if not path:
+            return
+        if not path.lower().endswith(".zip"):
+            path += ".zip"
+
+        include_hist = QuestionDialog.ask(
+            self, title="导出数据包",
+            message="是否包含最近 10 次历史改动？\n（体积增加约 450 KB）",
+            yes_text="包含", no_text="不包含", default_yes=False)
+
+        dlg = QProgressDialog("正在打包…", "", 0, 100, self)
+        dlg.setWindowTitle("导出数据包")
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+
+        worker = ExportWorker(path, include_hist, self)
+        self._pkg_worker = worker       # 保住引用，否则线程对象被回收
+
+        def _on_progress(done, total, name):
+            dlg.setMaximum(max(1, total))
+            dlg.setValue(done)
+            dlg.setLabelText(f"正在打包… {done}/{total} 个文件")
+
+        def _on_ok(result):
+            dlg.close()
+            Settings.set_last_export(time.strftime("%Y-%m-%d %H:%M"),
+                                     int(result.get("size", 0)))
+            self._refresh_pkg_status()
+            show_toast(self, f"已导出到 {os.path.basename(result['path'])}"
+                             f"（{result['size'] / 1024:.0f} KB）", duration=3000)
+
+        def _on_fail(msg):
+            dlg.close()
+            WarningDialog.show_warning(self, "导出失败", msg)
+
+        worker.progress.connect(_on_progress)
+        worker.finished_ok.connect(_on_ok)
+        worker.failed.connect(_on_fail)
+        worker.start()
+
+    def _on_import_package(self):
+        import os
+        import time
+        from PyQt6.QtWidgets import QFileDialog, QProgressDialog
+        from models.history_model import HistoryModel
+        from services.data_package import (
+            check_version_compatible, export_package, inspect_package)
+        from utils.dialogs import WarningDialog
+        from utils.settings import Settings
+        from utils.toast import show_toast
+        from views.dialogs.data_package_dialog import (
+            ImportPreviewDialog, ImportWorker)
+
+        path, _ = QFileDialog.getOpenFileName(self, "导入数据包", "", "数据包 (*.zip)")
+        if not path:
+            return
+
+        try:
+            info = inspect_package(path)
+            check_version_compatible(info)
+        except ValueError as e:
+            WarningDialog.show_warning(self, "无法导入", str(e))
+            return
+
+        # 判断当前是否已有数据：决定「先备份」默认勾不勾
+        has_existing = False
+        try:
+            from models.project_model import ProjectModel
+            has_existing = bool(ProjectModel().get_all_cases())
+        except Exception:
+            has_existing = False
+
+        preview = ImportPreviewDialog(info, has_existing, self)
+        if preview.exec() != QDialog.DialogCode.Accepted:
+            return
+        backup_wanted = preview.backup_wanted()
+
+        self._pkg_worker = None   # 占位，后面赋值给真正要启动的 worker
+
+        dlg = QProgressDialog("正在导入…", "", 0, 100, self)
+        dlg.setWindowTitle("导入数据包")
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+
+        state = {"backup_path": ""}
+
+        # 备份与快照都在 worker 线程里执行（都是文件操作，不碰界面）
+        def _backup():
+            if not backup_wanted:
+                return ""
+            dest = os.path.join(os.path.expanduser("~"), "Desktop",
+                                f"虫师数据包_导入前备份_{time.strftime('%Y%m%d_%H%M')}.zip")
+            r = export_package(dest, False)
+            state["backup_path"] = r.get("path", "")
+            return state["backup_path"]
+
+        def _snapshot(label):
+            try:
+                HistoryModel(self).take_snapshot("before_import", label=label)
+            except Exception:
+                pass
+
+        def _on_progress(step, done, total, name):
+            dlg.setMaximum(max(1, total))
+            dlg.setValue(done)
+            dlg.setLabelText(f"{step}… {done}/{total}" if total > 1 else f"{step}…")
+
+        def _on_ok(result):
+            dlg.close()
+            counts = result.get("counts") or {}
+            backup_path = result.get("backup_path") or ""
+            lines = [f"已导入 {counts.get('cases', 0)} 条用例、"
+                     f"{counts.get('elements', 0)} 个元素、"
+                     f"{counts.get('voice_cases', 0)} 条语音用例。"]
+            if backup_path:
+                lines.append(f"当前数据已备份到：{os.path.basename(backup_path)}")
+            lines.append("需要重启虫师才能生效。")
+            WarningDialog.show_warning(self, "导入完成", "\n".join(lines))
+
+        def _on_fail(msg):
+            dlg.close()
+            WarningDialog.show_warning(self, "导入失败", msg)
+
+        # 回调必须在构造时传入：worker.start() 之后 run() 立刻读取，事后赋值有竞态
+        worker = ImportWorker(path,
+                              snapshot_cb=_snapshot,
+                              backup_cb=_backup if backup_wanted else None,
+                              parent=self)
+        self._pkg_worker = worker
+        worker.progress.connect(_on_progress)
+        worker.finished_ok.connect(_on_ok)
+        worker.failed.connect(_on_fail)
+        worker.start()
+
     def _build_data_page(self):
         page = QWidget()
         layout = QVBoxLayout(page)
