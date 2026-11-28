@@ -684,36 +684,67 @@ def main():
     main_window.set_history_model(history_model)
 
     # ---------- 资产路径迁移：绝对路径 → data/assets/ 相对路径 ----------
-    # 判据是「还有没有绝对路径」而不是一次性标记 —— 历史回滚会把数据退回
-    # 迁移前的快照（旧绝对路径），只看标记就再也不会迁移了。
-    # 细节见 services/asset_migrator.py 的模块注释。
+    # 分两阶段：后台线程只扫描 + 复制文件（IO 密集）；主线程才改内存数据并落盘
+    # （后台线程改模型会让 GUI 读到写了一半的数据）。
+    # 判据是「还有没有绝对路径」而不是一次性标记 —— 历史回滚会把数据退回迁移前
+    # 的快照（旧绝对路径），只看标记就再也不会迁移。细节见 services/asset_migrator.py。
     def _migrate_assets_on_start():
         try:
-            from services.asset_migrator import has_absolute_assets, migrate_assets
+            from services.asset_migrator import (
+                apply_plan, has_absolute_assets, plan_assets)
             tpl = getattr(step_controller, "template_model", None)
             models = (project_model, step_model, element_model, tpl)
             if not has_absolute_assets(*models):
                 return
+
             try:
                 history_model.take_snapshot("before_migrate_assets",
                                             label="资源路径迁移前")
             except Exception:
                 logger.warning("迁移前快照失败", exc_info=True)
-            report = migrate_assets(*models)
-            if report.get("migrated"):
-                logger.info("资源路径迁移：%d 个文件收拢到 data/assets/",
-                            report["migrated"])
+
+            box = {}
+
+            def _worker():
+                # 后台线程：只读模型字段 + 往 assets/ 复制文件，不改任何模型
                 try:
-                    main_window.statusBar().showMessage(
-                        f"已把 {report['migrated']} 个资源文件收拢到 data/assets/", 3000)
+                    box["plan"], box["report"] = plan_assets(*models)
                 except Exception:
-                    pass
-                try:
-                    project_controller.view.refresh()
-                except Exception:
-                    pass
-            for line in (report.get("missing") or [])[:50]:
-                logger.warning("资源缺失（未迁移）：%s", line)
+                    logger.warning("资源路径扫描失败", exc_info=True)
+
+            def _poll():
+                th = box.get("thread")
+                if th is not None and th.is_alive():
+                    QTimer.singleShot(200, _poll)
+                    return
+                plan = box.get("plan")
+                report = box.get("report") or {}
+                if plan:
+                    try:
+                        changed = apply_plan(plan, *models)
+                        total = report.get("copied", 0)
+                        if changed:
+                            logger.info("资源路径迁移：%d 个文件收拢到 data/assets/",
+                                        total)
+                            try:
+                                main_window.statusBar().showMessage(
+                                    f"已把 {total} 个资源文件收拢到 data/assets/", 3000)
+                            except Exception:
+                                pass
+                            try:
+                                project_controller.view.refresh()
+                            except Exception:
+                                pass
+                    except Exception:
+                        logger.warning("资源路径改写失败", exc_info=True)
+                for line in (report.get("missing") or [])[:50]:
+                    logger.warning("资源缺失（未迁移）：%s", line)
+
+            th = threading.Thread(target=_worker, daemon=True)
+            box["thread"] = th
+            th.start()
+            # 主线程轮询等工作线程结束，再在主线程应用改写
+            QTimer.singleShot(200, _poll)
         except Exception:
             logger.warning("资源路径迁移失败", exc_info=True)
 

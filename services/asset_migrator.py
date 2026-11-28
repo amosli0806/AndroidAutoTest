@@ -10,6 +10,11 @@
 
 **为什么只复制不移动**：用户的原始表格可能还要用，删掉原文件是不可逆操作；
 复制进 assets/ 后按内容哈希去重，不会产生重复副本。
+
+**两阶段执行**（`plan_assets` → `apply_plan`）：
+第一阶段只读模型 + 复制文件（IO 密集，可放后台线程）；第二阶段才改内存数据并
+落盘（必须回主线程，否则 GUI 可能读到写了一半的模型）。中间用「改写计划」传递，
+不跨线程持有模型引用。
 """
 import os
 
@@ -22,8 +27,8 @@ from utils.app_paths import (
 )
 
 
-def _fix_value(value, prefix: str, report: dict, owner: str, kind: str):
-    """把一个路径值规范化。返回 (新值, 是否改动)。"""
+def _plan_value(value, prefix: str, report: dict, owner: str, kind: str):
+    """只读判断 + 必要的文件复制。返回 (新值, 是否改动)，不改任何模型字段。"""
     text = str(value or "").strip()
     if not text or is_asset_rel(text):
         return value, False
@@ -38,101 +43,181 @@ def _fix_value(value, prefix: str, report: dict, owner: str, kind: str):
     if not rel or not is_asset_rel(rel):
         report["missing"].append(f"{owner}（{kind}）：复制失败 {text}")
         return value, False
-    report["migrated"] += 1
+    report["copied"] += 1
     return rel, True
 
 
-def migrate_assets(project_model=None, step_model=None,
-                   element_model=None, template_model=None) -> dict:
-    """执行一次迁移，返回 {"migrated": n, "missing": [...]}。
+def plan_assets(project_model=None, step_model=None,
+                element_model=None, template_model=None):
+    """第一阶段：扫描 + 复制文件，返回 (改写计划, 统计)。
 
-    单个模型出错不影响其它模型（各自 try 包住），迁移本身失败也不阻塞启动。
+    可在后台线程执行：只读模型字段、只往 assets/ 写文件，不修改任何模型。
     """
-    report = {"migrated": 0, "missing": []}
+    plan = {"project": [], "step": [], "element": [], "template": []}
+    report = {"copied": 0, "missing": []}
 
     # ① 项目树：数据驱动文件
     if project_model is not None:
         try:
-            changed = False
             for node in project_model.get_all_cases():
                 raw = getattr(node, "data_file", "")
                 if not raw:
                     continue
-                new, ok = _fix_value(raw, ASSET_PREFIX_DATA, report,
-                                     f"用例「{getattr(node, 'name', '')}」", "数据驱动")
+                new, ok = _plan_value(raw, ASSET_PREFIX_DATA, report,
+                                      f"用例「{getattr(node, 'name', '')}」", "数据驱动")
                 if ok:
-                    node.data_file = new
-                    changed = True
-            if changed:
-                project_model.save()
+                    plan["project"].append((node.id, new))
         except Exception as e:
-            report["missing"].append(f"项目树迁移失败：{type(e).__name__}: {e}")
+            report["missing"].append(f"项目树扫描失败：{type(e).__name__}: {e}")
 
     # ② 步骤：图像定位参数
     if step_model is not None:
         try:
-            changed = False
-            for step in getattr(step_model, "_steps", {}).values():
+            for step_id, step in list(getattr(step_model, "_steps", {}).items()):
                 params = getattr(step, "params", None) or {}
                 if params.get("locationType") != "图像":
                     continue
                 raw = params.get("locationValue")
                 if not raw:
                     continue
-                new, ok = _fix_value(raw, ASSET_PREFIX_IMAGE, report,
-                                     f"步骤「{getattr(step, 'name', '')}」", "参考图")
+                new, ok = _plan_value(raw, ASSET_PREFIX_IMAGE, report,
+                                      f"步骤「{getattr(step, 'name', '')}」", "参考图")
                 if ok:
-                    fixed = dict(params)
-                    fixed["locationValue"] = new
-                    step.params = fixed
-                    changed = True
-            if changed:
-                step_model.save()
+                    plan["step"].append((step_id, new))
         except Exception as e:
-            report["missing"].append(f"步骤迁移失败：{type(e).__name__}: {e}")
+            report["missing"].append(f"步骤扫描失败：{type(e).__name__}: {e}")
 
     # ③ 元素库：图像定位值
     if element_model is not None:
         try:
-            changed = False
             for elem in getattr(element_model, "elements", []):
                 if getattr(elem, "loc_type", "") != "图像":
                     continue
-                raw = getattr(elem, "loc_value", "")
-                new, ok = _fix_value(raw, ASSET_PREFIX_IMAGE, report,
-                                     f"元素「{getattr(elem, 'name', '')}」", "参考图")
+                new, ok = _plan_value(getattr(elem, "loc_value", ""), ASSET_PREFIX_IMAGE,
+                                      report, f"元素「{getattr(elem, 'name', '')}」", "参考图")
                 if ok:
-                    elem.loc_value = new
-                    changed = True
-            if changed:
-                element_model.save()
+                    plan["element"].append((elem.id, new))
         except Exception as e:
-            report["missing"].append(f"元素库迁移失败：{type(e).__name__}: {e}")
+            report["missing"].append(f"元素库扫描失败：{type(e).__name__}: {e}")
 
     # ④ 步骤模板：独立快照，最容易漏
     if template_model is not None:
         try:
-            changed = False
             for tpl in getattr(template_model, "_templates", []):
-                for snap in tpl.get("steps", []) or []:
+                tpl_name = tpl.get("name", "")
+                for idx, snap in enumerate(tpl.get("steps", []) or []):
                     params = snap.get("params") or {}
                     if params.get("locationType") != "图像":
                         continue
                     raw = params.get("locationValue")
                     if not raw:
                         continue
-                    new, ok = _fix_value(raw, ASSET_PREFIX_IMAGE, report,
-                                         f"模板「{tpl.get('name', '')}」", "参考图")
+                    new, ok = _plan_value(raw, ASSET_PREFIX_IMAGE, report,
+                                          f"模板「{tpl_name}」第 {idx + 1} 步", "参考图")
                     if ok:
-                        params["locationValue"] = new
-                        snap["params"] = params
-                        changed = True
-            if changed:
-                template_model.save()
+                        plan["template"].append((tpl_name, idx, new))
         except Exception as e:
-            report["missing"].append(f"模板迁移失败：{type(e).__name__}: {e}")
+            report["missing"].append(f"模板扫描失败：{type(e).__name__}: {e}")
 
-    return report
+    return plan, report
+
+
+def apply_plan(plan, project_model=None, step_model=None,
+               element_model=None, template_model=None) -> int:
+    """第二阶段：把计划写回模型并落盘。**必须在主线程执行**。
+
+    按 id 重新定位对象而不是持有引用 —— 计划在后台线程生成，期间模型若被
+    重新加载过（例如用户回滚了历史），旧引用就失效了。
+
+    返回实际落盘（save 过）的模型数。
+    """
+    if not plan:
+        return 0
+    changed = 0
+
+    if project_model is not None and plan.get("project"):
+        try:
+            index = {n.id: n for n in project_model.get_all_cases()}
+            hit = False
+            for node_id, new in plan["project"]:
+                node = index.get(node_id)
+                if node is not None and getattr(node, "data_file", "") != new:
+                    node.data_file = new
+                    hit = True
+            if hit:
+                project_model.save()
+                changed += 1
+        except Exception as e:
+            print(f"[asset_migrator] 项目树改写失败: {type(e).__name__}: {e}")
+
+    if step_model is not None and plan.get("step"):
+        try:
+            steps = getattr(step_model, "_steps", {})
+            hit = False
+            for step_id, new in plan["step"]:
+                step = steps.get(step_id)
+                if step is None:
+                    continue
+                params = dict(getattr(step, "params", None) or {})
+                if params.get("locationValue") != new:
+                    params["locationValue"] = new
+                    step.params = params
+                    hit = True
+            if hit:
+                step_model.save()
+                changed += 1
+        except Exception as e:
+            print(f"[asset_migrator] 步骤改写失败: {type(e).__name__}: {e}")
+
+    if element_model is not None and plan.get("element"):
+        try:
+            index = {e.id: e for e in getattr(element_model, "elements", [])}
+            hit = False
+            for elem_id, new in plan["element"]:
+                elem = index.get(elem_id)
+                if elem is not None and getattr(elem, "loc_value", "") != new:
+                    elem.loc_value = new
+                    hit = True
+            if hit:
+                element_model.save()
+                changed += 1
+        except Exception as e:
+            print(f"[asset_migrator] 元素库改写失败: {type(e).__name__}: {e}")
+
+    if template_model is not None and plan.get("template"):
+        try:
+            by_name = {t.get("name"): t for t in getattr(template_model, "_templates", [])}
+            hit = False
+            for tpl_name, idx, new in plan["template"]:
+                tpl = by_name.get(tpl_name)
+                if not tpl:
+                    continue
+                snaps = tpl.get("steps", []) or []
+                if idx >= len(snaps):
+                    continue
+                params = snaps[idx].get("params") or {}
+                if params.get("locationValue") != new:
+                    params["locationValue"] = new
+                    snaps[idx]["params"] = params
+                    hit = True
+            if hit:
+                template_model.save()
+                changed += 1
+        except Exception as e:
+            print(f"[asset_migrator] 模板改写失败: {type(e).__name__}: {e}")
+
+    return changed
+
+
+def migrate_assets(project_model=None, step_model=None,
+                   element_model=None, template_model=None) -> dict:
+    """同步版：plan + apply 一次做完（供自测与命令行使用）。"""
+    plan, report = plan_assets(project_model, step_model, element_model, template_model)
+    changed = apply_plan(plan, project_model, step_model, element_model, template_model)
+    return {"migrated": report.get("copied", 0),
+            "missing": report.get("missing", []),
+            "models_changed": changed}
+
 
 def has_absolute_assets(project_model=None, step_model=None,
                         element_model=None, template_model=None) -> bool:
