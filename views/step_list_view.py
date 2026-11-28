@@ -794,16 +794,14 @@ class StepCardWidget(QWidget):
         # 2. name_label
         elem_id = self.step.params.get('element_id')
         display_name = ""
-        tooltip_text = ""
         if elem_id and self.element_controller:
             elem = self.element_controller.get_element_by_id(elem_id)
             if elem:
                 display_name = f"元素：{elem.name}"
             else:
                 # 卡片上不露内部 id（elem_658215130_0 这种）—— 对使用者没有意义，
-                # 又把名称挤没了；确实要查是哪个元素时，悬停看 tooltip
+                # 又把名称挤没了
                 display_name = "元素：已失效"
-                tooltip_text = f"引用的元素 {elem_id} 已不存在（可能被删除），请重新选择元素"
         else:
             if self.step.name:
                 raw_name = self.step.name
@@ -821,8 +819,6 @@ class StepCardWidget(QWidget):
             f"font-weight: 600; font-size: 12px; color: {name_color}; background: transparent;"
         )
         self.name_label.setText(display_name)
-        # 按钮挪到右侧后名称可用宽度少了约 60px，长名字更容易被截 —— 悬停看全名
-        self.name_label.setToolTip(tooltip_text or display_name)
         self.name_label.setVisible(bool(display_name))
 
         # 3. 参数 chips
