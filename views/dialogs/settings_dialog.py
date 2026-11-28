@@ -343,6 +343,7 @@ class SettingsDialog(QDialog):
         pkg_item.setData(0, Qt.ItemDataRole.UserRole, idx)
         data_root.addChild(pkg_item)
         self.content_stack.addWidget(self._build_package_page())
+        self._pkg_page_idx = idx
         idx += 1
 
         # ========== 分类：变量 ==========
@@ -1477,6 +1478,12 @@ class SettingsDialog(QDialog):
                 border-radius: 4px; padding: 5px 14px; font-size: 13px;
             }
             QPushButton#pkgSecondaryBtn:hover { background: #E8F1FD; }
+            QPushButton#pkgPrimaryBtn:disabled {
+                background: #C3D3E4; color: #FFFFFF; border-color: #C3D3E4;
+            }
+            QPushButton#pkgSecondaryBtn:disabled {
+                background: #F4F5F7; color: #B0B7C3; border-color: #E3E1EA;
+            }
         """)
 
         self.pkg_status = QLabel("")
@@ -1492,6 +1499,7 @@ class SettingsDialog(QDialog):
         layout.addStretch()
 
         self._refresh_pkg_status()
+        self._refresh_pkg_buttons()
         return page
 
     def _refresh_pkg_status(self):
@@ -1502,8 +1510,46 @@ class SettingsDialog(QDialog):
                 f"上次导出：{when} · {size / 1024:.0f} KB")
         else:
             self.pkg_status.setText("还没有导出过数据包。")
+        self.pkg_status.setStyleSheet("font-size: 12px; color: #5F5E5A;")
+
+    def _refresh_pkg_buttons(self):
+        """按全局忙碌状态启用/禁用导出与导入。
+
+        禁用比「点了再报错」更早拦住：执行中导出会打出不完整的包，导入会覆盖
+        数据并重启，把正在跑的任务直接掐断。
+        """
+        from utils import busy
+
+        reason = busy.busy_reason()
+        for btn in (getattr(self, "export_pkg_btn", None),
+                    getattr(self, "import_pkg_btn", None)):
+            if btn is None:
+                continue
+            btn.setEnabled(not reason)
+            btn.setToolTip(f"{reason}，请先停止" if reason else "")
+
+        # 状态行顺带说明原因 —— 只靠 tooltip 的话，用户看到灰按钮却不知道为什么
+        if reason:
+            if hasattr(self, "pkg_status"):
+                self.pkg_status.setText(f"{reason}，暂不能导出或导入；停止后可操作。")
+                self.pkg_status.setStyleSheet("font-size: 12px; color: #B26A00;")
+        else:
+            self._refresh_pkg_status()      # 恢复「上次导出…」并把颜色还原
+
+    def _blocked_by_busy(self) -> bool:
+        """点击时的二次检查：用户可能先开了设置页，再回去跑用例，又回来点。"""
+        from utils import busy
+        from utils.toast import show_toast
+
+        reason = busy.busy_reason()
+        if reason:
+            show_toast(self, f"{reason}，请先停止再操作", duration=2000)
+            return True
+        return False
 
     def _on_export_package(self):
+        if self._blocked_by_busy():
+            return
         import os
         import time
         from PyQt6.QtWidgets import QFileDialog
@@ -1554,6 +1600,8 @@ class SettingsDialog(QDialog):
         worker.start()
 
     def _on_import_package(self):
+        if self._blocked_by_busy():
+            return
         import os
         import time
         from PyQt6.QtWidgets import QFileDialog
@@ -2132,6 +2180,9 @@ class SettingsDialog(QDialog):
         # 切到「壁纸」页时才后台加载缩略图，设置对话框打开本身不卡
         if idx == getattr(self, "_wallpaper_page_idx", -1):
             self._ensure_wallpaper_thumbs()
+        # 切到数据包页：按当前有没有任务在跑决定按钮可用性
+        if idx == getattr(self, "_pkg_page_idx", -1):
+            self._refresh_pkg_buttons()
 
     # ------------------------------------------------------------------
     # 数据加载 / 保存

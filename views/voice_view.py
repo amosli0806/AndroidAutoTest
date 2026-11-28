@@ -43,7 +43,7 @@ from models.voice_model import (
 from services.voice_player import VoicePlaybackWorker
 from views.dialogs.voice_assert_dialog import VoiceAssertDialog, assert_label
 from services.voice_service import VoiceError
-from utils import tree_state, voice_table
+from utils import busy, tree_state, voice_table
 # InputDialog 是项目自定义的圆角卡片式对话框，与编辑页"创建项目"用同一个
 from utils.dialogs import (
     ConfirmDeleteDialog, ErrorDialog, InputDialog, WarningDialog)
@@ -2258,6 +2258,8 @@ class VoiceView(QWidget):
         worker.finished.connect(lambda w=worker: self._release_worker(w))
         self._sync_play_buttons(running=True)
         self.status_label.setText(label)
+        # 全局忙碌登记：播报期间禁止导出/导入数据包（导入会重启，掐断播放）
+        busy.set_busy(busy.KEY_VOICE, "语音播报进行中")
         worker.start()
 
     def _release_worker(self, worker):
@@ -2266,6 +2268,7 @@ class VoiceView(QWidget):
         worker.wait(1000)
         if self._worker is worker:
             self._worker = None
+        busy.clear_busy(busy.KEY_VOICE)
         worker.deleteLater()
 
     def _on_play_one(self, index):

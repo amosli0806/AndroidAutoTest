@@ -20,6 +20,7 @@ from utils.toast import show_toast
 from utils.theme import Theme, ThemeMode
 from utils.settings import Settings, THEME_MODE_DARK
 from utils.widget_helpers import clear_hover
+from utils import busy
 from views.perf_widgets import MetricCard, ProbeValueCard
 from views.perf_control_bar import ChipBar
 from models.perf_model import MEM_CATEGORIES
@@ -1003,6 +1004,13 @@ class PerfView(QWidget):
     def _apply_state(self):
         state = self._state
         idle = state == self.STATE_IDLE
+
+        # 全局忙碌登记：数据包导出/导入据此禁用。「停止中」也算忙 ——
+        # 收尾时探针还在收、会话还在落盘，这时候打包会读到写了一半的会话。
+        if idle:
+            busy.clear_busy(busy.KEY_PERF)
+        else:
+            busy.set_busy(busy.KEY_PERF, "性能采集进行中")
 
         # 开始/停止二合一：空闲时按「应用列表是否加载成功」决定可用性，
         # 采集中恒可用（点即停止）；停止中一律不可点（收尾还没完，重复点没意义）

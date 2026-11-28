@@ -51,6 +51,7 @@ from utils.toast import show_toast
 from utils.app_paths import migrate_legacy_data_files, get_app_dir
 from utils.gui_presence import GuiPresence
 from utils import log_colors
+from utils import busy
 from utils.settings import Settings, THEME_MODE_SYSTEM, THEME_MODE_DARK
 from utils.theme import Theme, ThemeMode
 import logging
@@ -912,6 +913,12 @@ def main():
     # 执行状态 → 捕虫师风险管控
     exec_controller.execution_state_changed.connect(
         adb_toolbox_controller.set_main_running
+    )
+    # 执行状态 → 全局忙碌登记（数据包导出/导入据此判断能不能动）
+    # 定时任务也走这个信号（task_controller 直接 emit），所以不用单独接
+    exec_controller.execution_state_changed.connect(
+        lambda running: (busy.set_busy(busy.KEY_EXECUTION, "自动化执行中")
+                         if running else busy.clear_busy(busy.KEY_EXECUTION))
     )
 
     # ADB 工具箱日志 → 底部日志面板
