@@ -1915,7 +1915,18 @@ class VoiceView(QWidget):
         展开逻辑已挪到 VoiceModel.build_play_items（性能检测的「语音场景」共用），
         这里只负责按树的顺序把勾选的 id 排好传进去。
         """
-        return self.model.build_play_items(self._ordered_checked_ids())
+        return self.model.build_play_items(self._ordered_checked_ids(),
+                                           self._current_serial())
+
+    def _current_serial(self) -> str:
+        """当前设备序列号；没连设备返回空串（${serial} 渲染成空，不阻止播放）。"""
+        ds = getattr(self, "_device_service", None)
+        if ds is None:
+            return ""
+        try:
+            return str(getattr(ds, "serial", None) or "")
+        except Exception:
+            return ""
 
     def _ordered_checked_ids(self):
         """勾选的用例 id，顺序与右栏树一致（分组顺序 → 组内用例顺序）。"""
@@ -2235,6 +2246,14 @@ class VoiceView(QWidget):
         if not self.service.is_available():
             self.status_label.setText("本机没有可用的语音引擎，无法播报")
             return
+        # 未定义变量：按用例汇总成一行，不逐句刷屏（一句一句记会淹掉日志）
+        try:
+            from models.voice_model import summarize_missing
+            from utils import voice_log
+            for line in summarize_missing(items):
+                voice_log.emit("warning", f"⚠ {line}")
+        except Exception:
+            pass
         # 单条试听不验证（人耳确认场景）；「执行选中」才抓回执/确认唤醒
         if verify:
             feedback, verify_enabled, verify_block, wake_cfg = self._build_feedback()
@@ -2294,9 +2313,16 @@ class VoiceView(QWidget):
         if not text:
             self.status_label.setText("这条是空的，先填文案")
             return
+        # 走 build_play_items 挑出这一条，而不是手工拼元组：
+        # 否则试听会念出字面量 ${date}，与正式播放不一致
+        items = [it for it in
+                 self.model.build_play_items([case.id], self._current_serial())
+                 if it.step_index == index]
+        if not items:
+            self.status_label.setText("这条是空的，先填文案")
+            return
         # 单条播报不等待后面的间隔，也不做回执验证（试听是人耳确认场景）
-        self._start_playback([(case.id, index, text, 0.0, [], case.name)], 1,
-                             "正在播报…", verify=False)
+        self._start_playback(items, 1, "正在播报…", verify=False)
 
     def _on_play_all(self):
         items = self._checked_items()

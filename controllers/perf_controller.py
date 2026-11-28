@@ -2105,7 +2105,11 @@ class PerfController(QObject):
             WarningDialog.show_warning(self.view, "套件不存在", name)
             return
 
-        items = self.voice_model.build_play_items(suite.case_ids)
+        try:
+            _serial = self.device_service.serial or ""
+        except Exception:
+            _serial = ""
+        items = self.voice_model.build_play_items(suite.case_ids, _serial)
         if not items:
             self._on_stop()
             WarningDialog.show_warning(
@@ -2129,7 +2133,7 @@ class PerfController(QObject):
             self.current_session.case_ids = [cid for cid in suite.case_ids
                                              if self.voice_model.get_case(cid)]
             self.current_session.case_names = sorted({
-                it[5] for it in items})       # 去重后的用例名，仅用于报告
+                it.case_name for it in items})    # 去重后的用例名，仅用于报告
 
         loop_count = int(payload.get('loop') or 1)
         self.voice_worker = VoicePlaybackWorker(

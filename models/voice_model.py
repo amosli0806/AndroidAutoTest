@@ -213,6 +213,61 @@ def _clean_keywords(keywords) -> List[str]:
 
 
 @dataclass
+class PlayItem:
+    """一条播报（展开后的执行单位）—— build_play_items 的产出。
+
+    以前这里是 7 元组，被四处按下标解包，其中 voice_player 是**严格解包**
+    （多一个字段就 ValueError）。改成字段具名后加字段不再有连锁风险。
+
+    text 是**渲染后**的文案（`${date}` 已替换成实际值），raw_text 保留原文，
+    未定义变量收在 missing 里 —— 给调用方按用例汇总成一行告警，而不是每步刷屏。
+    """
+    case_id: str
+    step_index: int          # 播报步骤在 case.steps 里的下标
+    text: str                # 渲染后，拿去念的就是这个
+    delay: float             # 播完等多久
+    verifies: List[tuple]    # [(步骤下标, [回执关键词])]
+    case_name: str
+    asserts: List[tuple]     # [(步骤下标, params)]
+    raw_text: str = ""       # 渲染前原文（复盘用）
+    missing: List[str] = field(default_factory=list)        # 文案里的未定义变量
+    assert_missing: List[str] = field(default_factory=list)  # 断言参数里的未定义变量
+
+
+def _unique(names) -> List[str]:
+    """去重保序 —— 一句文案里同一个变量出现两次，告警里只提一次。"""
+    seen = set()
+    out = []
+    for n in names:
+        if n and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def summarize_missing(items) -> List[str]:
+    """按用例汇总「未定义变量」，返回可直接打日志的行。
+
+    一条用例几十句播报，每句各记一条会刷屏；调用方在开始播这条用例前
+    打一行就够：`用例「X」有未定义变量：${a}、${b}（按原文播放）`。
+    """
+    order: List[str] = []
+    bucket = {}
+    for item in items:
+        names = list(item.missing or []) + list(item.assert_missing or [])
+        if not names:
+            continue
+        if item.case_name not in bucket:
+            bucket[item.case_name] = []
+            order.append(item.case_name)
+        for n in names:
+            if n not in bucket[item.case_name]:
+                bucket[item.case_name].append(n)
+    return [f"用例「{name}」有未定义变量：{'、'.join('${%s}' % v for v in bucket[name])}（按原文播放）"
+            for name in order]
+
+
+@dataclass
 class VoiceCase:
     """一个语音用例 = 一串按顺序执行的步骤（播报 + 检测预期结果）。
 
@@ -441,28 +496,40 @@ class VoiceModel:
         self.save()
         return suite
 
-    def build_play_items(self, case_ids) -> list:
-        """把若干语音用例展开成「播报组」列表（播放器吃的格式）。
+    def build_play_items(self, case_ids, serial: str = "") -> List[PlayItem]:
+        """把若干语音用例展开成播报组（PlayItem 列表）。
 
-        每组 = (case_id, 播报步骤下标, 文案, 播后等待, [检测步骤...], 用例名, [断言行...])。
         传进来的 case_ids 顺序即播放顺序；不存在的 id 自动跳过。
 
-        这段逻辑原来长在语音页的勾选树里（_checked_items），性能检测的
-        「语音场景」也要用，所以挪到模型层按 id 展开（2026-11-01）。
+        **文案在这里渲染**（`${date}` → 实际值）：库内仍存原文，编辑与预览看到的
+        还是占位符。放在这一步而不是播放时，是因为 voice_player 会拿「下一条」
+        提前合成音频（在线合成 2~3 秒），播放时才渲染会让预取拿到未渲染原文，
+        缓存 key 对不上、等于白预取。
+
+        唤醒步骤的文案不渲染：它来自设置，是环境配置，万一里面恰好有 `$` 会被吃掉。
         """
-        items = []
+        from utils.vars import current_values, resolve_params, resolve_text
+
+        values = current_values(serial)
+        items: List[PlayItem] = []
         for case_id in case_ids:
             case = self.get_case(case_id)
             if case is None:
                 continue
             for idx, step in enumerate(case.steps):
+                missing: List[str] = []
+                assert_missing: List[str] = []
                 if step.kind == KIND_WAKE:
                     # 唤醒步骤的文案在**这里**才解析：改设置 / 切车型模板后，
                     # 所有用例下一次执行自动用新唤醒词，不用逐条改用例
-                    text = (get_wake_word() or "").strip()
+                    raw = (get_wake_word() or "").strip()
+                    text = raw
                     delay = float(step.delay or WAKE_DELAY)
                 elif step.kind == KIND_PHRASE:
-                    text = (step.text or "").strip()
+                    raw = (step.text or "").strip()
+                    text, miss = resolve_text(raw, values)
+                    text = (text or "").strip()
+                    missing.extend(miss)
                     delay = float(step.delay or 0)
                 else:
                     continue
@@ -476,13 +543,27 @@ class VoiceModel:
                 while k < len(case.steps) and case.steps[k].kind in (KIND_VERIFY, KIND_ASSERT):
                     st = case.steps[k]
                     if st.kind == KIND_VERIFY:
-                        kw = [x for x in st.keywords if x]
+                        kw = []
+                        for x in st.keywords:
+                            if not x:
+                                continue
+                            rendered, miss = resolve_text(str(x), values)
+                            missing.extend(miss)
+                            kw.append(rendered)
                         if kw:
                             verifies.append((k, kw))
                     elif st.params:
-                        asserts.append((k, dict(st.params)))
+                        rendered, miss = resolve_params(st.params, values)
+                        assert_missing.extend(miss)
+                        asserts.append((k, dict(rendered)))
                     k += 1
-                items.append((case_id, idx, text, delay, verifies, case.name, asserts))
+                items.append(PlayItem(
+                    case_id=case_id, step_index=idx, text=text, delay=delay,
+                    verifies=verifies, case_name=case.name, asserts=asserts,
+                    raw_text=raw,
+                    missing=_unique(missing),
+                    assert_missing=_unique(assert_missing),
+                ))
         return items
 
     def delete_suite(self, name: str) -> bool:

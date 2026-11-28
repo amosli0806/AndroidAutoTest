@@ -59,6 +59,34 @@ def resolve_text(text: str, values: Dict[str, str]) -> Tuple[str, List[str]]:
     return _VAR_RE.sub(repl, text), missing
 
 
+def stuck_names(value) -> List[str]:
+    """找出残留的 `${x}` 变量名（文本 / dict / list 都走一遍）。
+
+    渲染后还留着占位符，说明这些变量没定义。给「断言参数里有未定义变量就直接
+    判失败」用 —— 拿缺失的预期值去比对，只会报「断言不匹配」，把真正的病因
+    （变量没配）埋掉。
+    """
+    found: List[str] = []
+
+    def walk(obj):
+        if isinstance(obj, str):
+            for m in _VAR_RE.finditer(obj):
+                if m.group(0) == "$$":
+                    continue
+                name = m.group(1)
+                if name and name not in found:
+                    found.append(name)
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                walk(v)
+        elif isinstance(obj, (list, tuple)):
+            for v in obj:
+                walk(v)
+
+    walk(value)
+    return found
+
+
 def resolve_params(params, values: Dict[str, str]):
     """递归替换 params 里的所有字符串（list / dict 也走一遍）。
 

@@ -1463,9 +1463,23 @@ def _run_suite_tool(suite_name: str, stop_on_failure: bool = False,
 # 批次 2：可控写操作（语音 / 接口 / 元素库 / 套件 / 用例 / 推送 / AI）
 # ----------------------------------------------------------------------
 def _voice_speak(text: str, after_delay: float = 0.0) -> dict:
-    text = (text or "").strip()
-    if not text:
+    raw = (text or "").strip()
+    if not raw:
         raise ToolFailure("INTERNAL_ERROR", "播报文案不能为空")
+
+    # 与语音页同一套渲染：${date} 先换成实际值再念。
+    # 外部 Agent 看不到本机变量表，所以把渲染结果与未定义变量都回传，
+    # 免得它以为念出去的就是自己给的那串
+    from utils.vars import current_values, resolve_text
+
+    serial = ""
+    try:
+        dev = RUNTIME.service
+        serial = str(getattr(dev, "serial", None) or "") if dev else ""
+    except Exception:
+        serial = ""
+    text, missing = resolve_text(raw, current_values(serial))
+
     cfg = dict(VoiceModel().settings or {})
     svc = get_voice_service()
     try:
@@ -1478,6 +1492,9 @@ def _voice_speak(text: str, after_delay: float = 0.0) -> dict:
         time.sleep(delay)
     return {
         "spoken": True,
+        "text": text,
+        "raw_text": raw,
+        "missing_vars": missing,
         "chars": len(text),
         "speak_seconds": round(float(elapsed or 0), 2),
         "after_delay": delay,

@@ -50,8 +50,8 @@ class VoicePlaybackRunner:
                     if self._stop_evt.is_set():
                         aborted = True
                         break
-                    text = (item[2] if len(item) > 2 else "").strip()
-                    delay = float(item[3] if len(item) > 3 else 0) or 0.0
+                    text = (item.text or "").strip()
+                    delay = float(item.delay or 0) or 0.0
                     if not text:
                         continue
                     service.speak(text)

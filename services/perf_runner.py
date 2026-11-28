@@ -119,14 +119,14 @@ class PerfRunner:
         if case_ids:
             if scenario_type == "voice":
                 from models.voice_model import VoiceModel
-                items = VoiceModel().build_play_items(case_ids)
+                items = VoiceModel().build_play_items(
+                    case_ids, getattr(self, "serial", "") or "")
                 if not items:
                     raise ValueError("语音套件里没有可播报的文案")
                 scenario["items"] = items
                 session.suite_name = str(scenario.get("suite_name") or "")
                 session.case_ids = case_ids
-                session.case_names = sorted(
-                    {it[5] for it in items if len(it) > 5})
+                session.case_names = sorted({it.case_name for it in items})
             else:
                 from models.project_model import ProjectModel
                 project = ProjectModel()

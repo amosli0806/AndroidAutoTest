@@ -153,8 +153,20 @@ class VoicePlaybackWorker(QThread):
                 "warning",
                 f"⚠ 未连接设备，{len(asserts)} 条界面断言跳过「{short}」")
             return
+        from utils.vars import stuck_names
         for _idx, params in asserts:
             label = _assert_label(params)
+            # 参数里还留着 ${x} = 这个变量没定义。拿缺失的预期值去比对只会报
+            # 「断言不匹配」，把真正的病因（变量没配）埋掉 —— 直接判失败并说明
+            stuck = stuck_names(params)
+            if stuck:
+                self._assert_fail += 1
+                self._failed_asserts.append(label)
+                voice_log.emit(
+                    "error",
+                    f"❌ 界面断言「{label}」失败：变量未定义 "
+                    + "、".join("${%s}" % v for v in stuck))
+                continue
             try:
                 self.assert_runner(params)
                 self._assert_pass += 1
@@ -262,7 +274,7 @@ class VoicePlaybackWorker(QThread):
         wake_ready = (wake_enabled and self.feedback is not None
                       and bool(wake_cfg.get("success_keywords")))
         if (wake_enabled and not wake_ready and self.wake_word
-                and any((it[2] or "").strip() == self.wake_word for it in self.items)):
+                and any((it.text or "").strip() == self.wake_word for it in self.items)):
             from utils import voice_log
             reason = ("未连接设备，无法读取车机日志"
                       if self.feedback is None else "未配置唤醒成功关键词")
@@ -277,8 +289,15 @@ class VoicePlaybackWorker(QThread):
                 self.round_changed.emit(round_index + 1, self.loop_count)
                 # 「跳过本用例」只作用于本轮；下一轮重新尝试唤醒
                 self._skipped_cases.clear()
-                for _i, (case_id, phrase_index, text, delay, verifies, case_name,
-                         asserts) in enumerate(self.items):
+                for _i, item in enumerate(self.items):
+                    case_id = item.case_id
+                    phrase_index = item.step_index
+                    text = item.text
+                    delay = item.delay
+                    verifies = item.verifies
+                    case_name = item.case_name
+                    asserts = item.asserts
+
                     if self._stop:
                         self._interrupted = True
                         break
@@ -287,7 +306,7 @@ class VoicePlaybackWorker(QThread):
                     self.progress.emit(case_id, phrase_index)
 
                     short = text[:20] + ("…" if len(text) > 20 else "")
-                    next_text = (self.items[_i + 1][2]
+                    next_text = (self.items[_i + 1].text
                                  if _i + 1 < len(self.items) else None)
 
                     # ---------- 唤醒词：独立确认/重试通道 ----------
