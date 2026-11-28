@@ -175,6 +175,25 @@ class _PerfCleanupWorker(QThread):
             self.failed.emit(f"{type(e).__name__}: {e}")
 
 
+def _restart_app():
+    """重启本程序：打包版直接拉 exe，开发模式拉 python main.py。"""
+    import sys
+
+    from PyQt6.QtCore import QProcess
+    from PyQt6.QtWidgets import QApplication
+
+    if getattr(sys, "frozen", False):
+        program, args = sys.executable, sys.argv[1:]
+    else:
+        program = sys.executable
+        args = [os.path.abspath(sys.argv[0])] + sys.argv[1:]
+    if not QProcess.startDetached(program, args):
+        from utils.dialogs import WarningDialog
+        WarningDialog.show_warning(None, "重启失败", "请手动关闭虫师后重新打开。")
+        return
+    QApplication.instance().quit()
+
+
 class SettingsDialog(QDialog):
     """参照 PyCharm 风格的设置对话框"""
 
@@ -1607,8 +1626,15 @@ class SettingsDialog(QDialog):
                      f"{counts.get('voice_cases', 0)} 条语音用例。"]
             if backup_path:
                 lines.append(f"当前数据已备份到：{os.path.basename(backup_path)}")
-            lines.append("需要重启虫师才能生效。")
-            WarningDialog.show_warning(self, "导入完成", "\n".join(lines))
+            lines.append("需要重启虫师才能加载新数据。")
+            # 数据已落盘但内存里还是旧的模型：必须重启才生效。
+            # 直接给「立即重启」比让用户自己去点开始菜单少一步，也避免他
+            # 以为导入了没生效又导一遍。
+            if QuestionDialog.ask(
+                    self, title="导入完成",
+                    message="\n".join(lines) + "\n\n现在重启吗？",
+                    yes_text="立即重启", no_text="稍后", default_yes=True):
+                _restart_app()
 
         def _on_fail(msg):
             dlg.close()
