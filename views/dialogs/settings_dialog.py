@@ -1428,24 +1428,46 @@ class SettingsDialog(QDialog):
         layout.addWidget(subtitle)
 
         row = QHBoxLayout()
-        row.setSpacing(10)
-        self.export_pkg_btn = QPushButton("导出数据包")
+        row.setSpacing(8)
+        self.export_pkg_btn = QPushButton(" 导出数据包")
+        self.export_pkg_btn.setObjectName("pkgPrimaryBtn")
+        self.export_pkg_btn.setIcon(qta.icon('fa6s.file-export', color='#FFFFFF'))
+        self.export_pkg_btn.setMinimumHeight(32)
+        self.export_pkg_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.export_pkg_btn.clicked.connect(self._on_export_package)
-        self.import_pkg_btn = QPushButton("导入数据包")
+        self.import_pkg_btn = QPushButton(" 导入数据包")
+        self.import_pkg_btn.setObjectName("pkgSecondaryBtn")
+        self.import_pkg_btn.setIcon(qta.icon('fa6s.file-import', color='#185FA5'))
+        self.import_pkg_btn.setMinimumHeight(32)
+        self.import_pkg_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.import_pkg_btn.clicked.connect(self._on_import_package)
         row.addWidget(self.export_pkg_btn)
         row.addWidget(self.import_pkg_btn)
         row.addStretch()
         layout.addLayout(row)
 
+        # 主操作给实心蓝、次操作给描边 —— 与其它页沿用同一套按钮层级
+        page.setStyleSheet("""
+            QPushButton#pkgPrimaryBtn {
+                background: #1976D2; color: #FFFFFF; border: 1px solid #1976D2;
+                border-radius: 4px; padding: 5px 14px; font-size: 13px; font-weight: 600;
+            }
+            QPushButton#pkgPrimaryBtn:hover { background: #1565C0; border-color: #1565C0; }
+            QPushButton#pkgSecondaryBtn {
+                background: #FFFFFF; color: #185FA5; border: 1px solid #B5D4F4;
+                border-radius: 4px; padding: 5px 14px; font-size: 13px;
+            }
+            QPushButton#pkgSecondaryBtn:hover { background: #E8F1FD; }
+        """)
+
         self.pkg_status = QLabel("")
-        self.pkg_status.setObjectName("SettingsPageSubtitle")
+        self.pkg_status.setStyleSheet("font-size: 12px; color: #5F5E5A;")
         self.pkg_status.setWordWrap(True)
         layout.addWidget(self.pkg_status)
 
         hint = QLabel("不包含性能采样与日志；勾选历史改动时只带最近 10 次。"
                       "导入完成后需要重启虫师才会生效。")
-        hint.setObjectName("SettingsPageSubtitle")
+        hint.setStyleSheet("font-size: 12px; color: #98A2B3;")
         hint.setWordWrap(True)
         layout.addWidget(hint)
         layout.addStretch()
@@ -1465,12 +1487,13 @@ class SettingsDialog(QDialog):
     def _on_export_package(self):
         import os
         import time
-        from PyQt6.QtWidgets import QFileDialog, QProgressDialog
+        from PyQt6.QtWidgets import QFileDialog
         from services.data_package import export_package
         from utils.dialogs import QuestionDialog, WarningDialog
         from utils.settings import Settings
         from utils.toast import show_toast
-        from views.dialogs.data_package_dialog import ExportWorker
+        from views.dialogs.data_package_dialog import (
+            ExportWorker, PackageProgressDialog)
 
         desktop = os.path.join(os.path.expanduser("~"), "Desktop")
         default = os.path.join(desktop, f"虫师数据包_{time.strftime('%Y%m%d_%H%M')}.zip")
@@ -1485,19 +1508,14 @@ class SettingsDialog(QDialog):
             message="是否包含最近 10 次历史改动？\n（体积增加约 450 KB）",
             yes_text="包含", no_text="不包含", default_yes=False)
 
-        dlg = QProgressDialog("正在打包…", "", 0, 100, self)
-        dlg.setWindowTitle("导出数据包")
-        dlg.setCancelButton(None)
-        dlg.setMinimumDuration(0)
-        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg = PackageProgressDialog("导出数据包", self)
+        dlg.show()
 
         worker = ExportWorker(path, include_hist, self)
         self._pkg_worker = worker       # 保住引用，否则线程对象被回收
 
         def _on_progress(done, total, name):
-            dlg.setMaximum(max(1, total))
-            dlg.setValue(done)
-            dlg.setLabelText(f"正在打包… {done}/{total} 个文件")
+            dlg.set_progress(f"正在打包…  {done}/{total} 个文件", done, total, name)
 
         def _on_ok(result):
             dlg.close()
@@ -1519,7 +1537,7 @@ class SettingsDialog(QDialog):
     def _on_import_package(self):
         import os
         import time
-        from PyQt6.QtWidgets import QFileDialog, QProgressDialog
+        from PyQt6.QtWidgets import QFileDialog
         from models.history_model import HistoryModel
         from services.data_package import (
             check_version_compatible, export_package, inspect_package)
@@ -1527,7 +1545,7 @@ class SettingsDialog(QDialog):
         from utils.settings import Settings
         from utils.toast import show_toast
         from views.dialogs.data_package_dialog import (
-            ImportPreviewDialog, ImportWorker)
+            ImportPreviewDialog, ImportWorker, PackageProgressDialog)
 
         path, _ = QFileDialog.getOpenFileName(self, "导入数据包", "", "数据包 (*.zip)")
         if not path:
@@ -1555,11 +1573,8 @@ class SettingsDialog(QDialog):
 
         self._pkg_worker = None   # 占位，后面赋值给真正要启动的 worker
 
-        dlg = QProgressDialog("正在导入…", "", 0, 100, self)
-        dlg.setWindowTitle("导入数据包")
-        dlg.setCancelButton(None)
-        dlg.setMinimumDuration(0)
-        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg = PackageProgressDialog("导入数据包", self)
+        dlg.show()
 
         state = {"backup_path": ""}
 
@@ -1580,9 +1595,8 @@ class SettingsDialog(QDialog):
                 pass
 
         def _on_progress(step, done, total, name):
-            dlg.setMaximum(max(1, total))
-            dlg.setValue(done)
-            dlg.setLabelText(f"{step}… {done}/{total}" if total > 1 else f"{step}…")
+            text = f"{step}…  {done}/{total}" if total > 1 else f"{step}…"
+            dlg.set_progress(text, done, total, name)
 
         def _on_ok(result):
             dlg.close()

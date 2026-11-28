@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
 )
@@ -147,9 +148,9 @@ class ImportPreviewDialog(AutoFreeDialog):
         grid.setVerticalSpacing(4)
         for i, (name, val) in enumerate(items):
             n = QLabel(name)
-            n.setStyleSheet("color: #2C2C2A; font-size: 12px;")
+            n.setStyleSheet("color: #888780; font-size: 12px;")
             c = QLabel(str(val))
-            c.setStyleSheet("color: #888780; font-size: 12px;")
+            c.setStyleSheet("color: #2C2C2A; font-size: 12px; font-weight: 500;")
             grid.addWidget(n, i // 2, (i % 2) * 2)
             grid.addWidget(c, i // 2, (i % 2) * 2 + 1)
         grid.setColumnStretch(1, 1)
@@ -157,13 +158,22 @@ class ImportPreviewDialog(AutoFreeDialog):
         v.addLayout(grid)
 
         # 警告
+        warn_box = QFrame()
+        warn_box.setObjectName("pkgWarn")
+        wl = QHBoxLayout(warn_box)
+        wl.setContentsMargins(10, 8, 10, 8)
+        wl.setSpacing(8)
+        import qtawesome as _qta
+        warn_icon = QLabel()
+        warn_icon.setPixmap(_qta.icon('fa6s.triangle-exclamation', color='#C0392B')
+                            .pixmap(14, 14))
+        wl.addWidget(warn_icon, 0, Qt.AlignmentFlag.AlignTop)
         warn = QLabel("将覆盖当前全部数据（用例 / 元素 / 语音 / 接口 / 知识库 / 设置偏好）。\n"
                       "导入前会自动存一份历史快照，可回滚。")
         warn.setWordWrap(True)
-        warn.setStyleSheet(
-            "background: #FDF3F2; border: 1px solid #F3C9C4; border-radius: 6px;"
-            "padding: 8px 10px; color: #8C2B22; font-size: 12px;")
-        v.addWidget(warn)
+        warn.setStyleSheet("color: #8C2B22; font-size: 12px; background: transparent;")
+        wl.addWidget(warn, 1)
+        v.addWidget(warn_box)
 
         # 备份勾选：已有数据时默认勾上，空目录时默认不勾
         self.backup_check = QCheckBox("导入前先导出当前数据包（多一层保险）")
@@ -200,6 +210,11 @@ class ImportPreviewDialog(AutoFreeDialog):
                 color: #444441;
                 font-size: 13px;
             }
+            #pkgContainer QFrame#pkgWarn {
+                background: #FDF3F2;
+                border: 1px solid #F3C9C4;
+                border-radius: 6px;
+            }
             #pkgContainer QPushButton:hover { background: #E8E6DF; }
             #pkgContainer QPushButton#pkgOkBtn {
                 background: #1976D2;
@@ -212,3 +227,91 @@ class ImportPreviewDialog(AutoFreeDialog):
 
     def backup_wanted(self) -> bool:
         return self.backup_check.isChecked()
+
+
+class PackageProgressDialog(AutoFreeDialog):
+    """自绘进度对话框。
+
+    替代 QProgressDialog：那个在 Windows 上是系统原生小窗，白底方角、百分比
+    压在进度条上，跟虫师其它弹窗完全不是一个世界。这里统一成无边框圆角 +
+    主色进度条，且不可关闭（打包/导入中途关掉只会留下半个状态）。
+    """
+
+    def __init__(self, title: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setFixedWidth(380)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+
+        container = QFrame()
+        container.setObjectName("progContainer")
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(20)
+        shadow.setOffset(0, 0)
+        shadow.setColor(Qt.GlobalColor.black)
+        container.setGraphicsEffect(shadow)
+
+        v = QVBoxLayout(container)
+        v.setContentsMargins(22, 18, 22, 18)
+        v.setSpacing(10)
+
+        head = QHBoxLayout()
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #1F2733;")
+        head.addWidget(title_label)
+        head.addStretch()
+        self._pct = QLabel("0%")
+        self._pct.setStyleSheet("font-size: 12px; color: #185FA5; font-weight: 600;")
+        head.addWidget(self._pct)
+        v.addLayout(head)
+
+        self._step = QLabel("准备中…")
+        self._step.setStyleSheet("font-size: 12px; color: #5F5E5A;")
+        v.addWidget(self._step)
+
+        self._bar = QProgressBar()
+        self._bar.setTextVisible(False)
+        self._bar.setFixedHeight(8)
+        self._bar.setRange(0, 100)
+        self._bar.setValue(0)
+        v.addWidget(self._bar)
+
+        self._detail = QLabel(" ")
+        self._detail.setStyleSheet("font-size: 11px; color: #98A2B3;")
+        self._detail.setWordWrap(False)
+        v.addWidget(self._detail)
+
+        outer.addWidget(container)
+
+        container.setStyleSheet("""
+            #progContainer {
+                background: #FFFFFF;
+                border-radius: 12px;
+                border: 1px solid #D0D0D0;
+            }
+            QProgressBar {
+                background: #EEF1F5;
+                border: none;
+                border-radius: 4px;
+            }
+            QProgressBar::chunk {
+                background: #1976D2;
+                border-radius: 4px;
+            }
+        """)
+
+    def set_progress(self, step_text: str, done: int, total: int, detail: str = ""):
+        total = max(1, int(total or 1))
+        value = int(done * 100 / total)
+        self._step.setText(step_text)
+        self._bar.setValue(min(100, value))
+        self._pct.setText(f"{min(100, value)}%")
+        if detail:
+            # 中间省略，保留文件名前后段（路径太长时前面全是目录，没用）
+            text = detail if len(detail) <= 42 else detail[:18] + "…" + detail[-20:]
+            self._detail.setText(text)
