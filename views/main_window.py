@@ -4186,6 +4186,9 @@ class MainWindow(QMainWindow):
         else:
             self.stacked_widget.addWidget(container)
         self.register_sub_view(knowledge_view)
+        # 知识库代码块右键「复制并打开 ADB 工具箱」→ 切到工具箱页
+        knowledge_view.toolbox_requested.connect(
+            lambda: self.switch_view(0))
         self.apply_theme()
     # ---------- 设备 ----------
     def set_device_service(self, service):

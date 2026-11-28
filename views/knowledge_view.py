@@ -23,14 +23,14 @@ import os
 import re
 
 import qtawesome as qta
-from PyQt6.QtCore import QBuffer, Qt, QTimer, QUrl, pyqtSignal
-from PyQt6.QtGui import (QFont, QImage, QKeySequence, QShortcut, QTextBlockFormat,
+from PyQt6.QtCore import QBuffer, QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import (QColor, QFont, QImage, QKeySequence, QShortcut, QTextBlockFormat,
                          QTextCharFormat, QTextCursor, QTextFormat, QTextImageFormat,
                          QTextListFormat)
 from PyQt6.QtWidgets import (
     QComboBox, QCompleter, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMenu, QPlainTextEdit, QPushButton, QSplitter,
-    QStackedWidget, QTabWidget, QTextEdit, QTreeWidget, QTreeWidgetItem,
+    QStackedWidget, QTabWidget, QTextEdit, QToolButton, QTreeWidget, QTreeWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -69,8 +69,32 @@ _MONO_FAMILY = "monospace"
 _ESCAPE_CHARS = "\\`*["
 
 
+# 双链：`[[笔记标题]]`。Markdown 里原样保留（可读、可导出），
+# 富文本里用 anchor 挂在 `[[标题]]` 这串文字上，点击即可跳转。
+WIKI_HREF_PREFIX = "kb:"
+WIKI_LINK_RE = re.compile(r"\[\[([^\[\]\n]{1,80})\]\]")
+
+
 def _escape_markdown(text: str) -> str:
     return "".join(("\\" + ch) if ch in _ESCAPE_CHARS else ch for ch in text)
+
+
+def _escape_keep_wiki(text: str) -> str:
+    """转义 Markdown 特殊字符，但 `[[双链]]` 原样保留。
+
+    不保留的话方括号会被转义，`[[环境信息]]` 存成带反斜杠的样子，回读时对不上，
+    双链一存一读就断了。
+    """
+    if "[[" not in text:
+        return _escape_markdown(text)
+    out = []
+    pos = 0
+    for m in WIKI_LINK_RE.finditer(text):
+        out.append(_escape_markdown(text[pos:m.start()]))
+        out.append(m.group(0))
+        pos = m.end()
+    out.append(_escape_markdown(text[pos:]))
+    return "".join(out)
 
 
 def _iter_fragments(block):
@@ -98,10 +122,14 @@ def _fragment_to_markdown(frag, suppress_bold: bool = False) -> str:
         return ""
     anchor = char_format.anchorHref()
     if anchor:
+        if anchor.startswith(WIKI_HREF_PREFIX):
+            # 双链：按 href 里的标题重建 [[标题]]。
+            # 不能直接用 text —— 它本身已经带着方括号，拼一遍就成 [[[[标题]]]] 了
+            return f"[[{anchor[len(WIKI_HREF_PREFIX):]}]]"
         return f"[{text}]({anchor})"
     if _MONO_FAMILY in (char_format.fontFamilies() or []):
         return f"`{text}`"
-    escaped = _escape_markdown(text)
+    escaped = _escape_keep_wiki(text)
     bold = char_format.fontWeight() >= QFont.Weight.Bold and not suppress_bold
     italic = char_format.fontItalic()
     if bold and italic:
@@ -206,17 +234,149 @@ class MarkdownEditor(QTextEdit):
 
     # 参数是 QImage（粘贴位图）或 str（拖入的图片文件路径）
     image_source_ready = pyqtSignal(object)
+    # 点击 [[双链]] 时抛出标题；由视图负责找笔记并跳转
+    wiki_link_clicked = pyqtSignal(str)
+    # 代码块里「复制 / 到 ADB」等动作，带原始命令文本
+    code_action = pyqtSignal(str, str)      # action, text
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptRichText(True)
+        self._is_dark = False
 
     # ---------------- Markdown 互转 ----------------
     def set_markdown(self, text: str):
         self.setMarkdown(text or "")
+        # setMarkdown 把 [[标题]] 当普通文字，这里补一遍链接样式，
+        # 否则打开笔记看不出哪些是可点的双链
+        self.decorate_wiki_links()
 
     def to_markdown(self) -> str:
         return document_to_markdown(self.document())
+
+    # ---------------- 双链 ----------------
+    def decorate_wiki_links(self):
+        """把正文里的 `[[标题]]` 标成可点击链接（只改格式，不改文字）。
+
+        每次打开笔记跑一遍：笔记通常几百行，成本可以忽略；
+        换来的是双链在任何时候打开都是可点的。
+        """
+        text = self.toPlainText()
+        if "[[" not in text:
+            return
+        doc = self.document()
+        color = QColor(self._wiki_color())
+        for m in WIKI_LINK_RE.finditer(text):
+            cursor = QTextCursor(doc)
+            cursor.setPosition(m.start())
+            cursor.setPosition(m.end(), QTextCursor.MoveMode.KeepAnchor)
+            fmt = QTextCharFormat(cursor.charFormat())
+            fmt.setAnchor(True)
+            fmt.setAnchorHref(WIKI_HREF_PREFIX + m.group(1))
+            fmt.setForeground(color)
+            fmt.setFontUnderline(False)      # 下划线会和中文字重打架，用颜色区分就够
+            cursor.mergeCharFormat(fmt)
+
+    def set_dark_mode(self, dark: bool):
+        """主题切换时由视图告知 —— 编辑器不自己去查全局主题。"""
+        self._is_dark = bool(dark)
+
+    def _wiki_color(self) -> str:
+        """双链颜色跟随主题：浅色用主色蓝，深色用亮一档的蓝。"""
+        return "#64B5F6" if getattr(self, "_is_dark", False) else "#1565C0"
+
+    def insert_wiki_link(self, title: str):
+        """插入一条双链：显示 `[[标题]]`，内部挂 anchor。"""
+        if not title:
+            return
+        cursor = self.textCursor()
+        fmt = QTextCharFormat()
+        fmt.setAnchor(True)
+        fmt.setAnchorHref(WIKI_HREF_PREFIX + title)
+        fmt.setForeground(QColor(self._wiki_color()))
+        cursor.insertText(f"[[{title}]]", fmt)
+        self.setTextCursor(cursor)
+
+    def wiki_link_at(self, pos: int = None) -> str:
+        """光标处（或指定位置）的双链标题；不在双链上返回空串。"""
+        cursor = self.textCursor() if pos is None else self.textCursor()
+        fmt = cursor.charFormat()
+        href = fmt.anchorHref()
+        if href.startswith(WIKI_HREF_PREFIX):
+            return href[len(WIKI_HREF_PREFIX):]
+        return ""
+
+    # ---------------- 代码块 ----------------
+    def toggle_code_block(self):
+        """把选中的行整体切成代码块。
+
+        「整块等宽」既是显示样式，也是导出判据（document_to_markdown 靠它识别围栏），
+        所以这里只改格式、不插反引号 —— 存进库时自然变成 ``` 围栏。
+        """
+        cursor = self.textCursor()
+        cursor.beginEditBlock()
+        in_code = all(_block_is_code(b) for b in self._selected_blocks())
+        mono = QTextCharFormat()
+        mono.setFontFamilies([_MONO_FAMILY])
+        for block in self._selected_blocks():
+            block_cursor = QTextCursor(block)
+            block_cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+            if in_code:
+                # 退出代码块：恢复正文字体
+                fmt = QTextCharFormat()
+                fmt.setFontFamilies([self.font().family()])
+                block_cursor.mergeCharFormat(fmt)
+                block_format = QTextBlockFormat(block.blockFormat())
+                block_format.clearBackground()
+                block_cursor.setBlockFormat(block_format)
+            else:
+                block_cursor.mergeCharFormat(mono)
+                block_format = QTextBlockFormat(block.blockFormat())
+                block_format.setBackground(QColor(self._code_bg()))
+                block_format.setLeftMargin(8)
+                block_format.setRightMargin(8)
+                block_cursor.setBlockFormat(block_format)
+        cursor.endEditBlock()
+
+    def _code_bg(self) -> str:
+        return "#20262E" if getattr(self, "_is_dark", False) else "#F4F6F9"
+
+    def code_block_text(self) -> str:
+        """光标所在代码块的完整文本；不在代码块内返回空串。"""
+        block = self.textCursor().block()
+        if not _block_is_code(block):
+            return ""
+        return block.text()
+
+    # ---------------- 右键 / 点击 ----------------
+    def contextMenuEvent(self, event):
+        menu = self.createStandardContextMenu()
+        code_text = self.code_block_text()
+        link_title = self.wiki_link_at()
+        if code_text or link_title:
+            menu.addSeparator()
+        if code_text:
+            copy_act = menu.addAction("复制这条命令")
+            copy_act.triggered.connect(
+                lambda: self.code_action.emit("copy", code_text))
+            adb_act = menu.addAction("复制并打开 ADB 工具箱")
+            adb_act.triggered.connect(
+                lambda: self.code_action.emit("adb", code_text))
+        if link_title:
+            act = menu.addAction(f"打开双链「{link_title}」")
+            act.triggered.connect(lambda: self.wiki_link_clicked.emit(link_title))
+        menu.exec(event.globalPos())
+
+    def mousePressEvent(self, event):
+        # Ctrl + 点击 = 打开双链（普通点击仍用于定位光标）
+        if (event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                and event.button() == Qt.MouseButton.LeftButton):
+            cursor = self.cursorForPosition(event.pos())
+            href = cursor.charFormat().anchorHref()
+            if href.startswith(WIKI_HREF_PREFIX):
+                self.wiki_link_clicked.emit(href[len(WIKI_HREF_PREFIX):])
+                return
+        super().mousePressEvent(event)
 
     def set_base_dir(self, base_dir: str):
         """图片相对路径（assets/x.png）的解析基准 —— 不设的话编辑器里显示不出图"""
@@ -355,10 +515,21 @@ class MarkdownEditor(QTextEdit):
         return False
 
 
-class QuickCard(QFrame):
-    """速查卡片：项目置顶展示的速查条目（点一下跳到该条目）"""
+# 速查卡里的「键：值」行。键限 12 字内、不含空白，避免把普通句子误判成键值对
+_QUICK_KV_RE = re.compile(r"^\s*([^：:\s]{1,12})\s*[：:]\s*(.+?)\s*$")
 
-    clicked = pyqtSignal(str)      # note_id
+
+class QuickCard(QFrame):
+    """速查卡片：项目置顶展示的速查条目。
+
+    原来是「标题 + 正文第一行」，点一下跳到笔记 —— 但速查的全部价值就在
+    「包名、Activity、账号」这几个值上，让人点进去再复制等于绕路。
+    现在直接解析正文里的 `键：值` 行钉在卡片上，每个值配一个复制按钮；
+    点卡片其它地方仍然是跳到笔记。
+    """
+
+    clicked = pyqtSignal(str)          # note_id
+    copy_requested = pyqtSignal(str)   # 要复制的文本
 
     def __init__(self, note, parent=None):
         super().__init__(parent)
@@ -366,20 +537,71 @@ class QuickCard(QFrame):
         self._note_id = note.id
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(note.title)
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
-        layout.setSpacing(1)
+        layout.setContentsMargins(10, 6, 8, 7)
+        layout.setSpacing(3)
 
         title = QLabel(note.title)
         title.setObjectName("KbQuickCardTitle")
         layout.addWidget(title)
 
-        first_line = next(
-            (ln.strip() for ln in (note.body or "").splitlines() if ln.strip()), "")
-        detail = QLabel(first_line or "（空）")
-        detail.setObjectName("KbQuickCardBody")
-        layout.addWidget(detail)
-        self.setFixedWidth(180)
+        rows = self._kv_rows(note.body)
+        if rows:
+            for key, value in rows[:3]:
+                layout.addLayout(self._kv_row(key, value))
+        else:
+            first_line = next(
+                (ln.strip() for ln in (note.body or "").splitlines() if ln.strip()), "")
+            detail = QLabel(first_line or "（空）")
+            detail.setObjectName("KbQuickCardBody")
+            detail.setWordWrap(True)
+            layout.addWidget(detail)
+        self.setFixedWidth(208)
+
+    @staticmethod
+    def _kv_rows(body) -> list:
+        """正文里的 `键：值` 行（最多取前 3 条）。"""
+        rows = []
+        for line in (body or "").splitlines():
+            m = _QUICK_KV_RE.match(line)
+            if not m:
+                continue
+            key, value = m.group(1).strip(), m.group(2).strip()
+            if key and value and not value.startswith("[["):
+                rows.append((key, value))
+            if len(rows) >= 3:
+                break
+        return rows
+
+    def _kv_row(self, key: str, value: str):
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        k = QLabel(key)
+        k.setObjectName("KbQuickKey")
+        k.setFixedWidth(48)
+        row.addWidget(k)
+
+        v = QLabel(value)
+        v.setObjectName("KbQuickValue")
+        v.setToolTip(value)
+        # 包名动辄二三十字符，卡片只有 200px：自己按字符截断，靠 tooltip 看全
+        metrics = v.fontMetrics()
+        elided = metrics.elidedText(value, Qt.TextElideMode.ElideMiddle, 110)
+        v.setText(elided)
+        row.addWidget(v, 1)
+
+        btn = QToolButton()
+        btn.setObjectName("KbQuickCopy")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn.setToolTip(f"复制「{value}」")
+        btn.setIcon(qta.icon('fa6s.copy', color='#8A9099'))
+        btn.setIconSize(QSize(11, 11))
+        btn.setFixedSize(18, 18)
+        btn.clicked.connect(lambda _=False, t=value: self.copy_requested.emit(t))
+        row.addWidget(btn)
+        return row
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -388,6 +610,8 @@ class QuickCard(QFrame):
 
 
 class KnowledgeView(QFrame):
+    # 请求切到 ADB 工具箱页（代码块右键「复制并打开 ADB 工具箱」）
+    toolbox_requested = pyqtSignal()
     """个人知识库页面。数据全部来自 KnowledgeModel，本视图不直接读写文件。"""
 
     def __init__(self, model, parent=None):
@@ -402,6 +626,7 @@ class KnowledgeView(QFrame):
         self._loading = False        # 载入内容期间不回写
         self._dirty = False
         self._is_dark = False
+        self._tag_filter = ""        # 标签页当前筛的标签，空 = 全部
         # 需要跟随主题换色的图标按钮：[(QPushButton, 图标名, 用途)]
         self._icon_buttons = []
 
@@ -454,6 +679,9 @@ class KnowledgeView(QFrame):
             theme_mode = (ThemeMode.DARK if Settings.get_theme_mode() == THEME_MODE_DARK
                           else ThemeMode.LIGHT)
         self._is_dark = (theme_mode == ThemeMode.DARK)
+        # 编辑器里的双链颜色、代码块底色跟着主题走
+        if hasattr(self, "body_edit"):
+            self.body_edit.set_dark_mode(self._is_dark)
 
         has_wp = False
         try:
@@ -553,6 +781,100 @@ class KnowledgeView(QFrame):
                 color: {sub_text};
                 font-size: 12px;
                 background: transparent;
+            }}
+            /* 编辑区右侧：大纲 / 被引用（一张浅色面板，与编辑器分开） */
+            #KbSidePanel {{
+                background-color: {card_bg};
+                border: 1px solid {container_border};
+                border-radius: 6px;
+            }}
+            #KbSideTabs::pane {{
+                border: none;
+                background: transparent;
+            }}
+            #KbSideTabs QTabBar::tab {{
+                background: transparent;
+                color: {sub_text};
+                padding: 4px 8px;
+                font-size: 11px;
+                border: none;
+                border-bottom: 2px solid transparent;
+            }}
+            #KbSideTabs QTabBar::tab:selected {{
+                color: {text};
+                border-bottom: 2px solid #1976D2;
+            }}
+            #KbOutlineList, #KbBacklinkList, #KbTagList {{
+                background: transparent;
+                border: none;
+                outline: none;
+                color: {text};
+                font-size: 12px;
+            }}
+            #KbOutlineList::item, #KbBacklinkList::item, #KbTagList::item {{
+                padding: 3px 5px;
+                border-radius: 3px;
+                font-size: 12px;
+            }}
+            #KbOutlineList::item:hover, #KbBacklinkList::item:hover,
+            #KbTagList::item:hover {{
+                background-color: {hover_bg};
+            }}
+            #KbOutlineList::item:selected, #KbBacklinkList::item:selected,
+            #KbTagList::item:selected {{
+                background-color: {selected_bg};
+                color: {text};
+            }}
+            /* 速查卡的键值行：键弱、值强（要复制的是值），等宽让包名对齐 */
+            #KbQuickKey {{
+                font-size: 11px;
+                color: {sub_text};
+                background: transparent;
+            }}
+            #KbQuickValue {{
+                font-size: 11px;
+                color: {text};
+                background: transparent;
+                font-family: Consolas, "Courier New", monospace;
+            }}
+            #KbQuickCopy {{
+                background: transparent;
+                border: none;
+                border-radius: 3px;
+            }}
+            #KbQuickCopy:hover {{
+                background-color: {hover_bg};
+            }}
+            #KbLinkBtn {{
+                background: transparent;
+                border: none;
+                color: #1976D2;
+                font-size: 12px;
+                padding: 2px 0;
+            }}
+            #KbLinkBtn:hover {{
+                color: #1565C0;
+            }}
+            /* 标签胶囊：常用标签靠左靠前，选中态实心蓝 */
+            #KbTagChip {{
+                background-color: {edit_bg};
+                border: 1px solid {container_border};
+                border-radius: 11px;
+                padding: 3px 10px;
+                font-size: 12px;
+                color: {text};
+            }}
+            #KbTagChip:hover {{
+                background-color: {hover_bg};
+            }}
+            #KbTagChipActive {{
+                background-color: #1976D2;
+                border: 1px solid #1976D2;
+                border-radius: 11px;
+                padding: 3px 10px;
+                font-size: 12px;
+                color: #FFFFFF;
+                font-weight: 600;
             }}
             #KbTitleEdit {{
                 font-size: 15px;
@@ -669,6 +991,13 @@ class KnowledgeView(QFrame):
         self.splitter.setChildrenCollapsible(False)
         root.addWidget(self.splitter, 1)
 
+        # 命令面板：Ctrl+Shift+P（Ctrl+P 已被「生成报告」占用）
+        QShortcut(QKeySequence("Ctrl+Shift+P"), self).activated.connect(
+            self._on_command_palette)
+        # 双链：Ctrl+Shift+K（Ctrl+K 是普通链接）
+        QShortcut(QKeySequence("Ctrl+Shift+K"), self).activated.connect(
+            self._on_insert_wiki_link)
+
     def _build_toolbar(self):
         row = QHBoxLayout()
         row.setSpacing(8)
@@ -707,11 +1036,20 @@ class KnowledgeView(QFrame):
         row.addWidget(self.export_btn)
         self._icon_buttons.append((self.export_btn, 'fa6s.file-export', 'primary'))
 
+        # 标签聚合：跨项目看「同一类坑」，点一个标签筛出全部相关笔记
+        self.tags_btn = QPushButton("标签")
+        self.tags_btn.setObjectName("KbToolBtn")
+        self.tags_btn.setToolTip("按标签跨项目查看（Ctrl+Shift+T）")
+        self.tags_btn.clicked.connect(self._on_show_tags)
+        row.addWidget(self.tags_btn)
+        self._icon_buttons.append((self.tags_btn, 'fa6s.tags', 'primary'))
+
         # 四个按钮等宽：2 字（导入/导出）与 4 字（新建…）混排时右边缘参差不齐。
         # 96 比「新建项目 + 图标」的自然宽度再多 2px，其余按钮靠文字居中撑开
         for btn in (self.new_project_btn, self.new_note_btn,
                     self.import_btn, self.export_btn):
             btn.setFixedWidth(96)
+        self.tags_btn.setFixedWidth(72)
         return row
 
     def _build_tree_panel(self):
@@ -748,6 +1086,8 @@ class KnowledgeView(QFrame):
         self.right_stack = QStackedWidget()
         self.right_stack.addWidget(self._build_editor_page())
         self.right_stack.addWidget(self._build_search_page())
+        self.tags_page = self._build_tags_page()
+        self.right_stack.addWidget(self.tags_page)
         layout.addWidget(self.right_stack, 1)
         return container
 
@@ -820,7 +1160,15 @@ class KnowledgeView(QFrame):
         self.tabs.addTab(editor_side, "编辑")
         self.tabs.addTab(self.source_view, "源码")
         self.tabs.currentChanged.connect(self._on_tab_changed)
-        layout.addWidget(self.tabs, 1)
+
+        # 编辑区右侧常驻「大纲 / 被引用」：长笔记要能一眼看到骨架，
+        # 也要能看到「谁引用了我」。用固定宽度的侧栏而不是 splitter ——
+        # 这两个列表宽度需求稳定，做成可拖拽反而容易拖坏。
+        body_row = QHBoxLayout()
+        body_row.setSpacing(8)
+        body_row.addWidget(self.tabs, 1)
+        body_row.addWidget(self._build_side_panel())
+        layout.addLayout(body_row, 1)
 
         # ---- 状态行 ----
         status_row = QHBoxLayout()
@@ -842,7 +1190,317 @@ class KnowledgeView(QFrame):
         self._editor_widgets = [self.title_edit, self.category_combo,
                                 self.tags_edit, self.tabs]
         self._set_editor_enabled(False)
+
+        # 双链点击 / 代码块右键动作
+        self.body_edit.wiki_link_clicked.connect(self._on_wiki_link)
+        self.body_edit.code_action.connect(self._on_code_action)
+        # 大纲防抖：和自动保存用同一档停顿，避免两套节奏
+        self._outline_timer = QTimer(self)
+        self._outline_timer.setSingleShot(True)
+        self._outline_timer.setInterval(300)
+        self._outline_timer.timeout.connect(self._on_outline_timeout)
         return page
+
+    def _on_outline_timeout(self):
+        if self._current_note_id is None:
+            return
+        self._refresh_outline()
+        # 标题可能刚改过，反链是按标题匹配的，得跟着重算
+        self._refresh_backlinks(self._current_note_id)
+
+    def _build_side_panel(self) -> QWidget:
+        """编辑区右侧：大纲 / 被引用。
+
+        两个列表都是「点一下就跳到那」的导航件，所以放在同一块窄栏里，
+        用页签切换 —— 同时展开会把编辑器挤窄，而且两者很少同时看。
+        """
+        panel = QFrame()
+        panel.setObjectName("KbSidePanel")
+        panel.setFixedWidth(196)
+        v = QVBoxLayout(panel)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        self.side_tabs = QTabWidget()
+        self.side_tabs.setObjectName("KbSideTabs")
+        self.side_tabs.tabBar().setExpanding(True)
+
+        # ---- 大纲 ----
+        self.outline_list = QListWidget()
+        self.outline_list.setObjectName("KbOutlineList")
+        self.outline_list.setWordWrap(True)
+        self.outline_list.itemClicked.connect(self._on_outline_clicked)
+        self.side_tabs.addTab(self.outline_list, "大纲")
+
+        # ---- 被引用 ----
+        self.backlink_list = QListWidget()
+        self.backlink_list.setObjectName("KbBacklinkList")
+        self.backlink_list.setWordWrap(True)
+        self.backlink_list.itemClicked.connect(self._on_backlink_clicked)
+        self.side_tabs.addTab(self.backlink_list, "被引用")
+
+        v.addWidget(self.side_tabs, 1)
+        return panel
+
+    # ---------------- 大纲 ----------------
+    _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.M)
+
+    def _refresh_outline(self):
+        """重建大纲。
+
+        **不能扫正文文本找 `#`**：编辑器是富文本，标题存在 blockFormat.headingLevel 上，
+        正文里根本没有井号（`toPlainText()` 拿到的是「现象」而不是「## 现象」）。
+        """
+        self.outline_list.clear()
+        doc = self.body_edit.document()
+        heads = []
+        block = doc.begin()
+        while block.isValid():
+            level = int(block.blockFormat().headingLevel() or 0)
+            title = block.text().strip()
+            if level and title:
+                heads.append((level, title, block.position()))
+            block = block.next()
+        if not heads:
+            item = QListWidgetItem("（这条笔记没有标题）")
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.outline_list.addItem(item)
+            self.side_tabs.setTabText(0, "大纲")
+            return
+        for level, title, pos in heads:
+            item = QListWidgetItem(title)
+            item.setData(Qt.ItemDataRole.UserRole, pos)
+            self.outline_list.addItem(item)
+            self._apply_outline_indent(item, level)
+        self.side_tabs.setTabText(0, f"大纲 {len(heads)}")
+
+    @staticmethod
+    def _apply_outline_indent(item: QListWidgetItem, level: int):
+        font = item.font()
+        font.setBold(level <= 2)
+        item.setFont(font)
+        item.setText(("    " * max(0, level - 1)) + item.text())
+
+    def _on_outline_clicked(self, item):
+        pos = item.data(Qt.ItemDataRole.UserRole)
+        if pos is None:
+            return
+        cursor = self.body_edit.textCursor()
+        cursor.setPosition(int(pos))
+        self.body_edit.setTextCursor(cursor)
+        self.body_edit.ensureCursorVisible()
+        self.body_edit.setFocus()
+
+    # ---------------- 被引用 ----------------
+    def _refresh_backlinks(self, note_id: str):
+        """扫全库，找出正文里写了 [[本笔记标题]] 的笔记。"""
+        self.backlink_list.clear()
+        note = self.model.get_note(note_id) if note_id else None
+        if note is None or not note.title.strip():
+            self.side_tabs.setTabText(1, "被引用")
+            item = QListWidgetItem("（未打开笔记）")
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.backlink_list.addItem(item)
+            return
+        title = note.title.strip()
+        hits = []
+        for other in self.model.get_notes():
+            if other.id == note_id or not other.body:
+                continue
+            for m in WIKI_LINK_RE.finditer(other.body):
+                if m.group(1).strip() == title:
+                    hits.append((other, m.start()))
+                    break
+        if not hits:
+            self.side_tabs.setTabText(1, "被引用")
+            item = QListWidgetItem("还没有别的笔记引用它")
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.backlink_list.addItem(item)
+            return
+        for other, _pos in hits:
+            item = QListWidgetItem(other.title or "（无标题）")
+            item.setData(Qt.ItemDataRole.UserRole, other.id)
+            project = self.model.get_project(other.project_id)
+            item.setToolTip((project.name + " · " if project else "") + other.category)
+            self.backlink_list.addItem(item)
+        self.side_tabs.setTabText(1, f"被引用 {len(hits)}")
+
+    def _on_backlink_clicked(self, item):
+        note_id = item.data(Qt.ItemDataRole.UserRole)
+        if note_id:
+            self._jump_to_note(note_id)
+
+    # ---------------- 双链 / 代码块交互 ----------------
+    def _on_wiki_link(self, title: str):
+        """点双链：按标题在当前项目里找，找不到再找全库。"""
+        title = (title or "").strip()
+        if not title:
+            return
+        project_id = self._current_project_id()
+        candidates = self.model.get_notes(project_id=project_id) if project_id else []
+        for note in candidates:
+            if note.title.strip() == title:
+                self._jump_to_note(note.id)
+                return
+        for note in self.model.get_notes():
+            if note.title.strip() == title:
+                self._jump_to_note(note.id)
+                return
+        show_toast(self, f"没有找到叫「{title}」的笔记", duration=2000)
+
+    def _on_insert_wiki_link(self):
+        """选一条已有笔记插入双链（手打 [[ 也可以，这里只是省事）。"""
+        notes = [n for n in self.model.get_notes() if n.title.strip()
+                 and n.id != self._current_note_id]
+        if not notes:
+            show_toast(self, "还没有可引用的笔记", duration=2000)
+            return
+        from PyQt6.QtWidgets import QInputDialog
+        titles = [n.title for n in notes]
+        title, ok = QInputDialog.getItem(
+            self, "插入双链", "引用哪条笔记：", titles, 0, False)
+        if not ok or not title:
+            return
+        self.body_edit.insert_wiki_link(title)
+        self.body_edit.setFocus()
+
+    def _on_code_action(self, action: str, text: str):
+        """代码块右键：复制，或复制后跳到 ADB 工具箱。"""
+        from PyQt6.QtWidgets import QApplication
+        QApplication.clipboard().setText(text)
+        if action == "adb":
+            # ADB 工具箱是「命令清单」制、没有自由输入框，所以只能把命令
+            # 放进剪贴板并把人送过去；真正的执行仍由用户在那里点。
+            self.toolbox_requested.emit()
+            show_toast(self, "命令已复制，在 ADB 工具箱里粘贴或新建命令", duration=2500)
+        else:
+            show_toast(self, "命令已复制", duration=1500)
+
+    def _build_tags_page(self) -> QWidget:
+        """标签聚合页：跨项目按标签看笔记。
+
+        两级导航用一个列表完成：先进「全部标签」，点一个标签就换成该标签的笔记，
+        顶部给一条面包屑可以退回去。不并排放两个列表 —— 窄屏会挤成两列碎片。
+        """
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        self.tag_summary = QLabel("")
+        self.tag_summary.setObjectName("KbSectionLabel")
+        layout.addWidget(self.tag_summary)
+
+        # 标签用「胶囊流」而不是竖向列表：标签通常十几个到几十个，
+        # 竖排一屏装不下还要滚，横排能一眼扫完，占的高度也稳定。
+        self.tag_chip_area = QWidget()
+        self.tag_chip_area.setObjectName("KbTagChipArea")
+        self.tag_chip_layout = FlowLayout(self.tag_chip_area, margin=0, spacing=6)
+        layout.addWidget(self.tag_chip_area)
+
+        self.tag_note_list = QListWidget()
+        self.tag_note_list.setObjectName("KbTagList")
+        self.tag_note_list.itemClicked.connect(self._on_tag_item)
+        layout.addWidget(self.tag_note_list, 1)
+        return page
+
+    def _on_show_tags(self):
+        self._tag_filter = ""
+        self._refresh_tags_page()
+        self.right_stack.setCurrentWidget(self.tags_page)
+
+    def _refresh_tags_page(self):
+        self._clear_tag_chips()
+        self.tag_note_list.clear()
+        notes = self.model.get_notes()
+        counts = {}
+        for note in notes:
+            for tag in note.tags:
+                counts[tag] = counts.get(tag, 0) + 1
+
+        if not counts:
+            self.tag_summary.setText("还没有任何标签")
+            item = QListWidgetItem("在笔记的「标签」行填几个词，就能在这里按标签聚合")
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.tag_note_list.addItem(item)
+            return
+
+        # 「全部」+ 每个标签一个胶囊，按使用次数降序（常用的排前面）
+        self._add_tag_chip("全部", len(notes), active=not self._tag_filter)
+        for tag, cnt in sorted(counts.items(), key=lambda x: (-x[1], x[0])):
+            self._add_tag_chip(tag, cnt, active=(tag == self._tag_filter))
+
+        if self._tag_filter:
+            matched = [n for n in notes if self._tag_filter in n.tags]
+            self.tag_summary.setText(
+                f"标签「{self._tag_filter}」· {len(matched)} 条笔记")
+        else:
+            matched = notes
+            self.tag_summary.setText(
+                f"共 {len(counts)} 个标签 · {len(notes)} 条笔记")
+
+        if not matched:
+            item = QListWidgetItem("这个标签下还没有笔记")
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.tag_note_list.addItem(item)
+            return
+        for note in matched:
+            project = self.model.get_project(note.project_id)
+            prefix = f"{project.name} · " if project else ""
+            item = QListWidgetItem(f"{note.title or '（无标题）'}"
+                                   f"    {prefix}{note.category}")
+            item.setData(Qt.ItemDataRole.UserRole, note.id)
+            self.tag_note_list.addItem(item)
+
+    def _clear_tag_chips(self):
+        while self.tag_chip_layout.count():
+            item = self.tag_chip_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _add_tag_chip(self, label: str, count: int, active: bool):
+        btn = QPushButton(f"{label}  {count}")
+        btn.setObjectName("KbTagChipActive" if active else "KbTagChip")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        tag = "" if label == "全部" else label
+        btn.clicked.connect(lambda _=False, t=tag: self._on_tag_chip(t))
+        self.tag_chip_layout.addWidget(btn)
+
+    def _on_tag_chip(self, tag: str):
+        self._tag_filter = tag
+        self._refresh_tags_page()
+
+    def _on_tag_item(self, item):
+        note_id = item.data(Qt.ItemDataRole.UserRole)
+        if note_id:
+            self._jump_to_note(note_id)
+
+    # ---------------- 命令面板 ----------------
+    def _on_command_palette(self):
+        from views.dialogs.kb_command_palette import KbCommandPalette
+        dlg = KbCommandPalette(self.model, self._current_project_id() or "", self)
+        dlg.command_triggered.connect(self._on_palette_command)
+        dlg.note_opened.connect(self._jump_to_note)
+        # 居中偏上（对齐 VS Code 的手感），而不是屏幕正中
+        parent_geo = self.window().geometry()
+        dlg.adjustSize()
+        dlg.move(parent_geo.center().x() - dlg.width() // 2,
+                 parent_geo.top() + 110)
+        dlg.exec()
+
+    def _on_palette_command(self, key: str):
+        handlers = {
+            "new-note": self._on_new_note,
+            "new-project": self._on_new_project,
+            "import": self._on_import,
+            "export": self._on_export,
+            "tags": self._on_show_tags,
+        }
+        handler = handlers.get(key)
+        if handler:
+            handler()
 
     def _build_format_toolbar(self):
         row = QHBoxLayout()
@@ -866,7 +1524,11 @@ class KnowledgeView(QFrame):
             lambda: self.body_edit.toggle_list(QTextListFormat.Style.ListDecimal))
         add('fa6s.quote-left', "引用", self.body_edit.toggle_quote)
         add('fa6s.code', "行内代码", self.body_edit.toggle_code)
+        add('fa6s.file-code', "代码块（整段等宽，导出为围栏）",
+            self.body_edit.toggle_code_block)
         add('fa6s.link', "插入链接 (Ctrl+K)", self._on_insert_link)
+        add('fa6s.share-nodes', "插入双链 [[笔记]]（Ctrl+Shift+K）",
+            self._on_insert_wiki_link)
         add('fa6s.image', "插入图片文件", self._on_insert_image_file)
         row.addStretch()
         return row
@@ -1013,6 +1675,8 @@ class KnowledgeView(QFrame):
             self._refresh_source_view()
         self.status_label.setText(f"已保存 · {note.updated}")
         self.hint_label.setText("")
+        self._refresh_outline()
+        self._refresh_backlinks(note.id)
 
     def _set_editor_enabled(self, enabled: bool):
         for widget in self._editor_widgets:
@@ -1032,6 +1696,8 @@ class KnowledgeView(QFrame):
         self._dirty = True
         self.status_label.setText("编辑中…")
         self._save_timer.start()
+        # 大纲跟着正文走。这里也走防抖：每敲一个字重建一次列表会明显卡顿
+        self._outline_timer.start()
 
     def _on_category_changed(self, _index):
         if self._loading or self._current_note_id is None:
@@ -1094,7 +1760,14 @@ class KnowledgeView(QFrame):
         for note in cards:
             card = QuickCard(note)
             card.clicked.connect(self._jump_to_note)
+            card.copy_requested.connect(self._on_quick_copy)
             self.quick_layout.addWidget(card)
+
+    def _on_quick_copy(self, text: str):
+        """速查卡上的复制按钮：直接进剪贴板，不打断手上的事。"""
+        from PyQt6.QtWidgets import QApplication
+        QApplication.clipboard().setText(text)
+        show_toast(self, "已复制", duration=1200)
 
     def _jump_to_note(self, note_id: str):
         item = self._item_by_note.get(note_id)
