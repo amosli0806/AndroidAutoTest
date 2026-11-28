@@ -308,7 +308,8 @@ def _walk_cases(nodes, project_name="", module_name=""):
                 "name": node.name,
                 "project": project_name,
                 "module": module_name,
-                "data_file": node.data_file or "",
+                # 库内存的是 assets/ 相对路径；对外仍给绝对路径，客户端可直接读文件
+                "data_file": to_abs(node.data_file) if node.data_file else "",
             }
 
 

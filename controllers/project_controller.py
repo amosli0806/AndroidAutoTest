@@ -88,7 +88,27 @@ class ProjectController:
                 "", "测试数据 (*.csv *.xlsx)")
             if not path:
                 return
-            self.model.set_data_file(node_id, path)
+            # 复制进 assets/ 并只存相对路径：换机器 / 拷工程后绑定不会失效。
+            # 大文件提示一下，避免无意识把 data/ 撑到几百 MB。
+            try:
+                size_mb = os.path.getsize(path) / 1024 / 1024
+            except OSError:
+                size_mb = 0
+            if size_mb > 50:
+                from utils.dialogs import QuestionDialog
+                if not QuestionDialog.ask(
+                        self.view, title="文件较大",
+                        message=f"该数据文件有 {size_mb:.0f} MB，"
+                                f"会复制一份到 data/assets/。继续吗？"):
+                    return
+            from utils.app_paths import import_asset, ASSET_PREFIX_DATA
+            rel = import_asset(path, ASSET_PREFIX_DATA)
+            if not rel:
+                from utils.dialogs import WarningDialog
+                WarningDialog.show_warning(
+                    self.view, "绑定失败", f"无法复制该文件到数据目录：{path}")
+                return
+            self.model.set_data_file(node_id, rel)
             show_toast(self.view, f"已绑定数据文件：{os.path.basename(path)}", duration=2500)
             self.view.refresh()
         elif action == "clear_data_file":
@@ -256,7 +276,10 @@ class ProjectController:
             type=src_node.type,
             children=[],
             expanded=src_node.expanded,
-            selected=False
+            selected=False,
+            # 复制用例要带上数据驱动绑定，否则副本跑起来没有数据行（原 bug）。
+            # 存的是 assets/ 相对路径，副本与原用例共用同一份文件。
+            data_file=getattr(src_node, "data_file", ""),
         )
         for child in src_node.children:
             child_new_name = child.name

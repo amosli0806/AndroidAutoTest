@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (QApplication, QComboBox, QFrame, QHBoxLayout,
                              QLabel, QLineEdit, QProgressBar, QPushButton,
                              QSizePolicy, QSplitter, QVBoxLayout, QWidget)
 
-from utils.app_paths import get_data_dir
+from utils.app_paths import get_data_dir, display_name as _asset_display_name
 from utils.settings import Settings, THEME_MODE_DARK
 from utils.theme import ThemeMode
 from utils.toast import show_toast
@@ -1015,17 +1015,25 @@ class VisualView(QWidget):
             show_toast(parent=self, message="框选区域太小")
             return
         try:
-            out_dir = os.path.join(get_data_dir(), "element_images")
-            os.makedirs(out_dir, exist_ok=True)
+            # 存进 data/assets/ 并只记相对路径：换机器 / 拷工程后参考图不会失联
+            import tempfile
+            from utils.app_paths import import_asset, ASSET_PREFIX_IMAGE
             name = f"elem_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]}.png"
-            path = os.path.join(out_dir, name)
-            if not crop.save(path, "PNG"):
+            tmp = os.path.join(tempfile.gettempdir(), name)
+            if not crop.save(tmp, "PNG"):
                 raise RuntimeError("保存失败")
+            rel = import_asset(tmp, ASSET_PREFIX_IMAGE)
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            if not rel:
+                raise RuntimeError("复制到数据目录失败")
         except Exception as e:
             show_toast(parent=self, message="图像保存失败")
             self.hint_label.setText(f"图像保存失败：{e}")
             return
-        self._image_path = path
+        self._image_path = rel
         self._sync_image_row()
         self._set_active_row("图像")
         self.hint_label.setText(
@@ -1041,7 +1049,7 @@ class VisualView(QWidget):
         if self._image_path:
             # value 用完整路径（复制/入库/回填都要能直接执行），显示只放文件名
             row.set_row(self._image_path, True, "重选", clickable=True,
-                        display=os.path.basename(self._image_path))
+                        display=_asset_display_name(self._image_path))
         else:
             row.set_row("", False, "框选", clickable=True)
         row.set_selected(self._active_type == "图像")

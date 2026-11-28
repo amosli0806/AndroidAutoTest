@@ -963,12 +963,18 @@ class ElementEditDialog(QDialog):
             self.loc_value_edit.setText(dlg.result_path)
 
     def get_data(self):
+        loc_type = self.loc_type_combo.currentText()
+        loc_value = self.loc_value_edit.text().strip()
+        # 图像定位：手填/粘贴的绝对路径也收口成 assets/ 相对路径（外部文件复制进来）
+        if loc_type == '图像' and loc_value:
+            from utils.app_paths import normalize_image_value
+            loc_value = normalize_image_value(loc_value)
         return {
             'app': self.app_edit.text().strip(),
             'module': self.module_edit.text().strip(),
             'name': self.name_edit.text().strip(),
-            'loc_type': self.loc_type_combo.currentText(),
-            'loc_value': self.loc_value_edit.text().strip(),
+            'loc_type': loc_type,
+            'loc_value': loc_value,
             'remark': self.remark_edit.text().strip()
         }
 

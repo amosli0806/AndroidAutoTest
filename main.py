@@ -683,6 +683,43 @@ def main():
     history_model = HistoryModel(main_window)
     main_window.set_history_model(history_model)
 
+    # ---------- 资产路径迁移：绝对路径 → data/assets/ 相对路径 ----------
+    # 判据是「还有没有绝对路径」而不是一次性标记 —— 历史回滚会把数据退回
+    # 迁移前的快照（旧绝对路径），只看标记就再也不会迁移了。
+    # 细节见 services/asset_migrator.py 的模块注释。
+    def _migrate_assets_on_start():
+        try:
+            from services.asset_migrator import has_absolute_assets, migrate_assets
+            tpl = getattr(step_controller, "template_model", None)
+            models = (project_model, step_model, element_model, tpl)
+            if not has_absolute_assets(*models):
+                return
+            try:
+                history_model.take_snapshot("before_migrate_assets",
+                                            label="资源路径迁移前")
+            except Exception:
+                logger.warning("迁移前快照失败", exc_info=True)
+            report = migrate_assets(*models)
+            if report.get("migrated"):
+                logger.info("资源路径迁移：%d 个文件收拢到 data/assets/",
+                            report["migrated"])
+                try:
+                    main_window.statusBar().showMessage(
+                        f"已把 {report['migrated']} 个资源文件收拢到 data/assets/", 3000)
+                except Exception:
+                    pass
+                try:
+                    project_controller.view.refresh()
+                except Exception:
+                    pass
+            for line in (report.get("missing") or [])[:50]:
+                logger.warning("资源缺失（未迁移）：%s", line)
+        except Exception:
+            logger.warning("资源路径迁移失败", exc_info=True)
+
+    # 等首屏画完再跑：迁移要读文件、写 json，别和启动抢 IO
+    QTimer.singleShot(1500, _migrate_assets_on_start)
+
     def _reload_after_restore():
         """恢复历史后让内存里的模型重新读盘，再把项目树与步骤列表刷一遍。
 

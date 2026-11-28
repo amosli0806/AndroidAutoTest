@@ -27,6 +27,28 @@ class Step:
         return cls(id=data['id'], type=data['type'], name=data['name'], params=data.get('params', {}))
 
 
+def _normalize_step_params(params):
+    """图像定位值统一成 assets/ 相对路径（手填绝对路径也收口）。
+
+    只改「图像」定位且值像文件路径的那种；资源 ID / 坐标 / 文本原样不动。
+    """
+    if not isinstance(params, dict) or params.get('locationType') != '图像':
+        return params
+    value = params.get('locationValue')
+    if not value:
+        return params
+    try:
+        from utils.app_paths import normalize_image_value
+        new_value = normalize_image_value(str(value))
+    except Exception:
+        return params
+    if new_value == value:
+        return params
+    fixed = dict(params)
+    fixed['locationValue'] = new_value
+    return fixed
+
+
 class StepModel:
     DATA_FILE = data_path("steps_data.json")
 
@@ -102,6 +124,7 @@ class StepModel:
         return [self._steps[sid] for sid in step_ids if sid in self._steps]
 
     def add_step_to_case(self, case_id: str, step: Step) -> int:
+        step.params = _normalize_step_params(step.params)
         step.id = self._id_counter
         self._id_counter += 1
         self._steps[step.id] = step
@@ -121,6 +144,8 @@ class StepModel:
         new_ids: List[int] = []
         for src in steps:
             step = copy.deepcopy(src)
+            # 模板快照里可能留着旧的绝对图像路径，插入时也收口一次
+            step.params = _normalize_step_params(step.params)
             step.id = self._id_counter
             self._id_counter += 1
             self._steps[step.id] = step
@@ -145,7 +170,7 @@ class StepModel:
             if name is not None:
                 step.name = name
             if params is not None:
-                step.params = params
+                step.params = _normalize_step_params(params)
             self.save()
             return True
         return False

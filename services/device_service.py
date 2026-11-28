@@ -728,10 +728,16 @@ class DeviceService:
         text = str(value or "").strip()
         if not text:
             return ""
+        # ① 绝对路径（存量数据）
         if os.path.isfile(text):
             return text
+        from utils.app_paths import to_abs, is_asset_rel, get_data_dir
+        # ② 资产相对路径：assets/img-xxxx.png
+        if is_asset_rel(text):
+            candidate = to_abs(text)
+            return candidate if os.path.isfile(candidate) else text
+        # ③ 仅文件名：旧版应用可视化存进元素库只写了 basename
         try:
-            from utils.app_paths import get_data_dir
             candidate = os.path.join(get_data_dir(), "element_images",
                                      os.path.basename(text))
             if os.path.isfile(candidate):

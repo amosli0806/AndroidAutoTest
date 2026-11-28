@@ -180,10 +180,16 @@ class CaseRunner:
 
     def _load_data_rows(self, case_node):
         """读该用例的数据文件 → [{表头: 值}, ...]；没绑数据文件返回 None。"""
-        path = (getattr(case_node, "data_file", "") or "").strip() if case_node else ""
-        if not path:
+        raw = (getattr(case_node, "data_file", "") or "").strip() if case_node else ""
+        if not raw:
             return None
+        # 绑定时已改成 assets/ 相对路径；存量绝对路径原样可读
+        from utils.app_paths import to_abs, is_asset_rel
+        path = to_abs(raw)
         if not os.path.exists(path):
+            if is_asset_rel(raw):
+                raise ValueError(
+                    f"资源缺失：{raw}（右键该用例可重新绑定数据文件）")
             raise ValueError(f"数据文件不存在：{path}")
         rows = read_file(path)
         if not rows:

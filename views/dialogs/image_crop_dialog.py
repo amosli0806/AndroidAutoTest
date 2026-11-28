@@ -13,6 +13,7 @@ from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPen
 
 from utils.app_paths import get_data_dir
+from utils.toast import show_toast
 
 
 class _CropLabel(QLabel):
@@ -187,10 +188,19 @@ class ImageCropDialog(QDialog):
                           int(rect.width() * self._scale), int(rect.height() * self._scale))
         crop = self._full.copy(crop_rect)
 
-        out_dir = os.path.join(get_data_dir(), "element_images")
-        os.makedirs(out_dir, exist_ok=True)
+        # 存进 data/assets/ 并返回相对路径：参考图跟着 data/ 走，换机器不失联
+        import tempfile
+        from utils.app_paths import import_asset, ASSET_PREFIX_IMAGE
         name = f"elem_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]}.png"
-        path = os.path.join(out_dir, name)
-        crop.save(path)
-        self.result_path = path
+        tmp = os.path.join(tempfile.gettempdir(), name)
+        crop.save(tmp)
+        rel = import_asset(tmp, ASSET_PREFIX_IMAGE)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        if not rel:
+            show_toast(parent=self, message="图像保存失败")
+            return
+        self.result_path = rel
         self.accept()
