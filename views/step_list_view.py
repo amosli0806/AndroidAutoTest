@@ -576,31 +576,29 @@ class StepCardWidget(QWidget):
         params_container.setMinimumHeight(24)
         layout.addWidget(params_container)
 
-        row3 = QHBoxLayout()
-        row3.addStretch()
-
+        # 编辑 / 复制 / 删除放在第一行末尾（与序号、动作类型同一行）：
+        # 原来单独占一行且靠右下，卡片白多出一行高度，按钮还离内容很远。
         self.update_btn = QPushButton()
         self.update_btn.setIcon(qta.icon('fa6s.pen-to-square', color='#555555'))
         self.update_btn.setFixedSize(20, 20)
         self.update_btn.setStyleSheet("border: none; background: transparent;")
         self.update_btn.clicked.connect(lambda: self.update_signal.emit(self.step.id))
-        row3.addWidget(self.update_btn)
+        row1.addWidget(self.update_btn)
 
         self.copy_btn = QPushButton()
         self.copy_btn.setIcon(qta.icon('fa6s.copy', color='#555555'))
         self.copy_btn.setFixedSize(20, 20)
         self.copy_btn.setStyleSheet("border: none; background: transparent;")
         self.copy_btn.clicked.connect(lambda: self.duplicate_signal.emit(self.step.id))
-        row3.addWidget(self.copy_btn)
+        row1.addWidget(self.copy_btn)
 
         self.delete_btn = QPushButton()
         self.delete_btn.setIcon(qta.icon('fa6s.trash-can', color='#e74c3c'))
         self.delete_btn.setFixedSize(20, 20)
         self.delete_btn.setStyleSheet("border: none; background: transparent;")
         self.delete_btn.clicked.connect(lambda: self.delete_signal.emit(self.step.id))
-        row3.addWidget(self.delete_btn)
+        row1.addWidget(self.delete_btn)
 
-        layout.addLayout(row3)
         self.update_display()
 
     def set_selected(self, selected):
@@ -819,6 +817,8 @@ class StepCardWidget(QWidget):
             f"font-weight: 600; font-size: 12px; color: {name_color}; background: transparent;"
         )
         self.name_label.setText(display_name)
+        # 按钮挪到右侧后名称可用宽度少了约 60px，长名字更容易被截 —— 悬停看全名
+        self.name_label.setToolTip(display_name)
         self.name_label.setVisible(bool(display_name))
 
         # 3. 参数 chips
