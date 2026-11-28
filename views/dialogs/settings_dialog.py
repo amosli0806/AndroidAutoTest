@@ -1963,7 +1963,7 @@ class SettingsDialog(QDialog):
         title.setObjectName("SettingsPageTitle")
         layout.addWidget(title)
 
-        subtitle = QLabel("在步骤参数里写 ${变量名} 就会替换成这里的值 —— "
+        subtitle = QLabel("在步骤参数、语音播报文案里写 ${变量名} 就会替换成这里的值 —— "
                           "换设备、换账号只改变量值，不用去改每一处参数。")
         subtitle.setObjectName("SettingsPageSubtitle")
         subtitle.setWordWrap(True)
