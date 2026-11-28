@@ -182,10 +182,10 @@
 
   <header class="hero">
     <h1>🐛 虫师 · 扩展方向与功能规划</h1>
-    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 更新于 2026-11-20（v1.6.1）</div>
+    <div class="sub">Android 自动化测试工具 · 基于当前源码梳理 · 更新于 2026-11-28（v1.6.11）</div>
     <div class="badges">
-      <span class="badge">当前版本 v1.6.1</span>
-      <span class="badge">10 项待办 · 3 项已落地</span>
+      <span class="badge">当前版本 v1.6.11</span>
+      <span class="badge">6 项待办 · 4 项已落地</span>
       <span class="badge">车机 / 手机均已实机验证</span>
       <span class="badge">按改动量分 A~C 三档</span>
     </div>
@@ -205,51 +205,50 @@
       <a href="#s2">二、macOS 移植注意事项</a>
       <a href="#s3">三、MCP 工具分组与 Token 预算（体验中）</a>
       <a href="#s4">四、发版剩余风险与待办</a>
+      <a href="#s5">五、变量能力：自动化与语音播报对照</a>
     </div>
   </nav>
 
   <!-- ============ 一、待办与扩展方向 ============ -->
     <section class="chapter" id="s1">
     <h2><span class="num">1</span>待办与扩展方向（按改动量与依赖排序）</h2>
-    <p class="small" style="margin-top:0">从「改动小、见效快」到「改动大、影响面广」依次排列 —— <b>越靠前越建议先动</b>。档位只反映<b>改动量与风险</b>，不代表价值：C 档（如关键字驱动）一旦做出来收益最大，只是要先有变量地基。<br>
-      本次补齐了 1~10 项的遗漏细节；每项末尾蓝色块 <b>❓ 待确认</b> 是需要你拍板的问题，确认后会把结论回填并删掉对应问题。</p>
+    <p class="small" style="margin-top:0">只列<b>还没做</b>的：从「改动小、见效快」到「改动大、影响面广」依次排列，<b>越靠前越建议先动</b>。
+      档位只反映<b>改动量与风险</b>，不代表价值。<br>
+      2026-11-28 已落地 4 项（相对路径、执行中保护、数据包、变量渲染），见本章末尾「已落地」；
+      每项末尾蓝色块 <b>❓ 待确认</b> 是需要你拍板的问题，确认后会回填结论并删掉对应问题。</p>
 
     <div class="card">
       <h3>依赖关系与建议顺序</h3>
-      <p>10 项里只有 <b>3 条硬依赖</b>，其余可以自由排序 —— 所以顺序主要看「怎么减少返工」，而不是谁必须排在谁前面。</p>
+      <p>剩下 6 项里<b>已经没有硬依赖</b>（原来卡住它们的两条前置——相对路径、变量渲染——都已落地），
+        所以顺序只看「怎么减少返工」。</p>
 
       <table>
-        <thead><tr><th>项</th><th>硬前提</th><th>它是谁的前提</th></tr></thead>
+        <thead><tr><th>项</th><th>前提</th><th>它是谁的前提</th></tr></thead>
         <tbody>
-          <tr><td>4. 路径相对化</td><td>—</td><td><b>8. 数据包</b></td></tr>
-          <tr><td>8. 数据包</td><td><b>4</b></td><td>—（5 是它的执行中防护，同一主题）</td></tr>
-          <tr><td>9. 变量接线</td><td>—（<code>utils/vars.py</code> 的渲染函数已在）</td><td><b>10. 关键字</b>、3 的变量比较</td></tr>
-          <tr><td>10. 关键字驱动</td><td><b>9</b></td><td>—</td></tr>
-          <tr><td>3. 条件与循环</td><td>—</td><td>软依赖：1、7 的报告口径</td></tr>
-          <tr><td>1 / 2 / 6 / 7</td><td>—</td><td>—</td></tr>
+          <tr><td>3. 条件与循环</td><td>—</td><td>软依赖：1、5 的报告口径</td></tr>
+          <tr><td>6. 关键字驱动</td><td>变量渲染（✅ 已落地）</td><td>—</td></tr>
+          <tr><td>1 / 2 / 4 / 5</td><td>—</td><td>—</td></tr>
         </tbody>
       </table>
 
       <ul>
-        <li><b>4 → 8</b>：数据包里的资源必须先是相对路径。若先做 8，导入时要写「路径前缀改写」，
-          处理盘符不同、外部路径、相对/绝对混存，至少多一天而且容易漏</li>
-        <li><b>9 → 10</b>：关键字的参数替换本质就是变量渲染。先做 10 得先自造一套替换逻辑，
-          等 9 上线再改回来</li>
-        <li><b>3 要排在 1、7 之前（软依赖，但会返工）</b>：循环会引入「轮次」。若先做套件报告
+        <li><b>3 要排在 1、5 之前（软依赖，但会返工）</b>：循环会引入「轮次」。若先做套件报告
           （按「第几步」展示），等循环上线后 <code>StepResult</code>、报告模板、执行页列表、
           性能按用例归组全都要回头补轮次字段 —— 等于改两遍</li>
+        <li><b>6 的前置已就绪</b>：关键字的参数替换本质就是变量渲染，2026-11-28 已落地
+          （见第 5 章）。先做 6 不用再造一套替换逻辑</li>
       </ul>
 
       <p><b>推荐顺序</b></p>
-      <div class="tree">4（1.5 天）→ 8（2）→ 5（1 小时）→ 3（3.5）→ 1（3）→ 7（2）→ 9（2.5）→ 10（约 4）
+      <div class="tree">3（3.5 天）→ 1（3）→ 5（2）→ 6（约 4）
 
 穿插：2 知识库（3.5 · 纯视图层，适合碎片时间）
-      6 接口二期（约 5.5 · 自成体系，连续排期，不要拆碎）</div>
-      <p class="small">前两步是「数据先收口」（同主题、上下文不切换），中间是「执行与报告」（口径一次定好），
-        最后是「变量与复用」（硬依赖链）。<b>只有 5 天的话</b>：做 4 + 3 v1 —— 数据能迁移、用例能写条件与循环。</p>
+      4 接口二期（约 5.5 · 自成体系，连续排期，不要拆碎）</div>
+      <p class="small">先「执行与报告」（3 → 1 → 5，口径一次定好），再「复用」（6）。
+        <b>只有 5 天的话</b>：做 3 v1 —— 用例能写条件与循环，后面的报告口径也就定了。</p>
     </div>
 
-    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ A · 改动小、见效快（0.5 ~ 3.5 天，可独立插进版本）</h3>
+    <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ A · 改动小、见效快（3 ~ 3.5 天，可独立插进版本）</h3>
 
     <div class="card">
       <h3>1. 测试套件增强 <span class="tag plan">📋 方案已定 2026-11-23 · 待确认 4</span></h3>
@@ -453,8 +452,9 @@
       <ul>
         <li><b>条件 v1 三类</b>：元素存在 / 不存在、文本包含、文本等于（都复用断言的定位与超时；
           文本类复用 <code>ui_find</code> 的 dump 缓存，不要每个条件各 dump 一次）。
-          <b>变量比较挪出 v1</b>：自动化步骤目前没有变量替换机制（第 9 项未落地），
-          条件里没有可比较的对象；等变量系统上线后随第 9 项一起补。数值大小与正则不做。</li>
+          <b>变量比较不必单独做一种类型</b>：条件参数里的 <code>${x}</code> 由统一参数渲染替换
+          （2026-11-28 已落地，见第 5 章），写「文本等于 <code>${city}</code>」即可。
+          数值大小与正则不做。</li>
         <li><b>条件超时</b>默认 2 秒（可配 0~10）；超时按「不满足」处理并在日志标注，
           避免每条条件都等满 5 秒把用例拖慢。</li>
         <li><b>循环约束</b>：次数 1~999，空块不允许保存；循环体至少 1 步；展开后步骤数超过
@@ -469,7 +469,7 @@
           <code>loop_index / loop_total / source_step_id</code>；<code>FailureContext</code>
           增加轮次字段，失败截图与 AI 分析能对上「第几轮」。数据驱动 × 循环的顺序是
           「先数据行、再块内轮次」。</li>
-        <li><b>与性能场景联动（第 7 项）</b>：用例级时间区间不变，块只影响步骤序号与失败定位。</li>
+        <li><b>与性能场景联动（第 5 项）</b>：用例级时间区间不变，块只影响步骤序号与失败定位。</li>
       </ul>
 
       <div class="ask">❓ <b>待确认</b>（每条都附了推荐，不同意直接说编号即可）
@@ -488,136 +488,10 @@
       <p><b>工作量约 3.5 天</b>：模型与展开 0.5 + 执行与报告 0.5 + 循环 UI 1.5 + 条件 UI 1。</p>
     </div>
 
-    <div class="card">
-      <h3>4. 数据驱动与参考图改相对路径 <span class="tag plan">📋 方案已定 2026-11-23 · 待确认 4</span></h3>
-      <p><b>现状</b>：两条资源的路径都是<b>绝对路径</b> ——
-        ① 数据驱动：用例节点 <code>TreeNode.data_file</code>（<code>models/project_model.py</code>），
-        由 <code>project_controller.py</code> 的 QFileDialog 原样写入；
-        ② 图像定位：元素的 <code>loc_value</code> / 步骤的 <code>params.locationValue</code>，
-        截图入口 <code>visual_view.py</code>、<code>image_crop_dialog.py</code> 都落在
-        <code>data/element_images/</code> 并存绝对路径。换机器 / 拷工程后全部失效。</p>
-      <p><b>已有利好</b>：<code>device_service._resolve_image_template()</code> 已兼容「只写文件名 →
-        去 <code>data/element_images/</code> 反查」，说明数据结构本身不强制绝对路径；缺的是统一规则与写入改造。</p>
-
-      <p><b>做法：一个资产根 + 两套相对前缀</b></p>
-      <div class="tree">data/
-├─ assets/            ← 统一资产目录（单一目录，靠前缀区分类型）
-│   ├─ data-8f3a1b2c-车型清单.csv     ← 数据驱动
-│   └─ img-5e7d9c01-登录按钮.png      ← 图像定位参考图
-├─ element_images/    ← 旧目录，只读兼容，两个版本后清理
-└─ *.json</div>
-      <ul>
-        <li><b>库内只存相对路径</b>：<code>assets/data-8f3a1b2c-车型清单.csv</code> 这种；
-          统一用正斜杠，跨机器可读。<b>不分子目录</b> —— 类型由扩展名与 <code>data-</code> /
-          <code>img-</code> 前缀决定，迁移、打包、清理都只写一遍逻辑</li>
-        <li><b>统一解析</b>：<code>utils/app_paths.py</code> 新增
-          <code>to_abs(rel)</code>（相对 → data 下绝对）与 <code>to_rel(abs)</code>（绝对 → 规范相对）；
-          绝对路径仍可读（兼容旧数据），但<b>新写入一律相对</b>。</li>
-        <li><b>写入点收口</b>（共 3 处）：绑定数据文件时复制进 <code>assets/data/</code>；
-          截屏框选 / 可视化框选写入 <code>assets/images/</code>；元素库与步骤只存返回的相对值。</li>
-        <li><b>读取点</b>（共 2 处）：<code>case_runner._load_data_rows()</code> 与
-          <code>_resolve_image_template()</code> 先 <code>to_abs()</code>，再走旧文件名兜底；
-          文件缺失时报「资源缺失：assets/data/xxx.csv（右键用例可重新绑定）」，不再抛系统错误。</li>
-      </ul>
-
-      <p><b>一次性迁移（必须可回滚）</b>：启动后首次运行，若配置里没有
-        <code>assets_migrated_v1</code> 标记，则：</p>
-      <ul>
-        <li>先 <code>HistoryModel.take_snapshot("before_migrate_assets", label="资源路径迁移前")</code>；</li>
-        <li>扫描项目 <code>data_file</code>、步骤 <code>locationValue</code>、元素 <code>loc_value</code>
-          里的绝对路径，能读到的<b>复制</b>（不移动）进 <code>assets/</code>，重名按内容哈希去重，再改写为相对路径；</li>
-        <li>文件已不存在的<b>不删不改</b>，只在虫师日志里列清单，用户可自行重新绑定；</li>
-        <li>迁移幂等：重复运行不会产生第二份副本；标记写入 <code>config.json</code>。</li>
-      </ul>
-
-      <p><b>顺带修一个现存 bug</b>：<code>project_controller._copy_node_recursive()</code> 复制用例时
-        没有带 <code>data_file</code>，复制出的用例会丢数据绑定 —— 改相对路径时一并补上。</p>
-
-      <p><b>两个容易漏的缺口</b></p>
-      <ul>
-        <li><b>历史回滚会把数据退回绝对路径</b>：迁移靠 <code>assets_migrated_v1</code> 标记只跑一次，
-          但回滚到迁移前的快照（里面是旧绝对路径）后，标记还在、再也不会迁移。
-          <b>判断依据改成「还有没有可迁移的绝对路径」</b>，标记只用来压日志噪音，不作为唯一闸门；
-          扫描本身只是遍历三个字段，很轻</li>
-        <li><b>手填路径绕过所有写入收口</b>：元素库编辑框允许直接粘贴图片路径。保存时统一过一遍
-          <code>to_rel()</code> —— 指向 <code>data/</code> 内的转相对，指向外部的复制进
-          <code>assets/</code> 再转相对（复用绑定数据文件那套）</li>
-      </ul>
-
-      <p><b>影响面</b>：写入 3 处 + 读取 2 处 + 用例导出（<code>main_window.py</code> 会带上相对路径，
-        对方导入后只要有同名资产即可直接跑；整目录搬家走第 8 项数据包）+ MCP
-        （<code>server.py</code> 透出的 <code>data_file</code> 改为读时转绝对，协议不变）。</p>
-      <p><b>补充细节（容易漏的）</b></p>
-      <ul>
-        <li><b>路径安全</b>：<code>to_abs()</code> 只接受 <code>assets/</code> 前缀，拒绝
-          <code>..</code>、盘符与 UNC；解析结果必须落在 <code>data/</code> 内 —— 导入别人数据包时
-          这是必须挡住的一类输入。</li>
-        <li><b>命名与去重</b>：复制进 assets 时用「原名 + 8 位内容哈希」；同内容重复绑定复用同一文件，
-          同名不同内容不覆盖。</li>
-        <li><b>大文件</b>：超过 50MB 的数据文件在绑定时提示「会复制进数据目录」，避免无意识把
-          <code>data/</code> 撑到几百 MB。</li>
-        <li><b>孤儿资源</b>：解绑 / 删用例 / 删步骤都<b>不自动删文件</b>（可能被多处引用）；
-          后续可在「清理缓存」页加「未引用资源」统计，v1 先不做。</li>
-        <li><b>迁移时机</b>：启动后<b>后台线程</b>执行，迁移期间旧绝对路径仍能正常跑；
-          完成写标记；失败只记日志、不阻塞启动，下次启动重试。</li>
-        <li><b>迁移覆盖面</b>：项目 <code>data_file</code>、步骤 <code>locationValue</code>、
-          元素 <code>loc_value</code>，以及<b>步骤模板</b>里的图像路径（模板是独立快照，最容易漏）。</li>
-        <li><b>读取兼容顺序</b>：<code>loc_value</code> 可能同时存在「绝对路径 / 仅文件名 / 相对路径」，
-          按「绝对存在 → 相对解析 → 旧 <code>element_images/</code> 按文件名」依次尝试。</li>
-        <li><b>旧目录下线</b>：<code>element_images/</code> 保留一个版本只读兼容；下线前跑一次
-          「引用扫描」，确认没有存量引用再删。</li>
-        <li><b>MCP</b>：对外返回值仍给绝对路径（客户端可直接读文件）；写入类接口同时接受相对与绝对。</li>
-      </ul>
-
-      <div class="ask">❓ <b>待确认</b>（每条都附了推荐，不同意直接说编号即可）
-        <ol>
-          <li>绑定数据文件时「自动复制进 assets」可以接受吗？<br>
-            <b>建议：自动复制</b> —— 大多数用户不会手动整理目录，只记路径等于相对路径化对普通用户不可用；原文件保持不动。</li>
-          <li>参考图统一到 <code>assets/</code>、旧 <code>element_images/</code> 保留多久再删？<br>
-            <b>建议：保留两个版本</b>（一个版本周期太短，跳版升级的用户会直接踩到「图找不到」）；删除前跑引用扫描。</li>
-          <li>迁移完成只在日志里写「已迁移 N 个资源」，不弹窗打断，可以吗？<br>
-            <b>建议：静默 + 日志 + 状态栏一句</b>（3 秒自动消失）—— 完全不提示会让用户不知道图被搬走了；
-            弹窗又会每次升级都打断，状态栏是中间档。</li>
-          <li>超过 50MB 的数据文件：提示后仍复制，还是直接拒绝？<br>
-            <b>建议：50MB 提示后仍复制，超过 200MB 直接拒绝</b> —— 防止误选磁盘镜像把 data 撑爆，同时不阻断正常大表格。</li>
-        </ol>
-      </div>
-
-      <p><b>工作量约 2 天</b>：解析与写入收口 0.5 + 迁移与校验 0.5 + 报错文案与联调 0.5
-        + 回滚冲突与手填路径收口 0.5。</p>
-      <p class="small"><b>不在本次范围</b>：<code>config.json</code> 里的输出目录 / 壁纸路径（属于偏好设置，
-        由第 8 项数据包的白名单处理）；知识库已有自己的 <code>knowledge_assets</code> 体系，不动。</p>
-      <div class="example">💡 <b>打个比方：</b>现在是「照片只记了『在我家书柜第二层』」—— 搬家就找不到；
-        改成「记『相册/第 2 页』」，相册跟着程序走，换到哪台机器都对得上。</div>
-    </div>
-    <div class="card">
-      <h3>5. 数据包执行中保护 <span class="tag plan">📋 方案已定 2026-11-28</span></h3>
-      <p><b>问题</b>：数据包是「当前数据的一张快照」。导出时若自动化正在跑，模型里可能正写到一半；
-        导入时若正在执行，覆盖完重启会把正在跑的会话直接掐断。包看着正常，实际少了最后几条用例。</p>
-
-      <p><b>现状</b>：三个执行入口都没有可查询的运行态 —— 自动化的
-        <code>execution_controller</code>、性能的 <code>perf_controller</code>（只有内部
-        <code>_running</code> 字段）、语音页的播放线程，各自藏着，外部问不到。</p>
-
-      <p><b>做法</b>：加一张极小的全局忙碌登记表（<code>utils/busy.py</code>，十几行），
-        三个入口开始时登记、结束时注销；设置页的导出 / 导入按钮查它决定是否可用。</p>
-      <ul>
-        <li><b>按钮禁用 + 悬停说明</b>「自动化执行中，请先停止」—— 禁用比点了再报错更早拦住</li>
-        <li><b>点击时二次检查</b>：用户可能先打开设置页（按钮可用）→ 回去跑用例 → 再回来点导出</li>
-        <li>登记的是<b>原因</b>而不是布尔：提示里能写清是「自动化执行中」还是「性能采集进行中」</li>
-        <li>导入会重启程序，若正在执行更必须拦住</li>
-      </ul>
-
-      <p><b>不做</b>：不阻止执行中编辑用例、不锁界面 —— 只拦「打包」和「覆盖」这两个
-        会读到不一致数据的动作。</p>
-
-      <p><b>工作量约 1 小时</b>：登记表 0.2 + 三处接线 0.5 + 界面与提示 0.3。</p>
-    </div>
-
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ B · 改动较大、需先设计（要先出方案再动手）</h3>
 
     <div class="card">
-      <h3>6. 接口模块二期 <span class="tag plan">📋 规划中 · 方案已定 2026-11-21 · 待确认 4</span></h3>
+      <h3>4. 接口模块二期 <span class="tag plan">📋 规划中 · 方案已定 2026-11-21 · 待确认 4</span></h3>
 
       <p><b>已有的地基</b>（不用重做）：<code>{{变量}}</code> 渲染（URL / 请求头 / 请求体三处）、
         JSON 路径取值 <code>json_get</code>、状态码 / 耗时 / JSON 断言 —— 链路编排要做的只是把它们接起来。</p>
@@ -696,7 +570,7 @@ def after(ctx):
     </div>
 
     <div class="card">
-      <h3>7. 性能检测补全 <span class="tag plan">📋 规划中 · 细节补充 2026-11-23 · 待确认 4</span></h3>
+      <h3>5. 性能检测补全 <span class="tag plan">📋 规划中 · 细节补充 2026-11-23 · 待确认 4</span></h3>
       <p><b>已经有的</b>：CPU / 内存 / 流量 / FPS / 线程都能采，堆转储、抓包、截图、录屏可随监控一起跑；
         也能在监控期间顺带跑一组自动化或语音用例。失败现场截图、内存超阈值自动转储也都具备。
         但<b>产物与报告都是整场一份</b>。</p>
@@ -793,186 +667,10 @@ def after(ctx):
       </div>
     </div>
 
-    <div class="card">
-      <h3>8. 数据包导出 / 导入 <span class="tag plan">📋 方案已定 2026-11-23 · 待确认 4</span></h3>
-      <p><b>现状</b>：<code>data/</code> 下有 11 个用户资产 json（与历史快照
-        <code>HistoryModel.TRACKED_FILES</code> 同一份名单），外加
-        <code>element_images/</code>、<code>knowledge_assets/</code>、<code>.history/</code>。
-        换电脑只能手动拷整目录；最近的历史快照只留本机。与其接 Git（第 4 章已论证不做），
-        一个 zip 更贴合「备份 / 迁移」。</p>
-
-      <p><b>包内结构</b></p>
-      <div class="tree">虫师数据包_20261123_1530.zip
-├─ manifest.json          格式版本 / 虫师版本 / 生成时间 / 各文件 sha256 / 数量统计
-├─ project_data.json      用例树
-├─ steps_data.json        步骤
-├─ elements_data.json     元素库
-├─ suites_data.json  tasks_data.json  vars_data.json
-├─ voice_data.json  api_data.json  knowledge_data.json  step_templates.json
-├─ config.preferences.json   ← 只带安全偏好（不含路径）
-├─ assets/
-│   ├─ data/              数据驱动文件
-│   ├─ images/            图像定位参考图
-│   └─ knowledge/         知识库附件
-└─ history/               可选：历史快照（默认不带）</div>
-
-      <p><b>三个关键取舍</b></p>
-      <ul>
-        <li><b>config 只带白名单</b>：主题、步骤间隔、侧栏名称、字号等可带；
-          输出目录、壁纸绝对路径、更新通道、设备序列号<b>一律不带</b> —— 否则导入别人的包，
-          自己机器的报告会写到不存在的目录。</li>
-        <li><b>排除名单与历史快照共用</b>：<code>perf_data.json</code>（采样）、
-          <code>perf_baselines.json</code>、<code>edge_voices_cache.json</code>、
-          <code>gui.info.json</code>、<code>gui.lock</code>、<code>mcp_*.log</code>、
-          日志与输出目录里的截图/报告，全部不进包。</li>
-        <li><b>历史快照默认不带</b>：它可到几百 MB，且对「迁移」不是必需；想要完整备份的人再勾选。</li>
-      </ul>
-
-      <p><b>导出流程</b>（主菜单 →「导出数据包…」）</p>
-      <ul>
-        <li>先写 <code>.part</code> 临时包 → 逐文件算 sha256 写进 manifest → 校验通过后
-          <code>os.replace</code> 改名；失败不留半个包。</li>
-        <li>后台线程打包（与「归档并清理」同款 worker），菜单/页面只显示进度与结果行，不弹窗打断。</li>
-        <li>默认文件名 <code>虫师数据包_YYYYMMDD_HHMM.zip</code>，默认落在桌面或文档目录。</li>
-      </ul>
-
-      <p><b>导入流程</b>（设置 → 数据维护 →「导入数据包」，只保留这一个入口）</p>
-      <ul>
-        <li><b>先预览再动手</b>：显示包内清单（用例 / 步骤 / 元素 / 套件 / 语音用例 / 知识笔记数量、
-          资源体积、虫师版本）。没有预览就无法判断「这是不是我想要的包」。</li>
-        <li><b>校验</b>：zip 路径穿越（<code>../</code>）直接拒绝、manifest 版本不认拒绝、
-          逐文件 sha256 不符拒绝；只接受本工具产出的包。</li>
-        <li><b>整包覆盖</b>：v1 不做合并（同名用例/元素如何合并没有唯一正确答案）。导入前
-          <code>HistoryModel.take_snapshot("before_import", label="导入数据包前")</code>，
-          后悔了去「历史」页一键回滚。</li>
-        <li><b>落盘后再提示重启</b>：各模型在启动时读盘，原地替换文件后内存态不一致；
-          导入完成提示「已导入，重启虫师生效」，不在运行中热重载（要处理 11 个模型 + 界面刷新，风险远大于收益）。</li>
-        <li>执行中禁止导入（与性能清理同一判断），避免把正在跑的用例池换掉。</li>
-      </ul>
-
-      <p><b>补充细节（容易漏的）</b></p>
-      <ul>
-        <li><b>manifest 版本</b>：<code>format: 1</code> + <code>app_version</code> + 逐文件
-          <code>sha256/size</code> + 数量统计 + <code>includes_history</code>。老版本虫师遇到更高的
-          <code>format</code> 直接拒绝并提示升级，不能半懂不懂地导。</li>
-        <li><b>config 白名单实现方式</b>：以当前 <code>config.json</code> 的实际键为准<b>逐项列白名单</b>，
-          默认拒绝未列出的键；宁可少带，也不要带过去一个本机路径。</li>
-        <li><b>zip 安全</b>：拒绝 <code>..</code> 与绝对路径、拒绝符号链接；限制总解压体积
-          （建议 2GB）与单文件体积，防 zip 炸弹。</li>
-        <li><b>磁盘空间</b>：导入前检查 data 所在盘剩余空间 ≥ 解压体积 × 1.5，不够就提前拒绝。</li>
-        <li><b>暂停历史监听</b>：导入/导出期间先停 <code>HistoryModel</code> 的 5 秒轮询，
-          避免把「写了一半」的状态存成快照。</li>
-        <li><b>失败自动回滚</b>：写文件过程中任一失败，用导入前的快照恢复，提示
-          「导入失败，已回滚」，不留半新半旧的数据。</li>
-        <li><b>执行中禁止</b>：自动化 / 性能 / 语音任一任务运行时不允许导出或导入，
-          避免拿到中间态、也避免把正在跑的用例池换掉。</li>
-        <li><b>包内说明</b>：附带 <code>README.txt</code>（虫师版本、包含内容、导入步骤），
-          发给不熟悉的人也能自己恢复。</li>
-        <li><b>旧包兼容</b>：包内若是旧版本的绝对路径，导入后首次启动按第 4 项自动迁移。</li>
-      </ul>
-
-      <div class="ask">❓ <b>待确认</b>（每条都附了推荐，不同意直接说编号即可）
-        <ol>
-          <li>执行中也允许导出吗？<br>
-            <b>建议：禁止</b> —— 执行中数据仍在变化，导出的包可能一半是旧状态，事后很难解释。</li>
-          <li>历史快照是否真的需要提供勾选？<br>
-            <b>建议：保留勾选、默认不勾</b> —— 完整备份有真实需求，成本只是一个复选框；默认不带保证包体积可控。</li>
-          <li>导入前是否加一个「先导出当前数据包」的快捷备份按钮？<br>
-            <b>建议：加</b>，并默认勾选 —— 多写一个包的时间，换来误导入后的第二条退路（第一条是历史快照）。</li>
-          <li><code>config</code> 白名单里是否包含「快捷键自定义」？<br>
-            <b>建议：不包含</b> —— 键位是个人习惯，带过去会打乱对方操作；主题、字号等观感项可以带。</li>
-        </ol>
-      </div>
-
-      <p><b>工作量约 2 天</b>：打包与校验 0.5 + 导入预览与落盘 0.75 + 历史快照联动 0.25 + 界面与文案 0.5。</p>
-      <p class="small"><b>v1 不做</b>：按模块选择性导入 / 合并、云同步或 Git、增量包、包加密。</p>
-      <div class="example">💡 <b>打个比方：</b>像给手机做「整机备份」—— 一个文件装走通讯录、相册和设置；
-        换新手机时先让你看一眼「这个备份里有什么」，再问要不要恢复，恢复前还自动留一份当前状态。</div>
-    </div>
     <h3 style="color:var(--primary);font-size:18px;margin:18px 0 10px">◆ C · 改动大 / 影响面广（需专门排期）</h3>
 
     <div class="card">
-      <h3>9. 变量渲染落地到语音播报 <span class="tag plan">📋 方案已定 2026-11-28</span></h3>
-      <p><b>现状</b>：语音用例是 <code>VoiceCase{id, name, group_id, steps}</code>，
-        每步 <code>VoiceStep{kind, text, delay, keywords, params}</code>（<code>models/voice_model.py</code>）。
-        执行前三处入口（语音页 <code>VoicePlaybackWorker</code>、性能场景 <code>VoicePlaybackRunner</code>、
-        MCP <code>_voice_speak</code>）都把文案原样丢给 TTS，<b>不做任何变量替换</b>。
-        而自动化侧的 voice 步骤经 <code>device_service._apply_vars()</code> 已支持 <code>${变量}</code> ——
-        同一段文案，转成自动化就生效、留在语音页就不生效，这是最别扭的地方。</p>
-
-      <p><b>变量语法先对齐</b>：用全局变量系统的 <code>${name}</code>（支持 <code>${name:默认值}</code>、
-        <code>$$</code> 转义），<b>不是</b>接口模块的 <code>{{name}}</code>。
-        内置变量 <code>serial / date / time / timestamp</code> 开箱可用。
-        基建全在 <code>utils/vars.py</code>（<code>resolve_text</code> / <code>resolve_params</code> /
-        <code>current_values</code>），<b>不用重造</b>，本项只做接线。</p>
-
-      <p><b>① 渲染点放在 <code>build_play_items()</code>，不是播放层</b></p>
-      <ul>
-        <li>这不是「存储层」：<code>voice_data.json</code> 里仍存原文，编辑与预览看到的还是
-          <code>${date}</code>；渲染只发生在「展开成播报组」这一步</li>
-        <li><b>为什么不能放播放层</b>：<code>voice_player</code> 里有一处预取 ——
-          这一条刚开播就去后台合成下一条（在线合成要 2~3 秒）。若渲染在播放时做，
-          预取拿到的是<b>未渲染的原文</b>，合成的音频与真要播的不是一份，缓存 key 对不上，
-          等于预取失效、静默期又回来</li>
-        <li>覆盖范围：播报文案、回执关键词、界面断言的定位值与预期值（<code>resolve_params</code>）</li>
-        <li><b>单条试听也走这条路径</b>：<code>_on_play_one</code> 现在是手工拼一个元组传给播放器，
-          不经过 <code>build_play_items</code>。不改的话试听会念出字面量 <code>${date}</code>，
-          与正式播放不一致</li>
-        <li>未定义变量不静默：保留原文，并按<b>用例</b>汇总成一行日志
-          （<code>用例X：未定义 ${a}、${b}</code>），不要每步一条；
-          <b>断言步骤直接判失败</b>，错误写「变量未定义」而不是「断言不匹配」</li>
-        <li>无设备时（只做语音回放）<code>${serial}</code> 为空，其余内置变量照常；不阻止播放</li>
-        <li>MCP <code>voice_speak</code> 同样渲染</li>
-      </ul>
-
-      <p><b>② <code>PlayItem</code> 数据类（必改，不是「顺手」）</b></p>
-      <p>现在 <code>build_play_items()</code> 返回 7 元组，四处消费，其中一处是<b>严格解包</b>：</p>
-      <div class="tree">views/voice_player.py:280
-    for _i, (case_id, phrase_index, text, delay, verifies, case_name, asserts) in enumerate(self.items):
-        ↑ 多一个字段就是 ValueError: too many values to unpack</div>
-      <p>四处消费点：<code>voice_player.py:280</code>（严格解包）、<code>voice_playback.py:53</code>
-        （<code>item[2]</code> 下标）、<code>perf_runner.py:130</code>（<code>it[5]</code> 取用例名）、
-        <code>voice_view._on_play_one</code>（手工拼元组）。改成字段具名的数据类，四处一起换。</p>
-
-      <p><b>数据与兼容</b>：<code>voice_data.json</code> <b>结构不变</b>，只在播放时渲染；
-        含 <code>${}</code> 的文案原样导入导出，不在导入时求值；
-        转自动化时也写原文（自动化侧由 <code>_apply_vars</code> 自己渲染，两边天然一致）。</p>
-
-      <p><b>补充细节（容易漏的）</b></p>
-      <ul>
-        <li><b>两种运行环境的变量来源不同</b>：语音页没有数据驱动，只有全局 + 内置变量；
-          转成自动化后由 <code>CaseRunner</code> 的行级变量覆盖。同一文案在两边渲染结果可能不同，
-          要在帮助里说明，否则会被当成 bug</li>
-        <li><b>美元符号转义</b>：文案里常见价格 <code>$5</code>，只有 <code>$$</code> 才转义成
-          <code>$</code>；单个 <code>$</code> 后不跟 <code>{</code> 时原样保留，避免误伤</li>
-        <li><b>断言可复盘</b>：执行前把「渲染后的预期值」写进日志，否则变量明明对了却失败，现场无法还原</li>
-        <li><b>性能场景共用</b>：<code>VoicePlaybackRunner</code> 与语音页吃同一个
-          <code>build_play_items</code> 结果，不存在两处实现分叉</li>
-        <li><b>唤醒步骤不渲染</b>：唤醒词来自设置，是环境配置；万一它在文案里含 <code>$</code>，
-          渲染会把字面量吃掉</li>
-      </ul>
-
-      <p><b>三条已定（2026-11-28）</b></p>
-      <ul>
-        <li><b>不做用例级语速</b> —— 设置页已有全局「执行语速」（<code>-10~10</code>），
-          而且它 2026-11-01 就是从语音页工具栏挪到设置页的，理由是「一次调好、长期不变」
-          「摆在工具栏上既碍事又挤」。同一件事再搬回中栏，等于推翻自己的判断</li>
-        <li><b>不做「变量预览」按钮</b> —— 没被要求的交互就是额外负担；真出现
-          「播出来才发现变量错」再补</li>
-        <li><b>未定义变量分两种处理</b>：播报步骤照常播原文 + 按用例汇总告警；
-          断言步骤直接失败并写明「变量未定义」</li>
-      </ul>
-
-      <p><b>工作量约 1.5 天</b>：<code>PlayItem</code> 重构与四处消费点 0.5 + 渲染接线与告警 0.5 +
-        单条试听与 MCP 0.3 + 自测 0.2。</p>
-      <p class="small"><b>v1 不做</b>：用例级语速、唤醒词用例级、音量参数（SAPI 固定满音量，Edge 也不稳定）、
-        变量写入与表达式运算（只做文本替换）。</p>
-      <div class="example">💡 <b>打个比方：</b>以前每条播报都是「死台词」，换日期只能手改；
-        现在台词里可以写「当前日期是 ${date}」，同一份用例在哪天跑就说哪天的话。</div>
-    </div>
-
-    <div class="card">
-      <h3>10. 关键字驱动 <span class="tag plan">📋 规划中 · 方案补充 2026-11-23 · 待确认 4</span></h3>
+      <h3>6. 关键字驱动 <span class="tag plan">📋 规划中 · 方案补充 2026-11-23 · 待确认 4</span></h3>
       <p>把常用动作组合封装成「关键字」（如「登录」「搜索商品」），支持传参，用例里点一下就复用。</p>
 
       <p><b>它和「步骤模板」不是一回事</b>（这两个最容易混，先分清）：</p>
@@ -990,7 +688,7 @@ def after(ctx):
       <p><b>方案细节（v1 形态）</b></p>
       <ul>
         <li><b>定义存哪</b>：新增 <code>data/keywords_data.json</code>（第 12 个用户资产），
-          必须同步进 <code>HistoryModel.TRACKED_FILES</code> 与第 8 项数据包清单 —— 这是最容易漏的一处。</li>
+          必须同步进 <code>HistoryModel.TRACKED_FILES</code> 与数据包备份的清单 —— 这是最容易漏的一处。</li>
         <li><b>定义结构</b>：<code>{id, name, params:[{name, default, required}], steps:[...]}</code>；
           步骤仍是普通 Step 快照（与 <code>TemplateModel</code> 同构），不引用原用例步骤 id。</li>
         <li><b>调用方式</b>：新增步骤类型 <code>keyword</code>，
@@ -1031,14 +729,14 @@ def after(ctx):
         和模板的差别在于：模板像「把这段话复制到每篇文档里」，改了模板，之前复制出去的那些不会变；
         关键字像「插一个共享链接」，改一次，所有引用它的地方一起更新。</div>
 
-      <p><b>为什么排在后面</b>：它依赖变量系统（第 6 项），现在做等于先造半个脚本语言。
+      <p><b>为什么排在后面</b>：它的参数替换依赖变量渲染（2026-11-28 已落地，见第 5 章），
+        前提已具备；排在最后是因为本身最重（约 4 天，要设计关键字模型 + 展开逻辑）。
         等真碰上「同一段流程 20 条用例都要改」的麻烦，可以先给模板加一个「引用模式」——
         只解决「改一处全生效」，不需要变量，成本低得多。</p>
     </div>
 
-    <div class="tip">💡 建议从 <b>A 档</b> 起步：套件增强 / 知识库的几个小件、数据路径相对化都是小步快跑、影响面可控的活，可随时插进版本。<br>
-      已完成项已从本文移除（步骤模板 2026-11-20、历史记录与回滚 2026-11-21、<br>
-      语音播报增强 2026-11-21），改动量与做法见更新日志。</div>
+    <div class="tip">💡 建议从 <b>A 档</b> 起步：套件增强、知识库的几个小件都是小步快跑、影响面可控的活，可随时插进版本。<br>
+      做完的项会移到本章末尾「已落地」，待办里只留还没动的。</div>
     <div class="card">
       <h3>范围边界（明确不做）</h3>
       <ul>
@@ -1046,6 +744,30 @@ def after(ctx):
         <li>不做通用 RPA（Android + 车机语音这条线已经够深）</li>
         <li>不做无授权的远程控制 / 局域网开放；远程接入必须本机 outbound + 一次性配对 + 显式授权 + 审计，并单独做安全评审</li>
       </ul>
+    </div>
+
+    <h3 style="color:var(--primary);font-size:18px;margin:26px 0 10px">◆ 已落地（从待办移出）</h3>
+
+    <div class="card">
+      <table>
+        <thead><tr><th style="width:34%">能力</th><th style="width:14%">落地时间</th><th>落地形态</th></tr></thead>
+        <tbody>
+          <tr><td><b>数据驱动与参考图改相对路径</b></td><td>2026-11-28</td>
+              <td><code>data/assets/</code> 统一收口，库内只存相对路径；两阶段迁移（后台线程复制、主线程改数据）；复制用例丢数据绑定的老 bug 一并修掉</td></tr>
+          <tr><td><b>数据包执行中保护</b></td><td>2026-11-28</td>
+              <td><code>utils/busy.py</code> 全局登记表（记原因而非布尔），自动化 / 性能 / 语音三处接线，执行中禁用导出导入并在状态行说明原因</td></tr>
+          <tr><td><b>数据包导出 / 导入</b></td><td>2026-11-28</td>
+              <td>zip + manifest + 逐文件 sha256、<code>config</code> 18 键白名单、导入前自动快照、路径穿越与 zip 炸弹防护；入口在「设置 → 数据维护」</td></tr>
+          <tr><td><b>变量渲染到语音播报</b></td><td>2026-11-28</td>
+              <td>与自动化同一套 <code>${}</code> 语法；<code>PlayItem</code> 数据类替换 7 元组；消费点 4 处。两侧对照见 <a href="#s5">第 5 章</a></td></tr>
+          <tr><td>测试套件之外的两项（记录）</td><td>2026-11-21</td>
+              <td>历史记录与回滚、语音播报增强（唤醒词引用化 / 多候选 / 界面断言 / 转自动化 / 批量删除）</td></tr>
+          <tr><td>步骤模板</td><td>2026-11-20</td>
+              <td>常用步骤存为模板，跨用例插入复用</td></tr>
+        </tbody>
+      </table>
+      <p class="small">新做完的项请追加到本表，并从上面对应档位里删掉卡片 —— 待办只放还没动的，
+        免得每次翻。具体改动细节看 <code>CHANGELOG.md</code> 对应版本段。</p>
     </div>
   </section>
 
@@ -1412,7 +1134,92 @@ def after(ctx):
     </div>
   </section>
 
-  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-21 · v1.6.1</footer>
+  <!-- ============ 五、变量能力对照 ============ -->
+  <section class="chapter" id="s5">
+    <h2><span class="num">5</span>变量能力：自动化与语音播报对照 <span class="tag done">✅ 两侧均已可用 · 2026-11-28</span></h2>
+
+    <p>两边用的是<b>同一套语法、同一个渲染函数</b>（<code>utils/vars.py</code>），
+      但「变量从哪来」「什么时候渲染」不一样 —— 这决定了同一段文案在两边可能得到不同结果。
+      这一章把差异摊开，避免把「语音页没渲染出来」当成 bug 排查。</p>
+
+    <p><b>语法（两边一致）</b></p>
+    <table>
+      <thead><tr><th style="width:32%">写法</th><th>含义</th></tr></thead>
+      <tbody>
+        <tr><td><code>${name}</code></td><td>取变量值；未定义时<b>原样保留</b>并告警，不会静默变空</td></tr>
+        <tr><td><code>${name:默认值}</code></td><td>未定义时用默认值</td></tr>
+        <tr><td><code>$$</code></td><td>转义成一个字面量 <code>$</code>（价格 <code>$$5</code> → <code>$5</code>）</td></tr>
+        <tr><td><code>${serial} ${date} ${time} ${timestamp}</code></td><td>内置变量，开箱可用，不用配</td></tr>
+      </tbody>
+    </table>
+
+    <p><b>差异对照</b></p>
+    <table>
+      <thead><tr><th style="width:22%">维度</th><th style="width:39%">自动化用例</th><th>语音播报</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>变量来源</b></td>
+          <td>全局变量 + 内置变量 + <b>数据驱动当前行的值</b></td>
+          <td>全局变量 + 内置变量<br><span class="small">没有数据驱动这一层</span></td>
+        </tr>
+        <tr>
+          <td><b>渲染时机</b></td>
+          <td>每个步骤执行前，<b>元素解析之后</b></td>
+          <td>展开播报组时（<code>build_play_items</code>），一次算完</td>
+        </tr>
+        <tr>
+          <td><b>覆盖范围</b></td>
+          <td>该步骤的全部参数：文字、坐标、定位值、断言预期、语音文案…</td>
+          <td>播报文案、回执关键词、界面断言的定位值与预期值</td>
+        </tr>
+        <tr>
+          <td><b>未定义变量</b></td>
+          <td>每步一条日志，带步骤号：<br><code>⚠ 步骤 3 有未定义变量：${xxx}</code></td>
+          <td>按用例汇总一条：<br><code>用例「X」有未定义变量：${xxx}（按原文播放）</code></td>
+        </tr>
+        <tr>
+          <td><b>断言里的变量</b></td>
+          <td>参数照常替换；未定义则断言按原值比对</td>
+          <td>参数里残留 <code>${x}</code> 时<b>直接判失败</b>，写明「变量未定义」</td>
+        </tr>
+        <tr>
+          <td><b>中文变量名</b></td>
+          <td>✅ 数据驱动表头可写中文（<code>${账号}</code>）</td>
+          <td>❌ 只有全局变量可用，而全局表限 ASCII</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p><b>实现位置</b></p>
+    <div class="tree">utils/vars.py
+  resolve_text()      替换一段文本，返回 (结果, 未定义变量名)
+  resolve_params()    递归替换 dict / list 里的所有字符串
+  current_values()    全局变量 + 内置变量 + 数据驱动行值
+  stuck_names()       找出残留的 ${x}（判断「变量没定义」）
+
+services/device_service.py
+  perform()           所有步骤类型的统一入口
+    └ _apply_vars()   在「元素解析之后」替换 —— 元素库里的定位值也能写 ${变量}
+                      一处生效，覆盖全部步骤类型
+
+models/voice_model.py
+  build_play_items()  展开播报组时渲染文案、回执关键词、断言参数</div>
+
+    <p><b>三个容易踩的点</b></p>
+    <ul>
+      <li><b>语音页没有数据驱动</b>：中文表头的 CSV（<code>${账号}</code>）在自动化里能跑通，
+        留在语音页会念出字面量并告警 —— 因为没有「当前这一行数据」这个概念</li>
+      <li><b>元素库也能写变量</b>：定位值写成 <code>${包名}/id/btn</code> 一样生效，
+        因为替换发生在元素解析之后。换 App 只改一个变量</li>
+      <li><b>唤醒词不渲染</b>：它来自设置，属于环境配置；万一里面恰好有 <code>$</code>，
+        渲染会把字面量吃掉，所以刻意跳过</li>
+    </ul>
+
+    <div class="example">💡 <b>一句话记住：</b>语法是同一套，差别只在「变量从哪来」——
+      自动化能拿到 CSV 当前行的值，语音页只能拿到全局表和内置变量。</div>
+  </section>
+
+  <footer>虫师 · 扩展方向与功能规划 · 更新于 2026-11-28 · v1.6.11</footer>
 </div>
 </body>
 </html>
